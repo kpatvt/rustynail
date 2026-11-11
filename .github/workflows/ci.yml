@@ -215,6 +215,8 @@ jobs:
         run: |
           cargo build -p rn-cli
           fuzz/make_seeds.sh
+      # (--target is explicit: without it cargo-fuzz built for x86_64-unknown-linux-musl on the runner, the second target of
+      # rust-toolchain.toml, and ASan cannot link against a static libc.)
       - name: Run every target briefly (60 s each, 10 min each on the weekly schedule)
         working-directory: fuzz
         run: |
@@ -225,7 +227,7 @@ jobs:
             # jit_diff and trace_ir panic on purpose when built without the compiler (`--features trace`)
             feat=""
             case "$t" in jit_diff|trace_ir) feat="--features trace" ;; esac
-            cargo +nightly fuzz run $feat "$t" -- -max_total_time=$secs -rss_limit_mb=2500 -timeout=30
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu $feat "$t" -- -max_total_time=$secs -rss_limit_mb=2500 -timeout=30
           done
       - name: Upload crash artifacts
         if: failure()
