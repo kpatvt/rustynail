@@ -380,7 +380,7 @@ fn item_slow<S: FormatSource>(
     Ok(i)
 }
 
-/// [`format`] appending to a caller-owned buffer (B3-2: the library reuses one).
+/// [`format()`] appending to a caller-owned buffer (B3-2: the library reuses one).
 pub fn format_into<S: FormatSource>(
     fmt: &[u8],
     src: &mut S,

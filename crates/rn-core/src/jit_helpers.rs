@@ -129,7 +129,7 @@ pub unsafe extern "C" fn jit_ccall(th: *mut Thread, ci: *mut CallInfo, instr: u6
 
 /// `OP_TAILCALL` (without `top` set: this does it). `instr` is the TAILCALL instruction. The caller has
 /// excluded hooks; a `CIST_MMRET` frame is excluded too unless `t1q` bit 5 (BUNDLE-V): then `x` = the `jit_mm_ret` flag word, a refused callee
-/// ([`crate::vm_unsafe::jit_mm_tail_ok`]) returns [`H_EXIT`] before anything changed, and a native callee that finished returns [`H_MMPOP`] / [`H_MMFC`].
+/// (`crate::vm_unsafe::jit_mm_tail_ok`) returns [`H_EXIT`] before anything changed, and a native callee that finished returns [`H_MMPOP`] / [`H_MMFC`].
 ///
 /// # Safety
 /// As [`jit_call`].
@@ -459,7 +459,7 @@ pub unsafe extern "C" fn jit_fmod(th: *mut Thread, ci: *mut CallInfo, instr: u64
 }
 
 /// BUNDLE-B: `RETURN0` / `RETURN1` (`instr`) of a metamethod frame (`CIST_MMRET`) run in place for a tier-1 comparison: pops the
-/// frame ([`crate::vm_unsafe::jit_mm_pop`]) and leaves the result as a boolean at the caller's `top`. [`H_DONE`], or [`H_EXIT`]
+/// frame (`crate::vm_unsafe::jit_mm_pop`) and leaves the result as a boolean at the caller's `top`. [`H_DONE`], or [`H_EXIT`]
 /// (nothing changed) when the caller's instruction is not a register comparison. The caller (the template) has excluded hooks.
 ///
 /// # Safety
@@ -531,7 +531,7 @@ pub unsafe extern "C" fn jit_mm_ret(th: *mut Thread, ci: *mut CallInfo, instr: u
 }
 
 /// BUNDLE-D (`armm`): `instr` (the `MMBIN*` after an arithmetic instruction, or a `UNM` / `BNOT`) of the running frame found no number
-/// operands in compiled code: push the in-place frame of its Lua metamethod ([`crate::vm_unsafe::jit_mm_arith`]; the caller has saved
+/// operands in compiled code: push the in-place frame of its Lua metamethod (`crate::vm_unsafe::jit_mm_arith`; the caller has saved
 /// `savedpc` = the instruction after `instr`). [`H_LUA`]: pushed, compiled code enters it and its return finishes the instruction
 /// ([`jit_mm_ret`]); [`H_EXIT`] otherwise, nothing observable has happened (the interpreter runs the arithmetic instruction itself).
 ///

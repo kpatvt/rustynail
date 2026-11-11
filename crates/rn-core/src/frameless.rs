@@ -1,7 +1,7 @@
 //! T2: the interpreter's generic `for` runs `next` / the `ipairs` iterator without a `CallInfo`.
 //!
 //! The addresses are registered by the base library ([`set_interp_builtins`]). They are used only while no
-//! compiler registered (`jit_hooks::set_builtins` calls [`disable`]): with a compiler the trace recorder models
+//! compiler registered (`jit_hooks::set_builtins` calls `disable`): with a compiler the trace recorder models
 //! the stack image of the real call and a trace entry needs the spare `CallInfo` node that call leaves behind
 //! (TR6b), and the tier-1 helper has its own fast path.
 

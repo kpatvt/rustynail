@@ -591,7 +591,7 @@ impl LuaString {
     /// The PUC hash of a short string (computed on first request).
     ///
     /// # Safety
-    /// `p` a live short string with the provenance of its whole allocation (see [`LuaString::promote_hash`]).
+    /// `p` a live short string with the provenance of its whole allocation (see `LuaString::promote_hash`).
     #[inline]
     pub unsafe fn short_hash(p: *const LuaString) -> u32 {
         // SAFETY: as documented.

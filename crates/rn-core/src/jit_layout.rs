@@ -161,7 +161,7 @@ pub mod proto {
     pub const NUMPARAMS: usize = offset_of!(Proto, numparams);
     /// `maxstacksize` (byte).
     pub const MAXSTACKSIZE: usize = offset_of!(Proto, maxstacksize);
-    /// Offset of the `k` buffer; its data pointer is `K_BUF + `[`ProtoLayout::k_ptr_in_buf`].
+    /// Offset of the `k` buffer; its data pointer is `K_BUF + ProtoLayout::k_ptr_in_buf`.
     pub const K_BUF: usize = offset_of!(Proto, k);
     /// Offset of the `code` buffer.
     pub const CODE_BUF: usize = offset_of!(Proto, code);

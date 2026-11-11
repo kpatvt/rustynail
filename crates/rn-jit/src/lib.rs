@@ -11,7 +11,13 @@
 // Internal-only crate (nothing is published, the facade re-exports a small surface): the JIT's constants, phase counters and
 // IR fields are documented where they are defined or by their names, and the unsafe blocks of the trace compiler share the
 // crate-level contract above (as in rn-capi).
-#![allow(missing_docs, clippy::undocumented_unsafe_blocks)]
+// Rustdoc: the internal docs link to private helpers by name (useful in the source, nothing to render for them).
+#![allow(
+    missing_docs,
+    clippy::undocumented_unsafe_blocks,
+    rustdoc::private_intra_doc_links,
+    rustdoc::broken_intra_doc_links
+)]
 
 pub mod arch;
 #[cfg(feature = "jit")]

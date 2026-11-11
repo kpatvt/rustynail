@@ -1,6 +1,6 @@
 //! Constant folding and algebraic identities (docs/JIT_TRACE.md 6.1: TR11 floats, TR12 integers, and the index
 //! normalisation of TR24e), plus [`optimize`], which re-emits a finished trace through the folding / CSE
-//! [`Builder`](super::ir::Builder) (the property tests run it against [`super::interp`]).
+//! [`Builder`] (the property tests run it against [`super::interp`]).
 //!
 //! The integer semantics are `rn_core::number`'s (the VM's own helpers); nothing is re-implemented here.
 //!
