@@ -22,6 +22,29 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rustynail_lua54)', 'cfg(ru
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
 missing_safety_doc = "warn"
+# Stylistic lints that are noise for this codebase (hot interpreter/JIT code and generated-looking test tables are kept in their
+# measured shape; "x + 0" / one-element loops are deliberate in tables of cases). Behaviour is unaffected.
+too_many_arguments = "allow"
+type_complexity = "allow"
+precedence = "allow"
+needless_range_loop = "allow"
+clone_on_copy = "allow"
+manual_range_contains = "allow"
+manual_div_ceil = "allow"
+manual_is_multiple_of = "allow"
+unnecessary_cast = "allow"
+useless_conversion = "allow"
+unnecessary_map_or = "allow"
+collapsible_if = "allow"
+if_same_then_else = "allow"
+doc_lazy_continuation = "allow"
+empty_line_after_doc_comments = "allow"
+items_after_test_module = "allow"
+needless_borrow = "allow"
+identity_op = "allow"
+single_element_loop = "allow"
+assertions_on_constants = "allow"
+field_reassign_with_default = "allow"
 
 # P-I (docs/JIT_TRACE_REF.md "P-I results"): fat LTO + one codegen unit were already in place and stay. `panic = "unwind"`
 # is required (rn-capi turns Lua errors into unwinds across the C API, `catch_unwind` in rn-capi/glue.rs and

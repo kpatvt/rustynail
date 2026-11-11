@@ -78,6 +78,7 @@ pub fn open_ext(st: &mut State) -> LuaResult<()> {
 // ---------------------------------------------------------------------------------------------
 
 /// The compiler's side of the `jit` table, installed by `rn_jit::register` (rn-std does not depend on rn-jit).
+#[allow(clippy::type_complexity)]
 pub struct JitCtl {
     /// `Some((enabled, features))` when a compiler is installed for this state, `None` otherwise.
     pub status: fn(&mut State) -> Option<(bool, Vec<&'static str>)>,

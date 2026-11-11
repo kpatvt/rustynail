@@ -8,6 +8,7 @@
 //! `cofuse_wanted_nil_skip` (co_11: `local x = yield()`), `cofuse_results_room_skip` (co_11: 5000 yielded values), `cofuse_prev_c_ignored`
 //! (co_15: `pcall(coroutine.yield)`).
 #![cfg(feature = "trace")]
+#![cfg_attr(rustynail_lua54, allow(dead_code))] // every test is Lua 5.5 only: the helpers are unused on 5.4
 
 use rn_core::state::{LuaState, LUA_MULTRET};
 use rn_core::status::Status;

@@ -5321,7 +5321,7 @@ pub fn chain_due(chainre: u32, chainn: u32, v: &[u64], done: u8, fam: u32) -> bo
 /// BUNDLE-G (`chaindepth`): the exit counters of the chain above exit `k` of trace `id`, from the top: `c[0]` is the counter of the exit that hosts the first link (the
 /// calls that reached the chain), `c[i]` that of the callee-guard exit of link `i` (the calls that left it), the last is exit `k` of `id` itself, so `c.len() - 1` is
 /// the number of links. Empty when exit `k` is not a callee-guard exit (nothing to cap) or `id` is not part of a chain. Counters only: no clock.
-pub fn chain_counts(d: &JitData, id: TrId, k: usize) -> Vec<u64> {
+pub(crate) fn chain_counts(d: &JitData, id: TrId, k: usize) -> Vec<u64> {
     let is_cg = |t: &Trace, e: usize| t.gk.get(e).is_some_and(|g| g & 1 != 0);
     let mut c = Vec::new();
     match d.tr.slot(id) {
@@ -5395,7 +5395,7 @@ pub fn chain_refuse_rule(cd: u32, c: &[u64], hot: u64) -> bool {
 }
 
 /// BUNDLE-G (`chaindepth`): [`chain_refuse_rule`] of the hot callee-guard exit `k` of trace `id`.
-pub fn chain_refuse(d: &JitData, id: TrId, k: usize, cd: u32) -> bool {
+pub(crate) fn chain_refuse(d: &JitData, id: TrId, k: usize, cd: u32) -> bool {
     let c = chain_counts(d, id, k);
     chain_refuse_rule(cd, &c, u64::from(d.tr.cfg.hot_exit))
 }

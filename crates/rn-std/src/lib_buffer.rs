@@ -76,7 +76,7 @@ fn ensure(st: &mut State, u: &Gc<Udata>, extra: usize) -> LuaResult<()> {
     if need <= cap {
         return Ok(());
     }
-    let target = need.max(cap.saturating_mul(2)).max(64).min(MAX_LEN);
+    let target = need.max(cap.saturating_mul(2)).clamp(64, MAX_LEN);
     let add = target.saturating_sub(b.charged);
     if !st.g_mut().heap.mem_mut().charge_ext(add) {
         return Err(Status::ErrMem);

@@ -845,13 +845,11 @@ impl<'a> MatchState<'a> {
 
     /// `match`: try to match the pattern from `p` at subject position `s`; returns the end position.
     pub fn do_match(&mut self, s: usize, p: usize) -> PResult<Option<usize>> {
-        if p == 0 {
-            if self.plan != 0 {
-                return Ok(match self.fast_match(Plan(self.plan), s) {
-                    NOM => None,
-                    e => Some(e),
-                });
-            }
+        if p == 0 && self.plan != 0 {
+            return Ok(match self.fast_match(Plan(self.plan), s) {
+                NOM => None,
+                e => Some(e),
+            });
         }
         if p == 0 {
             if let Some(pg) = self.prog {

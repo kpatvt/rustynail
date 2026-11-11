@@ -1,3 +1,5 @@
+#![allow(clippy::undocumented_unsafe_blocks)] // test harness: the raw accesses are on buffers the test just built
+
 //! F3: the class-A helpers of TR1 (`TNEW`, `NEWREF`, `TLEN` of `tr::asm::jit_tr_alloc`) in isolation, on a real state.
 //!
 //! The contract the traces rely on (docs/JIT_TRACE.md 6.9): a helper that reports 0 has **done nothing** (no allocation,

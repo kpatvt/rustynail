@@ -428,6 +428,7 @@ fn next_hinted_equals_next() {
 // ---------------------------------------------------------------------------------------------
 
 /// Everything observable about a table's layout and accounting.
+#[allow(clippy::type_complexity)]
 fn fingerprint(
     t: TableRef,
     h: &Heap,

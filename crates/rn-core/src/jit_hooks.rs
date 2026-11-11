@@ -183,7 +183,7 @@ pub fn jit_hot_loop(st: &mut State, ci: Ci, pc: *const u32) -> bool {
     match VTABLE.get() {
         Some(vt) => {
             bump_fired();
-            #[allow(unused_mut)]
+            #[allow(unused_mut, unused_assignments)]
             let mut rearmed = 0u32;
             #[cfg(feature = "jit_counter_b")]
             {
@@ -957,7 +957,7 @@ pub fn rec_arm_chain(st: &mut State, root: Ci, inner: Ci) -> Option<u64> {
         if c.r().is_lua() {
             c.w().trap = 1;
         }
-        if c.as_ptr() as usize == root.as_ptr() as usize {
+        if std::ptr::eq(c.as_ptr(), root.as_ptr()) {
             break;
         }
         cur = c.previous();

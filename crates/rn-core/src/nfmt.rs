@@ -503,7 +503,7 @@ pub fn format_float(out: &mut Vec<u8>, sp: &Spec, x: f64) -> bool {
                 // `n = round(ax * 10^prec)`: integer digits, the point, `prec` fraction digits
                 let mut buf = [b'0'; 40];
                 let nu = n as u64;
-                let t = (64 - nu.leading_zeros() as usize) * 1233 >> 12;
+                let t = ((64 - nu.leading_zeros() as usize) * 1233) >> 12;
                 let nd = if nu == 0 {
                     1
                 } else {

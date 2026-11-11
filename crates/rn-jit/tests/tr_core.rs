@@ -1,3 +1,5 @@
+#![allow(clippy::undocumented_unsafe_blocks)] // test harness: the raw accesses are on buffers the test just built
+
 //! J5 PI: the trace compiler end to end through the REAL pipeline (`rn_jit::tr::install_driver`: recorder -> passes ->
 //! register allocation -> exits -> assembler -> install), on live programs (docs/JIT_TRACE.md 9.3 subset, 9.5).
 //!

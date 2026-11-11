@@ -426,8 +426,8 @@ fn patc_depth_and_capture_limits() {
         }
     }
     for n in 28..36 {
-        let p = format!("{}", "(a)".repeat(n)).into_bytes();
-        let q = format!("{}", "()".repeat(n)).into_bytes();
+        let p = "(a)".repeat(n).into_bytes();
+        let q = "()".repeat(n).into_bytes();
         for pat in [p, q] {
             strfast::set_mask(0);
             let slow = observe_light(&subject, &pat);

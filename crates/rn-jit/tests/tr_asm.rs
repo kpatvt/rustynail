@@ -1,3 +1,5 @@
+#![allow(clippy::undocumented_unsafe_blocks)] // test harness: the raw accesses are on buffers the test just built
+
 //! J5-P5b: the trace assembler (`tr::asm`, docs/JIT_TRACE.md 5.3, 7.5-7.8; task P5b, decisions in
 //! docs/JIT_TRACE_REF.md "P5b decisions").
 //!

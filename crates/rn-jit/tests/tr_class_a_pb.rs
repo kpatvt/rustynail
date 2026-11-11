@@ -1,3 +1,5 @@
+#![allow(clippy::undocumented_unsafe_blocks)] // test harness: the raw accesses are on buffers the test just built
+
 //! P-B: the library-call helpers of TR1 (`LIB` = `lib_core` of `tr::asm`) and the single-probe string interning behind `SNEW` /
 //! `CONCAT` in isolation, on a real state.
 //!

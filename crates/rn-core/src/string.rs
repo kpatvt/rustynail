@@ -431,6 +431,7 @@ impl LuaString {
     /// `p` a live short string.
     #[inline(always)]
     pub(crate) unsafe fn strtab_hash(p: *const LuaString, seed: u32) -> u32 {
+        // SAFETY: per the contract.
         unsafe {
             if (*p).hdr.extra.get() == 0 || mut_hash(MUT_STRTAB_IDX_RAW) {
                 (*p).hdr.hash.get()
@@ -748,7 +749,7 @@ mod tests {
             x ^= x << 17;
             x
         };
-        let mut buf = vec![0u8; 64 + 16];
+        let mut buf = [0u8; 64 + 16];
         for round in 0..200 {
             for (i, b) in buf.iter_mut().enumerate() {
                 *b = match round {

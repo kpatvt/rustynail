@@ -41,7 +41,7 @@ pub fn install(u: Gc<Udata>) {
 /// The reference must not be held across a call that can run Lua code (finalizers, metamethods), and at most
 /// one reference to one buffer may be live at a time.
 #[allow(clippy::mut_from_ref)]
-pub fn inner<'a>(u: &'a Gc<Udata>) -> Option<&'a mut BufInner> {
+pub fn inner(u: &Gc<Udata>) -> Option<&mut BufInner> {
     // SAFETY: the payload was written by `install` (or is null); the box stays alive until `drop_inner`.
     unsafe {
         let p = u.data_ptr().cast::<*mut BufInner>().read();

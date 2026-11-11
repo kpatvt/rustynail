@@ -917,16 +917,15 @@ impl State {
                 None => typename_of(&v),
             };
             let p = self.value_pointer(&v);
-            let out: &mut [u8];
             let mut n = kind.len();
-            if kind.len() + 20 <= stack.len() {
+            let out: &mut [u8] = if kind.len() + 20 <= stack.len() {
                 stack[..n].copy_from_slice(kind);
-                out = &mut stack[..];
+                &mut stack[..]
             } else {
                 heap_buf = kind.to_vec();
                 heap_buf.resize(kind.len() + 20, 0);
-                out = &mut heap_buf[..];
-            }
+                &mut heap_buf[..]
+            };
             if p == 0 {
                 out[n..n + 7].copy_from_slice(b": (nil)");
                 n += 7;

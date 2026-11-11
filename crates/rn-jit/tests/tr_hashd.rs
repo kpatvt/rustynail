@@ -9,6 +9,7 @@
 //! Detectors of the mutants `promote_skip`, `strtab_idx_raw`, `chain_cmp_hash_only`, `promote_seed0` (and, with the program
 //! `hashd_absent_then_insert` of `tr_core`, `record_mainpos_raw`).
 #![cfg(feature = "trace")]
+#![cfg_attr(rustynail_lua54, allow(dead_code))] // every test is Lua 5.5 only: the helpers are unused on 5.4
 
 use rn_core::state::{LuaState, LUA_MULTRET};
 use rn_core::status::Status;
@@ -249,7 +250,7 @@ fn bp_fast_hash_equals_reference() {
         x ^= x << 17;
         x
     };
-    let mut buf = vec![0u8; 64 + 8];
+    let mut buf = [0u8; 64 + 8];
     for round in 0..100 {
         for (i, b) in buf.iter_mut().enumerate() {
             *b = match round {

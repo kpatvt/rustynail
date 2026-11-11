@@ -8,7 +8,10 @@
 //!
 //! All `unsafe` in this crate is confined to `mem` (executable memory), `rt` (calling generated code) and
 //! the emulator's raw memory accesses; the encoder is safe code operating on `Vec<u8>`.
-#![warn(missing_docs)]
+// Internal-only crate (nothing is published, the facade re-exports a small surface): the JIT's constants, phase counters and
+// IR fields are documented where they are defined or by their names, and the unsafe blocks of the trace compiler share the
+// crate-level contract above (as in rn-capi).
+#![allow(missing_docs, clippy::undocumented_unsafe_blocks)]
 
 pub mod arch;
 #[cfg(feature = "jit")]

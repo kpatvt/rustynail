@@ -41,7 +41,7 @@ const SPECIALS: [f64; 24] = [
     -f64::MIN_POSITIVE,
     5e-324,
     -5e-324,
-    2.2250738585072009e-308, // largest subnormal
+    2.225_073_858_507_201e-308, // largest subnormal
     1e15,
     1e16,
     1e17,
