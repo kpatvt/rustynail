@@ -161,6 +161,12 @@ jobs:
           key: asan-jit
       - name: scripts/asan-jit.sh
         run: scripts/asan-jit.sh "$RUNNER_TEMP/asan-jit"
+        env:
+          # the invocation the script was validated with (docs/RELEASE.md V3): fewer parallel ASan test processes, as every
+          # tr_* test child is an ASan process of up to a few GB (a 16 GB runner has no systemd-run memory cap to fall back on)
+          RUST_TEST_THREADS: "3"
+          TR_CORE_JOBS: "2"
+          TR_P8A_JOBS: "2"
 
   miri:
     name: Miri subset of rn-core (Lua ${{ matrix.lua }})
