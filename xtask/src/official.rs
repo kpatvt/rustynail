@@ -215,8 +215,6 @@ pub fn run(ver: &str, args: &[String]) {
         let _ = writeln!(toml, "\n[[file]]\nname = {}", toml_str(f));
         let _ = writeln!(toml, "reference = {}", toml_str(st(&r)));
         let _ = writeln!(toml, "ours = {}", toml_str(st(&o)));
-        let _ = writeln!(toml, "secs_reference = {:.1}", r.secs);
-        let _ = writeln!(toml, "secs_ours = {:.1}", o.secs);
         if !ff.is_empty() {
             let _ = writeln!(toml, "first_failure = {}", toml_str(&ff));
             if let Some(l) = failing_line(&ff) {
@@ -226,7 +224,14 @@ pub fn run(ver: &str, args: &[String]) {
         if st(&r) != "pass" {
             let _ = writeln!(toml, "reference_failure = {}", toml_str(&first_failure(&r)));
         }
-        eprintln!("{f:<16} ref={:<7} ours={:<7} {ff}", st(&r), st(&o));
+        // timings are not recorded in the status file (they are noise and would make `git diff --exit-code tests/` flaky)
+        eprintln!(
+            "{f:<16} ref={:<7} ours={:<7} ({:.1}s / {:.1}s) {ff}",
+            st(&r),
+            st(&o),
+            r.secs,
+            o.secs
+        );
         rows.push((f.clone(), st(&r), st(&o), ff));
     }
     let out = root().join(if ver == "5.5" {
