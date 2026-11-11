@@ -1,0 +1,28 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 5K of event 'cycles:u'
+# Event count (approx.): 5877872530
+#
+# Overhead  Shared Object         Symbol                                                                         
+# ........  ....................  ...............................................................................
+#
+    82.18%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     7.36%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     3.18%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+     2.84%  rn-cli               [.] <rn_core::state::State>::close
+     2.00%  rn-cli               [.] rn_core::vm_unsafe::push_closure
+     0.73%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.68%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.27%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.24%  libc.so.6             [.] 0x00000000001b8340
+     0.22%  rn-cli               [.] <rn_core::state::State>::post_call
+     0.15%  rn-cli               [.] <rn_core::state::State>::for_prep
+     0.07%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+
+
+#
+# (Tip: Use parent filter to see specific call path: perf report -p <regex>)
+#

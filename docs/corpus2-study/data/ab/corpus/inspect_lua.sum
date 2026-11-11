@@ -1,0 +1,82 @@
+== inspect_lua (rc 0)
+[trace] recorded 57 installed 13 entered 1562431 flushes 13 rerecord 7 blacklisted 36 refused 235 deferred 5 ineffective 1 probes 276 (fn-short 41 start-refused 235)
+[trace] aborted FnShort: 41
+[trace] aborted InnerLoop: 4
+[trace] aborted IntMiss: 3
+[trace] aborted LeaveFrame: 12
+[trace] aborted LeaveLoop: 7
+[trace] aborted MultRet: 6
+[trace] aborted StartRefused: 235
+[trace] aborted TableHash: 8
+[trace] aborted Unstable: 4
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 3 phis 12 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 70 installed 33 failed 42 preludes 3
+[trace] links: nest roots 1 frame links 0 stitches 5
+[trace] exits 2259605 (live traces 0)
+aborts (count reason op depth head):
+     12 LeaveFrame             RETURN    d0 root L88 'local function countCycles(x, cycles)'
+     12 SideShort              CALL      d1 side  [policy]
+     10 Insert                 SETTABLE  d0 side
+      6 MultRet                CALL      d0 root L160 'function Inspector:putValue(v)'
+      5 SideShort              TFORCALL  d0 side  [policy]
+      5 LeaveLoop              FORLOOP   d0 root L103 'local function makePath(path, a, b)'
+      5 LeaveFrame             RETURN1   d0 side
+      4 FnShort                RETURN    d0 root L88 'local function countCycles(x, cycles)'  [policy]
+      4 FnShort                RETURN1   d0 root L49 'local function isSequenceKey(k, sequenceLength)'  [policy]
+      4 FnShort                RETURN1   d0 root L58 'local function sortKeys(a, b)'  [policy]
+      4 FnShort                CALL      d0 root L44 'local function isIdentifier(str)'  [policy]
+      4 FnShort                CALL      d0 root L145 'local function tabify(inspector)'  [policy]
+      4 FnShort                CALL      d0 root L16 'local function smartQuote(str)'  [policy]
+      4 FnShort                CALL      d0 root L36 'local function escape(str)'  [policy]
+      4 FnShort                RETURN    d0 root L112 'local function processRecursive(process, item, pat'  [policy]
+      4 FnShort                RETURN1   d0 root L286 'local s3 = inspect(data[1 + r % #data], { process '  [policy]
+      3 Unstable               TFORCALL  d0 root L70 'local function getKeys(t)'
+      3 FnShort                CALL      d1 root L160 'function Inspector:putValue(v)'  [policy]
+      3 IntMiss                GETTABLE  d0 root L112 'local function processRecursive(process, item, pat'
+      2 LeaveLoop              TFORCALL  d0 root L88 'local function countCycles(x, cycles)'
+      2 TableHash              GETTABLE  d1 root L88 'local function countCycles(x, cycles)'
+      2 FnShort                RETURN0   d0 root L160 'function Inspector:putValue(v)'  [policy]
+      2 InnerLoop              TFORPREP  d0 root L88 'local function countCycles(x, cycles)'
+      2 TableHash              GETTABLE  d0 root L149 'function Inspector:getId(v)'
+      2 InnerLoop              FORPREP   d1 root L112 'local function processRecursive(process, item, pat'
+      2 TableHash              GETTABLE  d1 root L227 'function inspect.inspect(root, options)'
+      2 TableHash              GETTABLE  d2 root L0 main
+      2 SideShort              FORLOOP   d0 side  [policy]
+      1 Unstable               TFORCALL  d0 root L88 'local function countCycles(x, cycles)'
+      1 TableHash              GETTABLE  d1 side
+      1 Nyi(CALL)              CALL      d0 side
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1183.0 L160 pc40 Eq 101633 11640
+  33.1 L227 pc36 Gettabup 198 166988
+  9.2 L286 pc3 Eq 3094 2984
+  3.5 L227 pc56 Gettabup 198 17882
+  0.6 L0 pc192 Mulk 16 36025
+  0.4 L145 pc6 Call 12 35998
+  0.4 L36 pc0 Getupval 84 4996
+  0.4 L88 pc18 Getupval 7 55466
+  0.3 L0 pc146 Move 10 33056
+  0.3 L14 pc0 Gettabup 163 1859
+  0.3 L70 pc35 Call 14 18476
+  0.2 L145 pc0 Getupval 20 12053
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     482645 Eqk        -              black=true gk=32
+     458180 Call       SideShort      black=true gk=32
+     430430 Call       -              black=false gk=32
+     348961 Jmp        -              black=true gk=32
+     227124 Le         -              black=false gk=32
+      95261 Gettable   -              black=false gk=48
+      66025 Call       -              black=false gk=16
+      41733 Gti        -              black=false gk=32
+      32255 Gettable   -              black=false gk=16
+      30609 Call       MaxSide        black=true gk=32
+      20978 Settable   -              black=false gk=40
+       8483 Call       MaxSide        black=true gk=33
+       6172 Settable   TableHash      black=false gk=40
+       3192 Le         -              black=false gk=48
+       3134 Call       MaxSide        black=true gk=48
+       3129 Settable   SideShort      black=true gk=40
+        343 Forloop    -              black=false gk=32
+        184 Getupval   -              black=false gk=17
+        132 Settable   -              black=true gk=32
+        132 Gettable   LeaveFrame     black=true gk=16

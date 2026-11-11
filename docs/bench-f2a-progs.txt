@@ -1,0 +1,16 @@
+run 1/7
+run 2/7
+run 3/7
+run 4/7
+run 5/7
+run 6/7
+run 7/7
+program       base_tr Mcyc(min)   new_tr Mcyc    ratio  new_ms0 Mcyc    ratio       j4 Mcyc    ratio
+fannkuch                1292.2        1372.7   1.062         1279.4   0.990~        1207.8   0.935 
+matmul                   521.0         518.2   0.995~         527.9   1.013~         638.6   1.226 
+sieve                   2309.2        2161.3   0.936         2302.9   0.997~        1661.0   0.719 
+spectral_norm            266.3         265.9   0.999~         265.0   0.995~        2748.7  10.323 
+geomean new_tr: all(4) cycles min 0.997 median 0.999 instr 0.989; numeric cycles min 0.997 median 0.999 instr 0.989
+geomean new_ms0: all(4) cycles min 0.999 median 0.995 instr 1.001; numeric cycles min 0.999 median 0.995 instr 1.001
+geomean j4: all(4) cycles min 1.708 median 1.702 instr 1.388; numeric cycles min 1.708 median 1.702 instr 1.388
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

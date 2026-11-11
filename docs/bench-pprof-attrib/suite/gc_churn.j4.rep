@@ -1,0 +1,73 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cycles:u'
+# Event count (approx.): 3485454732
+#
+# Overhead  Shared Object         Symbol                                                                         
+# ........  ....................  ...............................................................................
+#
+    14.79%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     9.30%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     6.11%  rn-cli               [.] rn_core::jit_helpers::jit_setlist
+     6.07%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     5.63%  [JIT] tid 2363501     [.] lua_proto@0x7fa633e895e0
+     5.57%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     4.10%  rn-cli               [.] rn_core::table::resize
+     3.78%  rn-cli               [.] <rn_core::state::State>::gc_step
+     3.27%  rn-cli               [.] rn_core::table::newkey
+     3.26%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     3.25%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     3.06%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     2.87%  rn-cli               [.] rn_core::number::tostring_int
+     2.64%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     2.21%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::realloc
+     1.95%  rn-cli               [.] rn_core::vm_unsafe::push_closure
+     1.92%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     1.65%  rn-cli               [.] rn_core::jit_helpers::jit_set
+     1.51%  rn-cli               [.] rn_std::lib_base::base_tostring
+     1.47%  rn-cli               [.] rn_core::jit_helpers::jit_newtable
+     1.39%  libc.so.6             [.] 0x00000000001b7af9
+     1.11%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     0.93%  rn-cli               [.] <rn_core::heap::Heap>::singlestep
+     0.89%  rn-cli               [.] rn_core::table::mainposition
+     0.88%  libc.so.6             [.] 0x00000000001ae4a5
+     0.82%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     0.73%  rn-cli               [.] <rn_core::state::State>::close
+     0.65%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.65%  rn-cli               [.] <rn_core::state::State>::tolstring
+     0.65%  rn-cli               [.] <rn_core::state::State>::get_metafield
+     0.59%  rn-cli               [.] <rn_core::state::State>::finish_set
+     0.57%  rn-cli               [.] <rn_core::state::State>::call_meta
+     0.57%  libc.so.6             [.] 0x00000000001b7ac0
+     0.54%  rn-cli               [.] rn_core::jit_helpers::jit_closure
+     0.45%  rn-cli               [.] rn_core::gc::objsize
+     0.44%  rn-cli               [.] rn_core::table::insertkey
+     0.42%  libc.so.6             [.] 0x00000000001b7ac4
+     0.28%  rn-cli               [.] rn_core::jit_helpers::jit_close
+     0.28%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.23%  libc.so.6             [.] 0x00000000001b7b33
+     0.23%  libc.so.6             [.] 0x00000000001b7b44
+     0.19%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.17%  libc.so.6             [.] 0x00000000001b8344
+     0.17%  libc.so.6             [.] 0x00000000001b7b54
+     0.17%  libc.so.6             [.] 0x00000000001b8340
+     0.17%  libc.so.6             [.] 0x00000000001b7b4a
+     0.17%  [unknown]             [k] 0000000000000000
+     0.16%  libc.so.6             [.] 0x00000000001b7afc
+     0.11%  libc.so.6             [.] 0x00000000001b831e
+     0.11%  rn-cli               [.] <rn_core::heap::Heap>::traverseephemeron
+     0.10%  libc.so.6             [.] 0x00000000001ae49e
+     0.09%  libc.so.6             [.] 0x00000000001ae484
+     0.09%  libc.so.6             [.] 0x00000000001ae480
+     0.08%  libc.so.6             [.] 0x00000000001ae4ab
+     0.06%  libc.so.6             [.] 0x00000000001ae4a9
+     0.06%  libc.so.6             [.] 0x00000000001b7d79
+     0.05%  libc.so.6             [.] 0x00000000001b7b13
+
+
+#
+# (Tip: For hierarchical output, try: perf report --hierarchy)
+#

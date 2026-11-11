@@ -1,0 +1,46 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 1989971565
+#
+# Overhead  Shared Object         Symbol                                                                                                                                                                                                 
+# ........  ....................  .......................................................................................................................................................................................................
+#
+    39.94%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    11.52%  rn-cli               [.] rn_core::vm_unsafe::finish_op
+     9.92%  rn-cli               [.] rn_std::lib_coroutine::auxwrap
+     7.31%  rn-cli               [.] rn_std::lib_coroutine::auxresume
+     6.55%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     4.76%  rn-cli               [.] <rn_core::state::State>::ccall
+     3.75%  rn-cli               [.] <rn_core::state::State>::unroll
+     3.33%  rn-cli               [.] rn_std::lib_coroutine::co_yield
+     2.59%  rn-cli               [.] <rn_core::state::State>::resume
+     2.14%  [JIT] tid 2362943     [.] lua_proto@0x7fb64af6a680.v1
+     1.19%  rn-cli               [.] rn_core::vm::execute
+     0.83%  rn-cli               [.] <rn_core::state::State>::post_call
+     0.80%  rn-cli               [.] rn_core::jit_helpers::jit_tforcall
+     0.75%  [JIT] tid 2362943     [.] lua_proto@0x7fb64af6a680.v2
+     0.75%  rn-cli               [.] <rn_core::state::State>::new_thread
+     0.60%  rn-cli               [.] rn_std::lib_coroutine::co_create
+     0.55%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.35%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.35%  libc.so.6             [.] cfree
+     0.30%  libc.so.6             [.] malloc
+     0.25%  [JIT] tid 2362943     [.] lua_proto@0x7fb64af6a680.v3
+     0.21%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.20%  rn-cli               [.] <rn_core::state::State>::pre_call
+     0.20%  rn-cli               [.] rn_core::state::shrink_stack
+     0.15%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::realloc
+     0.15%  rn-cli               [.] rn_std::lib_coroutine::co_resume
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.10%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.05%  libc.so.6             [.] 0x00000000000bc527
+
+
+#
+# (Tip: To analyze particular parallelism levels, try: perf report --latency --parallelism=32-64)
+#

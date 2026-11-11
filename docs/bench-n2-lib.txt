@@ -1,0 +1,15 @@
+program         base Mcyc(min)      new Mcyc    ratio    base2 Mcyc    ratio
+tconcat                  349.1         349.2   1.000~         348.9   0.999~
+tinsert_append           301.1         306.5   1.018~         300.2   0.997~
+tinsert_front            475.1         372.6   0.784          476.5   1.003~
+tinsert_idx              524.5         514.5   0.981~         519.9   0.991~
+tmove                    417.4         434.3   1.041~         417.3   1.000~
+tmove_1k                  76.3          77.6   1.017~          76.4   1.001~
+tpack                    358.8         365.1   1.018~         362.2   1.009~
+tremove_front            365.4         246.4   0.674          362.5   0.992~
+tremove_pop              380.5         379.9   0.998~         379.5   0.997~
+tsort_int                468.7         471.1   1.005~         468.9   1.000~
+tunpack                  408.7         402.2   0.984~         410.4   1.004~
+geomean new: all(11) cycles min 0.949 median 0.943 instr 0.952; numeric cycles min nan median nan instr nan
+geomean base2: all(11) cycles min 1.000 median 0.996 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

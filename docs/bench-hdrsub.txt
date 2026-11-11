@@ -1,0 +1,35 @@
+set n | r0b | lean | hA | hB
+ALL 223 | 1.0013 / 1.0000 | 0.9992 / 0.9986 | 0.9974 / 0.9964 | 0.9972 / 0.9958
+apps 5 | 1.0028 / 1.0000 | 1.0058 / 1.0000 | 1.0070 / 1.0000 | 0.9967 / 1.0000
+awfy 14 | 1.0032 / 1.0000 | 1.0004 / 0.9991 | 1.0012 / 0.9981 | 1.0031 / 0.9981
+corpus 18 | 1.0035 / 0.9997 | 1.0015 / 0.9987 | 1.0024 / 0.9979 | 1.0024 / 0.9989
+corpus2/dev 17 | 0.9997 / 1.0000 | 0.9971 / 0.9995 | 1.0003 / 0.9995 | 1.0006 / 0.9994
+corpus2/heldout 11 | 1.0068 / 1.0000 | 1.0085 / 0.9948 | 1.0076 / 0.9895 | 1.0062 / 0.9895
+jit-trace 29 | 0.9997 / 1.0000 | 0.9994 / 1.0000 | 0.9997 / 1.0000 | 0.9985 / 1.0000
+lib 95 | 0.9995 / 1.0000 | 0.9984 / 0.9984 | 0.9943 / 0.9951 | 0.9937 / 0.9936
+programs 25 | 1.0062 / 1.0000 | 0.9978 / 0.9971 | 0.9924 / 0.9938 | 0.9981 / 0.9938
+real 5 | 0.9934 / 1.0000 | 0.9860 / 1.0000 | 0.9962 / 1.0000 | 0.9868 / 1.0000
+real_dis 4 | 1.0061 / 1.0000 | 1.0031 / 1.0000 | 0.9997 / 1.0000 | 0.9972 / 0.9983
+mismatches/errors: [] 0
+r0b worst cyc: programs/table_hash 1.285 awfy/havlak 1.093 corpus2/dev/iter_pipeline 1.054 lib/m_max 1.044 apps/lru_cache 1.043 corpus/json_rxi 1.029 lib/concat_op_str 1.027 corpus2/heldout/prototype_objects 1.024
+r0b best cyc: programs/string_ops 0.944 lib/tconcat 0.951 lib/sel_count 0.951 corpus2/dev/event_promise 0.965 awfy/cd 0.970 corpus2/dev/oop_mixins 0.971
+lean worst cyc: programs/table_hash 1.110 corpus2/heldout/prototype_objects 1.068 programs/gc_churn 1.047 corpus2/heldout/log_analyzer 1.034 jit-trace/int_sum 1.033 lib/sel_count 1.033 jit-trace/type_entry 1.025 apps/lru_cache 1.025
+lean best cyc: lib/sub 0.908 programs/knucleotide 0.929 corpus2/heldout/markov_text 0.950 lib/sub_1char 0.959 real/game_loop 0.959 programs/json 0.963
+hA worst cyc: corpus2/heldout/prototype_objects 1.102 corpus2/heldout/log_analyzer 1.050 lib/match 1.039 corpus2/dev/oop_mixins 1.034 jit-trace/int_sum 1.032 lib/gmatch_words 1.029 awfy/havlak 1.026 programs/gc_churn 1.025
+hA best cyc: lib/sub_1char 0.785 lib/sub 0.824 programs/knucleotide 0.858 corpus2/heldout/markov_text 0.914 lib/tmove_1k 0.943 real/game_loop 0.960
+hB worst cyc: corpus2/heldout/prototype_objects 1.087 programs/table_hash 1.079 corpus2/heldout/log_analyzer 1.065 awfy/havlak 1.056 awfy/richards 1.040 corpus2/dev/oop_mixins 1.036 programs/gc_churn 1.034 programs/heapsort 1.028
+hB best cyc: lib/sub_1char 0.785 lib/sub 0.825 programs/knucleotide 0.857 corpus2/heldout/markov_text 0.911 lib/tostring_int 0.938 corpus2/dev/csv_report 0.941
+targets (cyc/ins):
+  lib/sub r0b 0.999/1.000 lean 0.908/0.943 hA 0.824/0.837 hB 0.825/0.837
+  lib/sub_1char r0b 0.997/1.000 lean 0.959/0.915 hA 0.785/0.751 hB 0.785/0.751
+  programs/knucleotide r0b 1.003/1.000 lean 0.929/0.938 hA 0.858/0.864 hB 0.857/0.864
+  lib/char r0b 0.998/1.000 lean 1.007/1.000 hA 0.999/1.000 hB 1.002/1.000
+  lib/tostring_int r0b 1.002/1.000 lean 1.004/1.000 hA 1.001/1.000 hB 0.938/0.906
+  lib/tostring_flt r0b 0.993/1.000 lean 1.008/1.000 hA 0.978/1.000 hB 0.978/0.958
+cpu3:1.0%busy  cpu4:9.8%busy  cpu5:2.4%busy  cpu6:1.0%busy  cpu7:0.3%busy  cpu11:0.0%busy  cpu12:0.3%busy  cpu13:0.7%busy  cpu14:3.8%busy  cpu15:0.7%busy
+cpu3:1.3%busy  cpu4:3.4%busy  cpu5:5.1%busy  cpu6:1.4%busy  cpu7:0.7%busy  cpu11:0.0%busy  cpu12:2.0%busy  cpu13:1.7%busy  cpu14:0.7%busy  cpu15:0.0%busy
+
+eq_short A/B (inline short-string compare in Heap::jit_str_probe, reverted; separate binaries, equal-length dirs, 223 programs, 5 runs; cycles/instructions vs the bcmp build):
+  ALL one(jit_str_bytes only) 1.0013/0.9985, both(jit_str_bytes + jit_str_probe) 1.0037/0.9985, noise column 0.9978/1.0000
+  15-run re-measure of flagged: lib/find_plain 1.047/1.044 (one/both), jit-trace/alloc_ctor 1.057/1.035, lib/pcall_err 1.005/1.075, awfy/havlak 1.029/1.013; noise column <= 1.020
+  targets (cycles, 15 runs): lib/sub 0.987/0.984, lib/sub_1char 0.948/0.947, programs/knucleotide 0.950/0.952 (instructions 0.959/0.955/0.960)

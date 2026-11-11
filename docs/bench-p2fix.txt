@@ -1,0 +1,98 @@
+# P2 loop-top placement fix: raw numbers (2026-11-10). Machine: Ryzen AI 7 350 (Zen 5), CPUs 3-7, RUSTYNAIL_SEED=0, cycles:u, min of N runs
+
+## Per-knob A/B, lib/tonumber_num (min of 15, Mcyc / G instr) and programs/fib (min of 5), HEAD_OFFSET 24, one binary, limits explicit
+tonumber_num: all on 258.6/1.489; budsub=0 245.4/1.609; pollr15=0 247.3/1.609; fpool=0 259.3/1.489; budsub=0,pollr15=0 229.9/1.730; budsub=0,fpool=0 258.5/1.609; pollr15=0,fpool=0 255.3/1.610; all off 229.9/1.730
+fib: all on 1570/10.05; budsub=0 1538/10.25; pollr15=0 1455/10.21; fpool=0 1574/10.05; budsub=0,pollr15=0 1471/10.40; budsub=0,fpool=0 1542/10.25; pollr15=0,fpool=0 1448/10.21; all off 1458/10.40
+
+## Head-offset sweep (HEAD_OFFSET 0,8,..,56), default limits (budsub=pollr15=fpool=1), min of 5 (tonumber_num) / 3, Mcyc
+tonumber_num new code: 194 226 258 259 205 221 215 221 ; same program, all knobs off: 498 231 230 230 231 234 242 243
+fib new code: 1602 1487 1603 1583 1556 1601 1592 1612 ; fib pollr15=0: 1449 1447 1441 1456 1450 1458 1467 1507
+int_sum 925 917 916 913 926 925 960 965 ; inline_leaf 456 452 456 458 461 455 472 472 ; dot 1285 1241 1245 1244 1241 1239 1239 1259 ; upval_acc 1402 1430 1423 1433 1400 1400 1399 1401
+oop_methods 147.0 147.5 148.0 148.3 148.4 147.5 148.1 147.8 ; oop_override 135.8 129.1 129.2 129.5 129.6 130.2 130.5 130.1 ; spectral_norm 201.8 203.2 203.6 204.2 204.5 204.0 203.0 202.2
+inline_2 318.8 320.2 323.0 325.5 325.9 311.3 310.6 316.2 ; field_global 671.7 672.1 536.8 537.6 536.5 523.6 537.4 537.9 ; type_entry 1523 1509 1519 1510 1808 1599 1574 1562
+pollr15=0: inline_leaf (offsets 16 24 32 40 48) 492 491 651 856 521 ; str_eq 189 190 210 193 191
+
+## Poll-form variants on fib (pollr15=1, min of 5, Mcyc): cmp byte [r15+d],0 : 1570; movzx esi,[r15+d] + cmp : 1556; lea rax,[r15+d] + cmp byte [rax],0 : 1611; r15 shifted inside its page by 64..2112 bytes (4K-aliasing test): 1560-1609 (no trend); movabs rax + cmp byte [rax],0 (pollr15=0): 1448
+
+## Screen 1 (3 runs, 223 programs, geomean cycles/instructions vs all-off 'old', HEAD_OFFSET 24 unless noted)
+geomean cyc/ins vs old
+set                          d24             d32           p0_24           p0_32             old
+apps                0.998/0.998    0.997/0.998    0.997/0.999    0.999/0.999    1.000/1.000
+awfy                0.992/0.978    0.993/0.979    0.996/0.986    0.993/0.987    1.000/1.000
+corpus              1.003/0.998    1.002/0.999    1.001/0.999    0.998/0.999    1.000/1.000
+corpus2/dev         1.006/0.995    0.997/0.995    1.004/0.997    1.002/0.997    1.000/1.000
+corpus2/heldout     0.992/0.995    0.993/0.996    1.000/0.997    1.004/0.998    1.000/1.000
+jit-trace           0.959/0.901    0.974/0.901    0.976/0.929    0.981/0.930    1.000/1.000
+lib                 0.988/0.975    0.983/0.975    0.993/0.987    0.995/0.987    1.000/1.000
+programs            0.982/0.972    0.987/0.973    0.989/0.982    0.985/0.983    1.000/1.000
+real                0.987/0.991    0.985/0.992    0.987/0.994    0.986/0.994    1.000/1.000
+ALL                 0.987/0.970    0.986/0.971    0.993/0.982    0.993/0.982    1.000/1.000
+mismatch: []
+d24 worst: lib/tonumber_num 1.108, programs/fib 1.077, corpus2/heldout/sudoku_solver 1.075, lib/concat_op 1.063, lib/str_eq 1.054, lib/str_lt 1.048, corpus2/dev/wordfreq_wrap 1.044
+
+## Final (5 runs): main = 8b5b1242 behaviour (offset 24, all three knobs on), new = offset 48 + pollr15 default 0, old = budsub=0,pollr15=0,fpool=0 at offset 24
+geomean cyc/ins vs old
+set                         main             new             old             dup
+apps                1.003/0.998    0.999/1.000    1.000/1.000    1.003/0.998
+awfy                1.004/0.978    1.012/0.989    1.000/1.000    0.991/0.978
+corpus              1.003/0.999    0.997/1.000    1.000/1.000    1.002/0.998
+corpus2/dev         1.000/0.995    1.002/0.998    1.000/1.000    0.998/0.995
+corpus2/heldout     1.003/0.995    1.005/0.999    1.000/1.000    1.008/0.995
+jit-trace           0.959/0.901    0.977/0.930    1.000/1.000    0.959/0.901
+lib                 0.990/0.975    0.994/0.987    1.000/1.000    0.992/0.975
+programs            0.988/0.972    0.994/0.986    1.000/1.000    0.988/0.972
+real                0.993/0.991    0.996/0.995    1.000/1.000    0.989/0.991
+ALL                 0.990/0.970    0.995/0.983    1.000/1.000    0.990/0.970
+mismatch: []
+main worst: awfy/havlak 1.222, lib/tonumber_num 1.087, programs/fib 1.079, corpus2/dev/csv_report 1.041
+new worst: awfy/havlak 1.191, lib/tmove_1k 1.076, lib/pcall_err 1.074, lib/os_clock 1.058, lib/m_max 1.056, lib/tinsert_append 1.053, corpus2/dev/regex_nfa 1.052, awfy/sieve 1.043, lib/char 1.039, lib/tunpack 1.039, lib/str_eq_long 1.037, lib/m_sqrt 1.030
+dup worst: lib/tonumber_num 1.086, awfy/havlak 1.057, programs/fib 1.055, corpus2/heldout/log_analyzer 1.051, programs/json 1.045, lib/char 1.041, corpus2/heldout/prototype_objects 1.037, lib/gmatch_words 1.036, programs/gc_churn 1.036
+
+## Final vs main
+geomean cyc/ins vs main
+set                         main             new             old             dup
+apps                1.000/1.000    0.996/1.002    0.997/1.002    1.000/1.000
+awfy                1.000/1.000    1.008/1.011    0.996/1.023    0.987/1.000
+corpus              1.000/1.000    0.995/1.001    0.997/1.001    1.000/1.000
+corpus2/dev         1.000/1.000    1.002/1.003    1.000/1.005    0.998/1.000
+corpus2/heldout     1.000/1.000    1.002/1.004    0.997/1.005    1.005/1.000
+jit-trace           1.000/1.000    1.018/1.033    1.042/1.110    1.000/1.000
+lib                 1.000/1.000    1.004/1.013    1.010/1.026    1.002/1.000
+programs            1.000/1.000    1.006/1.015    1.013/1.029    1.001/1.000
+real                1.000/1.000    1.003/1.004    1.007/1.009    0.996/1.000
+ALL                 1.000/1.000    1.005/1.013    1.011/1.031    1.000/1.000
+mismatch: []
+new worst: lib/assert_ok 1.127, awfy/sieve 1.117, lib/m_min 1.102, lib/m_max 1.102, jit-trace/inline_leaf 1.102, lib/str_eq_dyn 1.099, lib/m_abs 1.092, lib/pcall_err 1.081, lib/tmove_1k 1.078, lib/sel_count 1.065, jit-trace/int_sum 1.063, jit-trace/type_entry 1.060, lib/len_op 1.056, lib/tinsert_append 1.054, lib/pcall_ok 1.051, lib/tconcat_num 1.051, jit-trace/upval_acc 1.049, lib/getmt 1.047, jit-trace/type_entry_stable 1.044, jit-trace/int_rec2 1.040, lib/tunpack 1.040, jit-trace/field_method 1.039, lib/fmt_s 1.038, corpus2/dev/regex_nfa 1.035, lib/str_eq_long 1.035, lib/fmt_f 1.033, jit-trace/tfor_loops 1.032, programs/binary_trees 1.031, lib/concat_op_str 1.030, lib/os_clock 1.030
+
+## 15-run re-measure of every program >3% worse than old (Mcyc)
+lib/m_max main=256 new=274 old=267 dup=255
+lib/str_eq_long main=44 new=45 old=44 dup=44
+lib/pcall_err main=220 new=237 old=222 dup=218
+lib/char main=262 new=270 old=263 dup=263
+lib/m_sqrt main=277 new=277 old=274 dup=279
+lib/tmove_1k main=95 new=96 old=95 dup=95
+lib/tinsert_append main=156 new=157 old=156 dup=155
+lib/os_clock main=116 new=115 old=116 dup=114
+awfy/sieve main=125 new=137 old=134 dup=125
+awfy/havlak main=149 new=152 old=154 dup=151
+lib/tonumber_num main=255 new=208 old=230 dup=256
+lib/tunpack main=262 new=272 old=260 dup=260
+corpus2/dev/regex_nfa main=698 new=724 old=688 dup=694
+programs/fib main=1586 new=1495 old=1491 dup=1586
+FIN
+
+## Alternative measured: offset 48 with pollr15=1 ('new') vs pollr15=0 ('p0'), 5 runs, vs all-off at offset 24
+geomean cyc/ins vs old
+set                          new              p0             old          oldo48
+apps                0.997/0.999    1.000/1.000    1.000/1.000    0.999/1.001
+awfy                0.993/0.981    0.993/0.989    1.000/1.000    1.012/1.003
+corpus              0.995/0.999    0.993/1.000    1.000/1.000    0.995/1.000
+corpus2/dev         1.000/0.995    1.001/0.998    1.000/1.000    0.997/1.001
+corpus2/heldout     0.995/0.996    0.996/0.999    1.000/1.000    1.008/1.001
+jit-trace           0.962/0.901    0.973/0.930    1.000/1.000    1.001/1.001
+lib                 0.983/0.975    0.988/0.987    1.000/1.000    0.999/1.000
+programs            0.989/0.975    0.990/0.986    1.000/1.000    1.008/1.004
+real                0.991/0.993    0.991/0.995    1.000/1.000    0.999/1.002
+ALL                 0.985/0.971    0.989/0.983    1.000/1.000    1.001/1.001
+mismatch: []
+new worst: programs/gc_churn 1.108, programs/fib 1.090, lib/fmt_f 1.068, lib/pcall_err 1.053, programs/pcall_error 1.044, corpus2/dev/regex_nfa 1.043, lib/tunpack 1.043

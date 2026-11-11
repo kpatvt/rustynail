@@ -1,0 +1,7 @@
+for i = 1, 3 do io.write(math.type(i), " ") end print()
+for i = 1.0, 3 do io.write(math.type(i), " ") end print()
+for i = 1, 3.0 do io.write(math.type(i), " ") end print()
+for i = 1, 3, 1.0 do io.write(math.type(i), " ") end print()
+for i = 1, 2.9 do io.write(i, " ") end print()
+for i = 3, 1.1, -1 do io.write(i, " ") end print()
+for i = 1, 3 do io.write(i / 2, " ") end print()

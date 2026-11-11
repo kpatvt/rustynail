@@ -1,0 +1,8 @@
+print(1, 1.0, -1.0, 1e15, 1e16, 0.1, 1/3, 100.0, 1e100, -1e-100, 2^63, 2^-1074)
+print(3.14159265358979, 1e300 * 1e10, -1e300 * 1e10, 0/0 ~= 0/0)
+print(123456789012.0, 1234567890123456.0, 12345678901234567890.0)
+print(tostring(10 // 3), tostring(10 / 2), tostring(2^2), tostring(7 // 2.0))
+print(8 | 0, 3.0 == 3, tostring(3.0), tostring(-0.0), 0.0, -0.0)
+print(tonumber("10"), tonumber("0x10"), tonumber("  5  "), tonumber("5 5"), tonumber(""), tonumber("1e"), tonumber(nil))
+print(tonumber("10", 2), tonumber("ff", 16), tonumber("zz", 36), tonumber("8", 8), tonumber("-101", 2))
+print(tonumber(" 0x1p4 "), tonumber("0x.8"), tonumber("inf"), tonumber("nan"), tonumber("1_000"))

@@ -1,0 +1,5 @@
+print(tostring(1), tostring(1.5), tostring(-0.0), tostring(1e100), tostring(2^63), tostring(nil), tostring(true))
+print(tostring(12345678901234567890), tostring(0x7fffffffffffffff), tostring(1e15), tostring(-1e15))
+print(10 == "10", 10 .. "" == "10", tostring(10) == "10", tonumber("10") == 10)
+print(#tostring(0.1), tostring(0.1), tostring(1/3), tostring(100 / 3))
+print(tostring(3) == "3", tostring(3.0) == "3.0", 3 | 0, 3.0 | 0)

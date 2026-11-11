@@ -1,0 +1,14 @@
+run 4/5
+run 5/5
+program           j4 Mcyc(min)       jb Mcyc    ratio       tr Mcyc    ratio       rc Mcyc    ratio
+metamethods             7422.7        7853.8   1.058         7576.1   1.021~        7533.1   1.015~
+pcall_error             5279.7        5510.6   1.044~        5525.9   1.047~        5619.4   1.064 
+string_ops              5578.7        5367.8   0.962~        4571.0   0.819         5566.8   0.998~
+table_hash              6679.5        5331.9   0.798         5253.5   0.787         4866.6   0.729 
+varargs                 7506.6        7350.5   0.979~        2893.1   0.385         3005.2   0.400 
+geomean jb: all(5) cycles min 0.964 median 0.961 instr 1.000; numeric cycles min nan median nan instr nan
+geomean tr: all(5) cycles min 0.767 median 0.785 instr 0.818; numeric cycles min nan median nan instr nan
+geomean rc: all(5) cycles min 0.793 median 0.753 instr 0.818; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+
+[exited with code 0]

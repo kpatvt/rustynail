@@ -1,0 +1,33 @@
+program           p7 Mcyc(min)       p6 Mcyc    ratio       p5 Mcyc    ratio       p4 Mcyc    ratio       mb Mcyc    ratio       du Mcyc    ratio
+fannkuch                1251.4        1250.4   0.999~        1295.9   1.036~        1392.7   1.113         1257.2   1.005~        1246.6   0.996~
+heapsort                1288.6        1311.0   1.017~        1342.4   1.042~        1372.4   1.065         1289.7   1.001~        1289.1   1.000~
+mandelbrot               558.5         558.1   0.999~         558.1   0.999~         558.2   1.000~         559.5   1.002~         558.1   0.999~
+matmul                   501.9         538.9   1.074          581.1   1.158          616.0   1.227          512.8   1.022~         498.9   0.994~
+nbody                    686.2         692.5   1.009~         683.7   0.996~         693.6   1.011~         680.8   0.992~         685.7   0.999~
+spectral_norm            249.2         272.7   1.094          279.8   1.123          289.0   1.160          258.9   1.039~         249.1   1.000~
+table_hash              1126.3        1128.1   1.002~        1100.0   0.977~        1146.5   1.018~        1135.9   1.008~        1119.7   0.994~
+geomean p6: all(7) cycles min 1.027 median 1.013 instr 1.028; numeric cycles min 1.034 median 1.009 instr 1.034
+geomean p5: all(7) cycles min 1.045 median 1.026 instr 1.046; numeric cycles min 1.060 median 1.026 instr 1.053
+geomean p4: all(7) cycles min 1.082 median 1.059 instr 1.065; numeric cycles min 1.099 median 1.061 instr 1.072
+geomean mb: all(7) cycles min 1.010 median 1.002 instr 1.022; numeric cycles min 1.012 median 0.996 instr 1.029
+geomean du: all(7) cycles min 0.998 median 0.978 instr 1.000; numeric cycles min 0.998 median 0.969 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected
+program           p7 Mcyc(min)       p6 Mcyc    ratio       p5 Mcyc    ratio       p4 Mcyc    ratio       mb Mcyc    ratio       du Mcyc    ratio
+bounce                    92.1          93.5   1.016~          95.6   1.039~          95.8   1.040~          91.6   0.995~          91.9   0.998~
+havlak                   183.8         184.5   1.004~         184.4   1.003~         184.5   1.004~         185.2   1.008~         185.1   1.007~
+permute                   71.7          72.7   1.015~          74.0   1.033~          75.2   1.049~          71.3   0.995~          71.2   0.994~
+queens                   166.2         167.4   1.007~         171.4   1.032~         173.4   1.044~         166.4   1.001~         166.1   0.999~
+geomean p6: all(4) cycles min 1.011 median 1.011 instr 1.010; numeric cycles min nan median nan instr nan
+geomean p5: all(4) cycles min 1.027 median 1.031 instr 1.021; numeric cycles min nan median nan instr nan
+geomean p4: all(4) cycles min 1.034 median 1.035 instr 1.029; numeric cycles min nan median nan instr nan
+geomean mb: all(4) cycles min 1.000 median 1.007 instr 1.002; numeric cycles min nan median nan instr nan
+geomean du: all(4) cycles min 1.000 median 1.005 instr 0.999; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected
+program           p7 Mcyc(min)       p6 Mcyc    ratio       p5 Mcyc    ratio       p4 Mcyc    ratio       mb Mcyc    ratio       du Mcyc    ratio
+expr_lang                263.3         262.2   0.996~         262.5   0.997~         261.8   0.994~         262.4   0.996~         262.9   0.998~
+geomean p6: all(1) cycles min 0.996 median 1.002 instr 1.000; numeric cycles min nan median nan instr nan
+geomean p5: all(1) cycles min 0.997 median 0.997 instr 1.000; numeric cycles min nan median nan instr nan
+geomean p4: all(1) cycles min 0.994 median 1.003 instr 1.000; numeric cycles min nan median nan instr nan
+geomean mb: all(1) cycles min 0.996 median 1.003 instr 1.000; numeric cycles min nan median nan instr nan
+geomean du: all(1) cycles min 0.998 median 1.000 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

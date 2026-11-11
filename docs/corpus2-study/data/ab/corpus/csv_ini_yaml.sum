@@ -1,0 +1,55 @@
+== csv_ini_yaml (rc 0)
+[trace] recorded 27 installed 4 entered 616587 flushes 4 rerecord 0 blacklisted 19 refused 202 deferred 0 ineffective 0 probes 210 (fn-short 8 start-refused 202)
+[trace] aborted CFunc: 16
+[trace] aborted FnShort: 8
+[trace] aborted LeaveFrame: 3
+[trace] aborted Nyi(Call): 4
+[trace] aborted StartRefused: 202
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 30 installed 21 failed 10 preludes 1
+[trace] exits 1254713 (live traces 0)
+aborts (count reason op depth head):
+      5 CFunc                  CALL      d0 root L137 'parse_block = function(indent)'
+      4 CFunc                  CALL      d0 root L6 'local function parse_csv(input, delimiter, headers'
+      4 SideShort              TFORCALL  d0 side  [policy]
+      4 FnShort                CALL      d0 root L106 'local function yaml_scalar(s)'  [policy]
+      4 FnShort                CALL      d0 root L137 'parse_block = function(indent)'  [policy]
+      3 LeaveFrame             RETURN1   d0 root L137 'parse_block = function(indent)'
+      2 Nyi(CALL)              CALL      d0 root L0 main
+      2 Nyi(CALL)              CALL      d0 root L67 'local function ini_value(v)'
+      2 CFunc                  CALL      d0 root L74 'local function parse_ini(text)'
+      2 CFunc                  CALL      d0 root L126 'local function parse_yaml(text)'
+      2 CFunc                  CALL      d1 root L106 'local function yaml_scalar(s)'
+      2 CFunc                  CALL      d1 side
+      2 LeaveFrame             RETURN    d0 side
+      1 CFunc                  CALL      d0 root L190 'local function make_csv(n)'
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  217.1 L6 pc187 Return 2 108553540
+  88.6 L0 pc96 Tforcall 4 22146900
+  42.1 L6 pc182 Tforcall 1 42099560
+  32.6 L137 pc19 Getupval 6 5437787
+  26.2 L137 pc230 Call 15 1744823
+  12.0 L0 pc81 Gettabup 2 6011400
+  7.6 L0 pc56 Gettabup 2 3822240
+  1.8 L6 pc176 Gettable 1 1849720
+  1.7 L106 pc0 Getupval 4 422385
+  1.0 L0 pc52 Gettabup 1 957820
+  0.8 L6 pc26 Getupval 2 389560
+  0.6 L126 pc9 Getupval 2 310590
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     598462 Settable   -              black=false gk=41
+     448819 Settable   SideShort      black=true gk=57
+     176010 Call       -              black=false gk=32
+      11862 Lt         -              black=false gk=32
+      11590 Call       MaxSide        black=true gk=32
+       5872 Getfield   -              black=false gk=4
+       1190 Settable   -              black=false gk=56
+        268 Gettabup   -              black=true gk=16
+        180 Tforcall   SideShort      black=true gk=4
+        105 Gettabup   -              black=false gk=16
+        100 Tforcall   -              black=false gk=49
+         98 Tforcall   -              black=false gk=16
+         81 Tforcall   CFunc          black=true gk=4
+         68 Return     LeaveFrame     black=true gk=32
+          8 Newtable   -              black=false gk=32

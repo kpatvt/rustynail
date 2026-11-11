@@ -1,0 +1,64 @@
+rustynail
+=========
+
+rnlua, rnluac (and the rustynail libraries): a Lua 5.5 (and 5.4) implementation in Rust with a template JIT and a trace
+compiler.
+
+Copyright (c) 2026 Kiran Pashikanti <kpatvt@gmail.com>
+
+rustynail is licensed under the MIT license (SPDX-License-Identifier: MIT); the full text is in the file LICENSE and is
+printed by `rnlua --license`.
+
+
+Lua
+---
+
+rustynail is a derivative port of the Lua interpreter, versions 5.5.1 and 5.4.9:
+
+    Lua 5.5.1 and 5.4.9  Copyright (C) 1994-2026 Lua.org, PUC-Rio
+    https://www.lua.org/
+
+Lua is licensed under the MIT license; the notice that must accompany copies of rustynail is in the file LICENSE-LUA
+and is printed by `rnlua --license` after the rustynail licence. The port reproduces Lua's behaviour (error messages,
+formats, bytecode format) and is compatible with Lua's C API headers.
+
+
+Third-party Rust crates linked into the binaries
+------------------------------------------------
+
+The crates below are compiled into rnlua and rnluac (normal dependencies of the `rn-cli` package, x86-64 Linux).
+Regenerate this section with scripts/gen-notice.py.
+
+
+libc 0.2.191
+------------
+License: MIT OR Apache-2.0  (used under MIT)
+Source: https://github.com/rust-lang/libc
+
+[LICENSE-MIT]
+
+Copyright (c) The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.

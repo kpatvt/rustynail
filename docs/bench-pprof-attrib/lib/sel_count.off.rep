@@ -1,0 +1,23 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 828  of event 'cycles:u'
+# Event count (approx.): 810244871
+#
+# Overhead  Shared Object         Symbol                                                         
+# ........  ....................  ...............................................................
+#
+    52.16%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    42.66%  rn-cli               [.] <rn_core::state::State>::adjust_varargs
+     2.19%  rn-cli               [.] <rn_core::state::State>::get_varargs
+     1.23%  rn-cli               [.] <rn_core::state::State>::precall_c
+     0.92%  rn-cli               [.] <rn_core::state::State>::post_call
+     0.48%  rn-cli               [.] rn_std::lib_base::base_select
+     0.25%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+
+
+#
+# (Tip: To only collect call graph on one event use perf record -e cpu/cpu-cycles,callgraph=1/,branches ; perf report --show-ref-call-graph)
+#

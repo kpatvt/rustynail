@@ -1,0 +1,23 @@
+run 1/7
+run 2/7
+run 3/7
+run 4/7
+run 5/7
+run 6/7
+run 7/7
+program         base Mcyc(min)       h0 Mcyc    ratio       h1 Mcyc    ratio       h2 Mcyc    ratio
+byte                     128.2         133.0   1.038~          72.5   0.566           72.3   0.564 
+byte_multi                70.9          71.0   1.002~          49.1   0.692           48.9   0.690 
+char                     273.5         273.1   0.999~         272.3   0.996~         272.2   0.995~
+getmt                     20.7          20.3   0.981~          20.0   0.967~          20.0   0.968~
+len_op                   259.2         256.7   0.990~          72.3   0.279           72.0   0.278 
+lower                    254.4         242.8   0.954~         241.7   0.950          241.9   0.951~
+pcall_ok                 270.0         272.5   1.009~         160.2   0.594          160.3   0.594 
+str_eq                   187.1         187.2   1.001~         186.4   0.996~         186.8   0.998~
+str_eq_long              158.8         158.1   0.995~         130.9   0.824          130.9   0.824 
+str_method_len           247.6         247.1   0.998~          59.1   0.239           59.0   0.238 
+sub                      261.9         263.5   1.006~         262.8   1.003~         620.1   2.368 !X
+geomean h0: all(11) cycles min 0.997 median 1.002 instr 1.000; numeric cycles min nan median nan instr nan
+geomean h1: all(11) cycles min 0.667 median 0.668 instr 0.724; numeric cycles min nan median nan instr nan
+geomean h2: all(11) cycles min 0.721 median 0.729 instr 0.759; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

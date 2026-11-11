@@ -1,0 +1,51 @@
+== containers_lru_heap (rc 0)
+[trace] recorded 26 installed 4 entered 2388775 flushes 4 rerecord 1 blacklisted 21 refused 143 deferred 3 ineffective 1 probes 147 (fn-short 4 start-refused 143)
+[trace] aborted FnShort: 4
+[trace] aborted Nyi(Setupval): 4
+[trace] aborted Nyi(Tforcall): 1
+[trace] aborted StartRefused: 143
+[trace] aborted TableHash: 17
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 8 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 24 installed 5 failed 19 preludes 0
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 4023186 (live traces 0)
+aborts (count reason op depth head):
+     12 TableHash              SETTABLE  d1 side
+      5 LeaveFrame             RETURN0   d0 side
+      4 FnShort                RETURN1   d0 root L171 'local function rnd(n) seed = (seed * 16807) % 2147'  [policy]
+      4 TableHash              SETTABLE  d1 root L87 'function heap:bubbleUp(pos)'
+      3 TableHash              GETTABLE  d1 root L0 main
+      2 Nyi(SETUPVAL)          SETUPVAL  d1 root L22 'local function makeFreeSpace(bytes)'
+      2 Nyi(SETUPVAL)          SETUPVAL  d2 root L44 'local function set(_, key, value, bytes)'
+      2 TableHash              GETTABLE  d0 root L117 'function heap:insert(value, payload)'
+      2 TableHash              GETTABLE  d2 root L0 main
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 TableHash              GETTABLE  d1 root L126 'function heap:pop()'
+      2 TableHash              GETTABLE  d0 root L133 'function heap:remove(payload)'
+      2 TableHash              GETTABLE  d0 root L148 'function heap:update(payload, newValue)'
+      1 Nyi(TFORCALL)          TFORCALL  d0 root L0 main
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  567.0 L0 pc0 Move 12 47250988
+  98.4 L0 pc0 Move 11 8948209
+  97.2 L148 pc0 Getfield 201 483817
+  47.5 L11 pc15 Eq 59831 794
+  46.5 L28 pc7 Eq 135848 342
+  2.8 L126 pc0 Getfield 200 14181
+  0.4 L96 pc19 Forloop 10 38772
+  0.3 L0 pc109 Modk 303 1124
+  0.3 L163 pc0 Getfield 22 14303
+  0.2 L96 pc10 Le 4 62055
+  0.2 L154 pc0 Lt 7 24954
+  0.2 L96 pc30 Return0 5 33872
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    1913224 Lt         TableHash      black=true gk=32
+     948703 Forloop    TableHash      black=true gk=32
+     599115 Lt         -              black=false gk=32
+     241914 Return0    LeaveFrame     black=true gk=32
+     200036 Forloop    -              black=false gk=48
+      81066 Le         -              black=false gk=32
+      39074 Forloop    SideShort      black=true gk=32
+         40 Forloop    -              black=false gk=32
+          6 Eq         -              black=false gk=32
+          4 Return0    LeaveFrame     black=false gk=32
+          4 Return0    -              black=false gk=32

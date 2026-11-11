@@ -1,0 +1,15 @@
+programs   rows 25  new/base cyc 0.944 instr 0.987 dup 1.000 | ours/PUC 0.255 (base 0.270) | ours/LJ 1.057 (base 1.119) n=25
+   best : sieve 0.431/0.967, oop_methods 0.706/0.861, loops_arith 0.788/0.892, binary_trees 0.982/1.000, coroutines 0.982/1.000, gc_churn 0.984/1.000
+   worst: varargs 1.005/1.000, closures 1.010/1.000, pcall_error 1.015/1.000, load_big 1.023/1.000, string_ops 1.023/1.000
+awfy       rows 14  new/base cyc 0.988 instr 0.994 dup 0.999 | ours/PUC 0.387 (base 0.392) | ours/LJ 1.880 (base 1.904) n=14
+   best : sieve 0.883/0.972, cd 0.983/0.995, bounce 0.990/0.992, permute 0.991/0.994, nbody 0.993/0.984, storage 0.994/0.999
+   worst: richards 1.000/0.997, towers 1.000/0.998, mandelbrot 1.000/1.000, deltablue 1.001/0.998, list 1.005/1.000
+apps       rows 5   new/base cyc 0.993 instr 0.998 dup 1.002 | ours/PUC 0.659 (base 0.663) | ours/LJ 1.554 (base 1.564) n=5
+   best : raytrace 0.976/0.993, expr_lang 0.976/0.997, lru_cache 0.988/1.001, markdown 0.991/1.000, events 1.036/1.000
+   worst: raytrace 0.976/0.993, expr_lang 0.976/0.997, lru_cache 0.988/1.001, markdown 0.991/1.000, events 1.036/1.000
+jit-trace  rows 29  new/base cyc 0.989 instr 0.985 dup 1.000 | ours/PUC 0.087 (base 0.088) | ours/LJ 1.104 (base 1.117) n=29
+   best : field_rw 0.890/0.894, oop_override 0.908/0.930, field_method 0.931/0.883, oop_inherit 0.972/0.881, alloc_ctor 0.994/1.000, field_global 0.995/1.000
+   worst: tfor_loops 1.001/1.000, multret 1.001/1.000, int_rec2 1.002/1.000, sink_vec 1.002/1.000, rec_loop 1.003/1.000
+lib        rows 95  new/base cyc 0.999 instr 0.999 dup 1.001 | ours/PUC 0.320 (base 0.320) | ours/LJ 1.332 (base 1.333) n=91
+   best : fmt_q 0.905/1.000, tsort_cmp 0.964/0.998, string_key_dyn 0.966/0.915, tconcat 0.968/1.000, find_plain 0.968/1.000, getmt 0.972/1.000
+   worst: fmt_mixed 1.023/1.000, tostring_tbl 1.028/1.000, pcall_err 1.029/1.000, match 1.037/1.000, char 1.039/1.000

@@ -1,0 +1,15 @@
+program           p1 Mcyc(min)       p5 Mcyc    ratio       p7 Mcyc    ratio      p1b Mcyc    ratio
+closures                1012.4         814.4   0.804          846.6   0.836         1013.2   1.001~
+coroutines              2826.4        2615.9   0.926         2709.1   0.959~        2781.5   0.984~
+fib                     3340.0        3268.9   0.979~        3239.9   0.970~        3334.7   0.998~
+gc_churn                5478.6        4828.2   0.881         4821.2   0.880         5470.9   0.999~
+json                    3882.0        3358.7   0.865         3453.4   0.890         3915.2   1.009~
+metamethods             6811.8        6077.4   0.892         6150.4   0.903         6938.5   1.019~
+oop_methods              325.4         317.3   0.975~         327.1   1.005~         326.3   1.003~
+queens                  2845.8        2841.4   0.998~        2718.0   0.955~        2740.8   0.963~
+sieve                   1688.0        1667.5   0.988~        1697.2   1.005~        1596.6   0.946 
+varargs                 3582.0        3212.4   0.897         3139.4   0.876         3535.7   0.987~
+geomean p5: all(10) cycles min 0.919 median 0.929 instr 0.953; numeric cycles min 0.988 median 1.025 instr 1.047
+geomean p7: all(10) cycles min 0.926 median 0.934 instr 0.967; numeric cycles min 1.005 median 1.033 instr 1.046
+geomean p1b: all(10) cycles min 0.991 median 0.991 instr 1.000; numeric cycles min 0.946 median 0.994 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

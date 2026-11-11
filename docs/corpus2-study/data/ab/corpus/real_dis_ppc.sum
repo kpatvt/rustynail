@@ -1,0 +1,56 @@
+== real_dis_ppc (rc 0)
+[trace] recorded 10 installed 2 entered 399215 flushes 2 rerecord 0 blacklisted 17 refused 147 deferred 0 ineffective 0 probes 166 (fn-short 19 start-refused 147)
+[trace] aborted CFunc: 4
+[trace] aborted FnShort: 19
+[trace] aborted IntMiss: 1
+[trace] aborted Nyi(Call): 2
+[trace] aborted StartRefused: 147
+[trace] aborted TableHash: 1
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 32 installed 6 failed 26 preludes 0
+[trace] links: nest roots 0 frame links 0 stitches 1
+[trace] exits 813909 (live traces 0)
+aborts (count reason op depth head):
+      8 InnerLoop              JMP       d1 side
+      6 SideShort              CALL      d1 side  [policy]
+      6 SideShort              CALL      d2 side  [policy]
+      4 FnShort                CALL      d0 root L9 'local function tohex(x, n)'  [policy]
+      4 FnShort                CALL      d1 root L404 main  [policy]
+      4 FnShort                CALL      d0 root L57 'local function out(s)'  [policy]
+      4 TableHash              GETTABLE  d1 side
+      4 FnShort                CALL      d1 root L422 main  [policy]
+      2 Nyi(CALL)              CALL      d0 root L38 'local function gen_code(nwords, little)'
+      2 CFunc                  TFORCALL  d0 root L427 main
+      2 CFunc                  CALL      d0 root L427 main
+      2 FnShort                CALL      d0 root L427 main  [policy]
+      2 LeaveFrame             RETURN0   d0 side
+      1 TableHash              GETTABLE  d0 root L427 main
+      1 FnShort                TAILCALL  d0 root L427 main  [policy]
+      1 IntMiss                GETTABLE  d1 root L559 main
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1254.1 L427 pc47 Gettable 38357 32695
+  92.9 L569 pc0 Newtable 154 602945
+  17.3 L53 pc19 Getfield 44 392613
+  4.0 L393 pc0 Lei 150 26783
+  1.3 L53 pc29 Forloop 43 29804
+  1.0 L559 pc23 Jmp 297 3329
+  0.8 L422 pc0 Getupval 111 7068
+  0.6 L427 pc29 Gettable 13 46360
+  0.4 L9 pc21 Call 6 62937
+  0.2 L427 pc25 Setfield 3 73133
+  0.2 L427 pc52 Call 6 31190
+  0.1 L38 pc6 Loadnil 2 67960
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     545008 Call       SideShort      black=true gk=32
+     249724 Gettable   InnerLoop      black=true gk=16
+       6534 Setfield   TableHash      black=false gk=10
+       3668 Gettable   -              black=false gk=32
+       2864 Gettable   InnerLoop      black=true gk=48
+       2210 Getfield   -              black=false gk=10
+       2036 Gettable   -              black=false gk=48
+       1402 Gettable   TableHash      black=false gk=48
+        200 Lt         -              black=false gk=32
+        168 Return0    LeaveFrame     black=true gk=32
+         92 Newtable   -              black=false gk=32
+          2 Settable   -              black=false gk=40
+          1 Tforcall   -              black=false gk=4

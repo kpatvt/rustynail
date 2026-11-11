@@ -1,0 +1,65 @@
+== particles_physics (rc 0)
+[trace] recorded 49 installed 14 entered 768054 flushes 14 rerecord 1 blacklisted 12 refused 118 deferred 2 ineffective 1 probes 135 (fn-short 17 start-refused 118)
+[trace] aborted FnShort: 17
+[trace] aborted InnerLoop: 3
+[trace] aborted IntMiss: 20
+[trace] aborted LeaveLoop: 8
+[trace] aborted Nyi(Closure): 2
+[trace] aborted StartRefused: 118
+[trace] aborted TooLong: 2
+[trace] sink: tables 9 traces 5; materialised 149577; loops peeled 5 phis 31 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 95 installed 46 failed 59 preludes 0
+[trace] links: nest roots 7 frame links 0 stitches 0
+[trace] exits 1687978 (live traces 0)
+aborts (count reason op depth head):
+     34 IntMiss                GETTABLE  d0 side
+      8 LeaveLoop              FORLOOP   d0 root L71 'function Hash:neighbors(p, fn)'
+      7 IntMiss                GETTABLE  d0 root L71 'function Hash:neighbors(p, fn)'
+      7 IntMiss                GETTABLE  d1 root L111 'local function collide()'
+      6 IntMiss                GETTABLE  d0 root L66 'function Hash:insert(p)'
+      6 LeaveFrame             RETURN    d0 side
+      5 SideShort              FORLOOP   d0 side  [policy]
+      4 FnShort                TAILCALL  d0 root L19 'local function length(a) return sqrt(dot(a, a)) en'  [policy]
+      4 FnShort                RETURN0   d0 root L115 'hash:neighbors(p, function(q)'  [policy]
+      4 LeaveFrame             RETURN0   d0 side
+      4 FnShort                RETURN1   d0 root L63 'function Hash:key(x, y)'  [policy]
+      4 FnShort                TAILCALL  d0 root L20 'local function normalize(a)'  [policy]
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L111 'local function collide()'
+      2 TooLong                GETFIELD  d2 root L0 main
+      2 InnerLoop              TFORCALL  d1 root L0 main
+      1 InnerLoop              FORLOOP   d0 root L71 'function Hash:neighbors(p, fn)'
+      1 FnShort                RETURN0   d0 root L66 'function Hash:insert(p)'  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  211.0 L62 pc0 Gettabup 198 1065677
+  6.7 L71 pc31 Gettable 35 191849
+  4.9 L20 pc0 Getupval 131 37458
+  3.9 L66 pc0 SelfOp 8 486728
+  0.8 L86 pc23 Getupval 160 4848
+  0.2 L0 pc98 Gti 76 2520
+  0.1 L71 pc46 Forloop 74 1773
+  0.1 L71 pc22 Getfield 8 12435
+  0.1 L86 pc11 Getupval 446 170
+  0.1 L86 pc28 Call 311 182
+  0.1 L0 pc130 Forloop 64 845
+  0.0 L86 pc15 Move 311 135
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     461290 Gettable   -              black=true gk=10
+     286285 Gettable   -              black=true gk=14
+     253525 Forloop    -              black=false gk=32
+     244443 Lt         SideShort      black=false gk=32
+     223648 Forloop    -              black=false gk=48
+      63975 Getfield   -              black=false gk=4
+      62434 Gettable   -              black=false gk=14
+      33317 Lt         -              black=false gk=32
+      28400 Return0    LeaveFrame     black=true gk=32
+      13231 Forloop    SideShort      black=true gk=48
+       9990 Lt         SideShort      black=true gk=32
+       1798 Tforcall   -              black=false gk=16
+       1694 Return     LeaveFrame     black=true gk=32
+       1171 Gettable   MaxSide        black=true gk=14
+        816 Getfield   -              black=false gk=32
+        564 Getfield   -              black=false gk=14
+        435 Forloop    MaxSide        black=true gk=48
+        324 Return0    MaxSide        black=true gk=32
+        223 Newtable   -              black=false gk=32
+        174 Getfield   -              black=false gk=30

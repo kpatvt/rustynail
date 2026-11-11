@@ -1,0 +1,63 @@
+== sudoku_solver (rc 0)
+[trace] recorded 47 installed 35 entered 12367310 flushes 35 rerecord 3 blacklisted 11 refused 99 deferred 8 ineffective 3 probes 103 (fn-short 4 start-refused 99)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 4
+[trace] aborted Identical: 1
+[trace] aborted InnerLoop: 8
+[trace] aborted IntMiss: 1
+[trace] aborted StartRefused: 99
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 16 phis 54 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 163 installed 66 failed 154 preludes 0
+[trace] links: nest roots 11 frame links 0 stitches 1
+[trace] exits 14992218 (live traces 0)
+aborts (count reason op depth head):
+     48 SideShort              FORLOOP   d0 side  [policy]
+     16 LeaveFrame             RETURN1   d0 side
+     10 InnerLoop              FORLOOP   d1 side
+      8 LeaveFrame             TAILCALL  d0 side
+      6 LeaveFrame             RETURN    d0 side
+      4 InnerLoop              FORLOOP   d2 root L0 main
+      4 FnShort                RETURN    d0 root L51 'local function eliminate(st, i, d)'  [policy]
+      3 InnerLoop              FORPREP   d1 side
+      2 IntMiss                GETTABLE  d0 side
+      2 InnerLoop              FORLOOP   d1 root L163 'local function generate_puzzle(holes)'
+      2 SideUntraced           FORLOOP   d0 side  [policy]
+      2 CFunc                  CALL      d0 root L131 'local function parse_puzzle(s)'
+      2 InnerLoop              FORLOOP   d1 root L131 'local function parse_puzzle(s)'
+      1 InnerLoop              FORLOOP   d2 side
+      1 SideUntraced           TFORCALL  d0 side  [policy]
+      1 IntMiss                GETTABLE  d0 root L206 'local function knapsack(items, cap)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  847.0 L99 pc20 Gettable 167 5071985
+  239.0 L51 pc38 Getupval 2383 100279
+  152.8 L51 pc53 Loadnil 439 348006
+  109.5 L90 pc12 Getfield 22 4978992
+  109.5 L80 pc6 Eq 1240 88315
+  57.0 L111 pc47 Return1 255 223694
+  48.6 L99 pc12 Getfield 10 4859744
+  15.7 L142 pc26 Tailcall 6 2616333
+  9.7 L111 pc27 Getfield 36 269257
+  5.9 L0 pc211 Move 16 369722
+  5.4 L0 pc237 Mulk 14 382159
+  4.2 L80 pc22 Return1 279 14932
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    7560533 Gettable   -              black=false gk=16
+    1559689 Gettable   SideShort      black=true gk=16
+    1137450 Forloop    -              black=false gk=48
+    1090009 Forloop    -              black=false gk=32
+     672129 Lt         SideShort      black=true gk=32
+     578994 Tforcall   -              black=false gk=40
+     433986 Eq         -              black=false gk=32
+     389917 Gti        SideShort      black=true gk=32
+     364932 Return     LeaveFrame     black=true gk=32
+     201108 Tforcall   -              black=false gk=48
+     182230 Eq         MaxSide        black=true gk=32
+     154050 Gettable   InnerLoop      black=true gk=16
+     134914 Return1    LeaveFrame     black=true gk=32
+     127426 Return     MaxSide        black=true gk=32
+      98504 Settable   SideShort      black=true gk=40
+      50390 Eq         SideShort      black=true gk=32
+      37297 Settable   -              black=false gk=56
+      29243 Forloop    SideShort      black=true gk=32
+      24232 Eqi        MaxSide        black=true gk=32
+      24080 Gettable   MaxSide        black=true gk=48

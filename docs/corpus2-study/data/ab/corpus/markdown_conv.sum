@@ -1,0 +1,42 @@
+== markdown_conv (rc 0)
+[trace] recorded 23 installed 1 entered 1 flushes 1 rerecord 0 blacklisted 40 refused 287 deferred 0 ineffective 0 probes 317 (fn-short 30 start-refused 287)
+[trace] aborted CFunc: 13
+[trace] aborted FnShort: 30
+[trace] aborted Nyi(Call): 2
+[trace] aborted Nyi(Closure): 7
+[trace] aborted StartRefused: 287
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] exits 1 (live traces 0)
+aborts (count reason op depth head):
+     10 CFunc                  CALL      d1 root L116 'blocks = function(lines, refs)'
+      4 FnShort                CALL      d0 root L104 'local function classify(line)'  [policy]
+      4 FnShort                RETURN1   d0 root L19 'local function hash(s)'  [policy]
+      4 FnShort                CALL      d0 root L41 'local function escape_special(s)'  [policy]
+      4 FnShort                CALL      d0 root L80 'local function emphasis(s)'  [policy]
+      4 FnShort                CALL      d1 root L116 'blocks = function(lines, refs)'  [policy]
+      3 FnShort                CALL      d0 root L60 'return (s:gsub("(`+)(.-)%1", function(_, code)'  [policy]
+      3 FnShort                CALL      d0 root L66 's = s:gsub("%[(.-)%]%((.-)%)", function(text, url)'  [policy]
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L87 'local function span(s, refs)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L64 'local function links(s, refs)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L59 'local function code_spans(s)'
+      2 CFunc                  TFORCALL  d0 root L98 'local function split_lines(text)'
+      2 Nyi(CALL)              CALL      d0 root L55 'return (text:gsub("\001(%d+)\002", function(n) ret'
+      2 FnShort                CALL      d0 root L202 'text = text:gsub("\n%s*%[([^%]]+)%]:%s*(%S+)[^\n]*'  [policy]
+      2 FnShort                CALL      d0 root L71 's = s:gsub("%[(.-)%]%[(.-)%]", function(text, id)'  [policy]
+      1 CFunc                  CALL      d0 root L116 'blocks = function(lines, refs)'
+      1 Nyi(CLOSURE)           CLOSURE   d0 root L29 'local function unhash(text)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  367.5 L197 pc30 Getupval 199 1846537
+  225.6 L0 pc102 Move 101 2234022
+  18.5 L197 pc26 Getupval 97 190462
+  3.2 L116 pc0 Newtable 4 811860
+  2.5 L80 pc0 SelfOp 4 632085
+  1.8 L19 pc0 Gettabup 9 205053
+  1.4 L87 pc0 Getupval 109 12894
+  1.0 L116 pc238 Len 2 479720
+  0.8 L104 pc0 SelfOp 4 194150
+  0.6 L41 pc0 SelfOp 22 28080
+  0.3 L116 pc4 Le 3 103040
+  0.0 L87 pc17 Move 53 472
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+          1 Forloop    -              black=false gk=32

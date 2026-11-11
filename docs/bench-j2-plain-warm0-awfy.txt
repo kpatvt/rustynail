@@ -1,0 +1,20 @@
+program         base Mcyc(min)       i1 Mcyc    ratio       i2 Mcyc    ratio      dup Mcyc    ratio      all Mcyc    ratio
+bounce                    63.6          63.2   0.994~          64.1   1.008~          63.5   0.999~          63.3   0.996~
+cd                       241.7         238.7   0.988~         240.5   0.995~         238.4   0.987~         238.9   0.989~
+deltablue                104.1          97.4   0.935          105.4   1.012~         104.8   1.006~          97.6   0.937 
+havlak                   160.6         161.7   1.007~         158.3   0.985~         160.3   0.998~         156.2   0.972~
+json                     160.5         156.5   0.975~         160.0   0.997~         161.3   1.005~         157.9   0.984~
+list                     138.5         138.5   1.000~         140.0   1.011~         138.0   0.997~         139.4   1.007~
+mandelbrot               276.9         277.3   1.001~         277.2   1.001~         277.7   1.003~         277.5   1.002~
+nbody                    123.4         123.8   1.003~         123.4   1.000~         123.9   1.004~         123.3   0.999~
+permute                   50.1          50.1   0.999~          50.0   0.997~          50.1   1.000~          50.0   0.997~
+queens                   103.6         103.6   1.001~         103.1   0.996~         103.2   0.997~         103.2   0.997~
+richards                  60.4          60.7   1.004~          60.3   0.998~          60.4   1.001~          61.2   1.013~
+sieve                    134.3         134.2   1.000~         134.6   1.003~         134.0   0.998~         134.3   1.000~
+storage                  124.7         124.5   0.998~         124.1   0.995~         124.0   0.995~         124.2   0.996~
+towers                    46.9          46.4   0.990~          46.2   0.985~          46.1   0.983~          46.4   0.989~
+geomean i1: all(14) cycles min 0.992 median 1.042 instr 0.996; numeric cycles min 1.001 median 0.999 instr 1.000
+geomean i2: all(14) cycles min 0.999 median 1.001 instr 1.000; numeric cycles min 1.001 median 1.000 instr 1.000
+geomean dup: all(14) cycles min 0.998 median 1.001 instr 1.000; numeric cycles min 1.002 median 1.001 instr 1.000
+geomean all: all(14) cycles min 0.991 median 1.040 instr 0.996; numeric cycles min 1.001 median 0.998 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

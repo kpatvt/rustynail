@@ -1,0 +1,3 @@
+local a, b, c = ...
+local t = {}
+for i = math.maxinteger - 1, math.maxinteger do end

@@ -1,0 +1,21 @@
+local function C(name, fail)
+  return setmetatable({}, {__close = function(_, e)
+    print("close", name, e)
+    if fail then error("fail " .. name, 0) end
+  end})
+end
+print(pcall(function()
+  local a <close> = C("a")
+  local b <close> = C("b", true)
+  local c <close> = C("c")
+  return "ok"
+end))
+print(pcall(function()
+  local a <close> = C("a", true)
+  local b <close> = C("b", true)
+  error("orig", 0)
+end))
+print(pcall(function()
+  local a <close> = C("a")
+  error({code = 1})
+end))

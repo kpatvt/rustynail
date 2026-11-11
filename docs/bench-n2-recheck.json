@@ -1,0 +1,175 @@
+{
+ "cpu": 4,
+ "runs": 15,
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 /tmp/n2-lua-base",
+  "new": "env RUSTYNAIL_SEED=0 /tmp/n2-lua-new",
+  "base2": "env RUSTYNAIL_SEED=0 /tmp/n2-lua-base"
+ },
+ "baseline": "base",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "knucleotide": {
+   "base": {
+    "cycles_min": 2854951299,
+    "cycles_median": 2889372310,
+    "instructions_min": 16170250205,
+    "instructions_median": 16170626966,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 2607437440,
+    "cycles_median": 2644330849,
+    "instructions_min": 16170229305,
+    "instructions_median": 16170635775,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "base2": {
+    "cycles_min": 2852946144,
+    "cycles_median": 2884333031,
+    "instructions_min": 16170137749,
+    "instructions_median": 16170623826,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "sieve": {
+   "base": {
+    "cycles_min": 1502230008,
+    "cycles_median": 1514396925,
+    "instructions_min": 4034484384,
+    "instructions_median": 4038815922,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 1460979993,
+    "cycles_median": 1508752449,
+    "instructions_min": 4034151240,
+    "instructions_median": 4038815175,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "base2": {
+    "cycles_min": 1497759212,
+    "cycles_median": 1508769825,
+    "instructions_min": 4033099653,
+    "instructions_median": 4038816350,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "table_hash": {
+   "base": {
+    "cycles_min": 1347989010,
+    "cycles_median": 1379025373,
+    "instructions_min": 1818997844,
+    "instructions_median": 1819001985,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 1353696842,
+    "cycles_median": 1392946328,
+    "instructions_min": 1818996335,
+    "instructions_median": 1819001994,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "base2": {
+    "cycles_min": 1351654809,
+    "cycles_median": 1369013197,
+    "instructions_min": 1818995413,
+    "instructions_median": 1819001208,
+    "runs": 15,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "new": {
+   "knucleotide": {
+    "cycles_min": 0.9133036493173469,
+    "cycles_median": 0.9151921473906559,
+    "instructions_min": 0.9999987075029926,
+    "instructions_median": 1.0000005447531515
+   },
+   "sieve": {
+    "cycles_min": 0.9725408128047459,
+    "cycles_median": 0.9962727895792578,
+    "instructions_min": 0.9999174258794207,
+    "instructions_median": 0.9999998150448016
+   },
+   "table_hash": {
+    "cycles_min": 1.0042343312576414,
+    "cycles_median": 1.0100947780023188,
+    "instructions_min": 0.9999991704223262,
+    "instructions_median": 1.0000000049477682
+   }
+  },
+  "base2": {
+   "knucleotide": {
+    "cycles_min": 0.9992976570210839,
+    "cycles_median": 0.9982559260422897,
+    "instructions_min": 0.9999930455003123,
+    "instructions_median": 0.9999998058207634
+   },
+   "sieve": {
+    "cycles_min": 0.9970238938270497,
+    "cycles_median": 0.9962842634535857,
+    "instructions_min": 0.9996567762151982,
+    "instructions_median": 1.0000001059716532
+   },
+   "table_hash": {
+    "cycles_min": 1.0027194576311864,
+    "cycles_median": 0.9927396723830983,
+    "instructions_min": 0.9999986635498178,
+    "instructions_median": 0.9999995728426871
+   }
+  }
+ },
+ "geomean": {
+  "new": {
+   "all_cycles_min": 0.9626151613977714,
+   "numeric_cycles_min": 0.9725408128047459,
+   "all_cycles_median": 0.9729358957028895,
+   "numeric_cycles_median": 0.9962727895792578,
+   "all_instructions_min": 0.9999717671965963,
+   "numeric_instructions_min": 0.9999174258794207,
+   "all_instructions_median": 1.0000001215818592,
+   "numeric_instructions_median": 0.9999998150448016,
+   "n_programs": 3
+  },
+  "base2": {
+   "all_cycles_min": 0.9996775964085338,
+   "numeric_cycles_min": 0.9970238938270497,
+   "all_cycles_median": 0.9957573370542437,
+   "numeric_cycles_median": 0.9962842634535857,
+   "all_instructions_min": 0.9998828156417862,
+   "numeric_instructions_min": 0.9996567762151982,
+   "all_instructions_median": 0.9999998282116774,
+   "numeric_instructions_median": 1.0000001059716532,
+   "n_programs": 3
+  }
+ }
+}

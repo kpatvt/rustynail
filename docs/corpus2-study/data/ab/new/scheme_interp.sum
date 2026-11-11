@@ -1,0 +1,68 @@
+== scheme_interp (rc 0)
+[trace] recorded 40 installed 9 entered 11803410 flushes 9 rerecord 3 blacklisted 15 refused 70 deferred 24 ineffective 0 probes 86 (fn-short 16 start-refused 70)
+[trace] aborted CFunc: 1
+[trace] aborted FnShort: 16
+[trace] aborted InnerLoop: 13
+[trace] aborted LeaveFrame: 1
+[trace] aborted LeaveLoop: 8
+[trace] aborted Nyi(Call): 4
+[trace] aborted StartRefused: 70
+[trace] aborted TailCall: 4
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 1 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 109 installed 80 failed 42 preludes 2
+[trace] links: nest roots 1 frame links 0 stitches 5
+[trace] exits 67154503 (live traces 0)
+aborts (count reason op depth head):
+     10 LeaveFrame             RETURN1   d0 side
+      8 FnShort                CALL      d0 root L169 'function eval(x, env)'  [policy]
+      8 LeaveLoop              FORLOOP   d0 root L123 'SPECIAL["lambda"] = function(x, env)'
+      5 InnerLoop              FORPREP   d1 side
+      5 InnerLoop              JMP       d2 root L141 'SPECIAL["cond"] = function(x, env)'
+      4 FnShort                TAILCALL  d0 root L169 'function eval(x, env)'  [policy]
+      4 TailCall               TAILCALL  d0 root L169 'function eval(x, env)'
+      4 LeaveFrame             TAILCALL  d0 side
+      4 SideShort              CALL      d2 side  [policy]
+      4 SideShort              FORLOOP   d0 side  [policy]
+      4 FnShort                RETURN1   d0 root L43 'local function to_list(x)'  [policy]
+      4 InnerLoop              JMP       d2 root L134 'SPECIAL["let"] = function(x, env)'
+      2 InnerLoop              JMP       d2 root L97 'SPECIAL["if"] = function(x, env)'
+      2 InnerLoop              JMP       d1 side
+      2 Nyi(CALL)              CALL      d1 root L17 'function read()'
+      2 Nyi(CALL)              CALL      d0 root L17 'function read()'
+      2 InnerLoop              FORPREP   d1 root L95 'SPECIAL["quote"] = function(x) return false, to_li'
+      1 LeaveFrame             RETURN    d0 root L141 'SPECIAL["cond"] = function(x, env)'
+      1 CFunc                  TFORCALL  d0 root L7 'local function tokenize(src)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1644.9 L215 pc1 Eq 148597 11070
+  340.3 L263 pc11 Move 160 2126885
+  145.6 L169 pc50 Getupval 918 158638
+  44.7 L169 pc0 Gettabup 278 160731
+  42.7 L71 pc7 Return1 308 138640
+  9.1 L71 pc1 Test 66 138618
+  4.9 L169 pc98 Getfield 364 13354
+  4.5 L213 pc0 Geti 197 22898
+  4.2 L0 pc17 Move 514 8169
+  3.5 L0 pc7 Move 96 35940
+  2.9 L141 pc29 Return 136 21612
+  1.0 L202 pc0 Mul 199 5086
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+   37962582 Gettable   -              black=false gk=27
+   14719673 Gettable   -              black=false gk=30
+    6152583 Gettable   -              black=false gk=11
+    2245191 Gettable   MaxSide        black=true gk=30
+    1749704 Return1    LeaveFrame     black=true gk=32
+    1109635 Gettable   -              black=false gk=16
+     637089 Gettable   -              black=false gk=10
+     415760 Gettable   InnerLoop      black=true gk=14
+     415283 Gettable   -              black=false gk=48
+     282617 Gettable   InnerLoop      black=true gk=16
+     247334 Settable   -              black=false gk=41
+     243694 Settable   -              black=false gk=57
+     216244 Gettable   MaxSide        black=true gk=11
+     126046 Call       -              black=false gk=32
+     118606 Call       InnerLoop      black=true gk=1
+     117852 Call       SideShort      black=true gk=32
+     102776 Return1    MaxSide        black=true gk=32
+      95643 Gettable   MaxSide        black=true gk=27
+      86817 Settable   SideShort      black=true gk=57
+      53706 Forloop    SideShort      black=true gk=48

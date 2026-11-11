@@ -1,0 +1,448 @@
+diff --git a/crates/lua-jit/src/tr/cache.rs b/crates/lua-jit/src/tr/cache.rs
+index d4a51960..7a49422e 100644
+--- a/crates/lua-jit/src/tr/cache.rs
++++ b/crates/lua-jit/src/tr/cache.rs
+@@ -80,6 +80,8 @@ pub const WGATE_PROCESS: u32 = 30_000;
+ pub const TAILHOOK_PROCESS: u32 = 1;
+ /// BUNDLE-1: process default of [`TrLimits::hdrlib`].
+ pub const HDRLIB_PROCESS: u32 = 1;
++/// BUNDLE-2: process default of [`TrLimits::sinkmt`].
++pub const SINKMT_PROCESS: u32 = 0;
+ 
+ /// `RUSTYNAIL_JIT_TRACE_LIMITS` (7.10).
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -226,6 +228,10 @@ pub struct TrLimits {
+     /// BUNDLE-1: header-safe peeling: loops with string `TLEN` and read-only `LIB` kinds are peeled (see
+     /// `opt_mem::header_safe_ins`; the allocating ops stay rolled: peeling them miscompiled `string.sub` loops). Default 0 here, [`HDRLIB_PROCESS`] in a process.
+     pub hdrlib: u32,
++    /// BUNDLE-2: allocation sinking of tables that are given a metatable (`setmetatable({...}, V)`, the object-constructor idiom): the `SETMT` helper
++    /// and its guard become a `__gc`-absence flag guard on the metatable, the method lookups on the table are proved absent statically, and
++    /// the exit restore sets the metatable of the materialised table (0 = such a table is never sunk). Default 0 here, [`SINKMT_PROCESS`] in a process.
++    pub sinkmt: u32,
+     /// B2: scaled array addressing (`~idx` as the index of a scaled access: 2 instructions per element address instead of 4, and the
+     /// tag check of a variable index without the address arithmetic) (0 = the shift / negate / add sequence). Default 0 here, 1 in a process.
+     pub b2arr: u32,
+@@ -306,6 +312,7 @@ impl Default for TrLimits {
+             wgate: 0,
+             tailhook: 0,
+             hdrlib: 0,
++            sinkmt: 0,
+             b2arr: 0,
+             b2mt: 0,
+             b2tag: 0,
+@@ -386,6 +393,7 @@ impl TrLimits {
+                 "wgate" => l.wgate = v,
+                 "tailhook" => l.tailhook = v.min(2),
+                 "hdrlib" => l.hdrlib = v.min(1),
++                "sinkmt" => l.sinkmt = v.min(1),
+                 "b2arr" => l.b2arr = v.min(1),
+                 "b2mt" => l.b2mt = v.min(1),
+                 "b2tag" => l.b2tag = v.min(1),
+@@ -548,6 +556,10 @@ impl TrConfig {
+         if !limits_env.is_some_and(|s| s.contains("hdrlib")) && !mutants::active("b1_default_ignored") {
+             self.limits.hdrlib = HDRLIB_PROCESS;
+         }
++        // BUNDLE-2: sinking of tables with a metatable, unless named
++        if !limits_env.is_some_and(|s| s.contains("sinkmt")) && !mutants::active("b2x_default_ignored") {
++            self.limits.sinkmt = SINKMT_PROCESS;
++        }
+         // P2: tree-aware ineffective rule and side traces on every hot type-guard exit, unless named
+         if !limits_env.is_some_and(|s| s.contains("ineffcover")) && !mutants::active("p2_default_ignored") {
+             self.limits.ineffcover = INEFFCOVER_PROCESS;
+diff --git a/crates/lua-jit/src/tr/exit.rs b/crates/lua-jit/src/tr/exit.rs
+index fd7656b6..688ceb70 100644
+--- a/crates/lua-jit/src/tr/exit.rs
++++ b/crates/lua-jit/src/tr/exit.rs
+@@ -152,6 +152,8 @@ pub struct SunkTable {
+     pub fields: Vec<SunkField>,
+     /// Further slots that hold the same table.
+     pub aliases: Vec<u16>,
++    /// BUNDLE-2 (`sinkmt`): the metatable the table gets after its fields (tag and location of the metatable value).
++    pub mt: Option<(u8, ValSrc)>,
+ }
+ 
+ /// A fully resolved snapshot (one exit).
+@@ -544,7 +546,13 @@ pub fn build_exits(
+                         c: ((v >> 16) & 0xFFFF) as u32,
+                         fields: Vec::new(),
+                         aliases: Vec::new(),
++                        mt: None,
+                     });
++                } else if e.flags & SNAP_SMT != 0 {
++                    let (tag, src) = slot_value(ir, si, e.r, loc, &mut usable)?;
++                    sunk.last_mut()
++                        .ok_or_else(|| format!("snapshot {si}: sunk metatable without table"))?
++                        .mt = Some((tag, src));
+                 } else if e.flags & SNAP_SALIAS != 0 {
+                     let first = int_of(e.r).ok_or_else(|| format!("snapshot {si}: bad sunk alias"))?;
+                     let t = sunk
+@@ -1144,6 +1152,17 @@ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area:
+                 return mat_failed!();
+             }
+         }
++        if let Some((mtag, msrc)) = t.mt {
++            // BUNDLE-2: the `setmetatable` of the sunk table (the trace guarded that the metatable has no `__gc`: no finalizer to register)
++            // SAFETY: `Value` is `repr(C)` `{ tag word, payload }`; the metatable is a live table (a value of the trace).
++            let mv = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(mtag), read_src(area, msrc)]) };
++            if let Some(m) = mv.as_table() {
++                if !mutants::active("sinkmt_no_mt_materialise") {
++                    tab.set_metatable(Some(m));
++                    heap.barrier(tab.as_ptr().cast(), &mv);
++                }
++            }
++        }
+         if !mutants::active("sink_slots_after_alloc") {
+             for &a in &t.aliases {
+                 put(a, tag, ptr);
+diff --git a/crates/lua-jit/src/tr/mod.rs b/crates/lua-jit/src/tr/mod.rs
+index 23e0e8c3..38746f49 100644
+--- a/crates/lua-jit/src/tr/mod.rs
++++ b/crates/lua-jit/src/tr/mod.rs
+@@ -129,6 +129,8 @@ pub struct TraceOpts {
+     pub allblack: bool,
+     /// BUNDLE-1 (4): `TrLimits::hdrlib` (set from the limits when a recording starts).
+     pub hdrlib: u32,
++    /// BUNDLE-2: `TrLimits::sinkmt` (set from the limits when a recording starts): sink tables that get a metatable.
++    pub sinkmt: u32,
+ }
+ 
+ /// N6: `RUSTYNAIL_JIT_HREFV=0` records every computed key as a constant (the F1 path); read once.
+@@ -158,6 +160,7 @@ impl Default for TraceOpts {
+             nestrule: true,
+             allblack: false,
+             hdrlib: 0,
++            sinkmt: 0,
+         }
+     }
+ }
+@@ -488,7 +491,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
+                     token,
+                     id,
+                     root,
+-                    opts: { let mut o = cfg.opts.clone(); o.hdrlib = cfg.limits.hdrlib; o },
++                    opts: { let mut o = cfg.opts.clone(); o.hdrlib = cfg.limits.hdrlib; o.sinkmt = cfg.limits.sinkmt; o },
+                     hot_exit: cfg.hot_exit,
+                     verbose: cfg.verbose,
+                     dump: cfg.dump.is_some(),
+@@ -604,7 +607,7 @@ pub fn driver_start_side(
+             token,
+             id,
+             root,
+-            opts: { let mut o = cfg.opts.clone(); o.hdrlib = cfg.limits.hdrlib; o },
++            opts: { let mut o = cfg.opts.clone(); o.hdrlib = cfg.limits.hdrlib; o.sinkmt = cfg.limits.sinkmt; o },
+             hot_exit: cfg.hot_exit,
+             verbose: cfg.verbose,
+             dump: cfg.dump.is_some(),
+diff --git a/crates/lua-jit/src/tr/print.rs b/crates/lua-jit/src/tr/print.rs
+index 4912eb85..4d07d6fe 100644
+--- a/crates/lua-jit/src/tr/print.rs
++++ b/crates/lua-jit/src/tr/print.rs
+@@ -124,6 +124,8 @@ pub fn dump(ir: &TraceIr) -> String {
+                 let _ = write!(s, "{}=ALIAS{}", e.slot, rstr(ir, e.r));
+             } else if e.flags & SNAP_SFKEY != 0 {
+                 let _ = write!(s, ".{}", rstr(ir, e.r));
++            } else if e.flags & SNAP_SMT != 0 {
++                let _ = write!(s, ".MT={}", rstr(ir, e.r));
+             } else if e.flags & SNAP_SFVAL != 0 {
+                 let _ = write!(s, "={}", rstr(ir, e.r));
+             } else {
+diff --git a/crates/lua-jit/src/tr/sink.rs b/crates/lua-jit/src/tr/sink.rs
+index dad71dd2..bed22aa0 100644
+--- a/crates/lua-jit/src/tr/sink.rs
++++ b/crates/lua-jit/src/tr/sink.rs
+@@ -34,7 +34,7 @@ use super::mutants;
+ use super::record::Recorded;
+ use super::TraceOpts;
+ use std::cell::RefCell;
+-use std::collections::{HashMap, HashSet};
++use crate::fx::{HashMap, HashSet};
+ use std::sync::atomic::{AtomicU64, Ordering};
+ 
+ /// Tables sunk, traces with a sunk table, peeled loops and their PHIs (process-wide, for `RUSTYNAIL_JIT_VERBOSE` and the
+@@ -88,7 +88,7 @@ struct Ev {
+ }
+ 
+ /// A table that can be sunk.
+-#[derive(Debug, Default)]
++#[derive(Clone, Debug, Default)]
+ struct Cand {
+     t: usize,
+     b: u32,
+@@ -100,6 +100,11 @@ struct Cand {
+     alias: Vec<(usize, Ref)>,
+     /// Slots holding the table in a writeback entry (dropped).
+     dead_wb: Vec<u16>,
++    /// BUNDLE-2 (`sinkmt`): the `setmetatable` of the table: index of its `SETMT` `LIB` and the metatable ref (the guard `NE %lib, 0` behind it,
++    /// at the next index, is replaced by the `__gc`-absence flag guard of the metatable: the same snapshot, the same position).
++    setmt: Option<(usize, Ref)>,
++    /// The removed `NE %lib, 0` guard (its snapshot and flags are the new guard's).
++    setmt_ne: Option<Ins>,
+ }
+ 
+ fn ref_of(i: usize) -> Ref {
+@@ -148,7 +153,7 @@ fn slot_is_dead(head: (ProtoKey, u32), slot: u16, loaded: &HashSet<u16>) -> bool
+     usize::from(slot) >= nact
+ }
+ 
+-fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>) -> Option<Cand> {
++fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool) -> Option<Cand> {
+     let ir = &rec.ir;
+     let n = ir.ins.len();
+     let ti = ir.ins[t];
+@@ -166,12 +171,14 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>) -> Option<Cand> {
+         vbytes: u32::try_from(vbytes).ok()?,
+         ..Cand::default()
+     };
+-    let mut removed: HashSet<usize> = HashSet::new();
+-    let mut meta_flds: HashSet<usize> = HashSet::new();
+-    let mut ls_flds: HashSet<usize> = HashSet::new();
+-    let mut node_flds: HashSet<usize> = HashSet::new();
+-    let mut hrefks: HashMap<usize, Ref> = HashMap::new();
+-    let mut newrefs: HashSet<usize> = HashSet::new();
++    let mut removed: HashSet<usize> = HashSet::default();
++    let mut meta_flds: HashSet<usize> = HashSet::default();
++    let mut ls_flds: HashSet<usize> = HashSet::default();
++    let mut node_flds: HashSet<usize> = HashSet::default();
++    let mut hrefks: HashMap<usize, Ref> = HashMap::default();
++    let mut newrefs: HashSet<usize> = HashSet::default();
++    let mut mtf: HashSet<usize> = HashSet::default(); // BUNDLE-2: `FLOAD metatable` after the `SETMT` (aliased to the metatable ref)
++    let mut setmt: Option<(usize, Ref)> = None;
+     let mut store: Vec<(Ref, Ref)> = Vec::new(); // key -> value, insertion order
+     let is_const_int = |r: Ref, v: i64| ir.as_int(r) == Some(v);
+     let mut j = t + 1;
+@@ -193,6 +200,12 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>) -> Option<Cand> {
+                     || newrefs.contains(&k)
+             }
+         });
++        // BUNDLE-2: `metatable != 0` of a sunk table that was given one: true (any other user of that load is renamed to the metatable ref)
++        if sinkmt && i.op == TOp::Ne && TraceIr::is_ins(i.a) && mtf.contains(&idx(i.a)) && is_const_int(i.b, 0) {
++            cand.remove.push(j);
++            j += 1;
++            continue;
++        }
+         if !uses_t && !uses_fld {
+             j += 1;
+             continue;
+@@ -204,7 +217,13 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>) -> Option<Cand> {
+             TOp::Fload if i.a == tr => {
+                 let f = i.b;
+                 if f == Field::Metatable as Ref {
+-                    meta_flds.insert(j);
++                    if let Some((_, mt)) = setmt {
++                        // BUNDLE-2: after the `SETMT` the metatable of the sunk table is the one it was given
++                        mtf.insert(j);
++                        cand.alias.push((j, mt));
++                    } else {
++                        meta_flds.insert(j);
++                    }
+                 } else if f == Field::Lsizenode as Ref {
+                     ls_flds.insert(j);
+                 } else if f == Field::Node as Ref {
+@@ -217,6 +236,33 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>) -> Option<Cand> {
+             TOp::Eq if TraceIr::is_ins(i.a) && meta_flds.contains(&idx(i.a)) && is_const_int(i.b, 0) => {
+                 cand.remove.push(j);
+             }
++            // BUNDLE-2: `setmetatable(t, mt)` of the sunk table with a table `mt` (an instruction's value): the helper and its guard `NE %lib, 0` are
++            // replaced (see `rebuild`) by the guard that `mt` has no `__gc` (the helper's only other failure, a protected old metatable, cannot
++            // happen: the table is new)
++            TOp::Lib if sinkmt && i.a == tr && (i.aux & 0xFF) == lib::SETMT && setmt.is_none() && !mutants::active("sinkmt_never") => {
++                let mt = i.b;
++                if !TraceIr::is_ins(mt) || ir.ty_of(mt) != Ty::Tab || ir.ins[idx(mt)].op == TOp::Tnew || idx(mt) >= j {
++                    return None;
++                }
++                let ne = *ir.ins.get(j + 1)?;
++                if !(ne.op == TOp::Ne && ne.a == ref_of(j) && is_const_int(ne.b, 0) && ne.flags & F_GUARD != 0) {
++                    return None;
++                }
++                setmt = Some((j, mt));
++                cand.setmt = Some((j, mt));
++                cand.setmt_ne = Some(ne);
++                removed.insert(j);
++                removed.insert(j + 1);
++                cand.remove.push(j);
++                cand.remove.push(j + 1);
++            }
++            // BUNDLE-2: the absent-key proof of a method lookup on a sunk table: true when the key was never stored
++            TOp::Hmiss if sinkmt && TraceIr::is_ins(i.a) && node_flds.contains(&idx(i.a)) && TraceIr::is_const(i.b) => {
++                if store.iter().any(|&(k, _)| k == i.b) {
++                    return None;
++                }
++                cand.remove.push(j);
++            }
+             TOp::Eq if TraceIr::is_ins(i.a) && ls_flds.contains(&idx(i.a)) && TraceIr::is_const(i.b) => {
+                 cand.remove.push(j);
+             }
+@@ -304,7 +350,12 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>) -> Option<Cand> {
+                     cand.remove.push(j + 1);
+                 }
+             }
+-            _ => return None,
++            _ => {
++                if std::env::var_os("DBGSINK").is_some() {
++                    eprintln!("sink: cand {t} bails at {j}: {:?} aux {:#x}", i.op, i.aux);
++                }
++                return None;
++            }
+         }
+         j += 1;
+     }
+@@ -341,7 +392,7 @@ pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
+     let mut cands: Vec<Cand> = Vec::new();
+     for t in 0..rec.ir.ins.len() {
+         if rec.ir.ins[t].op == TOp::Tnew {
+-            if let Some(c) = analyse(rec, t, &loaded) {
++            if let Some(c) = analyse(rec, t, &loaded, opts.sinkmt != 0) {
+                 cands.push(c);
+             }
+         }
+@@ -360,8 +411,8 @@ pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
+ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+     let n = rec.ir.ins.len();
+     let mut removed = vec![false; n];
+-    let mut alias: HashMap<usize, Ref> = HashMap::new();
+-    let mut sunk_of: HashMap<Ref, usize> = HashMap::new(); // table ref -> candidate
++    let mut alias: HashMap<usize, Ref> = HashMap::default();
++    let mut sunk_of: HashMap<Ref, usize> = HashMap::default(); // table ref -> candidate
+     for (ci, c) in cands.iter().enumerate() {
+         for &r in &c.remove {
+             removed[r] = true;
+@@ -382,9 +433,23 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+             last_g[s] = last_g[s].max(i);
+         }
+     }
++    // BUNDLE-2: the replacement guard of a `SETMT` sits at the position of the removed `LIB` with the snapshot of the removed `NE`
++    let mut mt_consts: Option<(Ref, Ref)> = None;
++    for c in cands {
++        if let (Some((at, _)), Some(ne)) = (c.setmt, c.setmt_ne) {
++            let s = aux_snap(ne.aux) as usize;
++            first_g[s] = first_g[s].min(at);
++            last_g[s] = last_g[s].max(at);
++            if mt_consts.is_none() {
++                let bit = rec.ir.konst(KVal::Int(1i64 << (lua_core::meta::Tm::Gc as u8)));
++                let z = rec.ir.konst(KVal::Int(0));
++                mt_consts = Some((bit, z));
++            }
++        }
++    }
+     // a store between the first and the last guard of one snapshot would make "the contents before the snapshot"
+     // ambiguous (TR3a says it cannot happen): unsink every table that has one
+-    let mut bad: HashSet<usize> = HashSet::new();
++    let mut bad: HashSet<usize> = HashSet::default();
+     for (ci, c) in cands.iter().enumerate() {
+         for ev in &c.events {
+             for s in 0..nsn {
+@@ -403,16 +468,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+             .iter()
+             .enumerate()
+             .filter(|(i, _)| !bad.contains(i))
+-            .map(|(_, c)| Cand {
+-                t: c.t,
+-                b: c.b,
+-                c: c.c,
+-                vbytes: c.vbytes,
+-                remove: c.remove.clone(),
+-                events: c.events.clone(),
+-                alias: c.alias.clone(),
+-                dead_wb: c.dead_wb.clone(),
+-            })
++            .map(|(_, c)| c.clone())
+             .collect();
+         if keep.is_empty() {
+             return Ok(());
+@@ -420,12 +476,26 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+         return rebuild(rec, &keep);
+     }
+     // ---- new instruction list ----
++    // BUNDLE-2: the replacement guards of the `SETMT`s (3 instructions each) are emitted before the first kept instruction behind the removed `NE`
++    let mut guards: Vec<(usize, usize)> = cands
++        .iter()
++        .enumerate()
++        .filter_map(|(ci, c)| c.setmt.map(|(at, _)| (at + 1, ci)))
++        .collect();
++    guards.sort_unstable();
+     let mut newidx: Vec<Option<usize>> = vec![None; n];
+     let mut order: Vec<usize> = Vec::new();
+-    for i in 0..n {
+-        if !removed[i] {
+-            newidx[i] = Some(order.len());
+-            order.push(i);
++    {
++        let (mut extra, mut gi) = (0usize, 0usize);
++        for i in 0..n {
++            if !removed[i] {
++                while gi < guards.len() && guards[gi].0 < i {
++                    extra += 3;
++                    gi += 1;
++                }
++                newidx[i] = Some(order.len() + extra);
++                order.push(i);
++            }
+         }
+     }
+     fn resolve(
+@@ -454,8 +524,37 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+         Err("sink: alias chain".into())
+     }
+     let mut heads = [NOREF; TOp::COUNT];
+-    let mut out: Vec<Ins> = Vec::with_capacity(order.len());
+-    for &o in &order {
++    let mut out: Vec<Ins> = Vec::with_capacity(order.len() + 3 * cands.len());
++    // BUNDLE-2: the replacement guards, emitted before the first kept instruction behind the removed `NE`
++    let mut next_guard = 0usize;
++    for &o in order.iter().chain(std::iter::once(&usize::MAX)) {
++        while next_guard < guards.len() && guards[next_guard].0 < o {
++            let c = &cands[guards[next_guard].1];
++            next_guard += 1;
++            let (Some((_, mt)), Some(ne), Some((bit, z))) = (c.setmt, c.setmt_ne, mt_consts) else {
++                return Err("sink: setmt without constants".into());
++            };
++            let mtr = resolve(mt, &alias, &newidx)?;
++            let flags_ref = ref_of(out.len());
++            let band_ref = ref_of(out.len() + 1);
++            let seq = [
++                Ins { op: TOp::Fload, t: Ty::U32, flags: 0, a: mtr, b: Field::Flags as Ref, prev: NOREF, aux: 0 },
++                // (MUTANT `sinkmt_gc_guard_skip`: the guard tests a bit that is always set)
++                Ins { op: TOp::Band, t: Ty::I64, flags: 0, a: flags_ref, b: if mutants::active("sinkmt_gc_guard_skip") { z } else { bit }, prev: NOREF, aux: 0 },
++                Ins { op: TOp::Ne, t: Ty::I64, flags: ne.flags, a: band_ref, b: z, prev: NOREF, aux: ne.aux },
++            ];
++            for mut g in seq {
++                if mutants::active("sinkmt_gc_guard_skip") && g.op == TOp::Ne {
++                    g.op = TOp::Eq; // (a guard that always holds: `0 == 0`)
++                }
++                g.prev = heads[g.op as usize];
++                heads[g.op as usize] = ref_of(out.len());
++                out.push(g);
++            }
++        }
++        if o == usize::MAX {
++            break;
++        }
+         let mut i = rec.ir.ins[o];
+         if let Some(c) = cands.iter().find(|c| c.t == o) {
+             i = Ins {
+@@ -490,7 +589,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+     for s in 0..nsn {
+         let (st, len) = rec.ir.snaps[s].map;
+         let at = new_map.len();
+-        let mut first_slot: HashMap<usize, u16> = HashMap::new(); // candidate -> slot of its group
++        let mut first_slot: HashMap<usize, u16> = HashMap::default(); // candidate -> slot of its group
+         for e in &old_map[st as usize..st as usize + usize::from(len)] {
+             if let Some(&ci) = sunk_of.get(&e.r) {
+                 if let Some(&fs) = first_slot.get(&ci) {
+@@ -538,6 +637,16 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+                         flags: SNAP_SFVAL,
+                     });
+                 }
++                // BUNDLE-2: the metatable, when the snapshot is taken after the `SETMT` (a guard of this snapshot behind it)
++                if let Some((at, mt)) = c.setmt {
++                    if g != usize::MAX && g > at {
++                        new_map.push(SnapEntry {
++                            slot: SNAP_PSEUDO,
++                            r: resolve(mt, &alias, &newidx)?,
++                            flags: SNAP_SMT,
++                        });
++                    }
++                }
+             } else {
+                 new_map.push(SnapEntry {
+                     r: resolve(e.r, &alias, &newidx)?,

@@ -1,0 +1,124 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 986848526
+#
+# Overhead  Shared Object         Symbol                                                                                      
+# ........  ....................  ............................................................................................
+#
+     9.68%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     8.44%  rn-cli               [.] <rn_std::pattern::MatchState>::classend
+     6.61%  rn-cli               [.] <rn_std::pattern::MatchState>::m
+     5.26%  rn-cli               [.] <rn_std::pattern::MatchState>::skip
+     4.36%  rn-cli               [.] rn_std::lib_string::gmatch_aux
+     4.07%  rn-cli               [.] <rn_core::value::Gc<rn_core::func::CClosure>>::set_upvalue
+     3.76%  rn-cli               [.] rn_std::lib_string::str_gsub::{closure#0}
+     3.75%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     3.26%  rn-cli               [.] <rn_core::state::State>::ccall
+     3.15%  rn-cli               [.] <rn_core::state::State>::post_call
+     2.82%  rn-cli               [.] rn_std::pattern::gsub
+     2.75%  rn-cli               [.] <rn_std::pattern::MatchState>::start_filter
+     2.71%  rn-cli               [.] rn_core::table::insertkey
+     2.64%  rn-cli               [.] rn_core::vm_unsafe::index_string_short_str
+     1.93%  libc.so.6             [.] cfree
+     1.83%  rn-cli               [.] rn_std::lib_string::gmatch
+     1.82%  rn-cli               [.] <rn_std::pattern::MatchState>::max_expand
+     1.73%  rn-cli               [.] <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>
+     1.73%  rn-cli               [.] rn_core::table::resize
+     1.42%  libc.so.6             [.] malloc
+     1.32%  rn-cli               [.] rn_core::vm_unsafe::push_closure
+     1.32%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     1.22%  rn-cli               [.] <alloc::raw_vec::RawVecInner>::finish_grow
+     1.12%  rn-cli               [.] <rn_core::state::State>::push_vec
+     1.04%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.92%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.90%  rn-cli               [.] rn_std::lib_string::str_gsub
+     0.81%  rn-cli               [.] <rn_core::table::TableRef>::get
+     0.81%  rn-cli               [.] rn_core::table::mainposition
+     0.61%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.61%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.61%  libc.so.6             [.] 0x00000000000bc5ae
+     0.61%  [JIT] tid 2376531     [.] lua_proto@0x7f942d47e560
+     0.61%  rn-cli               [.] rn_core::jit_helpers::jit_newtable
+     0.51%  [JIT] tid 2376531     [.] lua_proto@0x7f942d47e3d0
+     0.41%  rn-cli               [.] <rn_core::state::State>::close
+     0.41%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.41%  libc.so.6             [.] 0x00000000001b7b5b
+     0.41%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     0.31%  rn-cli               [.] <rn_core::heap::Heap>::check_finalizer
+     0.31%  libc.so.6             [.] 0x00000000001b8344
+     0.31%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     0.31%  libc.so.6             [.] realloc
+     0.31%  libc.so.6             [.] 0x00000000000bcb69
+     0.31%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.31%  rn-cli               [.] <rn_std::pattern::MatchState>::get_onecapture
+     0.31%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     0.31%  libc.so.6             [.] 0x00000000001b83ae
+     0.31%  libc.so.6             [.] 0x00000000001b7ac4
+     0.31%  libc.so.6             [.] 0x00000000000be628
+     0.31%  libc.so.6             [.] 0x00000000001b7ae8
+     0.30%  rn-cli               [.] rn_std::lib_table::tconcat::{closure#0}
+     0.30%  libc.so.6             [.] 0x00000000001ae4a5
+     0.20%  rn-cli               [.] <rn_core::value::Value>::raw_equal
+     0.20%  libc.so.6             [.] 0x00000000000bd0c5
+     0.20%  libc.so.6             [.] 0x00000000001b7b69
+     0.20%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     0.20%  libc.so.6             [.] 0x00000000000bc618
+     0.20%  libc.so.6             [.] 0x00000000000bcbf1
+     0.20%  libc.so.6             [.] 0x00000000000bd0e7
+     0.20%  rn-cli               [.] <rn_core::state::State>::push_bytes
+     0.20%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+     0.20%  libc.so.6             [.] 0x00000000000bc43e
+     0.20%  libc.so.6             [.] 0x00000000000bcb4e
+     0.20%  libc.so.6             [.] 0x00000000000bc550
+     0.20%  libc.so.6             [.] 0x00000000001b831e
+     0.20%  libc.so.6             [.] 0x00000000001b7ac0
+     0.20%  rn-cli               [.] <rn_core::state::State>::index
+     0.20%  libc.so.6             [.] 0x00000000001b838f
+     0.18%  libc.so.6             [.] 0x00000000000baf23
+     0.14%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr_after
+     0.10%  rn-cli               [.] rn_core::jit_helpers::jit_get
+     0.10%  rn-cli               [.] rn_core::jit_helpers::jit_set
+     0.10%  libc.so.6             [.] 0x00000000001b7b63
+     0.10%  libc.so.6             [.] 0x00000000000be640
+     0.10%  libc.so.6             [.] 0x00000000001b7b54
+     0.10%  libc.so.6             [.] 0x00000000000bd0af
+     0.10%  libc.so.6             [.] 0x00000000001b7b33
+     0.10%  rn-cli               [.] <rn_core::state::State>::tolstring
+     0.10%  libc.so.6             [.] 0x00000000000bc55f
+     0.10%  libc.so.6             [.] 0x00000000000be5c9
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.10%  libc.so.6             [.] 0x00000000000bcbaf
+     0.10%  libc.so.6             [.] 0x00000000000bc44a
+     0.10%  rn-cli               [.] <alloc::raw_vec::RawVecInner>::try_allocate_in
+     0.10%  libc.so.6             [.] 0x00000000000be62c
+     0.10%  libc.so.6             [.] 0x00000000000be744
+     0.10%  rn-cli               [.] rn_std::lib_string::push_captures
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::barrier_back_slow
+     0.10%  rn-cli               [.] <alloc::raw_vec::RawVec<u8>>::grow_one
+     0.10%  rn-cli               [.] rn_core::state::shrink_stack
+     0.10%  libc.so.6             [.] 0x00000000001b8340
+     0.10%  libc.so.6             [.] 0x00000000001b83f6
+     0.10%  libc.so.6             [.] 0x00000000001b7b77
+     0.10%  rn-cli               [.] rn_std::lib_base::base_ipairs
+     0.10%  libc.so.6             [.] 0x00000000000bcbc4
+     0.10%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     0.10%  libc.so.6             [.] 0x00000000000be580
+     0.10%  libc.so.6             [.] 0x00000000001b7b4a
+     0.10%  rn-cli               [.] <rn_core::state::State>::new_tbc_upval
+     0.10%  libc.so.6             [.] 0x00000000001b7cc6
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     0.10%  libc.so.6             [.] 0x00000000000bc5b3
+     0.10%  libc.so.6             [.] 0x00000000000bc482
+     0.10%  libc.so.6             [.] 0x00000000001ae484
+     0.10%  libc.so.6             [.] 0x00000000000bd5c3
+     0.06%  rn-cli               [.] rn_core::vm::execute
+     0.06%  rn-cli               [.] <rn_jit::arch::x86_64::asm::Assembler>::rm_op
+
+
+#
+# (Tip: To set sampling period of individual events use perf record -e cpu/cpu-cycles,period=100001/,cpu/branches,period=10001/ ...)
+#

@@ -1,0 +1,17 @@
+P-M2 (call/return protocol slimming), 2026-11-01, base ca4d8c2, fib(32), RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE=off, taskset -c 4,
+machine load average 23-39 (cycles +-5%; instruction counts exact).
+
+Executed instructions per call (tier-1.5 dump of fib, objdump of RUSTYNAIL_JIT_DUMP):
+  CALL (flat call)                      56   hook mask 3, interrupt word 4, block count 2, top 3, savedpc 2, closure kind 3,
+                                             proto->jit->entry0 8, numparams 3, maxstack/stack room 5, ci->next 3, CallInfo init +
+                                             register switch 20
+  RETURN1 (nresults 1)                  33   trap 3, callstatus/MMRET 5, previous!=NULL 3, interrupt word 4, block count 2,
+                                             nresults 2, store ci 1, copy+top 9, misc 4
+  ret_tail (shared continuation)        29   CIST_FRESH 4, caller func -> stack -> closure -> proto -> jit 9, resume-table lookup 9,
+                                             base/k/ci register switch 7
+  total protocol                       ~118 of 151 per call (rest: typed body ~33)
+Prototype (one change: removed the redundant `previous != NULL` test and the return interrupt poll from return_prologue):
+  instructions:u  1065.60 M -> 1023.30 M  (-4.0%, 6 per call)
+  cycles:u        base 291.1 / 282.3 / 297.1 M   new 290.6 / 282.5 / 284.8 M   (no change within noise)
+  branch-misses   0.34-0.46 M of 218.8 M branches (0.2% of calls): not mispredict bound
+Conclusion: instruction count is not the lever (IPC 3.4, dependent store->load chains through CallInfo/thread fields).

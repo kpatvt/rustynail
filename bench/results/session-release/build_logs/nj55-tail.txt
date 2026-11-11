@@ -1,0 +1,25 @@
+442 | pub(crate) fn jit_mm_arith(st: &mut State, ci: Ci, instr: Instruction) -> bool {
+    |               ^^^^^^^^^^^^
+
+warning: function `jit_mm_finish` is never used
+   --> crates/lua-core/src/vm_unsafe.rs:478:15
+    |
+478 | pub(crate) fn jit_mm_finish(st: &mut State) {
+    |               ^^^^^^^^^^^^^
+
+warning: function `jit_mm_tail_ok` is never used
+   --> crates/lua-core/src/vm_unsafe.rs:496:15
+    |
+496 | pub(crate) fn jit_mm_tail_ok(st: &State, ci: Ci, f: Value) -> bool {
+    |               ^^^^^^^^^^^^^^
+
+warning: function `jit_mm_return` is never used
+   --> crates/lua-core/src/vm_unsafe.rs:513:15
+    |
+513 | pub(crate) fn jit_mm_return(st: &mut State, ret: Ci) -> LuaResult<()> {
+    |               ^^^^^^^^^^^^^
+
+   Compiling lua-compiler v0.0.1 (<cache>/vcBuild/s55/crates/lua-compiler)
+   Compiling lua-std v0.0.1 (<cache>/vcBuild/s55/crates/lua-std)
+warning: `lua-core` (lib) generated 10 warnings
+    Finished `release` profile [optimized + debuginfo] target(s) in 10.94s

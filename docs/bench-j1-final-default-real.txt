@@ -1,0 +1,12 @@
+program       bplain Mcyc(min)   dplain Mcyc    ratio    plain Mcyc    ratio     bpgo Mcyc    ratio     dpgo Mcyc    ratio      pgo Mcyc    ratio
+game_loop                 38.8          38.8   0.999~          36.8   0.948           37.7   0.971~          37.8   0.974~          35.7   0.920 
+json_roundtrip           612.3         609.7   0.996~         602.9   0.985~         507.5   0.829          510.0   0.833          506.2   0.827 
+lua_interp               116.9         116.9   1.000~         117.5   1.005~         110.7   0.947          110.8   0.948          114.4   0.979~
+template_engine           842.0         834.7   0.991~         854.1   1.014~         701.2   0.833          699.5   0.831          699.5   0.831 
+wordfreq                 160.2         159.8   0.997~         163.5   1.021~         141.7   0.885          140.5   0.877          140.2   0.875 
+geomean dplain: all(5) cycles min 0.997 median 0.997 instr 1.000; numeric cycles min nan median nan instr nan
+geomean plain: all(5) cycles min 0.994 median 0.993 instr 0.991; numeric cycles min nan median nan instr nan
+geomean bpgo: all(5) cycles min 0.891 median 0.892 instr 0.901; numeric cycles min nan median nan instr nan
+geomean dpgo: all(5) cycles min 0.890 median 0.891 instr 0.901; numeric cycles min nan median nan instr nan
+geomean pgo: all(5) cycles min 0.884 median 0.883 instr 0.893; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

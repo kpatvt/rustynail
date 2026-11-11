@@ -1,0 +1,228 @@
+{
+ "cpu": 4,
+ "runs": 9,
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/b/lua-cli",
+  "dup": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/d/lua-cli",
+  "new": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/n/lua-cli"
+ },
+ "baseline": "base",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "concat_op": {
+   "base": {
+    "cycles_min": 263611536,
+    "cycles_median": 265618712,
+    "instructions_min": 994762387,
+    "instructions_median": 994765108,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "dup": {
+    "cycles_min": 264018372,
+    "cycles_median": 265609663,
+    "instructions_min": 994761400,
+    "instructions_median": 994764862,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "new": {
+    "cycles_min": 176595071,
+    "cycles_median": 177044222,
+    "instructions_min": 753172234,
+    "instructions_median": 753174949,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   }
+  },
+  "concat_op_str": {
+   "base": {
+    "cycles_min": 269023207,
+    "cycles_median": 270673446,
+    "instructions_min": 1328883532,
+    "instructions_median": 1328886381,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "dup": {
+    "cycles_min": 269634152,
+    "cycles_median": 271035923,
+    "instructions_min": 1328883909,
+    "instructions_median": 1328887340,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "new": {
+    "cycles_min": 265064528,
+    "cycles_median": 265986176,
+    "instructions_min": 1328629275,
+    "instructions_median": 1328631426,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   }
+  },
+  "str_idx_concat_key": {
+   "base": {
+    "cycles_min": 275564126,
+    "cycles_median": 277044149,
+    "instructions_min": 1620443424,
+    "instructions_median": 1620444649,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "dup": {
+    "cycles_min": 266539957,
+    "cycles_median": 267767722,
+    "instructions_min": 1620441895,
+    "instructions_median": 1620444540,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "new": {
+    "cycles_min": 274243983,
+    "cycles_median": 274839719,
+    "instructions_min": 1458964116,
+    "instructions_median": 1458966044,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   }
+  },
+  "tostring_int": {
+   "base": {
+    "cycles_min": 184445466,
+    "cycles_median": 185608102,
+    "instructions_min": 830676875,
+    "instructions_median": 830680899,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "dup": {
+    "cycles_min": 185085976,
+    "cycles_median": 185895536,
+    "instructions_min": 830677413,
+    "instructions_median": 830680672,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "new": {
+    "cycles_min": 181429645,
+    "cycles_median": 183066845,
+    "instructions_min": 830678090,
+    "instructions_median": 830678610,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   }
+  }
+ },
+ "ratios": {
+  "dup": {
+   "concat_op": {
+    "cycles_min": 1.0015433163744396,
+    "cycles_median": 0.9999659323700056,
+    "instructions_min": 0.9999990078032575,
+    "instructions_median": 0.9999997527054397
+   },
+   "concat_op_str": {
+    "cycles_min": 1.0022709750835734,
+    "cycles_median": 1.001339167197066,
+    "instructions_min": 1.0000002836967958,
+    "instructions_median": 1.0000007216568803
+   },
+   "str_idx_concat_key": {
+    "cycles_min": 0.9672520181382391,
+    "cycles_median": 0.9665164305635634,
+    "instructions_min": 0.9999990564311118,
+    "instructions_median": 0.999999932734512
+   },
+   "tostring_int": {
+    "cycles_min": 1.0034726253449895,
+    "cycles_median": 1.001548606967599,
+    "instructions_min": 1.0000006476645928,
+    "instructions_median": 0.9999997267302038
+   }
+  },
+  "new": {
+   "concat_op": {
+    "cycles_min": 0.6699064603910202,
+    "cycles_median": 0.666535202534978,
+    "instructions_min": 0.757137828935625,
+    "instructions_median": 0.7571384872095855
+   },
+   "concat_op_str": {
+    "cycles_min": 0.9852849906736857,
+    "cycles_median": 0.9826829337370612,
+    "instructions_min": 0.9998086687103291,
+    "instructions_median": 0.9998081438686969
+   },
+   "str_idx_concat_key": {
+    "cycles_min": 0.99520930746987,
+    "cycles_median": 0.9920430371550637,
+    "instructions_min": 0.9003486912234215,
+    "instructions_median": 0.9003492003878992
+   },
+   "tostring_int": {
+    "cycles_min": 0.9836492538125063,
+    "cycles_median": 0.9863084802192525,
+    "instructions_min": 1.0000014626626028,
+    "instructions_median": 0.9999972444292354
+   }
+  }
+ },
+ "geomean": {
+  "dup": {
+   "all_cycles_min": 0.9935163446337467,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9922290094406394,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9999997488986742,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0000000334566768,
+   "numeric_instructions_median": NaN,
+   "n_programs": 4
+  },
+  "new": {
+   "all_cycles_min": 0.8965668606597798,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.8947360714601126,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9086064261295581,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9086056746588782,
+   "numeric_instructions_median": NaN,
+   "n_programs": 4
+  }
+ }
+}

@@ -1,0 +1,29 @@
+--- a/crates/lua-core/src/heap.rs	2026-11-06 14:02:35.351829309 -0600
++++ b/crates/lua-core/src/heap.rs	2026-11-06 14:00:51.630741885 -0600
+@@ -301,7 +301,7 @@
+         unsafe {
+             let mut p = *self.strt.hash.as_ptr().add(idx);
+             while !p.is_null() {
+-                if (*p).hdr.hash.get() == h && (*p).len() == s.len() && LuaString::bytes_raw(p) == s
++                if (*p).hdr.hash.get() == h && (*p).len() == s.len() && short_eq(LuaString::bytes_raw(p), s)
+                 {
+                     // resurrect if dead-but-unswept (`isdead` -> `changewhite`)
+                     if (*p).hdr.marked & (self.current_white ^ WHITEBITS) != 0 {
+@@ -976,3 +976,17 @@
+         assert_eq!(std::mem::size_of::<Value>(), 16);
+     }
+ }
++
++/// Experiment C: equal-length byte compare without a `memcmp` call for short strings (no wide loads over bytes just stored one at a time).
++#[inline(always)]
++fn short_eq(a: &[u8], b: &[u8]) -> bool {
++    if a.len() <= 16 {
++        let mut d = 0u8;
++        for i in 0..a.len() {
++            d |= a[i] ^ b[i];
++        }
++        d == 0
++    } else {
++        a == b
++    }
++}

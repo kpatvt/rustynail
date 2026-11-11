@@ -1,0 +1,12 @@
+# P9 layout probe (scripts/p9_layout_probe.sh): type_late ('shift') / type_late_stable ('shifts') with k extra hot 1000-iteration loops prepended (300 calls each; each leaves one trace of ~1.5 KB before the program's own traces), cycles:u, CPU 4, quiet machine, JIT=on T15=off TRACE=on, one run each (deterministic to ~0.1%)
+shift k=0 cycles 2523572926
+shifts k=0 cycles 1793421996
+shift k=1 cycles 2548321307
+shifts k=1 cycles 1800614100
+shift k=2 cycles 1806243661
+shifts k=2 cycles 1898195079
+shift k=3 cycles 1809769007
+shifts k=3 cycles 2558399811
+shift k=4 cycles 1817015256
+shifts k=4 cycles 2564750824
+# same instruction stream (14.66 G instructions), two cycle levels (~1.80 G and ~2.55 G, +42%) depending only on where the trace is placed in the code arena

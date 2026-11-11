@@ -1,0 +1,15 @@
+[package]
+name = "spike-unwind"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["staticlib"]
+
+[profile.release]
+panic = "unwind"
+lto = "fat"
+codegen-units = 1

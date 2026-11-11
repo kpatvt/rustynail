@@ -1,0 +1,92 @@
+== penlight_mix (rc 0)
+[trace] recorded 84 installed 9 entered 486217 flushes 9 rerecord 4 blacklisted 25 refused 145 deferred 4 ineffective 0 probes 173 (fn-short 28 start-refused 145)
+[trace] aborted CFunc: 7
+[trace] aborted FnShort: 28
+[trace] aborted InnerLoop: 8
+[trace] aborted LeaveFrame: 2
+[trace] aborted LeaveLoop: 6
+[trace] aborted MetaTable: 45
+[trace] aborted Nyi(Call): 1
+[trace] aborted Nyi(Closure): 2
+[trace] aborted Nyi(Loadk): 2
+[trace] aborted StartRefused: 145
+[trace] aborted Unstable: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 3 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 50 installed 11 failed 39 preludes 5
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 972689 (live traces 0)
+aborts (count reason op depth head):
+     11 MetaTable              GETTABLE  d0 root L89 'function tablex.filter(t, pred, arg)'
+     11 IntMiss                GETTABLE  d0 side
+      9 MetaTable              GETTABLE  d0 root L121 'function tablex.zip(...)'
+      8 Nyi(CLOSURE)           CLOSURE   d0 side
+      6 MetaTable              GETTABLE  d0 root L84 'function tablex.imap(fun, t, ...)'
+      6 MetaTable              GETTABLE  d0 root L97 'function tablex.reduce(fun, t, memo)'
+      6 MetaTable              GETTABLE  d0 root L155 'function List:partition(fun)'
+      6 SideShort              TFORCALL  d0 side  [policy]
+      6 LeaveFrame             RETURN    d0 side
+      4 FnShort                CALL      d0 root L62 'return (s:gsub("([^\t\r\n]*)\t", function(before)'  [policy]
+      4 FnShort                CALL      d0 root L50 'function stringx.strip(s, chrs)'  [policy]
+      4 FnShort                CALL      d1 root L197 'local recs = lines:map(function(line)'  [policy]
+      4 FnShort                CALL      d0 root L32 'function stringx.split(s, re, n)'  [policy]
+      4 FnShort                CALL      d0 root L189 'local parse_kv = utils.memoize(function(field)'  [policy]
+      4 MetaTable              GETTABLE  d0 root L147 'function List:slice(i, j)'
+      3 FnShort                RETURN1   d0 root L11 'return function(k)'  [policy]
+      3 FnShort                RETURN1   d0 root L107 'table.sort(res, function(a, b) return tostring(a) '  [policy]
+      3 LeaveLoop              TFORCALL  d0 root L110 'function tablex.deepcompare(t1, t2)'
+      2 CFunc                  CALL      d0 root L32 'function stringx.split(s, re, n)'
+      2 LeaveLoop              FORLOOP   d0 root L197 'local recs = lines:map(function(line)'
+      2 TableHash              GETTABLE  d1 side
+      2 LeaveFrame             RETURN1   d0 side
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L60 'function stringx.expandtabs(s, tabsize)'
+      2 Nyi(LOADK)             LOADK     d0 root L176 'local function make_lines(n, seed)'
+      2 Unstable               TFORCALL  d0 root L110 'function tablex.deepcompare(t1, t2)'
+      2 LeaveFrame             RETURN    d0 root L110 'function tablex.deepcompare(t1, t2)'
+      2 InnerLoop              FORPREP   d1 root L145 'function List:filter(pred, arg) return List.new(ta'
+      2 CFunc                  CALL      d0 root L66 'function stringx.count(s, sub)'
+      2 InnerLoop              FORPREP   d1 root L153 'function List:join(sep) return table.concat(tablex'
+      2 MetaTable              GETTABLE  d0 root L143 'function List:extend(l) for i = 1, #l do self[#sel'
+      2 SideShort              TFORPREP  d0 side  [policy]
+      2 InnerLoop              TFORPREP  d0 root L110 'function tablex.deepcompare(t1, t2)'
+      2 CFunc                  CALL      d0 root L22 'return function(...)'
+      2 InnerLoop              TFORCALL  d0 root L110 'function tablex.deepcompare(t1, t2)'
+      1 CFunc                  CALL      d2 root L197 'local recs = lines:map(function(line)'
+      1 Nyi(CALL)              CALL      d0 root L107 'table.sort(res, function(a, b) return tostring(a) '
+      1 FnShort                RETURN    d0 root L110 'function tablex.deepcompare(t1, t2)'  [policy]
+      1 LeaveLoop              TFORCALL  d0 root L104 'function tablex.keys(t)'
+      1 FnShort                CALL      d0 root L55 'function stringx.startswith(s, prefix) return s:fi'  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1153.5 L0 pc145 Move 339 3402530
+  427.6 L144 pc7 Tailcall 174 2457503
+  44.4 L0 pc141 Move 263 168809
+  13.3 L0 pc254 Move 299 44357
+  11.2 L0 pc162 Move 286 39020
+  8.2 L0 pc148 Move 387 21120
+  7.5 L0 pc189 Move 371 20312
+  5.6 L0 pc154 Move 340 16374
+  4.4 L0 pc178 Move 1162 3750
+  3.9 L0 pc240 Move 293 13389
+  3.2 L0 pc256 Move 201 15988
+  3.0 L153 pc6 Testset 135 21876
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     956706 Gettable   TableHash      black=true gk=10
+       3091 Gettable   -              black=false gk=10
+       2176 Gettable   -              black=false gk=14
+       1986 Gettable   -              black=true gk=14
+       1344 Len        -              black=true gk=16
+       1105 Return     LeaveFrame     black=true gk=32
+       1071 Settable   SideShort      black=true gk=40
+        843 Gettable   -              black=true gk=2
+        644 Len        -              black=false gk=16
+        641 Gettable   -              black=false gk=4
+        624 Tforcall   SideShort      black=true gk=4
+        326 Gettable   -              black=true gk=16
+        312 Tforcall   -              black=false gk=36
+        309 Gettabup   -              black=true gk=16
+        261 Getfield   -              black=false gk=4
+        259 Tforcall   -              black=false gk=16
+        229 Return1    LeaveFrame     black=true gk=32
+        157 Tforprep   SideShort      black=true gk=4
+         78 Settable   SideShort      black=true gk=41
+         18 Gettabup   -              black=false gk=16

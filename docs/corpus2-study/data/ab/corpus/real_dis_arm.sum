@@ -1,0 +1,62 @@
+== real_dis_arm (rc 0)
+[trace] recorded 11 installed 4 entered 1497694 flushes 4 rerecord 1 blacklisted 19 refused 171 deferred 0 ineffective 0 probes 191 (fn-short 20 start-refused 171)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 20
+[trace] aborted InnerLoop: 2
+[trace] aborted Nyi(Call): 2
+[trace] aborted StartRefused: 171
+[trace] aborted Unstable: 1
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 86 installed 48 failed 51 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 7544080 (live traces 0)
+aborts (count reason op depth head):
+     18 SideShort              GETTABLE  d0 side  [policy]
+      7 IntMiss                GETTABLE  d0 side
+      5 SideShort              TESTSET   d0 side  [policy]
+      4 FnShort                CALL      d0 root L9 'local function tohex(x, n)'  [policy]
+      4 FnShort                CALL      d1 root L429 main  [policy]
+      4 FnShort                CALL      d0 root L58 'local function out(s)'  [policy]
+      4 FnShort                CALL      d0 root L456 main  [policy]
+      4 FnShort                CALL      d1 root L451 main  [policy]
+      4 SideShort              JMP       d0 side  [policy]
+      2 Nyi(CALL)              CALL      d0 root L39 'local function gen_code(nwords, little)'
+      2 CFunc                  TFORCALL  d0 root L515 main
+      2 LeaveFrame             TAILCALL  d0 side
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 InnerLoop              TESTSET   d1 root L658 main
+      1 Unstable               TESTSET   d0 root L515 main
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1891.5 L667 pc0 Newtable 190 9955024
+  212.4 L494 pc0 Shri 162 1311082
+  45.9 L506 pc0 Eqk 155 295998
+  17.1 L54 pc29 Forloop 9 1897327
+  7.5 L515 pc47 Gettable 18 416341
+  5.9 L515 pc41 Gettable 4 1462680
+  4.8 L54 pc19 Getfield 8 595382
+  3.5 L658 pc19 Jmp 707 4996
+  2.7 L451 pc0 Getupval 169 15789
+  2.2 L515 pc36 Gettable 4 548130
+  2.0 L456 pc0 Shri 136 14733
+  1.9 L17 pc0 Modk 166 11256
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    4475528 Call       -              black=false gk=32
+     739121 Getupval   -              black=false gk=16
+     481152 Gettable   SideShort      black=true gk=2
+     369885 Call       MaxSide        black=true gk=32
+     337277 Setfield   -              black=false gk=42
+     257064 Eqi        -              black=false gk=8
+     216230 Getfield   -              black=false gk=10
+     141854 Eqi        -              black=false gk=32
+     105418 Gettable   -              black=true gk=6
+      90824 Gettable   SideShort      black=true gk=48
+      71400 Gettable   MaxSide        black=true gk=2
+      60225 Tailcall   LeaveFrame     black=true gk=32
+      50408 Gettable   SideShort      black=true gk=4
+      35940 Gettable   -              black=false gk=10
+      33696 Getfield   MaxSide        black=true gk=14
+      19940 Gettable   -              black=false gk=48
+      16215 Forloop    -              black=false gk=32
+      15991 Forloop    -              black=false gk=48
+      15911 Gettable   SideShort      black=true gk=14
+       5286 Gettable   MaxSide        black=true gk=4

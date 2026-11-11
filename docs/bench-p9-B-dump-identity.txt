@@ -1,0 +1,77 @@
+# P9 B: machine-code identity (same method as scripts/jit-dump-identity.sh, on prebuilt release binaries, + scripts/p9_dumpdiff.py)
+# binaries: 89963c6 = main@89963c6 --features jit; 61680f8 = --features jit (pre-P0y); HEAD = 8154671 --features jit,trace run with RUSTYNAIL_JIT_TRACE=off
+
+## 1. tier 1 (JIT=always, T15 default): 89963c6 vs 61680f8 (pre-P0y J5 base)
+compared 25 programs, 69 protos in A; 0 programs differ, 0 A-protos without a B twin
+69 proto pairs, 0 differ after removing addresses and branch targets
+lines only in A: {}
+lines only in B: {}
+
+## 2. tier 1 (JIT=always, T15 default): 89963c6 vs HEAD (TRACE=off)
+DIFFERENT binary_trees: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT closures: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT coroutines: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT fannkuch: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT fasta: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT fib: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT gc_churn: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT heapsort: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT json: 6 of 6 protos differ (A=6 B=6 protos, B=6)
+DIFFERENT knucleotide: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT load_big: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT loops_arith: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT mandelbrot: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT matmul: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT metamethods: 9 of 9 protos differ (A=9 B=9 protos, B=9)
+DIFFERENT nbody: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT oop_methods: 6 of 6 protos differ (A=6 B=6 protos, B=6)
+DIFFERENT pcall_error: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT queens: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT sieve: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT spectral_norm: 5 of 5 protos differ (A=5 B=5 protos, B=5)
+DIFFERENT string_ops: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT table_array: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT table_hash: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+DIFFERENT varargs: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+compared 25 programs, 69 protos in A; 25 programs differ, 69 A-protos without a B twin
+69 proto pairs, 69 differ after removing addresses and branch targets
+lines only in A: {'mov    eax,T': 904, 'mov    rdx,r13': 904, 'add    rsp,T': 904, 'pop    r15': 904, 'pop    r14': 904, 'pop    r13': 904, 'pop    r12': 904, 'pop    rbx': 904, 'pop    rbp': 904, 'ret': 904, 'movabs rsi,IMM': 904, 'mov    QWORD PTR [r13+0x20],rsi': 904, 'mov    edi,DWORD PTR [r15]': 357, 'add    rdi,T': 357, 'mov    DWORD PTR [r15],edi': 357}
+lines only in B: {'mov    edi,DWORD PTR [r15]': 1042, 'mov    DWORD PTR [r15],edi': 1042, 'add    rdi,T': 1018, 'mov    eax,T': 928, 'mov    rdx,r13': 928, 'add    rsp,T': 928, 'pop    r15': 928, 'pop    r14': 928, 'pop    r13': 928, 'pop    r12': 928, 'pop    rbx': 928, 'pop    rbp': 928, 'ret': 928, 'movabs rsi,IMM': 928, 'mov    QWORD PTR [r13+0x20],rsi': 928, 'sub    rdi,T': 24}
+
+## 3. tier 1.5 regions forced (JIT=always T15=always): 89963c6 vs 61680f8
+compared 25 programs, 121 protos in A; 0 programs differ, 0 A-protos without a B twin
+121 proto pairs, 0 differ after removing addresses and branch targets
+lines only in A: {}
+lines only in B: {}
+
+## 4. tier 1.5 regions forced (JIT=always T15=always): 89963c6 vs HEAD (TRACE=off)
+DIFFERENT binary_trees: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT closures: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT coroutines: 6 of 6 protos differ (A=6 B=6 protos, B=6)
+DIFFERENT fannkuch: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT fasta: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT fib: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT gc_churn: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT heapsort: 4 of 4 protos differ (A=4 B=4 protos, B=4)
+DIFFERENT json: 14 of 14 protos differ (A=14 B=14 protos, B=14)
+DIFFERENT knucleotide: 5 of 5 protos differ (A=5 B=5 protos, B=5)
+DIFFERENT load_big: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT loops_arith: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT mandelbrot: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT matmul: 7 of 7 protos differ (A=7 B=7 protos, B=7)
+DIFFERENT metamethods: 9 of 9 protos differ (A=9 B=9 protos, B=9)
+DIFFERENT nbody: 7 of 7 protos differ (A=7 B=7 protos, B=7)
+DIFFERENT oop_methods: 7 of 7 protos differ (A=7 B=7 protos, B=7)
+DIFFERENT pcall_error: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT queens: 3 of 3 protos differ (A=3 B=3 protos, B=3)
+DIFFERENT sieve: 2 of 2 protos differ (A=2 B=2 protos, B=2)
+DIFFERENT spectral_norm: 10 of 10 protos differ (A=10 B=10 protos, B=10)
+DIFFERENT string_ops: 5 of 5 protos differ (A=5 B=5 protos, B=5)
+DIFFERENT table_array: 5 of 5 protos differ (A=5 B=5 protos, B=5)
+DIFFERENT table_hash: 6 of 6 protos differ (A=6 B=6 protos, B=6)
+DIFFERENT varargs: 1 of 1 protos differ (A=1 B=1 protos, B=1)
+compared 25 programs, 121 protos in A; 25 programs differ, 121 A-protos without a B twin
+121 proto pairs, 121 differ after removing addresses and branch targets
+lines only in A: {'mov    eax,T': 2507, 'mov    rdx,r13': 2507, 'add    rsp,T': 2507, 'pop    r15': 2507, 'pop    r14': 2507, 'pop    r13': 2507, 'pop    r12': 2507, 'pop    rbx': 2507, 'pop    rbp': 2507, 'ret': 2507, 'movabs rsi,IMM': 2507, 'mov    QWORD PTR [r13+0x20],rsi': 2507, 'mov    edi,DWORD PTR [r15]': 1026, 'add    rdi,T': 1026, 'mov    DWORD PTR [r15],edi': 1026}
+lines only in B: {'mov    edi,DWORD PTR [r15]': 2699, 'mov    DWORD PTR [r15],edi': 2699, 'add    rdi,T': 2643, 'mov    eax,T': 2464, 'mov    rdx,r13': 2464, 'add    rsp,T': 2464, 'pop    r15': 2464, 'pop    r14': 2464, 'pop    r13': 2464, 'pop    r12': 2464, 'pop    rbx': 2464, 'pop    rbp': 2464, 'ret': 2464, 'movabs rsi,IMM': 2464, 'mov    QWORD PTR [r13+0x20],rsi': 2464, 'sub    rdi,T': 56}
+ALLDONE

@@ -1,0 +1,59 @@
+== regex_nfa (rc 0)
+[trace] recorded 52 installed 5 entered 2643218 flushes 5 rerecord 0 blacklisted 9 refused 79 deferred 0 ineffective 0 probes 79 (fn-short 0 start-refused 79)
+[trace] aborted InnerLoop: 2
+[trace] aborted IntMiss: 19
+[trace] aborted LeaveLoop: 24
+[trace] aborted Nyi(Close): 2
+[trace] aborted StartRefused: 79
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 54 installed 23 failed 53 preludes 1
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 11760019 (live traces 0)
+aborts (count reason op depth head):
+     16 LeaveLoop              TFORCALL  d0 root L144 'local function match(nfa, input)'
+     16 LeaveFrame             RETURN    d0 side
+      8 LeaveLoop              TFORCALL  d0 root L136 'local function setMatches(st, c)'
+      7 IntMiss                GETTABLE  d1 root L144 'local function match(nfa, input)'
+      6 IntMiss                GETTABLE  d0 root L124 'local function addState(nfa, list, onList, s, gen)'
+      6 IntMiss                GETTABLE  d2 root L0 main
+      4 Nyi(CLOSE)             CLOSE     d1 side
+      4 SideShort              CALL      d2 side  [policy]
+      3 IntMiss                GETTABLE  d1 side
+      2 LeaveFrame             TAILCALL  d0 side
+      2 InnerLoop              FORPREP   d1 root L0 main
+      2 Nyi(CLOSE)             CLOSE     d0 root L136 'local function setMatches(st, c)'
+      2 SideShort              TFORCALL  d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  20.8 L144 pc33 Getfield 11 1891664
+  8.4 L124 pc0 Gettable 8 1048735
+  7.1 L144 pc78 Return 6 1185923
+  6.2 L144 pc0 Loadi 7 891657
+  4.6 L144 pc39 Eq 5 924624
+  3.1 L136 pc5 Geti 6 513293
+  2.8 L144 pc20 SelfOp 11 252516
+  2.8 L136 pc0 Loadfalse 203 13639
+  1.3 L0 pc98 Settable 941 1366
+  0.8 L144 pc58 Tforcall 4 206025
+  0.5 L144 pc74 Getfield 4 125250
+  0.4 L144 pc66 Return 6 73970
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    4011918 Gettable   -              black=false gk=56
+    2009223 Eq         -              black=false gk=32
+    2001184 Call       SideShort      black=true gk=32
+    1019908 Eqk        -              black=false gk=32
+     535216 Tforcall   -              black=false gk=32
+     525571 Eqi        -              black=false gk=32
+     523353 Forloop    -              black=false gk=48
+     500269 Tforcall   MaxSide        black=true gk=49
+     499983 Forloop    MaxSide        black=true gk=16
+      31845 Getfield   MaxSide        black=true gk=14
+      31561 Getfield   -              black=false gk=10
+      11178 Return     LeaveFrame     black=true gk=32
+       9118 Getfield   MaxSide        black=true gk=10
+       5768 Le         -              black=false gk=32
+       5126 Return     MaxSide        black=true gk=32
+       4967 Eqi        MaxSide        black=true gk=32
+       4738 Tforcall   MaxSide        black=true gk=48
+       4464 Eqk        MaxSide        black=true gk=32
+       3580 Eq         MaxSide        black=true gk=32
+       2727 Tforcall   -              black=false gk=16

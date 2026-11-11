@@ -1,0 +1,19 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)        k Mcyc    ratio   konlyA Mcyc    ratio      dup Mcyc    ratio
+events                   155.9         155.5   0.998~         155.2   0.996~         155.3   0.997~
+expr_lang                137.6         135.8   0.987~         135.1   0.981~         137.4   0.998~
+lru_cache                171.0         170.6   0.998~         169.1   0.989~         170.6   0.998~
+markdown                 142.9         146.1   1.023~         145.3   1.017~         141.9   0.993~
+raytrace                 129.7         128.7   0.992~         128.2   0.988~         128.8   0.993~
+geomean k: all(5) cycles min 0.999 median 0.999 instr 0.998; numeric cycles min nan median nan instr nan
+geomean konlyA: all(5) cycles min 0.994 median 0.997 instr 0.998; numeric cycles min nan median nan instr nan
+geomean dup: all(5) cycles min 0.996 median 0.999 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

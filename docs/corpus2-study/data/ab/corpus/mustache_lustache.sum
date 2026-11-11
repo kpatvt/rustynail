@@ -1,0 +1,70 @@
+== mustache_lustache (rc 0)
+[trace] recorded 35 installed 9 entered 192620 flushes 9 rerecord 1 blacklisted 17 refused 106 deferred 2 ineffective 0 probes 127 (fn-short 21 start-refused 106)
+[trace] aborted CFunc: 6
+[trace] aborted FnShort: 21
+[trace] aborted InnerLoop: 11
+[trace] aborted LeaveFrame: 1
+[trace] aborted LeaveLoop: 4
+[trace] aborted Nyi(Closure): 2
+[trace] aborted StartRefused: 106
+[trace] aborted TableHash: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 42 installed 18 failed 24 preludes 3
+[trace] links: nest roots 1 frame links 0 stitches 4
+[trace] exits 650840 (live traces 0)
+aborts (count reason op depth head):
+     10 LeaveFrame             RETURN    d0 side
+      7 SideShort              TFORCALL  d0 side  [policy]
+      6 InnerLoop              TFORPREP  d0 root L180 'function Renderer:render_tokens(tokens, context, p'
+      5 InnerLoop              TFORCALL  d0 root L180 'function Renderer:render_tokens(tokens, context, p'
+      4 FnShort                CALL      d0 root L68 'function Context:lookup(name)'  [policy]
+      4 FnShort                CALL      d0 root L176 'local function escape(s)'  [policy]
+      4 SideShort              CALL      d2 side  [policy]
+      4 FnShort                CALL      d0 root L36 'function Scanner:scan(pattern)'  [policy]
+      4 FnShort                CALL      d0 root L44 'function Scanner:scan_until(pattern)'  [policy]
+      4 FnShort                CALL      d2 root L263 'bold = function(text, render) return "<strong>" ..'  [policy]
+      2 CFunc                  CALL      d1 root L180 'function Renderer:render_tokens(tokens, context, p'
+      2 CFunc                  CALL      d0 root L68 'function Context:lookup(name)'
+      2 LeaveLoop              TFORPREP  d0 root L9 'local function is_array(array)'
+      2 LeaveLoop              TFORPREP  d0 root L180 'function Renderer:render_tokens(tokens, context, p'
+      2 TableHash              GETTABLE  d0 root L225 'function Renderer:render(template, view, partials)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L0 main
+      2 CFunc                  CALL      d1 root L140 'local function parse(template, tags)'
+      2 InnerLoop              TFORCALL  d1 side
+      1 LeaveFrame             RETURN    d0 root L9 'local function is_array(array)'
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+      1 FnShort                TAILCALL  d0 root L225 'function Renderer:render(template, view, partials)'  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1403.2 L0 pc0 Move 156 8994994
+  108.6 L263 pc0 Loadk 201 540295
+  25.7 L9 pc12 Tforprep 4 6429165
+  24.1 L68 pc16 Call 4 6037240
+  9.1 L225 pc0 Getfield 36 251794
+  5.9 L9 pc0 Gettabup 3 1956307
+  0.9 L67 pc0 Gettabup 120 7877
+  0.8 L35 pc0 Getfield 136 5732
+  0.4 L44 pc0 Loadnil 52 8580
+  0.4 L120 pc35 Tforcall 3 144820
+  0.4 L263 pc4 Loadk 198 2084
+  0.4 L180 pc12 Gettabup 17 21005
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     243158 Call       SideShort      black=true gk=32
+     124963 Gettabup   -              black=true gk=16
+     119777 Len        -              black=true gk=16
+      69128 Tforprep   -              black=false gk=36
+      68048 Gettabup   -              black=false gk=16
+       7390 Return     LeaveFrame     black=true gk=32
+       6220 Tforprep   InnerLoop      black=true gk=53
+       4437 Tforcall   -              black=false gk=4
+       2801 Eqk        -              black=false gk=32
+       1601 Settable   SideShort      black=true gk=40
+        876 Tforcall   SideShort      black=true gk=4
+        424 Newtable   -              black=false gk=32
+        422 Settable   -              black=false gk=40
+        331 Forloop    -              black=false gk=32
+        228 Call       -              black=false gk=32
+        204 Gti        -              black=false gk=32
+        202 Settable   SideShort      black=false gk=40
+        145 Test       -              black=false gk=16
+        116 Eqk        -              black=true gk=16
+        108 Tforcall   SideShort      black=true gk=57

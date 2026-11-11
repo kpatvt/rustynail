@@ -1,0 +1,53 @@
+[t15] region [29, 54] not generated: 12 typed, 11 fallback (weighted 120/290)
+[t15] promoted nest 0 [29, 56] of proto@5619fe268560: version 0 -> 1, 1 retired blocks
+[t15] nest [62, 82]: no region (NoSuchLoop)
+[t15] promoted nest 2 [62, 82] of proto@7fa4a031cf80: version 0 -> 1, 1 retired blocks
+[t15] nest [62, 82]: no region (NoSuchLoop)
+[t15] nest [47, 52]: no region (NoSuchLoop)
+[t15] promoted nest 1 [47, 52] of proto@7fa4a031cf80: version 1 -> 2, 2 retired blocks
+[t15] region [29, 54] not generated: 12 typed, 11 fallback (weighted 120/290)
+[t15] region [80, 98] not generated: 9 typed, 7 fallback (weighted 90/160)
+[t15] promoted nest 1 [80, 100] of proto@5619fe268560: version 1 -> 2, 2 retired blocks
+[t15] nest [47, 52]: no region (NoSuchLoop)
+[t15] nest [62, 82]: no region (NoSuchLoop)
+[t15] region [21, 31] not generated: 7 typed, 2 fallback (weighted 70/50)
+[t15] promoted nest 0 [21, 31] of proto@7fa4a031cf80: version 2 -> 3, 3 retired blocks
+[jit] compiled 4 failed 0 refused 0 enters 571 (osr 7) exits: continue 6 frame_changed 565 returned 0 code 173256 B
+[jit] t15: promoted 5 recompiled 5 refused 0 off 0
+[jit] t15 policy: regions 0 stub_events 0 respecialised 0 given_up 0 penalties 0
+[jit] proto@7fa4a031d770 line 21 n=13 tmpl=13 loop 0/0 entry_ok=true interp_entry=true 2160B enters=403 insns/enter=182107.9 blocks=1 Mcyc_in_jit=646.9
+[jit] proto@7fa4a031cf80 line 1 n=111 tmpl=111 loop 38/38 entry_ok=true interp_entry=true 22393B enters=163 insns/enter=131381.0 blocks=0 Mcyc_in_jit=239.9
+[jit] proto@7fa4a031d8b0 line 23 n=54 tmpl=54 loop 40/40 entry_ok=true interp_entry=true 9764B enters=4 insns/enter=84688.2 blocks=0 Mcyc_in_jit=3.0
+[jit] proto@5619fe268560 line 24 n=149 tmpl=149 loop 49/49 entry_ok=true interp_entry=true 25315B enters=1 insns/enter=111.0 blocks=0 Mcyc_in_jit=0.0
+[jit] exit proto@7fa4a031d8b0 line 23 pc 0 Some(Getupval): 179 exits, 934.3 cyc/stay
+[jit] exit proto@7fa4a031cb20 line 0 pc 69 Some(Move): 150 exits, 1587586.4 cyc/stay
+[jit] exit proto@7fa4a031cb20 line 0 pc 76 Some(Move): 150 exits, 4286998.1 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 2 Some(Getupval): 18 exits, 72.2 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 31 Some(Getupval): 12 exits, 71.7 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 35 Some(Getupval): 12 exits, 83.3 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 44 Some(Getupval): 11 exits, 127.3 cyc/stay
+[jit] exit proto@7fa4a031cf80 line 1 pc 47 Some(Len): 6 exits, 36286.7 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 88 Some(Getupval): 6 exits, 73.3 cyc/stay
+[jit] exit proto@7fa4a031d770 line 21 pc 0 Some(Getupval): 4 exits, 1470.0 cyc/stay
+[jit] exit proto@7fa4a031cf80 line 1 pc 21 Some(Gti): 3 exits, 505413.3 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 17 Some(Getupval): 3 exits, 60.0 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 29 Some(Getupval): 3 exits, 431286.7 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 80 Some(Len): 3 exits, 77820.0 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 68 Some(Getupval): 2 exits, 60.0 cyc/stay
+[jit] exit proto@7fa4a031cf80 line 1 pc 50 Some(Settable): 2 exits, 21010.0 cyc/stay
+[jit] exit proto@7fa4a031cf80 line 1 pc 62 Some(Gti): 2 exits, 8190.0 cyc/stay
+[jit] exit proto@7fa4a031d8b0 line 23 pc 9 Some(Call): 2 exits, 2465880.0 cyc/stay
+[jit] exit proto@7fa4a031d770 line 21 pc 12 Some(Return0): 1 exits, 6540.0 cyc/stay
+[jit] exit proto@7fa4a031d8b0 line 23 pc 5 Some(Getupval): 1 exits, 174280.0 cyc/stay
+[jit] exit proto@5619fe268560 line 24 pc 55 Some(Return1): 1 exits, 1300.0 cyc/stay
+[trace] recorded 20 installed 5 entered 539967 flushes 5 rerecord 4 blacklisted 6 refused 0 deferred 4 ineffective 0
+[trace] hot exits: type-guard 4 other 6; tracemove 0
+[trace] aborted CFunc: 7
+[trace] aborted FnShort: 4
+[trace] aborted LeaveLoop: 2
+[trace] aborted Nyi(Closure): 2
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] side traces: recorded 4 installed 1 failed 3 preludes 0
+[trace] side aborted AllocStorm: 1
+[trace] side aborted SideShort: 2
+[trace] exits 540571 (live traces 0)

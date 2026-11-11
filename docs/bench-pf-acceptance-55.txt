@@ -1,0 +1,41 @@
+== tr_core+tr_policy+tr_loop+tr_mutants
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 609.21s
+test result: ok. 19 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+== mutant runner 5.5
+test runner::every_registered_mutant_is_caught has been running for over 60 seconds
+[tr_mutants] dep_edge_at_install        P3b      caught by tr_record_calls::dep_edges_are_registered_when_inlining
+[tr_mutants] forprep_step_guard_skip    F2b      NOT CAUGHT (passed: tr_core::nest_for_loops)
+[tr_mutants] abc_with_store             P7       not injected yet
+[tr_mutants] vbytes_no_credit           F-memory not injected yet
+[tr_mutants] vbytes_no_limit_guard      F-memory not injected yet
+[tr_mutants] 176 registered: 167 caught, 1 NOT caught, 3 not injected yet (owners: F-memory P7)
+thread 'runner::every_registered_mutant_is_caught' (527536) panicked at crates/lua-jit/tests/tr_mutants.rs:1682:9:
+thread 'instruction_count_identity' (533880) panicked at crates/lua-jit/tests/tr_core.rs:1411:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 45 filtered out; finished in 36.77s
+forprep_step_guard_skip: NOT caught by any of tr_core::nest_for_loops
+test runner::every_registered_mutant_is_caught ... FAILED
+    runner::every_registered_mutant_is_caught
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 364.20s
+== official 5.5
+-- RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=always
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=always)
+-- RUSTYNAIL_JIT=on RUSTYNAIL_JIT_THRESHOLD=2 RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_HOT=2,2
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=on RUSTYNAIL_JIT_THRESHOLD=2 RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_HOT=2,2)
+-- RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always)
+-- RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_STRESS=1 RUSTYNAIL_GC_MODE=inc
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_STRESS=1 RUSTYNAIL_GC_MODE=inc)
+-- RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_STRESS=2 RUSTYNAIL_GC_MODE=inc
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_STRESS=2 RUSTYNAIL_GC_MODE=inc)
+-- RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_MODE=inc
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_MODE=inc)
+== jit-diff 5.5 1..500
+traces: hook=none mode=tremu seeds=500 with_trace=394 (78%) installed=8791 entered=2717058 exits=3633409
+traces: hook=none mode=tron seeds=500 with_trace=394 (78%) installed=6266 entered=2155918 exits=2954038
+traces: hook=none mode=trrand seeds=500 with_trace=394 (78%) installed=8793 entered=2718167 exits=3636676
+traces: hook=none mode=trstack seeds=500 with_trace=390 (78%) installed=8718 entered=2702304 exits=3602034
+traces: hook=none mode=trstorm seeds=500 with_trace=394 (78%) installed=9332 entered=97746 exits=1670008
+jit-diff: seeds 1..500 done=500 diffs=0 genfail=0 gensyntax=0 timeouts=0 slowskips=4 hook=none
+acc55 done

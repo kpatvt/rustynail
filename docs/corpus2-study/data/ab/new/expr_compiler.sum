@@ -1,0 +1,86 @@
+== expr_compiler (rc 0)
+[trace] recorded 82 installed 20 entered 3366254 flushes 20 rerecord 3 blacklisted 23 refused 143 deferred 37 ineffective 0 probes 168 (fn-short 25 start-refused 143)
+[trace] aborted CFunc: 4
+[trace] aborted FnShort: 25
+[trace] aborted Identical: 1
+[trace] aborted InnerLoop: 8
+[trace] aborted LeaveFrame: 19
+[trace] aborted LeaveLoop: 14
+[trace] aborted MultRet: 1
+[trace] aborted Nyi(Closure): 8
+[trace] aborted Recursion: 3
+[trace] aborted StartRefused: 143
+[trace] aborted TailCall: 4
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 176 installed 121 failed 84 preludes 2
+[trace] links: nest roots 1 frame links 0 stitches 11
+[trace] exits 16578346 (live traces 0)
+aborts (count reason op depth head):
+     18 LeaveFrame             RETURN    d0 root L158 'local function emit(node, code)'
+     16 LeaveFrame             RETURN    d0 side
+     12 LeaveFrame             RETURN1   d0 side
+      8 LeaveLoop              FORLOOP   d0 root L174 'local function run(code, env)'
+      7 InnerLoop              TEST      d1 side
+      6 LeaveLoop              FORLOOP   d0 root L148 'return function(env)'
+      6 Nyi(CLOSURE)           CLOSURE   d0 root L127 'local function toClosure(node)'
+      4 TailCall               TAILCALL  d0 root L143 'return function(env) return f(l(env), r(env)) end'
+      4 FnShort                RETURN1   d0 root L140 'return function(env) return e(env) == 0 and 1 or 0'  [policy]
+      4 Nyi(CLOSURE)           CLOSURE   d0 side
+      4 FnShort                RETURN1   d0 root L55 'local function primary()'  [policy]
+      4 FnShort                RETURN0   d0 root L49 'local function expect(v)'  [policy]
+      4 FnShort                CALL      d1 root L45 'local function parse(src)'  [policy]
+      4 FnShort                CALL      d0 root L6 'local function tokenize(src)'  [policy]
+      4 SideShort              CALL      d2 side  [policy]
+      4 SideShort              CALL      d3 side  [policy]
+      3 FnShort                RETURN1   d0 root L84 'function expr(minPrec)'  [policy]
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 FnShort                TAILCALL  d0 root L143 'return function(env) return f(l(env), r(env)) end'  [policy]
+      2 InnerLoop              FORPREP   d1 root L0 main
+      2 InnerLoop              FORLOOP   d0 root L148 'return function(env)'
+      2 CFunc                  CALL      d0 root L6 'local function tokenize(src)'
+      2 InnerLoop              JMP       d0 root L84 'function expr(minPrec)'
+      2 InnerLoop              TFORCALL  d0 root L158 'local function emit(node, code)'
+      2 InnerLoop              JMP       d1 side
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L127 'local function toClosure(node)'
+      2 CFunc                  CALL      d2 root L0 main
+      2 MultRet                SETLIST   d1 side
+      2 SideShort              CALL      d1 side  [policy]
+      1 Recursion              CALL      d2 root L0 main
+      1 Recursion              CALL      d2 root L84 'function expr(minPrec)'
+      1 Recursion              CALL      d3 root L55 'local function primary()'
+      1 MultRet                SETLIST   d1 root L84 'function expr(minPrec)'
+      1 LeaveFrame             RETURN1   d0 root L55 'local function primary()'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  96.5 L84 pc9 Gettable 13 7421329
+  45.8 L45 pc0 Getupval 195 235033
+  44.6 L119 pc0 Le 125 356521
+  39.0 L106 pc0 Lt 174 224079
+  34.0 L148 pc7 Getupval 13 2615142
+  21.3 L137 pc0 Getupval 69 309315
+  9.6 L158 pc103 Return 16 598448
+  2.1 L45 pc14 Move 154 13434
+  1.8 L148 pc20 Call 29 63457
+  1.7 L140 pc0 Getupval 120 14276
+  1.0 L49 pc0 Getupval 164 6004
+  0.8 L174 pc78 Call 15 52296
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    8694421 Getupval   -              black=false gk=48
+    2442829 Eqk        -              black=false gk=32
+    1164817 Eqk        -              black=false gk=1
+     754867 Call       -              black=false gk=32
+     644994 Getupval   -              black=false gk=17
+     634899 Getupval   MaxSide        black=true gk=48
+     216244 Eqk        MaxSide        black=true gk=1
+     188631 Return     LeaveFrame     black=true gk=32
+     159859 Getupval   -              black=true gk=32
+     158744 Settable   SideShort      black=true gk=40
+     125175 Getfield   -              black=true gk=32
+     103187 Call       MaxSide        black=true gk=32
+      90951 Eqk        MaxSide        black=true gk=32
+      89261 Getfield   -              black=false gk=10
+      73664 Gettable   -              black=false gk=11
+      65638 Forloop    MaxSide        black=true gk=32
+      61736 Forloop    -              black=false gk=32
+      61012 Forloop    MaxSide        black=true gk=48
+      59220 Call       SideShort      black=true gk=32
+      50588 Gettable   MaxSide        black=true gk=48

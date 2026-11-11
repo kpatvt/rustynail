@@ -1,0 +1,129 @@
+diff --git a/crates/lua-core/src/jit_helpers.rs b/crates/lua-core/src/jit_helpers.rs
+index 70ec9179..c3fe9d1c 100644
+--- a/crates/lua-core/src/jit_helpers.rs
++++ b/crates/lua-core/src/jit_helpers.rs
+@@ -36,6 +36,48 @@ pub const H_TRUE: u32 = 5;
+ /// See [`H_TRUE`].
+ pub const H_FALSE: u32 = 6;
+ 
++/// H3-D: the address of the base library's `setmetatable` (stored when the base library opens; 0 until then). `jit_call` runs
++/// the common case of a call to it (a table without a metatable gets a table or nil) without the native call frame.
++pub static SETMETATABLE_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++/// H3-D: `setmetatable(t, mt)` with `t` a table that has no metatable yet (so `__metatable` cannot protect it) and `mt` a table
++/// or nil, the arguments at `func + 1`, `func + 2`. Does what the native call does for that case (the metatable store, the
++/// barrier, the finalizer check) and returns `t`, or `None` when the call is not of that shape (nothing happened then).
++#[inline]
++fn fast_setmetatable(st: &mut State, func: StkId) -> Option<Value> {
++    if st.hook_mask() != 0 {
++        return None;
++    }
++    let (t, mt) = (st.get(func + 1), st.get(func + 2));
++    let (Some(tab), true) = (t.as_table(), mt.is_nil() || mt.is_table()) else {
++        return None;
++    };
++    if tab.metatable().is_some() && !mut_c2(2) {
++        return None;
++    }
++    if mut_c2(4) {
++        // (mutant `h3_setmt_no_finalizer`: no `__gc` registration)
++        tab.set_metatable(mt.as_table());
++        if let Some(m) = mt.as_table() {
++            st.heap().barrier(tab.as_ptr().cast(), &Value::table(m));
++        }
++    } else {
++        st.set_metatable(&t, mt.as_table());
++    }
++    Some(t)
++}
++
++/// H3-D: is the function at `func` the base library's `setmetatable`?
++#[inline]
++fn is_setmetatable(st: &State, func: StkId, tail: bool) -> bool {
++    static OFF: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
++    let (no_call, no_tail) = *OFF.get_or_init(|| (std::env::var_os("H3X_NOCALL").is_some(), std::env::var_os("H3X_NOTAIL").is_some()));
++    if (tail && no_tail) || (!tail && no_call) {
++        return false;
++    }
++    st.get(func).as_native().is_some_and(|f| f as usize == SETMETATABLE_FN.load(std::sync::atomic::Ordering::Relaxed))
++}
++
+ fn finish(st: &mut State, r: LuaResult<u32>) -> u32 {
+     if stress_stackmove() {
+         stress_move_stack(st);
+@@ -63,7 +105,20 @@ pub unsafe extern "C" fn jit_call(th: *mut Thread, ci: *mut CallInfo, instr: u64
+         let newci = match st.pre_call_lua_fast(func, nresults) {
+             Some(c) => Some(c),
+             None => {
+-                if st.pre_call_native_fast(func, nresults)? {
++                if i.b() == 3 && (0..=1).contains(&nresults) && is_setmetatable(&st, func, false) && {
++                    match fast_setmetatable(&mut st, func) {
++                        Some(t) => {
++                            if nresults == 1 && !mut_c2(8) {
++                                st.set(func, t);
++                            }
++                            st.set_top(func + nresults as usize);
++                            true
++                        }
++                        None => false,
++                    }
++                } {
++                    None
++                } else if st.pre_call_native_fast(func, nresults)? {
+                     None
+                 } else {
+                     st.pre_call(func, nresults)?
+@@ -115,6 +170,15 @@ pub unsafe extern "C" fn jit_tailcall(
+             let lvl = StkId(ci.r().func.0 + 1);
+             st.close_upvals(lvl);
+         }
++        if b == 3 && i.k() == 0 && is_setmetatable(&st, ra, true) {
++            // H3-D: `return setmetatable(t, mt)`: the native call's result is `t`, in the slot below `top`
++            if let Some(t) = fast_setmetatable(&mut st, ra) {
++                st.set(ra + 2, t);
++                ci.w().func -= delta;
++                st.post_call(ci, 1)?;
++                return Ok(H_RETURNED);
++            }
++        }
+         crate::jit_hooks::TAIL_FROM_JIT.with(|c| c.set(true));
+         let n = st.pre_tail_call(ci, ra, b, delta);
+         crate::jit_hooks::TAIL_FROM_JIT.with(|c| c.set(false));
+@@ -181,7 +245,7 @@ unsafe fn upvalue(st: &State, ci: Ci, n: u32) -> Value {
+ }
+ 
+ /// Test-only mutants of the C2 tier-1 helpers (feature `jit_trace_mut`, set by `lua_jit::tr::mutants::apply_vm_mutants`):
+-/// bit 0 `c2setupval_barrier_skip`.
++/// bit 0 `c2setupval_barrier_skip`, bit 1 `h3_setmt_protected` (2), bit 2 `h3_setmt_no_finalizer` (4), bit 3 `h3_setmt_result_dropped` (8).
+ #[cfg(feature = "jit_trace_mut")]
+ static MUT_C2: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+ 
+@@ -195,6 +259,16 @@ pub fn set_mut_c2_barrier_skip(on: bool) {
+     }
+ }
+ 
++/// Select the H3-D `setmetatable` fast path mutants (`bit` 2, 4 or 8; feature `jit_trace_mut`).
++#[cfg(feature = "jit_trace_mut")]
++pub fn set_mut_h3_setmt(bit: u8, on: bool) {
++    if on {
++        MUT_C2.fetch_or(bit, std::sync::atomic::Ordering::Relaxed);
++    } else {
++        MUT_C2.fetch_and(!bit, std::sync::atomic::Ordering::Relaxed);
++    }
++}
++
+ 
+ #[inline(always)]
+ fn mut_c2(bit: u8) -> bool {
+diff --git a/crates/lua-std/src/lib_base.rs b/crates/lua-std/src/lib_base.rs
+index 6776419c..db60f9bc 100644
+--- a/crates/lua-std/src/lib_base.rs
++++ b/crates/lua-std/src/lib_base.rs
+@@ -798,6 +798,7 @@ pub fn open(st: &mut State) -> LuaResult<usize> {
+         ("xpcall", Some(base_xpcall)),
+     ];
+     st.set_funcs(g, funcs)?;
++    lua_core::jit_helpers::SETMETATABLE_FN.store(base_setmetatable as usize, std::sync::atomic::Ordering::Relaxed);
+     // T2: the interpreter's generic `for` runs `next` / the `ipairs` iterator without a frame as well
+     // (`vm_unsafe` `OP_TFORCALL`) while no compiler is registered
+     lua_core::frameless::set_interp_builtins(

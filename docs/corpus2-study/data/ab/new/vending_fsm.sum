@@ -1,0 +1,56 @@
+== vending_fsm (rc 0)
+[trace] recorded 13 installed 7 entered 3309120 flushes 7 rerecord 0 blacklisted 12 refused 171 deferred 0 ineffective 0 probes 187 (fn-short 16 start-refused 171)
+[trace] aborted FnShort: 16
+[trace] aborted InnerLoop: 2
+[trace] aborted Nyi(Closure): 2
+[trace] aborted Nyi(Concat): 2
+[trace] aborted StartRefused: 171
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 10 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 50 installed 43 failed 49 preludes 0
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 13294700 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                RETURN1   d0 root L15 'function m.fire(event, arg)'  [policy]
+      4 Nyi(CONCAT)            CONCAT    d0 side
+      4 FnShort                CALL      d0 root L179 'set_method = function(c) c.req.method = table.conc'  [policy]
+      4 FnShort                CALL      d0 root L180 'set_path = function(c) c.req.path = table.concat(c'  [policy]
+      4 FnShort                CALL      d0 root L181 'set_version = function(c) c.req.version = table.co'  [policy]
+      2 LeaveFrame             RETURN    d0 side
+      2 Nyi(CONCAT)            CONCAT    d0 root L208 'local function gen_message(i)'
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L224 'local function parse(msg)'
+      2 InnerLoop              FORPREP   d1 root L238 'local function run_parser(count)'
+      1 SideShort              FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  55.3 L15 pc5 Gettable 12 4608227
+  10.0 L180 pc0 Getfield 202 49747
+  9.2 L65 pc0 Gettabup 143 64224
+  7.6 L181 pc0 Getfield 202 37450
+  6.5 L68 pc0 Getfield 190 34288
+  5.7 L187 pc0 Setfield 198 28929
+  1.0 L179 pc0 Getfield 202 4872
+  0.7 L238 pc22 Test 60 11983
+  0.4 L129 pc0 Getfield 19 23242
+  0.2 L183 pc0 Getfield 14 16523
+  0.2 L178 pc0 Getfield 108 1416
+  0.1 L128 pc0 Getfield 29 4138
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    2662477 Eqi        -              black=false gk=32
+    1898408 Gettable   -              black=false gk=14
+    1813702 Gei        -              black=false gk=32
+    1783548 Lei        -              black=false gk=32
+     747938 Call       -              black=false gk=1
+     661804 Le         -              black=false gk=32
+     660914 Getfield   -              black=false gk=14
+     462328 Gettable   -              black=false gk=10
+     461640 Gettable   -              black=false gk=11
+     295798 Gettable   MaxSide        black=true gk=11
+     268074 Gettable   MaxSide        black=true gk=10
+     263908 Gettable   MaxSide        black=true gk=14
+     260170 Settable   -              black=false gk=40
+     217908 Settable   MaxSide        black=true gk=40
+     216982 Gettable   -              black=false gk=30
+     160078 Eqi        MaxSide        black=true gk=32
+      90872 Call       MaxSide        black=true gk=32
+      83042 Getfield   MaxSide        black=true gk=14
+      72132 Eqk        -              black=false gk=32
+      59874 Call       MaxSide        black=true gk=1

@@ -1,0 +1,41 @@
+{
+ "cpu": 4,
+ "runs": 7,
+ "set": "jit-trace",
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=nrinline=1 <tmp>/bb/lua-cli",
+  "ours": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=nrinline=1 <tmp>/bn/lua-cli",
+  "lj": "/usr/bin/luajit"
+ },
+ "programs": {
+  "alloc_ctor": {
+   "base": {
+    "variant": false,
+    "cycles_min": 336835827,
+    "cycles_median": 341022225,
+    "instructions_min": 1874543023,
+    "instructions_median": 1874971120,
+    "runs": 7,
+    "output": "same"
+   },
+   "ours": {
+    "variant": false,
+    "cycles_min": 329862099,
+    "cycles_median": 334391823,
+    "instructions_min": 1874543323,
+    "instructions_median": 1874972711,
+    "runs": 7,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 273677279,
+    "cycles_median": 278068912,
+    "instructions_min": 1427950581,
+    "instructions_median": 1431482544,
+    "runs": 7,
+    "output": "same"
+   }
+  }
+ }
+}

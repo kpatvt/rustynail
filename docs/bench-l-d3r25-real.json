@@ -1,0 +1,257 @@
+{
+ "cpu": 4,
+ "runs": 11,
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,sinkpol=0,sinkrate=2500 <cache>/bl-pgo-d3/pgo/release/lua-cli",
+  "on": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,sinkpol=1,sinkrate=2500 <cache>/bl-pgo-d3/pgo/release/lua-cli",
+  "dup": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,sinkpol=0,sinkrate=2500 <cache>/bl-pgo-d3/pgo/release/lua-cli"
+ },
+ "baseline": "base",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "game_loop": {
+   "base": {
+    "cycles_min": 35934674,
+    "cycles_median": 36240818,
+    "instructions_min": 176915313,
+    "instructions_median": 176916937,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "on": {
+    "cycles_min": 35663346,
+    "cycles_median": 35887815,
+    "instructions_min": 177024182,
+    "instructions_median": 177025402,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 35703485,
+    "cycles_median": 35895537,
+    "instructions_min": 176915448,
+    "instructions_median": 176916756,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "json_roundtrip": {
+   "base": {
+    "cycles_min": 488381169,
+    "cycles_median": 493840094,
+    "instructions_min": 2186015804,
+    "instructions_median": 2186020290,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "on": {
+    "cycles_min": 488793236,
+    "cycles_median": 492464604,
+    "instructions_min": 2185925717,
+    "instructions_median": 2185928398,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 489264869,
+    "cycles_median": 493958751,
+    "instructions_min": 2186017310,
+    "instructions_median": 2186020883,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "lua_interp": {
+   "base": {
+    "cycles_min": 122778160,
+    "cycles_median": 123708743,
+    "instructions_min": 592177026,
+    "instructions_median": 592178844,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "on": {
+    "cycles_min": 122621330,
+    "cycles_median": 123287403,
+    "instructions_min": 592187907,
+    "instructions_median": 592188591,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 122696659,
+    "cycles_median": 123560439,
+    "instructions_min": 592176374,
+    "instructions_median": 592179151,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "template_engine": {
+   "base": {
+    "cycles_min": 709858263,
+    "cycles_median": 713158562,
+    "instructions_min": 3142289144,
+    "instructions_median": 3142289673,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "on": {
+    "cycles_min": 710878726,
+    "cycles_median": 715677560,
+    "instructions_min": 3142288450,
+    "instructions_median": 3142290066,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 711091591,
+    "cycles_median": 715742707,
+    "instructions_min": 3142288555,
+    "instructions_median": 3142289843,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "wordfreq": {
+   "base": {
+    "cycles_min": 138228683,
+    "cycles_median": 139244968,
+    "instructions_min": 601480509,
+    "instructions_median": 601484837,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "on": {
+    "cycles_min": 138342504,
+    "cycles_median": 139634886,
+    "instructions_min": 601487195,
+    "instructions_median": 601488290,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 138908679,
+    "cycles_median": 140004529,
+    "instructions_min": 601482077,
+    "instructions_median": 601484808,
+    "runs": 11,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "on": {
+   "game_loop": {
+    "cycles_min": 0.9924494097261046,
+    "cycles_median": 0.9902595189766412,
+    "instructions_min": 1.0006153735262024,
+    "instructions_median": 1.0006130843199033
+   },
+   "json_roundtrip": {
+    "cycles_min": 1.0008437405579003,
+    "cycles_median": 0.9972147056978327,
+    "instructions_min": 0.9999587894104721,
+    "instructions_median": 0.9999579637936481
+   },
+   "lua_interp": {
+    "cycles_min": 0.9987226555602398,
+    "cycles_median": 0.9965940968295184,
+    "instructions_min": 1.0000183745730116,
+    "instructions_median": 1.0000164595545733
+   },
+   "template_engine": {
+    "cycles_min": 1.0014375588102438,
+    "cycles_median": 1.0035321710124823,
+    "instructions_min": 0.9999997791419032,
+    "instructions_median": 1.0000001250680366
+   },
+   "wordfreq": {
+    "cycles_min": 1.0008234253378512,
+    "cycles_median": 1.0028002304542882,
+    "instructions_min": 1.0000111159046718,
+    "instructions_median": 1.0000057407930967
+   }
+  },
+  "dup": {
+   "game_loop": {
+    "cycles_min": 0.9935664088673797,
+    "cycles_median": 0.9904725936373732,
+    "instructions_min": 1.0000007630769645,
+    "instructions_median": 0.9999989769210169
+   },
+   "json_roundtrip": {
+    "cycles_min": 1.0018094473253534,
+    "cycles_median": 1.0002402741321363,
+    "instructions_min": 1.000000688924571,
+    "instructions_median": 1.0000002712692113
+   },
+   "lua_interp": {
+    "cycles_min": 0.9993361930167385,
+    "cycles_median": 0.9988011841652938,
+    "instructions_min": 0.9999988989778877,
+    "instructions_median": 1.0000005184244642
+   },
+   "template_engine": {
+    "cycles_min": 1.0017374285322647,
+    "cycles_median": 1.0036235209639115,
+    "instructions_min": 0.9999998125570331,
+    "instructions_median": 1.0000000541006775
+   },
+   "wordfreq": {
+    "cycles_min": 1.004919355268689,
+    "cycles_median": 1.0054548542106023,
+    "instructions_min": 1.0000026069007666,
+    "instructions_median": 0.9999999517859832
+   }
+  }
+ },
+ "geomean": {
+  "on": {
+   "all_cycles_min": 0.9988497813296345,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9980684953445265,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.0001206557206799,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0001186439645096,
+   "numeric_instructions_median": NaN,
+   "n_programs": 5
+  },
+  "dup": {
+   "all_cycles_min": 1.000266560460692,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9997049695379837,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.000000554086688,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9999999545001322,
+   "numeric_instructions_median": NaN,
+   "n_programs": 5
+  }
+ }
+}

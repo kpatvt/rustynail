@@ -1,0 +1,30 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)       c1 Mcyc    ratio      c2b Mcyc    ratio      c4b Mcyc    ratio      all Mcyc    ratio      dup Mcyc    ratio
+bounce                    63.1          62.9   0.997~          63.4   1.004~          63.3   1.003~          62.8   0.996~          63.3   1.002~
+cd                       236.7         230.4   0.973~         235.4   0.994~         233.0   0.984~         228.1   0.964~         235.7   0.996~
+deltablue                103.9          99.5   0.958~         102.1   0.983~         102.2   0.983~          97.3   0.936          104.0   1.001~
+havlak                   154.9         151.0   0.975~         155.3   1.002~         157.1   1.014~         153.2   0.988~         155.4   1.003~
+json                     160.9         157.4   0.978~         159.9   0.994~         156.5   0.973~         153.2   0.952~         160.4   0.997~
+list                     139.7         139.5   0.999~         139.3   0.997~         139.7   1.000~         139.5   0.999~         139.0   0.995~
+mandelbrot               276.9         276.8   1.000~         276.9   1.000~         276.9   1.000~         276.8   1.000~         276.9   1.000~
+nbody                    123.8         124.0   1.002~         121.8   0.984~         121.8   0.984~         121.6   0.982~         124.0   1.002~
+permute                   50.3          49.9   0.991~          50.2   0.997~          50.1   0.997~          49.9   0.992~          50.1   0.996~
+queens                   102.8         101.7   0.989~         103.0   1.002~         102.4   0.996~         101.6   0.988~         102.2   0.994~
+richards                  60.9          60.6   0.995~          64.4   1.057           63.3   1.039~          58.5   0.960~          59.8   0.981~
+sieve                    133.0         133.1   1.001~         133.2   1.001~         133.8   1.006~         132.9   1.000~         133.9   1.007~
+storage                  121.8         121.5   0.997~         121.8   1.000~         121.8   1.000~         122.1   1.002~         121.8   1.000~
+towers                    45.9          44.8   0.976~          45.5   0.991~          45.6   0.994~          44.7   0.973~          45.6   0.993~
+geomean c1: all(14) cycles min 0.988 median 0.986 instr 0.993; numeric cycles min 1.001 median 1.000 instr 1.000
+geomean c2b: all(14) cycles min 1.000 median 0.996 instr 1.000; numeric cycles min 0.995 median 1.001 instr 1.000
+geomean c4b: all(14) cycles min 0.998 median 1.041 instr 0.997; numeric cycles min 0.997 median 0.994 instr 0.995
+geomean all: all(14) cycles min 0.981 median 0.982 instr 0.990; numeric cycles min 0.994 median 0.994 instr 0.995
+geomean dup: all(14) cycles min 0.997 median 0.999 instr 1.000; numeric cycles min 1.003 median 1.002 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

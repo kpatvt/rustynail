@@ -1,0 +1,25 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 787  of event 'cycles:u'
+# Event count (approx.): 763474670
+#
+# Overhead  Shared Object         Symbol                                                                                                                                                      
+# ........  ....................  ............................................................................................................................................................
+#
+    31.34%  rn-cli               [.] <rn_core::state::State>::adjust_varargs
+    23.82%  [JIT] tid 2374099     [.] lua_proto@0x7f7c245eb690
+    21.17%  rn-cli               [.] <rn_core::state::State>::post_call
+    12.99%  rn-cli               [.] rn_core::jit_helpers::jit_varargprep
+     8.91%  [JIT] tid 2374099     [.] lua_proto@0x7f7c245e96d0
+     0.52%  rn-cli               [.] rn_core::jit_helpers::jit_tailcall
+     0.42%  rn-cli               [.] rn_std::lib_base::base_select
+     0.36%  rn-cli               [.] <rn_core::state::State>::precall_c
+     0.24%  rn-cli               [.] rn_core::jit_helpers::jit_vararg
+
+
+#
+# (Tip: To only collect call graph on one event use perf record -e cpu/cpu-cycles,callgraph=1/,branches ; perf report --show-ref-call-graph)
+#

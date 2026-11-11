@@ -1,0 +1,947 @@
+{
+ "cpu": [
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "runs": 9,
+ "set": "jit-trace",
+ "mode": "default",
+ "bins": {
+  "plain": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/a/rn-cli",
+  "bplain": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/d/rn-cli",
+  "bpgo": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/e/rn-cli"
+ },
+ "programs": {
+  "alloc_ctor": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 252185053,
+    "cycles_median": 267937968,
+    "instructions_min": 1508041473,
+    "instructions_median": 1508042548,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 254641792,
+    "cycles_median": 261128731,
+    "instructions_min": 1508039620,
+    "instructions_median": 1508040515,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 244380005,
+    "cycles_median": 259061192,
+    "instructions_min": 1508039585,
+    "instructions_median": 1508040498,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "array_rec": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1806290395,
+    "cycles_median": 1814863343,
+    "instructions_min": 6437939265,
+    "instructions_median": 6437940413,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1806960293,
+    "cycles_median": 1810622938,
+    "instructions_min": 6437935797,
+    "instructions_median": 6437937957,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1805406951,
+    "cycles_median": 1811315543,
+    "instructions_min": 6437935664,
+    "instructions_median": 6437937403,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "dot": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1251438645,
+    "cycles_median": 1364604308,
+    "instructions_min": 12920479048,
+    "instructions_median": 12920479825,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1312506386,
+    "cycles_median": 1321904633,
+    "instructions_min": 12920476517,
+    "instructions_median": 12920477236,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1240363440,
+    "cycles_median": 1323442828,
+    "instructions_min": 12920476742,
+    "instructions_median": 12920477589,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "field_global": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 551266759,
+    "cycles_median": 585236666,
+    "instructions_min": 3619761986,
+    "instructions_median": 3619763630,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 548416126,
+    "cycles_median": 574046879,
+    "instructions_min": 3619767481,
+    "instructions_median": 3619768513,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 541343472,
+    "cycles_median": 560256291,
+    "instructions_min": 3619767661,
+    "instructions_median": 3619768330,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "field_method": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 767107133,
+    "cycles_median": 800772021,
+    "instructions_min": 4385511729,
+    "instructions_median": 4385512745,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 763575931,
+    "cycles_median": 800550953,
+    "instructions_min": 4385508117,
+    "instructions_median": 4385509147,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 760255260,
+    "cycles_median": 781622440,
+    "instructions_min": 4385508001,
+    "instructions_median": 4385509077,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "field_rw": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1094736913,
+    "cycles_median": 1116349244,
+    "instructions_min": 7101863392,
+    "instructions_median": 7101864113,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1072580205,
+    "cycles_median": 1119965690,
+    "instructions_min": 7101848469,
+    "instructions_median": 7101849390,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1104509521,
+    "cycles_median": 1151246034,
+    "instructions_min": 7101848907,
+    "instructions_median": 7101849249,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "float_loop": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 2790567524,
+    "cycles_median": 2806096655,
+    "instructions_min": 12227361839,
+    "instructions_median": 12227363126,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 2791659886,
+    "cycles_median": 2797231206,
+    "instructions_min": 12227360552,
+    "instructions_median": 12227361322,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 2790148425,
+    "cycles_median": 2806961036,
+    "instructions_min": 12227359985,
+    "instructions_median": 12227361195,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "float_poly": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1832054867,
+    "cycles_median": 1838630308,
+    "instructions_min": 6924055440,
+    "instructions_median": 6924057376,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1832245744,
+    "cycles_median": 1834890540,
+    "instructions_min": 6924049983,
+    "instructions_median": 6924051318,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1832458742,
+    "cycles_median": 1835674313,
+    "instructions_min": 6924050849,
+    "instructions_median": 6924051606,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "inline_2": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 372756836,
+    "cycles_median": 375285780,
+    "instructions_min": 2993390605,
+    "instructions_median": 2993392123,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 372325365,
+    "cycles_median": 373592152,
+    "instructions_min": 2993383847,
+    "instructions_median": 2993387877,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 372525505,
+    "cycles_median": 377130117,
+    "instructions_min": 2993385394,
+    "instructions_median": 2993386848,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "inline_leaf": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 515497821,
+    "cycles_median": 523310153,
+    "instructions_min": 4808651263,
+    "instructions_median": 4808652069,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 517309345,
+    "cycles_median": 522358900,
+    "instructions_min": 4808646876,
+    "instructions_median": 4808647654,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 516490236,
+    "cycles_median": 519728961,
+    "instructions_min": 4808646881,
+    "instructions_median": 4808648332,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "int_rec2": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 980337524,
+    "cycles_median": 1002793768,
+    "instructions_min": 8784794928,
+    "instructions_median": 8784796588,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 990120607,
+    "cycles_median": 1013678646,
+    "instructions_min": 8784791930,
+    "instructions_median": 8784793204,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 980834517,
+    "cycles_median": 1004788584,
+    "instructions_min": 8784791959,
+    "instructions_median": 8784793260,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "int_sum": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 987907722,
+    "cycles_median": 991380446,
+    "instructions_min": 9088688590,
+    "instructions_median": 9088690064,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 987422265,
+    "cycles_median": 989027693,
+    "instructions_min": 9088685225,
+    "instructions_median": 9088686744,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 989069227,
+    "cycles_median": 990624954,
+    "instructions_min": 9088684732,
+    "instructions_median": 9088686103,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "licm_expr": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 481811236,
+    "cycles_median": 495198195,
+    "instructions_min": 3513370111,
+    "instructions_median": 3513370954,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 474722116,
+    "cycles_median": 485375054,
+    "instructions_min": 3513364111,
+    "instructions_median": 3513364526,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 476001948,
+    "cycles_median": 486815279,
+    "instructions_min": 3513363518,
+    "instructions_median": 3513364220,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "multret": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 153612375,
+    "cycles_median": 153787974,
+    "instructions_min": 990303906,
+    "instructions_median": 990305405,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 153396579,
+    "cycles_median": 153773500,
+    "instructions_min": 990305378,
+    "instructions_median": 990306210,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 153599187,
+    "cycles_median": 153758505,
+    "instructions_min": 990305021,
+    "instructions_median": 990306364,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "oop_inherit": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 56761221,
+    "cycles_median": 57148030,
+    "instructions_min": 256778184,
+    "instructions_median": 256779474,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 56769306,
+    "cycles_median": 56997245,
+    "instructions_min": 256773949,
+    "instructions_median": 256775428,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 57138963,
+    "cycles_median": 57228807,
+    "instructions_min": 256774620,
+    "instructions_median": 256775333,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "oop_override": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 123735045,
+    "cycles_median": 124444079,
+    "instructions_min": 746013739,
+    "instructions_median": 746015220,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 123865723,
+    "cycles_median": 125091702,
+    "instructions_min": 746005042,
+    "instructions_median": 746006494,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 123692613,
+    "cycles_median": 124082453,
+    "instructions_min": 746004736,
+    "instructions_median": 746005964,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "rec_loop": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 141293477,
+    "cycles_median": 141850034,
+    "instructions_min": 653880210,
+    "instructions_median": 653881156,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 142596128,
+    "cycles_median": 143342976,
+    "instructions_min": 653877617,
+    "instructions_median": 653878491,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 142635684,
+    "cycles_median": 143453286,
+    "instructions_min": 653877541,
+    "instructions_median": 653878399,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "short_inner": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1801430071,
+    "cycles_median": 1803485288,
+    "instructions_min": 6731642043,
+    "instructions_median": 6731642956,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1802115045,
+    "cycles_median": 1803242530,
+    "instructions_min": 6731638272,
+    "instructions_median": 6731639682,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1801687364,
+    "cycles_median": 1803190909,
+    "instructions_min": 6731636834,
+    "instructions_median": 6731639640,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "sink_tuple": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 12854024,
+    "cycles_median": 13047910,
+    "instructions_min": 83153658,
+    "instructions_median": 83154452,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 13069656,
+    "cycles_median": 13239971,
+    "instructions_min": 83147363,
+    "instructions_median": 83148659,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 12986487,
+    "cycles_median": 13158845,
+    "instructions_min": 83147214,
+    "instructions_median": 83148790,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "sink_vec": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 12205323,
+    "cycles_median": 12297939,
+    "instructions_min": 82577956,
+    "instructions_median": 82578552,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 12041746,
+    "cycles_median": 12167202,
+    "instructions_min": 82575844,
+    "instructions_median": 82577089,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 12067683,
+    "cycles_median": 12342294,
+    "instructions_min": 82575887,
+    "instructions_median": 82576772,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "str_concat": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 612510410,
+    "cycles_median": 614984038,
+    "instructions_min": 2548577752,
+    "instructions_median": 2548578930,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 613724968,
+    "cycles_median": 614712461,
+    "instructions_min": 2548575221,
+    "instructions_median": 2548576770,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 611088660,
+    "cycles_median": 613210010,
+    "instructions_min": 2548575275,
+    "instructions_median": 2548577032,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "tail_loop": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 556604792,
+    "cycles_median": 558457105,
+    "instructions_min": 1767651834,
+    "instructions_median": 1767656751,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 556488279,
+    "cycles_median": 558193055,
+    "instructions_min": 1767642177,
+    "instructions_median": 1767644066,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 555184583,
+    "cycles_median": 557857714,
+    "instructions_min": 1767640575,
+    "instructions_median": 1767646240,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "tfor_loops": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 534745388,
+    "cycles_median": 537348016,
+    "instructions_min": 3500947308,
+    "instructions_median": 3500948375,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 534346385,
+    "cycles_median": 537013008,
+    "instructions_min": 3500950085,
+    "instructions_median": 3500951187,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 534136728,
+    "cycles_median": 535459810,
+    "instructions_min": 3500950728,
+    "instructions_median": 3500951710,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "type_entry": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1831521905,
+    "cycles_median": 1843388072,
+    "instructions_min": 14530291006,
+    "instructions_median": 14530292193,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1832370956,
+    "cycles_median": 1842468922,
+    "instructions_min": 14530284288,
+    "instructions_median": 14530285658,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1836109940,
+    "cycles_median": 1841370595,
+    "instructions_min": 14530284752,
+    "instructions_median": 14530285536,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "type_entry_stable": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1776613147,
+    "cycles_median": 1782239220,
+    "instructions_min": 14160205360,
+    "instructions_median": 14160206853,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1772434201,
+    "cycles_median": 1783473676,
+    "instructions_min": 14160200817,
+    "instructions_median": 14160201275,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1774588885,
+    "cycles_median": 1783964954,
+    "instructions_min": 14160200872,
+    "instructions_median": 14160201780,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "type_late": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1543067417,
+    "cycles_median": 1545588406,
+    "instructions_min": 12663998115,
+    "instructions_median": 12663999813,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1542056830,
+    "cycles_median": 1544575263,
+    "instructions_min": 12663990989,
+    "instructions_median": 12663992212,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1543054414,
+    "cycles_median": 1544501906,
+    "instructions_min": 12663992323,
+    "instructions_median": 12663992679,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "type_late_stable": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1542382774,
+    "cycles_median": 1544409564,
+    "instructions_min": 12662352090,
+    "instructions_median": 12662353446,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1542396772,
+    "cycles_median": 1544746212,
+    "instructions_min": 12662347641,
+    "instructions_median": 12662349065,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1542614645,
+    "cycles_median": 1543785649,
+    "instructions_min": 12662347383,
+    "instructions_median": 12662349385,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "upval_acc": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 1476834196,
+    "cycles_median": 1481412147,
+    "instructions_min": 12721014610,
+    "instructions_median": 12721016647,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1478116762,
+    "cycles_median": 1481397672,
+    "instructions_min": 12721011121,
+    "instructions_median": 12721012817,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1478426715,
+    "cycles_median": 1487186458,
+    "instructions_min": 12721011639,
+    "instructions_median": 12721012672,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "upval_inv": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 2136548751,
+    "cycles_median": 2137760000,
+    "instructions_min": 14900687575,
+    "instructions_median": 14900688327,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 2135554596,
+    "cycles_median": 2137911946,
+    "instructions_min": 14900691181,
+    "instructions_median": 14900692552,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 2135857340,
+    "cycles_median": 2137750993,
+    "instructions_min": 14900691041,
+    "instructions_median": 14900692136,
+    "runs": 9,
+    "output": "same",
+    "expected": "ok"
+   }
+  }
+ }
+}

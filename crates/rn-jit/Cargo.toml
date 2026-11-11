@@ -1,0 +1,47 @@
+[package]
+name = "rn-jit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Experimental x86-64 JIT backend for rustynail (see docs/JIT_PLAN.md); not used unless the `jit` feature is enabled"
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The compiler proper (templates, runtime, registration with the interpreter's hooks). Requires the
+# interpreter hooks of rn-core (counter B + placement (e), docs/JIT_HOOK_COST.md). The encoder and the
+# executable-memory manager are always built.
+jit = ["rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "dep:rn-std", "rn-std/jit"]
+# Test-only: the region-analysis oracle (tests/t15_oracle.rs) needs the interpreter's per-instruction hook.
+t15_oracle = ["jit", "rn-core/t15_oracle"]
+# Test-only: deliberate bugs in the region generator selected by `RUSTYNAIL_JIT_MUT` (src/t15/mutants.rs); the test
+# suite must detect each of them.
+t15_mutants = ["jit"]
+# J5 trace compiler (docs/JIT_TRACE.md): the `tr` module. Off by default; with it off the crate is byte-identical.
+trace = ["jit", "rn-core/jit_trace"]
+# Rejected together with `trace` (`compile_error!` in tr/exit.rs, P4c): forwards the interpreter's entry-hook variant D.
+jit_check_d = ["jit", "rn-core/jit_check_d"]
+# Test-only: deliberate bugs of the trace compiler selected by `RUSTYNAIL_JIT_MUT` (src/tr/mutants.rs).
+tr_mutants = ["trace", "rn-core/jit_trace_mut"]
+
+# Heavy verification stress (docs/JIT_TIER15.md section 22): not part of a plain `cargo test`, run it by name.
+[[test]]
+name = "t15_stress"
+path = "tests/t15_stress.rs"
+test = false
+
+[dependencies]
+libc = "0.2"
+rn-core = { path = "../rn-core" }
+rn-std = { path = "../rn-std", optional = true }
+
+[dev-dependencies]
+rn-compiler = { path = "../rn-compiler" }
+rn-std = { path = "../rn-std" }
+iced-x86 = { version = "1", default-features = false, features = ["std", "decoder", "encoder", "code_asm", "intel", "instr_info"] }

@@ -1,0 +1,42 @@
+# cargo-deny configuration (https://embarkstudios.github.io/cargo-deny/).
+#   cargo deny check                 # main workspace (licenses, bans, sources, advisories)
+#   cargo deny --manifest-path fuzz/Cargo.toml check licenses bans sources   # finds this file too
+# The advisories check needs network access to fetch the RustSec database; offline, run
+# `cargo deny check licenses bans sources` (or audit by hand: `cargo metadata --format-version 1`
+# lists every package with its `license` field; `cargo tree -e normal,build` shows the graph).
+#
+# Third-party dependencies (2026-10-28): libc, cc, shlex, find-msvc-tools (all MIT OR Apache-2.0).
+# The fuzz workspace adds libfuzzer-sys ((MIT OR Apache-2.0) AND NCSA), arbitrary, getrandom,
+# r-efi, syn/quote/proc-macro2, unicode-ident ((MIT OR Apache-2.0) AND Unicode-3.0), ...
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Permissive licenses only; everything we ship is MIT (Lua's license).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "NCSA",        # libfuzzer-sys (fuzz workspace only, never shipped)
+    "Unicode-3.0", # unicode-ident (proc-macro dependency of the fuzz workspace)
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# The workspace crates are `publish = false` and MIT; do not require them to be checked.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

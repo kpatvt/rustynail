@@ -1,0 +1,36 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 136  of event 'cycles:u'
+# Event count (approx.): 117413440
+#
+# Overhead  Shared Object         Symbol                                                                                                                      
+# ........  ....................  ............................................................................................................................
+#
+    56.65%  [JIT] tid 2376561     [.] lua_proto@0x555ba6208030
+    18.07%  [JIT] tid 2376561     [.] lua_proto@0x7f11f169edc0
+     9.85%  [JIT] tid 2376561     [.] lua_proto@0x7f11f169f230
+     4.26%  rn-cli               [.] <rn_core::table::TableRef>::get
+     3.41%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     1.58%  rn-cli               [.] rn_core::jit_helpers::jit_get
+     1.11%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     0.90%  rn-cli               [.] rn_jit::x86::emit
+     0.85%  rn-cli               [.] <rn_core::state::State>::compare_lt_le
+     0.85%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     0.85%  rn-cli               [.] rn_std::lib_math::math_min
+     0.34%  rn-cli               [.] core::slice::sort::unstable::quicksort::quicksort::<((u32, u32), u32), <((u32, u32), u32) as core::cmp::PartialOrd>::lt>
+     0.28%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.21%  rn-cli               [.] <f64 as core::str::traits::FromStr>::from_str
+     0.19%  rn-cli               [.] rn_std::lib_base::base_collectgarbage
+     0.13%  [unknown]             [k] 0000000000000000
+     0.12%  ld-linux-x86-64.so.2  [.] 0x000000000000cdd1
+     0.11%  ld-linux-x86-64.so.2  [.] 0x000000000002b26f
+     0.11%  ld-linux-x86-64.so.2  [.] 0x00000000000316a2
+     0.08%  libc.so.6             [.] strchr
+
+
+#
+# (Tip: To show context switches in perf report sample context add --switch-events to perf record.)
+#

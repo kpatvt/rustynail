@@ -1,0 +1,5 @@
+# iced-x86 (dev-dependency, test oracle only) builds its decoder tables lazily and keeps them in a static
+leak:iced_x86::decoder::table_de
+# test harnesses leak one byte per case on purpose (a stable address for the interrupt flag)
+leak:arith_diff::build
+leak:table_diff::build

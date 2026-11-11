@@ -1,0 +1,52 @@
+== sha2_base64 (rc 0)
+[trace] recorded 34 installed 5 entered 729073 flushes 5 rerecord 0 blacklisted 14 refused 89 deferred 0 ineffective 0 probes 100 (fn-short 11 start-refused 89)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 11
+[trace] aborted InnerLoop: 6
+[trace] aborted LeaveLoop: 1
+[trace] aborted Nyi(Call): 6
+[trace] aborted Nyi(Closure): 2
+[trace] aborted Nyi(Concat): 12
+[trace] aborted StartRefused: 89
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 3 phis 34 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 7 installed 3 failed 4 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 797580 (live traces 0)
+aborts (count reason op depth head):
+      4 InnerLoop              FORPREP   d1 root L73 'local function digestblock(msg, i, H)'
+      4 Nyi(CONCAT)            CONCAT    d0 root L124 'local function b64encode(s)'
+      3 FnShort                TAILCALL  d0 root L171 'local ipad = key:gsub(".", function(c) return char'  [policy]
+      3 FnShort                TAILCALL  d0 root L172 'local opad = key:gsub(".", function(c) return char'  [policy]
+      3 FnShort                CALL      d0 root L147 'local function b64decode(s)'  [policy]
+      2 LeaveFrame             RETURN1   d0 side
+      2 Nyi(CALL)              CALL      d0 root L147 'local function b64decode(s)'
+      2 LeaveFrame             RETURN0   d0 side
+      2 Nyi(CALL)              CALL      d0 root L112 'return (h:gsub("%x%x", function(c) return char(ton'
+      2 InnerLoop              FORPREP   d2 root L102 'local function sha256(msg)'
+      2 CFunc                  CALL      d0 root L102 'local function sha256(msg)'
+      2 Nyi(CALL)              CALL      d0 root L48 'local function num2s(l, n)'
+      2 Nyi(CONCAT)            CONCAT    d0 root L48 'local function num2s(l, n)'
+      2 Nyi(CONCAT)            CONCAT    d1 root L64 'local function preprocess(msg, len)'
+      2 Nyi(CONCAT)            CONCAT    d2 root L102 'local function sha256(msg)'
+      2 Nyi(CONCAT)            CONCAT    d3 root L0 main
+      2 FnShort                CALL      d0 root L168 'local function hmac_sha256(key, msg)'  [policy]
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L111 'local function hex2bin(h)'
+      1 LeaveLoop              FORLOOP   d0 root L73 'local function digestblock(msg, i, H)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  198.5 L48 pc5 Modk 1528 129940
+  70.4 L168 pc0 Len 197 357250
+  9.0 L102 pc25 Forloop 2459 3664
+  1.7 L168 pc35 Call 133 12676
+  1.0 L102 pc0 Getupval 3 336347
+  0.7 L147 pc0 SelfOp 3 241567
+  0.5 L64 pc0 Addi 2 247170
+  0.2 L124 pc0 Newtable 2 111920
+  0.2 L102 pc32 Getupval 2 110900
+  0.1 L124 pc9 Getupval 2 61600
+  0.1 L147 pc12 Getupval 2 51540
+  0.1 L102 pc20 Getupval 2 32910
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     410217 Forloop    -              black=false gk=32
+     364604 Return1    LeaveFrame     black=true gk=32
+      22758 Return0    LeaveFrame     black=true gk=32
+          1 Settable   -              black=false gk=40

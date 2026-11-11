@@ -1,0 +1,53 @@
+== oop_mixins (rc 0)
+[trace] recorded 12 installed 4 entered 14799 flushes 4 rerecord 0 blacklisted 28 refused 185 deferred 0 ineffective 0 probes 244 (fn-short 59 start-refused 185)
+[trace] aborted FnShort: 59
+[trace] aborted Nyi(Call): 4
+[trace] aborted StartRefused: 185
+[trace] aborted Vararg: 4
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 3 phis 13 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 52 installed 16 failed 36 preludes 0
+[trace] exits 1153645 (live traces 0)
+aborts (count reason op depth head):
+     32 Nyi(CALL)              CALL      d2 side
+      4 FnShort                RETURN0   d0 root L59 'function Shape:init(x, y)'  [policy]
+      4 FnShort                RETURN0   d0 root L82 'function Rect:init(x, y, w, h)'  [policy]
+      4 Vararg                 TAILCALL  d1 root L0 main
+      4 FnShort                RETURN0   d0 root L74 'function Polygon:init(x, y, sides)'  [policy]
+      4 FnShort                RETURN0   d0 root L98 'function Circle:init(x, y, r)'  [policy]
+      4 FnShort                RETURN0   d0 root L91 'function Square:init(x, y, s)'  [policy]
+      4 FnShort                RETURN1   d0 root L44 '__lt = function(a, b) return a:area() < b:area() e'  [policy]
+      4 FnShort                RETURN0   d0 root L116 'function Account:init(owner, balance)'  [policy]
+      4 FnShort                RETURN0   d0 root L137 'function Savings:init(owner, balance, rate)'  [policy]
+      4 FnShort                RETURN0   d0 root L147 'function Checking:init(owner, balance, overdraft)'  [policy]
+      4 FnShort                RETURN0   d0 root L157 'function Premium:init(owner, balance, rate)'  [policy]
+      4 FnShort                RETURN0   d0 root L109 'audit = function(self, what, amount)'  [policy]
+      4 FnShort                RETURN1   d0 root L122 'function Account:deposit(n) self.balance = self.ba'  [policy]
+      4 Nyi(CALL)              CALL      d3 side
+      4 FnShort                RETURN0   d0 root L152 'function Checking:monthEnd()'  [policy]
+      3 FnShort                RETURN1   d0 root L69 'Shape.__eq = function(a, b) return a:area() == b:a'  [policy]
+      3 FnShort                RETURN1   d0 root L123 'function Account:withdraw(n)'  [policy]
+      2 Nyi(CALL)              CALL      d2 root L141 'function Savings:monthEnd()'
+      2 Nyi(CALL)              CALL      d3 root L160 'function Premium:monthEnd()'
+      1 FnShort                RETURN0   d0 root L141 'function Savings:monthEnd()'  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  6.2 L98 pc0 Gettabup 86 72377
+  3.3 L157 pc0 Gettabup 95 35218
+  2.3 L0 pc297 Lt 80 28436
+  2.0 L147 pc0 Gettabup 105 19030
+  1.7 L152 pc0 Getfield 86 19848
+  1.3 L160 pc0 Gettabup 127 10239
+  1.3 L44 pc8 Return1 1020 1255
+  0.8 L69 pc14 Return1 637 1280
+  0.8 L141 pc0 Gettabup 47 17182
+  0.4 L82 pc0 Gettabup 43 9476
+  0.3 L141 pc12 Return0 91 3454
+  0.2 L91 pc0 Gettabup 83 2188
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     437382 SelfOp     -              black=false gk=10
+     159525 SelfOp     -              black=false gk=14
+     120074 Lt         -              black=false gk=32
+      14798 Getfield   -              black=false gk=10
+       1700 Lti        -              black=false gk=32
+          6 Tforcall   -              black=false gk=49
+          1 Tforcall   -              black=false gk=16
+          1 Tforcall   -              black=false gk=48

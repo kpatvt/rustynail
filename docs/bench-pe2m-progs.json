@@ -1,0 +1,134 @@
+{
+ "cpu": 4,
+ "runs": 5,
+ "bins": {
+  "j4": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_T15=on RUSTYNAIL_JIT_TRACE=off RUSTYNAIL_PAD=0 <worktree>/tmp/lua-cli-55",
+  "t1": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=off RUSTYNAIL_PAD= <worktree>/tmp/lua-cli-55",
+  "tr": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_PAD=0 <worktree>/tmp/lua-cli-55"
+ },
+ "baseline": "j4",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "fib": {
+   "j4": {
+    "cycles_min": 2205216696,
+    "cycles_median": 3539361450,
+    "instructions_min": 11806078696,
+    "instructions_median": 11806079150,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "t1": {
+    "cycles_min": 2185418238,
+    "cycles_median": 3531319847,
+    "instructions_min": 11806079352,
+    "instructions_median": 11806080018,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "tr": {
+    "cycles_min": 2186569764,
+    "cycles_median": 3538695591,
+    "instructions_min": 11806081569,
+    "instructions_median": 11806082627,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "varargs": {
+   "j4": {
+    "cycles_min": 4029638960,
+    "cycles_median": 4320135801,
+    "instructions_min": 22241987961,
+    "instructions_median": 22241991147,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "t1": {
+    "cycles_min": 4055472624,
+    "cycles_median": 8033503260,
+    "instructions_min": 22239886218,
+    "instructions_median": 22239889250,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "tr": {
+    "cycles_min": 2187709452,
+    "cycles_median": 4184234717,
+    "instructions_min": 11706779410,
+    "instructions_median": 11706788151,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "t1": {
+   "fib": {
+    "cycles_min": 0.9910219897954192,
+    "cycles_median": 0.9977279508991658,
+    "instructions_min": 1.0000000555645965,
+    "instructions_median": 1.0000000735214452
+   },
+   "varargs": {
+    "cycles_min": 1.0064109128029672,
+    "cycles_median": 1.8595487804203865,
+    "instructions_min": 0.9999055056138109,
+    "instructions_median": 0.999905498703506
+   }
+  },
+  "tr": {
+   "fib": {
+    "cycles_min": 0.991544172491609,
+    "cycles_median": 0.9998118703021982,
+    "instructions_min": 1.0000002433492166,
+    "instructions_median": 1.000000294509291
+   },
+   "varargs": {
+    "cycles_min": 0.5429045812084367,
+    "cycles_median": 0.9685424046233587,
+    "instructions_min": 0.5263369187379806,
+    "instructions_median": 0.5263372363395177
+   }
+  }
+ },
+ "geomean": {
+  "t1": {
+   "all_cycles_min": 0.9986868104455073,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.3621027106227617,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9999527794716893,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9999527849943732,
+   "numeric_instructions_median": NaN,
+   "n_programs": 2
+  },
+  "tr": {
+   "all_cycles_min": 0.7336987622425315,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9840529421903421,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.725490900578124,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.7254911380235626,
+   "numeric_instructions_median": NaN,
+   "n_programs": 2
+  }
+ }
+}

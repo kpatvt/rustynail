@@ -1,0 +1,53 @@
+== serpent_ser (rc 0)
+[trace] recorded 17 installed 4 entered 93707 flushes 4 rerecord 2 blacklisted 22 refused 191 deferred 4 ineffective 0 probes 208 (fn-short 17 start-refused 191)
+[trace] aborted FnShort: 17
+[trace] aborted Identical: 1
+[trace] aborted IntMiss: 1
+[trace] aborted LeaveLoop: 2
+[trace] aborted Nyi(Call): 6
+[trace] aborted StartRefused: 191
+[trace] aborted TableHash: 3
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 8 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 14 installed 3 failed 11 preludes 2
+[trace] exits 94267 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                CALL      d0 root L29 'local function safestr(s) return type(s) == "numbe'  [policy]
+      4 FnShort                CALL      d0 root L47 'local function val2str(t, name, indent, insref, pa'  [policy]
+      4 SideShort              FORLOOP   d0 side  [policy]
+      4 TableHash              GETTABLE  d0 side
+      4 FnShort                RETURN1   d0 root L32 'local function comment(s, l) return comm and (l or'  [policy]
+      3 FnShort                CALL      d1 root L35 'local function safename(path, name) -- generates f'  [policy]
+      3 TableHash              GETTABLE  d0 root L47 'local function val2str(t, name, indent, insref, pa'
+      2 Nyi(CALL)              CALL      d0 root L43 'table.sort(k, function(a, b)'
+      2 SideShort              TFORCALL  d0 side  [policy]
+      2 LeaveLoop              TFORCALL  d0 root L47 'local function val2str(t, name, indent, insref, pa'
+      2 Nyi(CALL)              CALL      d0 root L42 'local function padnum(d) return ("%0" .. tostring('
+      2 Nyi(CALL)              CALL      d0 root L40 'local alphanumsort = type(opts.sortkeys) == 'funct'
+      1 FnShort                CALL      d0 root L35 'local function safename(path, name) -- generates f'  [policy]
+      1 IntMiss                GETTABLE  d0 root L43 'table.sort(k, function(a, b)'
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+      1 FnShort                CALL      d0 root L43 'table.sort(k, function(a, b)'  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  728.7 L18 pc83 Len 198 3680070
+  546.4 L0 pc0 Move 84 6505050
+  261.8 L0 pc222 Eq 50 5235448
+  159.5 L127 pc0 Test 34 4690872
+  8.9 L40 pc16 Return 148 60423
+  8.9 L47 pc442 Return 148 60369
+  8.0 L32 pc0 Getupval 114 69863
+  7.4 L40 pc0 Gettabup 50 148810
+  6.2 L18 pc124 Return 83 74200
+  2.8 L0 pc0 Move 148 18992
+  2.6 L47 pc172 Gettable 10 264294
+  1.7 L8 pc0 Gettabup 150 11464
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+      55690 Settable   SideShort      black=true gk=40
+      25418 Settable   SideShort      black=true gk=32
+      12567 Forloop    -              black=false gk=32
+        282 Tforprep   TableHash      black=true gk=37
+        102 Gettable   TableHash      black=false gk=17
+         60 Gettable   -              black=true gk=11
+         55 Gettable   -              black=true gk=16
+         40 Tforcall   SideShort      black=true gk=4
+         31 Tforcall   -              black=false gk=4
+         22 Gettable   -              black=false gk=32

@@ -1,0 +1,18 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)    base2 Mcyc    ratio      new Mcyc    ratio      puc Mcyc    ratio       lj Mcyc    ratio
+json_roundtrip           692.0         687.4   0.993~         690.2   0.997~         816.9   1.180              -        -
+lua_interp               243.4         243.2   0.999~         243.4   1.000~         225.8   0.928              -        -
+template_engine           978.9         978.3   0.999~         977.9   0.999~        1269.0   1.296          946.3   0.967~
+geomean base2: all(3) cycles min 0.997 median 0.998 instr 1.000; numeric cycles min nan median nan instr nan
+geomean new: all(3) cycles min 0.999 median 1.000 instr 1.000; numeric cycles min nan median nan instr nan
+geomean puc: all(3) cycles min 1.124 median 1.122 instr 1.170; numeric cycles min nan median nan instr nan
+geomean lj: all(1) cycles min 0.967 median 0.975 instr 0.920; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

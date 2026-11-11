@@ -1,0 +1,75 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 1455034301
+#
+# Overhead  Shared Object         Symbol                                                                                                                              
+# ........  ....................  ....................................................................................................................................
+#
+    17.88%  rn-cli               [.] rn_core::jit_helpers::jit_call
+    12.72%  rn-cli               [.] rn_jit::tr::asm::jit_tr_alloc
+     9.66%  [JIT] tid 2363812     [.] lua_proto@0x7f76b03fe5f0
+     9.12%  [JIT] tid 2363812     [.] 0x00007f76b02fef2a
+     6.94%  rn-cli               [.] rn_std::lib_table::tunpack
+     4.49%  rn-cli               [.] <rn_core::state::State>::gc_step
+     3.81%  [JIT] tid 2363812     [.] 0x00007f76b02feefe
+     3.54%  rn-cli               [.] rn_core::table::resize
+     3.34%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     3.00%  rn-cli               [.] <rn_core::state::State>::post_call
+     2.86%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     2.59%  [JIT] tid 2363812     [.] 0x00007f76b02ff484
+     2.59%  rn-cli               [.] rn_core::table::mainposition
+     1.97%  [JIT] tid 2363812     [.] 0x00007f76b02ff3f9
+     1.84%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     1.49%  rn-cli               [.] rn_std::lib_base::base_select
+     1.43%  rn-cli               [.] rn_std::lib_table::checktab
+     1.36%  rn-cli               [.] rn_core::table::insertkey
+     1.29%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.82%  rn-cli               [.] rn_jit::tr::exit::restore
+     0.75%  [JIT] tid 2363812     [.] lua_proto@0x7f76b03febe0
+     0.68%  rn-cli               [.] <rn_core::state::State>::with_roots::<rn_core::gc::StepOutcome, <rn_core::state::State>::gc_step55::{closure#1}>::{closure#0}
+     0.54%  rn-cli               [.] <rn_core::state::State>::new_table_sized
+     0.54%  rn-cli               [.] rn_jit::tr::exit::jit_tr_exit
+     0.41%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.41%  [JIT] tid 2363812     [.] 0x00007f76b02ff45b
+     0.34%  [JIT] tid 2363812     [.] 0x00007f76b02ff30c
+     0.34%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.27%  [JIT] tid 2363812     [.] 0x00007f76b02ff1f4
+     0.21%  rn-cli               [.] <rn_core::table::TableRef>::short_str_node
+     0.20%  rn-cli               [.] rn_std::lib_table::tpack
+     0.20%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     0.14%  rn-cli               [.] <rn_core::heap::Heap>::finishgencycle
+     0.14%  rn-cli               [.] rn_core::state::shrink_stack
+     0.14%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.14%  [JIT] tid 2363812     [.] 0x00007f76b02ff3d0
+     0.08%  rn-cli               [.] rn_jit::x86::emit
+     0.08%  [JIT] tid 2363812     [.] lua_proto@0x7f76b03fe960
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff1de
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff010
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02fef3b
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff4c7
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff217
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff319
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff3fd
+     0.07%  rn-cli               [.] <rn_core::table::TableRef>::node_addr
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02ff045
+     0.07%  rn-cli               [.] <rn_core::state::State>::raw_set_int
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02feef6
+     0.07%  rn-cli               [.] <rn_core::heap::Heap>::clearbyvalues
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02fef71
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02feef0
+     0.07%  rn-cli               [.] <rn_core::state::State>::raw_set_str
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b0300e86
+     0.07%  [JIT] tid 2363812     [.] 0x00007f76b02fef4c
+     0.07%  rn-cli               [.] <rn_core::table::TableRef>::len
+     0.06%  [JIT] tid 2363812     [.] 0x00007f76b02ff187
+     0.06%  [JIT] tid 2363812     [.] 0x00007f76b02ff476
+     0.06%  [JIT] tid 2363812     [.] 0x00007f76b02feee8
+
+
+#
+# (Tip: To count events every 1000 msec: perf stat -I 1000)
+#

@@ -1,0 +1,68 @@
+== oop_mixins__all3 (rc 0)
+[trace] recorded 14 installed 8 entered 584104 flushes 8 rerecord 0 blacklisted 33 refused 285 deferred 0 ineffective 0 probes 333 (fn-short 48 start-refused 285)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 48
+[trace] aborted InnerLoop: 4
+[trace] aborted StartRefused: 285
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 5 phis 20 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 81 installed 24 failed 57 preludes 0
+[trace] links: nest roots 0 frame links 0 stitches 1
+[trace] exits 2145748 (live traces 0)
+aborts (count reason op depth head):
+     32 InnerLoop              FORPREP   d2 side
+     13 CFunc                  CALL      d1 side
+      6 Depth                  CALL      d4 side
+      4 FnShort                RETURN0   d0 root L59 'function Shape:init(x, y)'  [policy]
+      4 FnShort                RETURN1   d0 root L187 'local function LT(a, b) return getmetatable(a).__l'  [policy]
+      4 FnShort                RETURN1   d0 root L44 '__lt = function(a, b) return a:area() < b:area() e'  [policy]
+      4 FnShort                RETURN1   d0 root L69 'Shape.__eq = function(a, b) return a:area() == b:a'  [policy]
+      4 FnShort                RETURN1   d0 root L214 'table.sort(shapes, function(a, b)'  [policy]
+      4 FnShort                RETURN1   d0 root L127 'function Account:deposit(n) self.balance = self.ba'  [policy]
+      4 InnerLoop              FORPREP   d3 side
+      4 FnShort                RETURN0   d0 root L157 'function Checking:monthEnd()'  [policy]
+      4 FnShort                RETURN1   d0 root L240 'table.sort(accounts, function(a, b) if LT(a, b) th'  [policy]
+      3 FnShort                RETURN0   d0 root L82 'function Rect:init(x, y, w, h)'  [policy]
+      3 FnShort                RETURN1   d0 root L18 'c.new = function(p1, p2, p3, p4)'  [policy]
+      3 FnShort                RETURN0   d0 root L74 'function Polygon:init(x, y, sides)'  [policy]
+      3 FnShort                RETURN1   d0 root L128 'function Account:withdraw(n)'  [policy]
+      2 CFunc                  CALL      d0 root L188 'local function EQ(a, b) return rawequal(a, b) or ('
+      2 FnShort                RETURN0   d0 root L121 'function Account:init(owner, balance)'  [policy]
+      2 LeaveFrame             RETURN0   d0 side
+      2 InnerLoop              FORPREP   d2 root L146 'function Savings:monthEnd()'
+      2 InnerLoop              FORPREP   d3 root L165 'function Premium:monthEnd()'
+      1 FnShort                RETURN0   d0 root L98 'function Circle:init(x, y, r)'  [policy]
+      1 FnShort                RETURN0   d0 root L146 'function Savings:monthEnd()'  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  12.4 L82 pc0 Gettabup 42 294779
+  8.8 L98 pc0 Gettabup 66 133290
+  0.8 L157 pc0 Getfield 70 11144
+  0.5 L16 pc0 Getfield 66 7648
+  0.5 L165 pc0 Gettabup 129 3537
+  0.3 L146 pc0 Gettabup 47 7114
+  0.2 L188 pc0 Gettabup 101 2085
+  0.1 L156 pc0 Gettabup 108 1313
+  0.1 L135 pc0 Return0 116 1143
+  0.1 L0 pc171 Settable 105 1238
+  0.1 L0 pc204 Settable 83 1205
+  0.1 L162 pc0 Gettabup 68 925
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     569289 Forloop    LeaveFrame     black=true gk=32
+     489495 SelfOp     -              black=false gk=10
+     419982 Gti        InnerLoop      black=true gk=32
+     160086 SelfOp     -              black=false gk=14
+     120072 Lt         -              black=false gk=32
+      98749 Call       -              black=false gk=1
+      87328 Call       Depth          black=true gk=32
+      73449 Eqi        -              black=false gk=32
+      35032 Call       CFunc          black=false gk=1
+      34694 SelfOp     CFunc          black=true gk=14
+      24773 Eqi        CFunc          black=true gk=32
+      14876 SelfOp     CFunc          black=true gk=10
+      14798 Getfield   -              black=false gk=10
+       1700 Lti        -              black=false gk=32
+       1200 Newtable   -              black=false gk=32
+        184 Lti        InnerLoop      black=true gk=32
+         27 Concat     -              black=false gk=32
+          6 Settable   -              black=false gk=40
+          6 Tforcall   -              black=false gk=49
+          1 Tforcall   -              black=false gk=16

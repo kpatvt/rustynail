@@ -1,0 +1,56 @@
+[package]
+name = "rn-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rustynail runtime: values, strings, tables, garbage collector, state, calls and the bytecode interpreter of Lua 5.5/5.4"
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Promote the PUC hash of every short string at creation (A/B for the lazy hash, `string::LAZY_HASH`).
+eager_hash = []
+# A/B (BUNDLE-T): disable the fused coroutine resume path (`coro::CORO_FUSED`).
+coro_nofuse = []
+# JIT hooks of the interpreter (docs/JIT_HOOK_COST.md): extra `Proto` fields, hot counters, the
+# frame-entry check. OFF by default; with it off the generated code is byte-identical to a build
+# without these features.
+jit = []
+# Test-only: a per-instruction callback in the interpreter dispatch loop (`oracle`, used by the tier-1.5
+# region-analysis oracle `rn-jit/tests/t15_oracle.rs`). OFF by default; with it off the generated code is
+# byte-identical (`scripts/jit-text-identity.sh`).
+t15_oracle = []
+# Counter variant B: global sampling tick in the thread (instead of the per-`Proto` counter A).
+jit_counter_b = ["jit"]
+# Counter variant G: like B but the sampling tick is one process-global static (no pointer chase).
+jit_counter_g = ["jit_counter_b"]
+# Counter variant C: per-CallInfo loop counter (`CallInfo.hot`), initialised at frame creation.
+jit_counter_c = ["jit"]
+# Entry-check placement (d): in `pre_call_lua_fast` / `do_ret!` instead of the `'frame` head (c).
+jit_check_d = ["jit"]
+# Entry-check placement (e): counter and check merged into one `sub [proto.hot]; jle cold` in
+# `pre_call_lua_fast` (compiled protos keep `hot` <= 0); nothing at the `'frame` head or in `do_ret!`.
+jit_check_e = ["jit"]
+# Ablations for the cost breakdown: no loop back-edge counting / no function-entry counting+check.
+jit_no_loop = ["jit"]
+jit_no_entry = ["jit"]
+# J5 trace recorder hook (docs/JIT_TRACE.md TR23): cfg blocks in cold paths only (the `'frame` head of the hooked
+# copy, `fast_trap`, `trace_exec`, the `run()` error choke point). OFF by default; the fast interpreter copy is
+# identical modulo relocations (`scripts/jit-text-identity.sh --fast-copy`).
+jit_trace = ["jit"]
+# Test-only: the VM-side mutant `hooked_head_no_trap` of the recorder hook (selected at run time through
+# `jit_hooks::set_mut_hooked_head_no_trap`; forwarded by rn-jit's `tr_mutants`).
+jit_trace_mut = ["jit_trace"]
+
+[dependencies]
+
+[dev-dependencies]
+libc = "0.2"

@@ -1,0 +1,45 @@
+== varargs_util (rc 0)
+[trace] recorded 19 installed 7 entered 1746324 flushes 7 rerecord 0 blacklisted 5 refused 0 deferred 0 ineffective 0 probes 4 (fn-short 4 start-refused 0)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 4
+[trace] aborted LeaveLoop: 4
+[trace] aborted Vararg: 6
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 8 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 17 installed 2 failed 15 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 1412136 (live traces 0)
+aborts (count reason op depth head):
+      6 CFunc                  CALL      d0 side
+      4 SideShort              FORLOOP   d0 side  [policy]
+      4 FnShort                TAILCALL  d0 root L74 'return (fmt:gsub("%%(%a)", function(spec)'  [policy]
+      3 LeaveFrame             RETURN    d0 side
+      3 LeaveLoop              FORLOOP   d0 root L101 'return function(...)'
+      2 Vararg                 VARARG    d0 root L33 'function M.sum(...)'
+      2 Vararg                 VARARG    d0 root L113 'return function(...)'
+      2 Vararg                 VARARG    d0 root L62 'function M.concatAll(sep, ...)'
+      2 CFunc                  CALL      d0 root L126 'return function(...)'
+      2 TailCall               TAILCALL  d0 side
+      1 LeaveLoop              FORLOOP   d0 root L53 'function M.reverse(...)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  10.4 L99 pc0 Varargprep 158 65732
+  9.9 L101 pc10 Getupval 3 3303393
+  8.3 L126 pc8 Getupval 2 4145740
+  2.2 L110 pc0 Test 164 13456
+  1.2 L53 pc18 Sub 2 575910
+  0.9 L62 pc0 Varargprep 157 6040
+  0.7 L53 pc24 Forloop 2 343880
+  0.4 L101 pc23 Forloop 2 209740
+  0.3 L189 pc0 Mul 136 2271
+  0.3 L101 pc18 Gettabup 2 139540
+  0.2 L74 pc0 Getupval 4 41535
+  0.1 L39 pc11 Lt 5 16516
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     856485 Lt         SideShort      black=true gk=32
+     372683 Forloop    CFunc          black=true gk=32
+      57086 Forloop    LeaveFrame     black=true gk=32
+      56981 Forprep    CFunc          black=true gk=32
+      30391 Forloop    TailCall       black=true gk=32
+      30341 Forloop    -              black=false gk=32
+       7992 Gettable   -              black=false gk=32
+        176 Newtable   -              black=false gk=32
+          1 Forloop    -              black=false gk=48

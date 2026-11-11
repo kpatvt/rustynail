@@ -1,0 +1,31 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cycles:u'
+# Event count (approx.): 3283698324
+#
+# Overhead  Shared Object         Symbol                                                                         
+# ........  ....................  ...............................................................................
+#
+    67.31%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     6.52%  rn-cli               [.] <rn_core::state::State>::new_table
+     5.85%  rn-cli               [.] rn_core::table::resize
+     4.48%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     3.50%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     3.39%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     2.34%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     2.01%  rn-cli               [.] <rn_core::state::State>::gc_step
+     1.61%  rn-cli               [.] <rn_core::state::State>::finish_get
+     1.20%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.70%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     0.58%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     0.22%  [unknown]             [k] 0000000000000000
+     0.12%  rn-cli               [.] rn_core::vm_unsafe::mm_index
+     0.11%  rn-cli               [.] <rn_core::heap::Heap>::singlestep
+
+
+#
+# (Tip: To analyze cache line scalability issues use perf c2c record ... ; perf c2c report)
+#

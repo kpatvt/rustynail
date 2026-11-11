@@ -1,0 +1,28 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)      dup Mcyc    ratio      new Mcyc    ratio     new2 Mcyc    ratio
+bounce                    84.5          84.5   1.000~          77.7   0.919           77.6   0.918 
+cd                       282.0         281.1   0.997~         276.8   0.981~         278.9   0.989~
+deltablue                124.4         124.5   1.001~         120.5   0.969~         120.2   0.966~
+havlak                   178.7         178.9   1.001~         162.5   0.909          163.0   0.912 
+json                     193.2         193.1   1.000~         184.5   0.955~         183.9   0.952~
+list                     145.0         144.8   0.999~         143.6   0.990~         144.0   0.993~
+mandelbrot               277.5         277.3   0.999~         277.3   0.999~         277.1   0.999~
+nbody                    151.8         152.5   1.005~         153.4   1.011~         152.7   1.006~
+permute                   67.7          67.5   0.997~          67.8   1.001~          67.8   1.002~
+queens                   162.0         162.6   1.004~         163.8   1.011~         163.7   1.010~
+richards                  75.9          75.9   1.000~          76.2   1.004~          75.8   0.999~
+sieve                    133.8         133.9   1.000~         134.0   1.002~         133.9   1.000~
+storage                  180.6         180.0   0.997~         142.0   0.786          142.1   0.787 
+towers                   130.2         129.5   0.995~         119.9   0.921          121.0   0.929 
+geomean dup: all(14) cycles min 1.000 median 1.000 instr 1.000; numeric cycles min 1.002 median 1.003 instr 1.000
+geomean new: all(14) cycles min 0.959 median 0.960 instr 0.972; numeric cycles min 1.004 median 1.005 instr 1.000
+geomean new2: all(14) cycles min 0.960 median 0.962 instr 0.972; numeric cycles min 1.002 median 1.006 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

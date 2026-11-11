@@ -1,0 +1,45 @@
+== log_analyzer (rc 0)
+[trace] recorded 10 installed 5 entered 18 flushes 5 rerecord 0 blacklisted 17 refused 146 deferred 0 ineffective 0 probes 165 (fn-short 19 start-refused 146)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 19
+[trace] aborted LeaveLoop: 2
+[trace] aborted Nyi(Call): 1
+[trace] aborted StartRefused: 146
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 7 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 8 installed 6 failed 2 preludes 0
+[trace] links: nest roots 0 frame links 0 stitches 1
+[trace] exits 302458 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                RETURN1   d0 root L10 'local function pick(t) return t[rnd(#t)] end'  [policy]
+      4 FnShort                CALL      d0 root L23 'local function gen_line()'  [policy]
+      4 FnShort                CALL      d0 root L51 'local function browser_of(agent)'  [policy]
+      4 FnShort                CALL      d0 root L38 'local function parse_line(line)'  [policy]
+      3 FnShort                RETURN1   d0 root L65 'table.sort(keys, function(a, b)'  [policy]
+      2 CFunc                  TFORCALL  d0 root L38 'local function parse_line(line)'
+      2 LeaveLoop              TFORCALL  d0 root L0 main
+      2 CFunc                  CALL      d1 side
+      1 Nyi(CALL)              CALL      d0 root L65 'table.sort(keys, function(a, b)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  941.0 L62 pc0 Newtable 1 941003920
+  652.3 L60 pc0 Gettable 4 163066085
+  96.6 L0 pc0 Move 1 96623100
+  18.1 L0 pc403 Gettable 1 18054420
+  6.3 L38 pc0 SelfOp 4 1565125
+  5.7 L0 pc132 Move 844 6713
+  5.6 L0 pc183 Move 3 1866500
+  1.9 L23 pc3 Lei 2 952680
+  0.9 L0 pc135 Test 192 4833
+  0.6 L38 pc16 Settable 2 318760
+  0.5 L51 pc0 SelfOp 4 124370
+  0.3 L0 pc187 Tforcall 1 325400
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     165321 Call       -              black=false gk=32
+      82388 Tforcall   -              black=false gk=4
+      47300 Eqk        -              black=false gk=32
+       6700 Lei        CFunc          black=true gk=32
+        578 Gettable   -              black=false gk=48
+        146 Gettable   -              black=false gk=56
+         21 Settable   -              black=false gk=40
+          2 Forloop    -              black=false gk=32
+          1 Lt         -              black=false gk=32
+          1 Tforcall   -              black=false gk=16

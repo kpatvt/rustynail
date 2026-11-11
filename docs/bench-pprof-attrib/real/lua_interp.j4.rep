@@ -1,0 +1,44 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 257  of event 'cycles:u'
+# Event count (approx.): 226036951
+#
+# Overhead  Shared Object         Symbol                                                                                  
+# ........  ....................  ........................................................................................
+#
+    64.21%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     8.41%  rn-cli               [.] <rn_core::state::State>::post_call
+     6.12%  [JIT] tid 2376541     [.] lua_proto@0x7f88c271c070
+     4.36%  rn-cli               [.] <rn_core::value::Value>::raw_equal
+     3.97%  rn-cli               [.] <rn_core::table::TableRef>::get
+     3.36%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     1.95%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+     0.89%  rn-cli               [.] <rn_core::state::State>::close
+     0.80%  rn-cli               [.] rn_jit::rt::enter
+     0.44%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     0.44%  rn-cli               [.] rn_core::table::mainposition
+     0.44%  libc.so.6             [.] 0x00000000001b7b2c
+     0.44%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.44%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.44%  rn-cli               [.] rn_core::jit_helpers::jit_return_close
+     0.44%  rn-cli               [.] rn_jit::rt::ensure_compiled
+     0.44%  rn-cli               [.] rn_core::table::insertkey
+     0.44%  [JIT] tid 2376541     [.] lua_proto@0x7f88c271c330
+     0.44%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.30%  rn-cli               [.] rn_std::lib_base::ipairs_aux
+     0.27%  rn-cli               [.] rn_jit::lower::lower_ex
+     0.21%  rn-cli               [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&(u32, u32)>
+     0.16%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.13%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::constructor
+     0.11%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::discharge2reg
+     0.09%  libc.so.6             [.] statx
+     0.07%  [unknown]             [k] 0000000000000000
+     0.06%  rn-cli               [.] rn_core::table::resize
+
+
+#
+# (Tip: Treat branches as callchains: perf record -b ... ; perf report --branch-history)
+#

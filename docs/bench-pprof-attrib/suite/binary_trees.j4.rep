@@ -1,0 +1,37 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 2583914992
+#
+# Overhead  Shared Object         Symbol                                                                                                                                                                                                                 
+# ........  ....................  .......................................................................................................................................................................................................................
+#
+    22.78%  [JIT] tid 2363450     [.] lua_proto@0x7fac67dc2c50
+    15.96%  [JIT] tid 2363450     [.] lua_proto@0x7fac67dc03f0
+    11.69%  rn-cli               [.] rn_core::jit_helpers::jit_newtable
+     8.21%  rn-cli               [.] <rn_core::state::State>::new_table
+     7.62%  rn-cli               [.] rn_core::jit_helpers::jit_get
+     5.55%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     4.35%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     4.10%  rn-cli               [.] rn_core::jit_helpers::jit_setlist
+     3.83%  rn-cli               [.] <rn_core::table::TableRef>::get
+     3.30%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     3.05%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     3.03%  rn-cli               [.] <rn_core::state::State>::gc_step
+     2.78%  rn-cli               [.] rn_core::table::resize
+     1.21%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.78%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     0.68%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     0.30%  rn-cli               [.] <rn_core::heap::Heap>::singlestep
+     0.20%  [unknown]             [k] 0000000000000000
+     0.15%  rn-cli               [.] rn_core::gc::objsize
+     0.11%  [JIT] tid 2363450     [.] lua_proto@0x7fac67dc27b0
+     0.11%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+
+
+#
+# (Tip: System-wide collection from all CPUs: perf record -a)
+#

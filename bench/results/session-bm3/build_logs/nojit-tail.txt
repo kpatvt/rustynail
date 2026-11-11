@@ -1,0 +1,25 @@
+352 | fn mm_ret_mut(bit: u8) -> bool {
+    |    ^^^^^^^^^^
+
+warning: function `jit_mm_pop` is never used
+   --> crates/lua-core/src/vm_unsafe.rs:368:15
+    |
+368 | pub(crate) fn jit_mm_pop(st: &mut State, ret: Ci, v: Value, flags: u32) -> bool {
+    |               ^^^^^^^^^^
+
+warning: function `jit_mm_arith` is never used
+   --> crates/lua-core/src/vm_unsafe.rs:442:15
+    |
+442 | pub(crate) fn jit_mm_arith(st: &mut State, ci: Ci, instr: Instruction) -> bool {
+    |               ^^^^^^^^^^^^
+
+warning: function `jit_mm_finish` is never used
+   --> crates/lua-core/src/vm_unsafe.rs:478:15
+    |
+478 | pub(crate) fn jit_mm_finish(st: &mut State) {
+    |               ^^^^^^^^^^^^^
+
+   Compiling lua-compiler v0.0.1 (<cache>/bm3/1e6ec4ca/src/crates/lua-compiler)
+   Compiling lua-std v0.0.1 (<cache>/bm3/1e6ec4ca/src/crates/lua-std)
+warning: `lua-core` (lib) generated 8 warnings
+    Finished `release` profile [optimized + debuginfo] target(s) in 10.58s

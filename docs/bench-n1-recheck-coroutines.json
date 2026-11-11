@@ -1,0 +1,93 @@
+{
+ "cpu": 4,
+ "runs": 21,
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 <tmp>/lua-cli",
+  "new": "env RUSTYNAIL_SEED=0 <tmp>/lua-cli",
+  "base2": "env RUSTYNAIL_SEED=0 <tmp>/lua-cli"
+ },
+ "baseline": "base",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "coroutines": {
+   "base": {
+    "cycles_min": 1861254212,
+    "cycles_median": 1903010535,
+    "instructions_min": 9306479176,
+    "instructions_median": 9306527497,
+    "runs": 21,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 1930715113,
+    "cycles_median": 1948310270,
+    "instructions_min": 9306400572,
+    "instructions_median": 9306518160,
+    "runs": 21,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "base2": {
+    "cycles_min": 1870570610,
+    "cycles_median": 1907362263,
+    "instructions_min": 9306330686,
+    "instructions_median": 9306522398,
+    "runs": 21,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "new": {
+   "coroutines": {
+    "cycles_min": 1.0373194056739627,
+    "cycles_median": 1.0238042481462142,
+    "instructions_min": 0.9999915538413063,
+    "instructions_median": 0.9999989967256849
+   }
+  },
+  "base2": {
+   "coroutines": {
+    "cycles_min": 1.0050054409225428,
+    "cycles_median": 1.0022867598050371,
+    "instructions_min": 0.9999840444493355,
+    "instructions_median": 0.9999994521049874
+   }
+  }
+ },
+ "geomean": {
+  "new": {
+   "all_cycles_min": 1.0373194056739627,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.0238042481462142,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9999915538413063,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9999989967256849,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "base2": {
+   "all_cycles_min": 1.0050054409225428,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.0022867598050371,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9999840444493355,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9999994521049874,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  }
+ }
+}

@@ -1,0 +1,34 @@
+# P9 micro: scripts/bench-cycles.sh RUNS=9 CPU=4 PROGDIR=bench/jit-trace (min of 9 cycles:u)
+# columns: j4 = J5 binary T15=on TRACE=off (baseline of ratios); t1 = T15=off TRACE=off; tr = T15=off TRACE=on; ref89 = main@89963c6 --features jit binary, T15=on
+# started Fri Oct 30 03:35:34 PM CDT 2026
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program           j4 Mcyc(min)       t1 Mcyc    ratio       tr Mcyc    ratio    ref89 Mcyc    ratio
+array_rec               4501.0        6518.8   1.448         1819.0   0.404         4501.2   1.000~
+dot                     2250.0        5667.9   2.519         1711.2   0.761         2274.7   1.011~
+float_loop              2893.0       11118.4   3.843         2774.1   0.959~        2946.1   1.018~
+float_poly              1814.8        7593.4   4.184         3149.5   1.735         1814.9   1.000~
+inline_2                6278.3        6273.2   0.999~         411.8   0.066         6253.9   0.996~
+inline_leaf             6364.9        6361.4   0.999~         663.8   0.104         6376.9   1.002~
+int_rec2                2528.9        5286.3   2.090         1226.3   0.485         2728.7   1.079 
+int_sum                 2039.3        3106.4   1.523         1245.5   0.611         2039.3   1.000~
+licm_expr               2025.5        8859.9   4.374          469.6   0.232         2071.7   1.023~
+short_inner             1423.5        6178.1   4.340         2328.1   1.635         1421.8   0.999~
+type_entry              8467.9        5514.1   0.651         2149.6   0.254         7034.3   0.831 
+type_entry_stable          2671.7        5507.0   2.061         1988.9   0.744         2198.8   0.823 
+type_late               2036.6        5387.9   2.646         2540.0   1.247         2539.0   1.247 
+type_late_stable          2535.1        5378.0   2.121         1792.5   0.707         2036.0   0.803 
+upval_acc               5428.4        5364.6   0.988~        1846.2   0.340         5033.6   0.927 
+upval_inv               3831.4        7611.3   1.987         2170.1   0.566         3789.7   0.989~
+geomean t1: all(16) cycles min 1.972 median 1.949 instr 2.018; numeric cycles min nan median nan instr nan
+geomean tr: all(16) cycles min 0.494 median 0.489 instr 0.557; numeric cycles min nan median nan instr nan
+geomean ref89: all(16) cycles min 0.979 median 0.968 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+# finished Fri Oct 30 03:43:50 PM CDT 2026

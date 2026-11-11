@@ -1,0 +1,57 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 1473114612
+#
+# Overhead  Shared Object         Symbol                                                                         
+# ........  ....................  ...............................................................................
+#
+    20.83%  rn-cli               [.] <rn_core::state::State>::concat_result::{closure#0}
+    14.08%  rn-cli               [.] <rn_core::table::TableRef>::get
+    12.05%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    11.39%  libc.so.6             [.] 0x00000000001b7af9
+     8.16%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     5.18%  rn-cli               [.] rn_core::number::tostring_int
+     3.99%  rn-cli               [.] <rn_core::table::TableRef>::next
+     2.80%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     2.74%  rn-cli               [.] rn_core::table::insertkey
+     2.12%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     1.96%  rn-cli               [.] <rn_core::state::State>::ccall
+     1.75%  rn-cli               [.] rn_core::table::mainposition
+     1.74%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     1.74%  rn-cli               [.] <rn_core::state::State>::concat_scan
+     1.57%  rn-cli               [.] <rn_core::heap::Heap>::resize_strtab
+     1.08%  libc.so.6             [.] 0x00000000001ae4a5
+     1.01%  rn-cli               [.] <rn_core::state::State>::concat_tostring
+     0.87%  rn-cli               [.] <rn_core::state::State>::concat
+     0.82%  rn-cli               [.] rn_core::table::resize
+     0.74%  libc.so.6             [.] 0x00000000001b7ac4
+     0.53%  rn-cli               [.] rn_core::table::newkey
+     0.41%  libc.so.6             [.] 0x00000000001ae484
+     0.32%  rn-cli               [.] <rn_core::table::TableRef>::pset
+     0.27%  rn-cli               [.] rn_std::lib_base::base_next
+     0.20%  [unknown]             [k] 0000000000000000
+     0.20%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.19%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.14%  libc.so.6             [.] 0x00000000001ae4ab
+     0.13%  rn-cli               [.] core::ptr::drop_glue::<rn_core::heap::Heap>
+     0.13%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     0.13%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.13%  rn-cli               [.] rn_core::vm_unsafe::mm_newindex
+     0.07%  libc.so.6             [.] 0x00000000001ae4b3
+     0.07%  libc.so.6             [.] 0x00000000001ae4a9
+     0.07%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.07%  rn-cli               [.] <rn_core::heap::Heap>::free_string
+     0.07%  rn-cli               [.] <rn_core::state::State>::finish_set
+     0.07%  libc.so.6             [.] 0x00000000001b83c7
+     0.06%  libc.so.6             [.] 0x00000000001b7afc
+     0.06%  libc.so.6             [.] 0x00000000001b7ac0
+     0.06%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+
+
+#
+# (Tip: For memory address profiling, try: perf mem record / perf mem report)
+#

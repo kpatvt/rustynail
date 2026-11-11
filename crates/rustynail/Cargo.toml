@@ -1,0 +1,64 @@
+[package]
+name = "rustynail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lua 5.5 (and 5.4) in Rust: safe embedding API with the semantics of the Lua C API"
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+readme = "../../README.md"
+
+[lints]
+workspace = true
+
+[features]
+jit = ["rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "dep:rn-jit", "rn-jit/jit", "rn-jit/trace"]
+jit_counter_b = ["rn-core/jit_counter_b"]
+jit_check_d = ["rn-core/jit_check_d"]
+jit_counter_g = ["rn-core/jit_counter_g"]
+jit_counter_c = ["rn-core/jit_counter_c"]
+jit_check_e = ["rn-core/jit_check_e"]
+jit_no_loop = ["rn-core/jit_no_loop"]
+jit_no_entry = ["rn-core/jit_no_entry"]
+
+[dependencies]
+rn-core = { path = "../rn-core" }
+rn-compiler = { path = "../rn-compiler" }
+rn-std = { path = "../rn-std" }
+rn-jit = { path = "../rn-jit", optional = true }
+
+[[bin]]
+name = "rnvmrun"
+path = "src/bin/vmrun.rs"
+test = false
+doc = false
+
+# The examples also run as tests: `cargo test -p rustynail` runs each example's `#[test]`.
+[[example]]
+name = "hello"
+test = true
+
+[[example]]
+name = "rust_functions"
+test = true
+
+[[example]]
+name = "call_lua"
+test = true
+
+[[example]]
+name = "userdata"
+test = true
+
+[[example]]
+name = "errors"
+test = true
+
+[[example]]
+name = "sandbox"
+test = true

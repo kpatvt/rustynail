@@ -1,0 +1,12 @@
+local co = coroutine.wrap(function()
+  local r = {pcall(function()
+    local a = coroutine.yield("y1")
+    local ok, e = pcall(function() coroutine.yield("y2") error("inner " .. a) end)
+    coroutine.yield(tostring(ok) .. ":" .. tostring(e))
+    error("outer")
+  end)}
+  coroutine.yield(tostring(r[1]) .. ":" .. tostring(r[2]))
+  local ok, v = xpcall(function() coroutine.yield("y3") error("xp") end, function(m) return "H(" .. m .. ")" end)
+  return tostring(ok) .. tostring(v)
+end)
+print(co()) print(co("A")) print(co()) print(co()) print(co()) print(co())

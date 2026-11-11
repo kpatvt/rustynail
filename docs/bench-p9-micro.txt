@@ -1,0 +1,35 @@
+# P9 micro: scripts/bench-cycles.sh RUNS=9 CPU=4 PROGDIR=bench/jit-trace (min of 9 cycles:u) PAD=1
+# columns: j4 = J5 binary (bin/luaj5) T15=on TRACE=off (baseline of ratios); t1 = T15=off TRACE=off; tr = T15=off TRACE=on; ref89 = main@89963c6 --features jit binary (bin/luaj4), T15=on (+ ignored TRACE=off)
+# PAD: every column's environment strings and binary path have the same total length (RUSTYNAIL_PAD fills the on/off difference): stack alignment otherwise shifts some programs by up to 25%
+# started Fri Oct 30 03:44:43 PM CDT 2026
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program           j4 Mcyc(min)       t1 Mcyc    ratio       tr Mcyc    ratio    ref89 Mcyc    ratio
+array_rec               4502.8        6491.6   1.442         1819.0   0.404         4505.8   1.001~
+dot                     2255.4        5663.6   2.511         1712.5   0.759         2252.2   0.999~
+float_loop              2910.9       11118.5   3.820         2777.3   0.954~        2911.2   1.000~
+float_poly              1815.4        7596.8   4.185         3149.2   1.735         1814.3   0.999~
+inline_2                6271.6        6270.7   1.000~         413.5   0.066         6254.6   0.997~
+inline_leaf             6364.0        6368.8   1.001~         663.1   0.104         6372.6   1.001~
+int_rec2                2551.3        5292.9   2.075         1225.2   0.480         2731.7   1.071 
+int_sum                 2039.4        3104.6   1.522         1247.2   0.612         2039.1   1.000~
+licm_expr               2026.2        9055.4   4.469          469.4   0.232         2028.2   1.001~
+short_inner             1424.5        6176.7   4.336         2326.5   1.633         1421.8   0.998~
+type_entry              8467.3        5515.6   0.651         2147.6   0.254         7017.6   0.829 
+type_entry_stable          2671.8        5506.8   2.061         1989.0   0.744         2194.2   0.821 
+type_late               2036.6        5386.5   2.645         2537.7   1.246         2538.7   1.247 
+type_late_stable          2536.3        5378.2   2.120         1791.3   0.706         2036.2   0.803 
+upval_acc               5428.5        5361.6   0.988~        1846.0   0.340         5032.6   0.927 
+upval_inv               3833.8        7612.2   1.986         2166.6   0.565         3790.8   0.989~
+geomean t1: all(16) cycles min 1.972 median 1.961 instr 2.018; numeric cycles min nan median nan instr nan
+geomean tr: all(16) cycles min 0.493 median 0.486 instr 0.557; numeric cycles min nan median nan instr nan
+geomean ref89: all(16) cycles min 0.975 median 0.966 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+# finished Fri Oct 30 03:52:59 PM CDT 2026

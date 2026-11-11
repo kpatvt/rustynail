@@ -1,0 +1,54 @@
+[package]
+name = "rn-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rustynail command-line interpreter (`lua`-compatible) and bytecode compiler (`luac`-compatible)"
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rnlua"
+path = "src/main.rs"
+
+[[bin]]
+name = "rnluac"
+path = "src/luac.rs"
+
+[features]
+# The release build has the JIT on by default (x86-64 only: `rn-jit` is a target-specific dependency, so on other
+# architectures the default build is the plain interpreter). `--no-default-features` builds the interpreter without it.
+default = ["jit"]
+coro_nofuse = ["rn-core/coro_nofuse"]
+jit = ["rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "dep:rn-jit", "rn-jit/jit", "rn-jit/trace"]
+# The template JIT (J4) without the trace compiler: the baseline of scripts/jit-text-identity.sh --fast-copy (TR23.1).
+jit_j4 = ["rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "dep:rn-jit", "rn-jit/jit"]
+jit_trace = ["jit", "rn-core/jit_trace"]
+# J5 trace compiler; since F9 the `jit` feature includes it and RUSTYNAIL_JIT_TRACE defaults to on at run time (this alias is kept).
+trace = ["jit", "rn-jit/trace"]
+jit_counter_b = ["rn-core/jit_counter_b"]
+jit_check_d = ["rn-core/jit_check_d"]
+jit_counter_g = ["rn-core/jit_counter_g"]
+jit_counter_c = ["rn-core/jit_counter_c"]
+jit_check_e = ["rn-core/jit_check_e"]
+jit_no_loop = ["rn-core/jit_no_loop"]
+jit_no_entry = ["rn-core/jit_no_entry"]
+
+[dependencies]
+rn-core = { path = "../rn-core" }
+rn-compiler = { path = "../rn-compiler" }
+rn-std = { path = "../rn-std" }
+libc = "0.2"
+rn-capi = { path = "../rn-capi" }
+
+# The JIT backend exists for x86-64 only (docs/JIT.md "Platforms"); elsewhere the `jit` features are inert.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+rn-jit = { path = "../rn-jit", optional = true }

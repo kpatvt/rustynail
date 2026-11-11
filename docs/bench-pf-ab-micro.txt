@@ -1,0 +1,39 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program           j4 Mcyc(min)     base Mcyc    ratio      new Mcyc    ratio
+alloc_ctor              1310.0         444.4   0.339          437.5   0.334 
+array_rec               4499.5        1819.6   0.404         1844.5   0.410 
+dot                     2693.2        1662.2   0.617         1664.8   0.618 
+field_global           11999.2         595.3   0.050          580.0   0.048 
+field_method            9309.3         850.0   0.091          850.8   0.091 
+field_rw                6316.8        1225.7   0.194         1227.0   0.194 
+float_loop              5065.2        3649.9   0.721         3649.4   0.720 
+float_poly              1854.9        1959.2   1.056         1953.4   1.053 
+inline_2                8057.6         410.8   0.051          411.4   0.051 
+inline_leaf             6404.8         670.2   0.105         1290.3   0.201 
+int_rec2                3097.6        1226.3   0.396         1227.2   0.396 
+int_sum                 2043.0        1047.9   0.513         1048.9   0.513 
+licm_expr               2024.1         482.2   0.238          479.3   0.237 
+multret                 6329.9         706.3   0.112          699.9   0.111 
+oop_inherit             3060.2          93.4   0.031           93.4   0.031 
+oop_override             760.1         354.1   0.466          353.2   0.465 
+rec_loop                1196.2        1184.0   0.990~        1196.8   1.001~
+short_inner             2235.8        2042.6   0.914         2052.2   0.918 
+sink_tuple              2454.9          21.1   0.009           28.9   0.012 
+sink_vec                2107.7          25.7   0.012           25.6   0.012 
+str_concat              1573.5        1142.0   0.726         1143.4   0.727 
+tail_loop               7779.0        1421.9   0.183         1379.7   0.177 
+tfor_loops              1239.8        1151.6   0.929         1152.2   0.929 
+type_entry              8001.3        3968.9   0.496         3965.0   0.496 
+type_entry_stable          2669.4        1947.4   0.730         1940.3   0.727 
+type_late               2036.7        1716.1   0.843         1714.0   0.842 
+type_late_stable          2036.2        1710.6   0.840         1713.4   0.841 
+upval_acc               5061.1        1838.0   0.363         1837.7   0.363 
+upval_inv               3918.2        2151.6   0.549         2159.4   0.551 
+geomean base: all(29) cycles min 0.262 median 0.272 instr 0.298; numeric cycles min nan median nan instr nan
+geomean new: all(29) cycles min 0.271 median 0.272 instr 0.298; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+finished

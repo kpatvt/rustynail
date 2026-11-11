@@ -1,0 +1,11 @@
+local prot = setmetatable({}, {__metatable = "locked"})
+print(getmetatable(prot))
+print(pcall(setmetatable, prot, {}))
+print(getmetatable("abc").__index == string)
+print(getmetatable(1), getmetatable(nil), getmetatable(print), getmetatable({}))
+local mt = {}
+local t = setmetatable({}, mt)
+print(getmetatable(t) == mt, getmetatable(setmetatable(t, nil)))
+print(pcall(setmetatable, 1, {}))
+print(pcall(setmetatable, {}, 1))
+print(pcall(setmetatable, {}))

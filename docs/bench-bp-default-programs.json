@@ -1,0 +1,1641 @@
+{
+ "cpu": 4,
+ "runs": 11,
+ "set": "programs",
+ "bins": {
+  "ref": "ref/55/build-seed0/lua",
+  "lj": "/usr/bin/luajit",
+  "plain": "env RUSTYNAIL_SEED=0 <cache>/bpa/lua-cli",
+  "pgo": "env RUSTYNAIL_SEED=0 <cache>/bpb/lua-cli",
+  "pgo2": "env RUSTYNAIL_SEED=0 <cache>/bpe/lua-cli",
+  "bolt": "env RUSTYNAIL_SEED=0 <cache>/bpc/lua-cli",
+  "native": "env RUSTYNAIL_SEED=0 <cache>/bpd/lua-cli"
+ },
+ "programs": {
+  "binary_trees": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4346647434,
+    "cycles_median": 4374187243,
+    "instructions_min": 20986698124,
+    "instructions_median": 20986698352,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 2093091201,
+    "cycles_median": 2152151677,
+    "instructions_min": 7165966294,
+    "instructions_median": 7188889288,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1972222235,
+    "cycles_median": 1994678125,
+    "instructions_min": 10371770630,
+    "instructions_median": 10371771552,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1724976692,
+    "cycles_median": 1759994236,
+    "instructions_min": 9503386190,
+    "instructions_median": 9503387242,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1739107034,
+    "cycles_median": 1750630402,
+    "instructions_min": 9503386268,
+    "instructions_median": 9503387563,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1742003355,
+    "cycles_median": 1755209056,
+    "instructions_min": 9520351567,
+    "instructions_median": 9520352330,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1716862493,
+    "cycles_median": 1727524487,
+    "instructions_min": 9312405149,
+    "instructions_median": 9312405895,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "closures": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4995057075,
+    "cycles_median": 5058603678,
+    "instructions_min": 25098178304,
+    "instructions_median": 25098178665,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 947675759,
+    "cycles_median": 958167793,
+    "instructions_min": 3930860844,
+    "instructions_median": 3931041621,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 493146576,
+    "cycles_median": 494631393,
+    "instructions_min": 3142260005,
+    "instructions_median": 3142260913,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 455563411,
+    "cycles_median": 457852185,
+    "instructions_min": 2873684944,
+    "instructions_median": 2873685687,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 455853554,
+    "cycles_median": 457995405,
+    "instructions_min": 2873684330,
+    "instructions_median": 2873685001,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 459086571,
+    "cycles_median": 465826564,
+    "instructions_min": 2873600737,
+    "instructions_median": 2873601380,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 456279216,
+    "cycles_median": 479432879,
+    "instructions_min": 2879357982,
+    "instructions_median": 2879359689,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "coroutines": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3718123522,
+    "cycles_median": 3771703632,
+    "instructions_min": 9714872122,
+    "instructions_median": 9714872566,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 870058194,
+    "cycles_median": 879905085,
+    "instructions_min": 4788402370,
+    "instructions_median": 4791035922,
+    "runs": 11,
+    "output": "diff"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1945760224,
+    "cycles_median": 1969897709,
+    "instructions_min": 9442034982,
+    "instructions_median": 9442035605,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1583785497,
+    "cycles_median": 1619259475,
+    "instructions_min": 7941331287,
+    "instructions_median": 7941333287,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1567268998,
+    "cycles_median": 1599717763,
+    "instructions_min": 7941332511,
+    "instructions_median": 7941333497,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1547899966,
+    "cycles_median": 1563221924,
+    "instructions_min": 7931051233,
+    "instructions_median": 7931053544,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1606452917,
+    "cycles_median": 1628334745,
+    "instructions_min": 7881237120,
+    "instructions_median": 7881239104,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "fannkuch": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4030301535,
+    "cycles_median": 4045635029,
+    "instructions_min": 20004306209,
+    "instructions_median": 20004306451,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 1064292626,
+    "cycles_median": 1087410797,
+    "instructions_min": 2341146290,
+    "instructions_median": 2347535343,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1164193170,
+    "cycles_median": 1168537060,
+    "instructions_min": 5941795667,
+    "instructions_median": 5941797544,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1158368230,
+    "cycles_median": 1164038554,
+    "instructions_min": 5943532979,
+    "instructions_median": 5943533607,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1161916891,
+    "cycles_median": 1164117094,
+    "instructions_min": 5943531917,
+    "instructions_median": 5943532970,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1162750996,
+    "cycles_median": 1167433360,
+    "instructions_min": 5943508050,
+    "instructions_median": 5943509956,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1158049388,
+    "cycles_median": 1162183917,
+    "instructions_min": 5943088477,
+    "instructions_median": 5943089249,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "fasta": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3575211141,
+    "cycles_median": 3607457089,
+    "instructions_min": 13623115715,
+    "instructions_median": 13623116132,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1468629685,
+    "cycles_median": 1478705554,
+    "instructions_min": 3070718753,
+    "instructions_median": 3071301684,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1606501260,
+    "cycles_median": 1624838272,
+    "instructions_min": 6316973547,
+    "instructions_median": 6316974566,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1547491420,
+    "cycles_median": 1568691410,
+    "instructions_min": 5833277550,
+    "instructions_median": 5833279387,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1545652786,
+    "cycles_median": 1556792485,
+    "instructions_min": 5833277733,
+    "instructions_median": 5833278799,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1538205965,
+    "cycles_median": 1551142385,
+    "instructions_min": 5846066511,
+    "instructions_median": 5846067720,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1556112111,
+    "cycles_median": 1572560179,
+    "instructions_min": 5895881124,
+    "instructions_median": 5895882549,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "fib": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4135614043,
+    "cycles_median": 4139082096,
+    "instructions_min": 18176758253,
+    "instructions_median": 18176758366,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 460839626,
+    "cycles_median": 474395741,
+    "instructions_min": 2483248721,
+    "instructions_median": 2532978204,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1427264018,
+    "cycles_median": 1600277729,
+    "instructions_min": 10399681518,
+    "instructions_median": 10399682905,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1426383538,
+    "cycles_median": 1599464093,
+    "instructions_min": 10399541662,
+    "instructions_median": 10399542531,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1425651584,
+    "cycles_median": 1600644773,
+    "instructions_min": 10399541984,
+    "instructions_median": 10399542899,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1425794377,
+    "cycles_median": 1598404697,
+    "instructions_min": 10399543391,
+    "instructions_median": 10399544067,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1423543148,
+    "cycles_median": 1440109711,
+    "instructions_min": 10399534463,
+    "instructions_median": 10399534704,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "gc_churn": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4454823779,
+    "cycles_median": 4531670309,
+    "instructions_min": 19740402813,
+    "instructions_median": 19744548734,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 3491495365,
+    "cycles_median": 3514345412,
+    "instructions_min": 9126799033,
+    "instructions_median": 9128588847,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 2270659269,
+    "cycles_median": 2285165900,
+    "instructions_min": 10383535226,
+    "instructions_median": 10383599434,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1865779278,
+    "cycles_median": 1876023174,
+    "instructions_min": 8575455288,
+    "instructions_median": 8575518546,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1868718111,
+    "cycles_median": 1880229763,
+    "instructions_min": 8575461045,
+    "instructions_median": 8575508802,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1844563171,
+    "cycles_median": 1860645698,
+    "instructions_min": 8576091254,
+    "instructions_median": 8576122042,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1952184637,
+    "cycles_median": 1983310946,
+    "instructions_min": 8784157163,
+    "instructions_median": 8784239626,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "heapsort": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3777475780,
+    "cycles_median": 3801248500,
+    "instructions_min": 18209675361,
+    "instructions_median": 18209675554,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1228730648,
+    "cycles_median": 1233618110,
+    "instructions_min": 1823183808,
+    "instructions_median": 1823185056,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1241830868,
+    "cycles_median": 1247037371,
+    "instructions_min": 3934966039,
+    "instructions_median": 3934967649,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1243734933,
+    "cycles_median": 1248198398,
+    "instructions_min": 3948244819,
+    "instructions_median": 3948246522,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1243819502,
+    "cycles_median": 1246657648,
+    "instructions_min": 3948245739,
+    "instructions_median": 3948246373,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1243368318,
+    "cycles_median": 1248226434,
+    "instructions_min": 3948237453,
+    "instructions_median": 3948238359,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1235612121,
+    "cycles_median": 1245117996,
+    "instructions_min": 3935030090,
+    "instructions_median": 3935031326,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "json": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3079166265,
+    "cycles_median": 3096577484,
+    "instructions_min": 12371397168,
+    "instructions_median": 12372475115,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1438399573,
+    "cycles_median": 1474578645,
+    "instructions_min": 5196087839,
+    "instructions_median": 5205270455,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 2141793430,
+    "cycles_median": 2152233218,
+    "instructions_min": 9011480291,
+    "instructions_median": 9011486275,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1722575805,
+    "cycles_median": 1749997359,
+    "instructions_min": 7727208438,
+    "instructions_median": 7727213107,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1791582740,
+    "cycles_median": 1818717693,
+    "instructions_min": 7727208713,
+    "instructions_median": 7727213532,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1705128906,
+    "cycles_median": 1739294995,
+    "instructions_min": 7726269700,
+    "instructions_median": 7726272360,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1735544384,
+    "cycles_median": 1752283823,
+    "instructions_min": 7708773982,
+    "instructions_median": 7708776296,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "knucleotide": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4063944281,
+    "cycles_median": 4110484441,
+    "instructions_min": 22525056209,
+    "instructions_median": 22525056486,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 691586249,
+    "cycles_median": 698010827,
+    "instructions_min": 3612092240,
+    "instructions_median": 3620842393,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1435356142,
+    "cycles_median": 1443433243,
+    "instructions_min": 8677932843,
+    "instructions_median": 8677934675,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1370169689,
+    "cycles_median": 1390617466,
+    "instructions_min": 8079621517,
+    "instructions_median": 8079623324,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1369830254,
+    "cycles_median": 1377654583,
+    "instructions_min": 8079622176,
+    "instructions_median": 8079623364,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1376711101,
+    "cycles_median": 1391559579,
+    "instructions_min": 8079621298,
+    "instructions_median": 8079622518,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1370797001,
+    "cycles_median": 1380926592,
+    "instructions_min": 8052647336,
+    "instructions_median": 8052647761,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "load_big": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 1745946612,
+    "cycles_median": 1762260927,
+    "instructions_min": 6564481771,
+    "instructions_median": 6567699877,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 483351045,
+    "cycles_median": 492482366,
+    "instructions_min": 1917502640,
+    "instructions_median": 1930463748,
+    "runs": 11,
+    "output": "diff"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 763923527,
+    "cycles_median": 766458207,
+    "instructions_min": 2871590821,
+    "instructions_median": 2871766653,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 623033499,
+    "cycles_median": 626119805,
+    "instructions_min": 2518216562,
+    "instructions_median": 2518520458,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 610903756,
+    "cycles_median": 615755761,
+    "instructions_min": 2518129213,
+    "instructions_median": 2518350374,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 603611666,
+    "cycles_median": 605676423,
+    "instructions_min": 2515335980,
+    "instructions_median": 2515606928,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 604540059,
+    "cycles_median": 607815571,
+    "instructions_min": 2519583232,
+    "instructions_median": 2519711264,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "loops_arith": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4342213607,
+    "cycles_median": 4351311879,
+    "instructions_min": 24765087814,
+    "instructions_median": 24765088091,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1106870388,
+    "cycles_median": 1109615057,
+    "instructions_min": 3091144148,
+    "instructions_median": 3091145184,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 539768221,
+    "cycles_median": 548147884,
+    "instructions_min": 3567178457,
+    "instructions_median": 3567180161,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 539322541,
+    "cycles_median": 548201797,
+    "instructions_min": 3566909878,
+    "instructions_median": 3566911354,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 539682150,
+    "cycles_median": 547884612,
+    "instructions_min": 3566909516,
+    "instructions_median": 3566910493,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 547363582,
+    "cycles_median": 548281704,
+    "instructions_min": 3566908995,
+    "instructions_median": 3566910070,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 540484708,
+    "cycles_median": 548319983,
+    "instructions_min": 3566882284,
+    "instructions_median": 3566883213,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "mandelbrot": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4672067234,
+    "cycles_median": 4756714991,
+    "instructions_min": 26758703377,
+    "instructions_median": 26758703567,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 521706776,
+    "cycles_median": 521821015,
+    "instructions_min": 1199441306,
+    "instructions_median": 1199441699,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 556809727,
+    "cycles_median": 557671519,
+    "instructions_min": 2094134226,
+    "instructions_median": 2094135332,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 556739902,
+    "cycles_median": 557140765,
+    "instructions_min": 2093788952,
+    "instructions_median": 2093789961,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 556649613,
+    "cycles_median": 556901003,
+    "instructions_min": 2093788454,
+    "instructions_median": 2093789180,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 556420171,
+    "cycles_median": 556901054,
+    "instructions_min": 2093792028,
+    "instructions_median": 2093793624,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 556908178,
+    "cycles_median": 557108190,
+    "instructions_min": 2093724060,
+    "instructions_median": 2093725168,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "matmul": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3243326723,
+    "cycles_median": 3348742515,
+    "instructions_min": 14518544664,
+    "instructions_median": 14518544799,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 269563510,
+    "cycles_median": 273602564,
+    "instructions_min": 1123019795,
+    "instructions_median": 1123100820,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 442909526,
+    "cycles_median": 448260359,
+    "instructions_min": 2697113795,
+    "instructions_median": 2697115521,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 434634460,
+    "cycles_median": 443084542,
+    "instructions_min": 2697228163,
+    "instructions_median": 2697229808,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 433138752,
+    "cycles_median": 444712384,
+    "instructions_min": 2697227938,
+    "instructions_median": 2697229132,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 439341646,
+    "cycles_median": 445370862,
+    "instructions_min": 2697259135,
+    "instructions_median": 2697260150,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 438131386,
+    "cycles_median": 445474512,
+    "instructions_min": 2694512375,
+    "instructions_median": 2694513434,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "metamethods": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4560855110,
+    "cycles_median": 4589273477,
+    "instructions_min": 23217288419,
+    "instructions_median": 23217289096,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 530668985,
+    "cycles_median": 536595514,
+    "instructions_min": 2993148135,
+    "instructions_median": 2993518130,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 846270639,
+    "cycles_median": 852987265,
+    "instructions_min": 4687447793,
+    "instructions_median": 4687448760,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 819720668,
+    "cycles_median": 821884452,
+    "instructions_min": 4499422952,
+    "instructions_median": 4499424039,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 815848841,
+    "cycles_median": 820354743,
+    "instructions_min": 4499423687,
+    "instructions_median": 4499424837,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 820534407,
+    "cycles_median": 831784594,
+    "instructions_min": 4503039838,
+    "instructions_median": 4503042178,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 813634129,
+    "cycles_median": 815204591,
+    "instructions_min": 4502067205,
+    "instructions_median": 4502068321,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "nbody": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4324765419,
+    "cycles_median": 4431405663,
+    "instructions_min": 24002344472,
+    "instructions_median": 24002344868,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 344079791,
+    "cycles_median": 347662320,
+    "instructions_min": 1698644812,
+    "instructions_median": 1699644335,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 645164626,
+    "cycles_median": 646077800,
+    "instructions_min": 3564891354,
+    "instructions_median": 3564893387,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 644262297,
+    "cycles_median": 645430160,
+    "instructions_min": 3563997364,
+    "instructions_median": 3563999349,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 643610259,
+    "cycles_median": 645620987,
+    "instructions_min": 3563997413,
+    "instructions_median": 3563998229,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 625441096,
+    "cycles_median": 644808345,
+    "instructions_min": 3563996176,
+    "instructions_median": 3563997163,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 643711240,
+    "cycles_median": 645785313,
+    "instructions_min": 3563660753,
+    "instructions_median": 3563662600,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "oop_methods": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4593667924,
+    "cycles_median": 4636197830,
+    "instructions_min": 25827177738,
+    "instructions_median": 25827178074,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 304974915,
+    "cycles_median": 305746315,
+    "instructions_min": 956244339,
+    "instructions_median": 957146185,
+    "runs": 11,
+    "output": "diff"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 156246952,
+    "cycles_median": 156608213,
+    "instructions_min": 967513029,
+    "instructions_median": 967514525,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 155146082,
+    "cycles_median": 155684454,
+    "instructions_min": 966426708,
+    "instructions_median": 966427425,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 154855708,
+    "cycles_median": 155987121,
+    "instructions_min": 966426609,
+    "instructions_median": 966427353,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 155373463,
+    "cycles_median": 155966425,
+    "instructions_min": 966356410,
+    "instructions_median": 966358292,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 155180179,
+    "cycles_median": 155718031,
+    "instructions_min": 965842740,
+    "instructions_median": 965844254,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "pcall_error": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4033812303,
+    "cycles_median": 4099162921,
+    "instructions_min": 14266976936,
+    "instructions_median": 14296414873,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 8457579639,
+    "cycles_median": 8510217619,
+    "instructions_min": 38760647802,
+    "instructions_median": 38926039292,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 2261881294,
+    "cycles_median": 2308253909,
+    "instructions_min": 10348446326,
+    "instructions_median": 10348446978,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1852346454,
+    "cycles_median": 1869613389,
+    "instructions_min": 8766715610,
+    "instructions_median": 8766716378,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1913105182,
+    "cycles_median": 1954200771,
+    "instructions_min": 8766714245,
+    "instructions_median": 8766715548,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1941996402,
+    "cycles_median": 1964662237,
+    "instructions_min": 8752256311,
+    "instructions_median": 8752257708,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1879537488,
+    "cycles_median": 1893249993,
+    "instructions_min": 8661543351,
+    "instructions_median": 8661544983,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "queens": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4320247603,
+    "cycles_median": 4356402984,
+    "instructions_min": 15646464817,
+    "instructions_median": 15646464947,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 1894676837,
+    "cycles_median": 1898533205,
+    "instructions_min": 4335132086,
+    "instructions_median": 4335133278,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1950496724,
+    "cycles_median": 1956124779,
+    "instructions_min": 6171026257,
+    "instructions_median": 6171027357,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1950053027,
+    "cycles_median": 1958028458,
+    "instructions_min": 6170736240,
+    "instructions_median": 6170736901,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1951891135,
+    "cycles_median": 1958491180,
+    "instructions_min": 6170735217,
+    "instructions_median": 6170736177,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1945969957,
+    "cycles_median": 1958345867,
+    "instructions_min": 6170726663,
+    "instructions_median": 6170727390,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1951310711,
+    "cycles_median": 1959772410,
+    "instructions_min": 6170540640,
+    "instructions_median": 6170541021,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "sieve": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3089287952,
+    "cycles_median": 3100789766,
+    "instructions_min": 13032031973,
+    "instructions_median": 13032033008,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 999728950,
+    "cycles_median": 1004644904,
+    "instructions_min": 980849347,
+    "instructions_median": 980849812,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 608413553,
+    "cycles_median": 610935753,
+    "instructions_min": 3510923392,
+    "instructions_median": 3510926498,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 642394412,
+    "cycles_median": 644714219,
+    "instructions_min": 3743300908,
+    "instructions_median": 3743302639,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 639941308,
+    "cycles_median": 643010028,
+    "instructions_min": 3743301080,
+    "instructions_median": 3743301981,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 642212930,
+    "cycles_median": 644384022,
+    "instructions_min": 3743302892,
+    "instructions_median": 3743304302,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 601342892,
+    "cycles_median": 603744388,
+    "instructions_min": 3431852210,
+    "instructions_median": 3431853847,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "spectral_norm": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4349342625,
+    "cycles_median": 4553709130,
+    "instructions_min": 23292864262,
+    "instructions_median": 23292864426,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 170977102,
+    "cycles_median": 171267888,
+    "instructions_min": 744631053,
+    "instructions_median": 744631652,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 229541397,
+    "cycles_median": 230296581,
+    "instructions_min": 1948371953,
+    "instructions_median": 1948373497,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 229252925,
+    "cycles_median": 229556875,
+    "instructions_min": 1945283604,
+    "instructions_median": 1945284948,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 228943969,
+    "cycles_median": 229783397,
+    "instructions_min": 1945283943,
+    "instructions_median": 1945285415,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 229217799,
+    "cycles_median": 229805703,
+    "instructions_min": 1945141751,
+    "instructions_median": 1945142995,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 229044421,
+    "cycles_median": 229388167,
+    "instructions_min": 1944457856,
+    "instructions_median": 1944459007,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "string_ops": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 2683394606,
+    "cycles_median": 2723777718,
+    "instructions_min": 6701681300,
+    "instructions_median": 6713681200,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 2133568932,
+    "cycles_median": 2177197516,
+    "instructions_min": 3535302954,
+    "instructions_median": 3535747068,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1485290589,
+    "cycles_median": 1519035235,
+    "instructions_min": 4685354610,
+    "instructions_median": 4685357928,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1307971314,
+    "cycles_median": 1326714880,
+    "instructions_min": 3910936455,
+    "instructions_median": 3910938271,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1311882149,
+    "cycles_median": 1331786024,
+    "instructions_min": 3910936179,
+    "instructions_median": 3910938476,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1316338749,
+    "cycles_median": 1328783666,
+    "instructions_min": 3897415480,
+    "instructions_median": 3897416827,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1342894631,
+    "cycles_median": 1355887551,
+    "instructions_min": 3955033380,
+    "instructions_median": 3955034186,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "table_array": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3401587160,
+    "cycles_median": 3407658483,
+    "instructions_min": 18914945038,
+    "instructions_median": 18914945225,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 598058172,
+    "cycles_median": 599471187,
+    "instructions_min": 3063610375,
+    "instructions_median": 3063611273,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 362729518,
+    "cycles_median": 364912628,
+    "instructions_min": 1485569437,
+    "instructions_median": 1485570823,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 318983656,
+    "cycles_median": 320583733,
+    "instructions_min": 1056610252,
+    "instructions_median": 1056610962,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 319380925,
+    "cycles_median": 321232898,
+    "instructions_min": 1056610164,
+    "instructions_median": 1056611315,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 316675618,
+    "cycles_median": 317446632,
+    "instructions_min": 1054445497,
+    "instructions_median": 1054446329,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 313623924,
+    "cycles_median": 314092796,
+    "instructions_min": 1032429370,
+    "instructions_median": 1032430730,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "table_hash": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 1663591957,
+    "cycles_median": 1699484627,
+    "instructions_min": 2581079085,
+    "instructions_median": 2581079714,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 404436907,
+    "cycles_median": 407791476,
+    "instructions_min": 667137426,
+    "instructions_median": 667452786,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 628561756,
+    "cycles_median": 640659916,
+    "instructions_min": 1501453470,
+    "instructions_median": 1501456174,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 606063734,
+    "cycles_median": 614532544,
+    "instructions_min": 1368887161,
+    "instructions_median": 1368888823,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 609314981,
+    "cycles_median": 627653181,
+    "instructions_min": 1368888239,
+    "instructions_median": 1368889862,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 605049355,
+    "cycles_median": 615518883,
+    "instructions_min": 1365074006,
+    "instructions_median": 1365075459,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 602431919,
+    "cycles_median": 616654496,
+    "instructions_min": 1330780534,
+    "instructions_median": 1330782882,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "varargs": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 5332557077,
+    "cycles_median": 5382149890,
+    "instructions_min": 28129142943,
+    "instructions_median": 28129143246,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 2163792960,
+    "cycles_median": 2202614169,
+    "instructions_min": 11129603052,
+    "instructions_median": 11131126490,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1342127275,
+    "cycles_median": 1389345375,
+    "instructions_min": 7579872585,
+    "instructions_median": 7579873160,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1147337326,
+    "cycles_median": 1154544314,
+    "instructions_min": 6483000012,
+    "instructions_median": 6483000667,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1146189902,
+    "cycles_median": 1153636234,
+    "instructions_min": 6483000098,
+    "instructions_median": 6483000895,
+    "runs": 11,
+    "output": "same"
+   },
+   "bolt": {
+    "variant": false,
+    "cycles_min": 1146179620,
+    "cycles_median": 1151395871,
+    "instructions_min": 6482981168,
+    "instructions_median": 6482982402,
+    "runs": 11,
+    "output": "same"
+   },
+   "native": {
+    "variant": false,
+    "cycles_min": 1129778220,
+    "cycles_median": 1132018793,
+    "instructions_min": 6474937025,
+    "instructions_median": 6474938266,
+    "runs": 11,
+    "output": "same"
+   }
+  }
+ }
+}

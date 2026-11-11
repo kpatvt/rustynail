@@ -1,0 +1,56 @@
+== bignum_arith (rc 0)
+[trace] recorded 78 installed 8 entered 4093 flushes 8 rerecord 0 blacklisted 13 refused 83 deferred 0 ineffective 0 probes 83 (fn-short 0 start-refused 83)
+[trace] aborted InnerLoop: 5
+[trace] aborted LeaveFrame: 1
+[trace] aborted LeaveLoop: 4
+[trace] aborted MetaTable: 58
+[trace] aborted StartRefused: 83
+[trace] aborted TailCall: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 4 phis 19 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 15 installed 5 failed 10 preludes 0
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 5000 (live traces 0)
+aborts (count reason op depth head):
+     12 MetaTable              GETTABLE  d0 root L116 'function Big.mulSmall(a, m)'
+     12 MetaTable              GETTABLE  d0 root L58 'function Big.__add(a, b)'
+     12 MetaTable              GETTABLE  d0 root L79 'function Big.__mul(a, b)'
+      8 MetaTable              GETTABLE  d0 root L105 'function Big.divmodSmall(a, d)'
+      6 MetaTable              GETTABLE  d0 root L11 'local function trim(a)'
+      6 MetaTable              GETTABLE  d0 root L46 'function Big.cmp(a, b)'
+      4 LeaveLoop              FORLOOP   d0 root L79 'function Big.__mul(a, b)'
+      4 MetaTable              GETTABLE  d0 side
+      2 TailCall               TAILCALL  d0 root L116 'function Big.mulSmall(a, m)'
+      2 InnerLoop              FORPREP   d1 root L149 'local function factorial(n)'
+      2 MetaTable              SETTABLE  d0 root L79 'function Big.__mul(a, b)'
+      2 LeaveFrame             RETURN1   d0 side
+      2 InnerLoop              JMP       d1 side
+      2 SideShort              SETI      d0 side  [policy]
+      2 InnerLoop              FORLOOP   d0 root L105 'function Big.divmodSmall(a, d)'
+      1 LeaveFrame             RETURN1   d0 root L16 'function Big.new(n)'
+      1 InnerLoop              FORPREP   d1 root L156 'local function fib(n)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  325.8 L58 pc44 Return1 178155 1829
+  50.1 L0 pc155 Add 240 208735
+  46.7 L79 pc101 Tailcall 986 47368
+  12.3 L149 pc10 Move 1123 10978
+  11.4 L163 pc37 Add 736 15536
+  11.2 L163 pc28 Move 337 33279
+  2.4 L11 pc0 Len 10 244996
+  0.6 L105 pc10 Getupval 6 93787
+  0.4 L46 pc17 Gettable 6 63880
+  0.3 L105 pc0 Gettabup 4 80820
+  0.3 L58 pc0 Gettabup 6 46440
+  0.3 L116 pc0 Gettabup 6 42203
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+       1620 Forloop    -              black=false gk=32
+       1209 Forprep    -              black=false gk=32
+        924 Forloop    -              black=true gk=32
+        408 Gti        -              black=false gk=32
+        376 Return1    LeaveFrame     black=true gk=32
+        220 Eqi        -              black=false gk=32
+        118 Gettabup   InnerLoop      black=true gk=16
+        110 Eqi        SideShort      black=true gk=32
+          7 Settable   -              black=false gk=40
+          4 Settable   -              black=false gk=32
+          3 Newtable   -              black=false gk=32
+          1 Call       -              black=false gk=33

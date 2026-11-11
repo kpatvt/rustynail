@@ -1,0 +1,50 @@
+== forth_vm (rc 0)
+[trace] recorded 1 installed 1 entered 6493826 flushes 1 rerecord 0 blacklisted 13 refused 164 deferred 0 ineffective 0 probes 210 (fn-short 46 start-refused 164)
+[trace] aborted FnShort: 46
+[trace] aborted StartRefused: 164
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 20 installed 16 failed 10 preludes 0
+[trace] exits 60612128 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                RETURN0   d0 root L81 'function execute(word)'  [policy]
+      4 FnShort                RETURN1   d0 root L12 'local function pop()'  [policy]
+      4 FnShort                RETURN0   d0 root L33 'prim["DUP"]  = function() local a = pop(); push(a)'  [policy]
+      4 FnShort                RETURN1   d0 root L58 'OPS.call = function(ins, pc) execute(ins[2]); retu'  [policy]
+      4 FnShort                RETURN1   d0 root L57 'OPS.lit  = function(ins, pc) push(ins[2]); return '  [policy]
+      4 FnShort                RETURN0   d0 root L34 'prim["DROP"] = function() pop() end'  [policy]
+      4 FnShort                RETURN1   d0 root L61 'OPS["do"] = function(ins, pc)'  [policy]
+      4 FnShort                RETURN0   d0 root L25 'prim["/"]    = function() local b, a = pop(), pop('  [policy]
+      4 FnShort                RETURN0   d0 root L36 'prim["OVER"] = function() local b, a = pop(), pop('  [policy]
+      3 FnShort                RETURN0   d0 root L40 'prim["!"]    = function() local addr, v = pop(), p'  [policy]
+      3 FnShort                RETURN0   d0 root L44 'prim["J"]    = function() push(rstack[#rstack - 2]'  [policy]
+      3 FnShort                RETURN0   d0 root L39 'prim["@"]    = function() push(memory[pop()] or 0)'  [policy]
+      2 SideShort              CALL      d3 side  [policy]
+      2 LeaveFrame             RETURN0   d0 side
+      1 FnShort                RETURN0   d0 root L22 'prim["+"]    = function() local b, a = pop(), pop('  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  789.6 L127 pc111 Jmp 32 24673488
+  459.8 L61 pc0 Getupval 203 2264928
+  7.5 L34 pc0 Getupval 203 36881
+  6.5 L25 pc0 Getupval 203 31790
+  4.5 L33 pc0 Getupval 76 58560
+  2.8 L36 pc0 Getupval 203 14007
+  2.1 L40 pc0 Getupval 202 10246
+  1.9 L39 pc0 Getupval 202 9211
+  0.4 L44 pc0 Getupval 202 1964
+  0.1 L28 pc0 Getupval 134 909
+  0.1 L22 pc0 Getupval 66 1563
+  0.0 L23 pc0 Getupval 123 242
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+   32290825 Call       -              black=false gk=17
+   19451938 Call       -              black=false gk=1
+    8668298 Getfield   -              black=false gk=14
+      52381 Call       MaxSide        black=true gk=17
+      37956 Eqi        -              black=false gk=32
+      35482 Eq         MaxSide        black=true gk=32
+      31830 Call       SideShort      black=true gk=32
+      17203 Le         -              black=false gk=32
+      17171 Return0    LeaveFrame     black=true gk=32
+       3434 Call       MaxSide        black=true gk=1
+       2914 Lt         MaxSide        black=true gk=32
+       1668 Eqk        MaxSide        black=true gk=32
+       1028 Lt         -              black=false gk=32

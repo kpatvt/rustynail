@@ -1,0 +1,70 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 2164876315
+#
+# Overhead  Shared Object         Symbol                                                                                      
+# ........  ....................  ............................................................................................
+#
+    32.37%  [JIT] tid 2362909     [.] lua_proto@0x7f0059abebf0
+    18.91%  [JIT] tid 2362909     [.] lua_proto@0x7f0059abe770
+    10.57%  rn-cli               [.] <rn_core::table::TableRef>::len
+     6.04%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     3.60%  rn-cli               [.] rn_std::lib_table::tconcat::{closure#0}
+     3.37%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     3.24%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     2.51%  rn-cli               [.] rn_core::table::mainposition
+     2.00%  rn-cli               [.] rn_core::jit_helpers::jit_set
+     1.51%  libc.so.6             [.] 0x00000000001b7ac4
+     1.48%  rn-cli               [.] rn_core::table::newkey
+     1.42%  rn-cli               [.] rn_core::table::resize
+     1.24%  rn-cli               [.] <rn_core::state::State>::finish_set
+     0.96%  rn-cli               [.] rn_std::lib_table::tconcat
+     0.87%  libc.so.6             [.] 0x00000000001b7b2c
+     0.60%  libc.so.6             [.] 0x00000000001b7b5b
+     0.46%  libc.so.6             [.] 0x00000000001b7ac0
+     0.46%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.45%  libc.so.6             [.] 0x00000000001b7b77
+     0.45%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::realloc
+     0.45%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.41%  libc.so.6             [.] 0x00000000001b7bb0
+     0.41%  rn-cli               [.] rn_core::table::insertkey
+     0.32%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     0.28%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     0.27%  libc.so.6             [.] 0x00000000001b7b63
+     0.27%  libc.so.6             [.] 0x00000000001b7b44
+     0.27%  rn-cli               [.] rn_core::jit_helpers::jit_newtable
+     0.23%  rn-cli               [.] rn_std::lib_string::str_byte
+     0.18%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     0.18%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.18%  rn-cli               [.] rn_core::jit_helpers::jit_get
+     0.18%  libc.so.6             [.] 0x00000000001b7ad3
+     0.14%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.14%  libc.so.6             [.] malloc
+     0.14%  libc.so.6             [.] realloc
+     0.14%  [unknown]             [k] 0000000000000000
+     0.13%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     0.13%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.09%  rn-cli               [.] <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>
+     0.09%  libc.so.6             [.] 0x00000000001b7b69
+     0.09%  libc.so.6             [.] 0x00000000001b7af6
+     0.09%  libc.so.6             [.] 0x00000000000bcbd8
+     0.09%  rn-cli               [.] <alloc::raw_vec::RawVecInner>::finish_grow
+     0.09%  libc.so.6             [.] 0x00000000000bcb69
+     0.09%  libc.so.6             [.] 0x00000000000bcc76
+     0.09%  libc.so.6             [.] cfree
+     0.09%  libc.so.6             [.] 0x00000000001b7b3a
+     0.09%  libc.so.6             [.] 0x00000000001b7bc7
+     0.09%  libc.so.6             [.] 0x00000000001b7afc
+     0.09%  rn-cli               [.] rn_core::vm_unsafe::index_string_short_str
+     0.09%  libc.so.6             [.] 0x00000000001b7b4e
+     0.07%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.06%  rn-cli               [.] rn_jit::lower::lower_ex
+
+
+#
+# (Tip: Add -I to perf record to sample register values, which will be visible in perf report sample context.)
+#

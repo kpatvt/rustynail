@@ -1,0 +1,54 @@
+== template_gsub (rc 0)
+[trace] recorded 35 installed 2 entered 19393 flushes 2 rerecord 3 blacklisted 30 refused 218 deferred 0 ineffective 0 probes 248 (fn-short 30 start-refused 218)
+[trace] aborted CFunc: 4
+[trace] aborted FnShort: 30
+[trace] aborted InnerLoop: 2
+[trace] aborted LeaveLoop: 3
+[trace] aborted Metamethod: 11
+[trace] aborted Nyi(Call): 4
+[trace] aborted Nyi(Closure): 6
+[trace] aborted StartRefused: 218
+[trace] aborted Unstable: 3
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 6 installed 2 failed 4 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 21960 (live traces 0)
+aborts (count reason op depth head):
+     11 Metamethod             SETTABLE  d0 root L70 'tpl = tpl:gsub("{{#each ([%w_%.]+)}}(.-){{/each}}"'
+      4 FnShort                CALL      d1 root L61 'return (tpl:gsub("%${([%w_%.]+)([^}]*)}", function'  [policy]
+      4 FnShort                CALL      d0 root L50 'local function applyFilters(value, chain)'  [policy]
+      4 FnShort                CALL      d0 root L40 'local function lookup(ctx, path)'  [policy]
+      4 FnShort                CALL      d0 root L18 'local function money(cents)'  [policy]
+      4 FnShort                RETURN1   d0 root L36 'trunc = function(s, n) n = n or 8; if #s > n then '  [policy]
+      4 FnShort                CALL      d1 root L70 'tpl = tpl:gsub("{{#each ([%w_%.]+)}}(.-){{/each}}"'  [policy]
+      4 LeaveFrame             RETURN1   d0 side
+      3 LeaveLoop              TFORCALL  d0 root L70 'tpl = tpl:gsub("{{#each ([%w_%.]+)}}(.-){{/each}}"'
+      3 Unstable               TFORCALL  d0 root L70 'tpl = tpl:gsub("{{#each ([%w_%.]+)}}(.-){{/each}}"'
+      3 FnShort                CALL      d0 root L33 'title = function(s) return (s:gsub("(%a)(%w*)", fu'  [policy]
+      3 FnShort                CALL      d1 root L80 'tpl = tpl:gsub("{{#if ([%w_%.]+)}}(.-){{/if}}", fu'  [policy]
+      2 Nyi(CALL)              CALL      d0 root L50 'local function applyFilters(value, chain)'
+      2 CFunc                  TFORCALL  d0 root L40 'local function lookup(ctx, path)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L68 'function render(tpl, ctx)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L60 'local function renderVars(tpl, ctx)'
+      2 Nyi(CALL)              CALL      d0 root L14 'local function escape(s)'
+      2 CFunc                  TFORCALL  d0 root L0 main
+      2 InnerLoop              FORPREP   d1 root L0 main
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L33 'title = function(s) return (s:gsub("(%a)(%w*)", fu'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1869.5 L0 pc0 Move 6 311575157
+  21.3 L103 pc0 Newtable 63 338346
+  19.9 L103 pc77 Return1 4 4984290
+  1.6 L92 pc0 Getupval 8 204110
+  1.3 L70 pc52 Settable 49 25986
+  1.0 L70 pc41 Settable 12 80507
+  0.8 L33 pc0 SelfOp 187 4158
+  0.6 L36 pc0 Test 157 3753
+  0.6 L0 pc119 Addi 2 278640
+  0.6 L60 pc0 SelfOp 3 184453
+  0.5 L80 pc0 Getupval 3 164347
+  0.5 L40 pc0 Move 4 119565
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+       9776 Forloop    -              black=false gk=32
+       9699 Return1    LeaveFrame     black=true gk=32
+       2440 Eqi        -              black=false gk=32
+         45 Newtable   -              black=false gk=32

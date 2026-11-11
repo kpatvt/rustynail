@@ -1,0 +1,27 @@
+P-M study data (base 3ba94b9; release lua-cli --features jit; cycles:u / instructions:u, RUSTYNAIL_SEED=0, single runs, CPU shared: load average 26-31)
+columns: J4 = RUSTYNAIL_JIT_TRACE=off; T1 = defaults (trace on, fnroot=0); others = RUSTYNAIL_JIT_TRACE_LIMITS=<value>
+
+fib.lua 32 (7.05M calls)
+J4                                           314453340  1065641760   (44.6 cyc/call, 151 instr/call, IPC 3.4, all in generated tier-1 code, no Rust helpers)
+T1                                           316689490  1065650391
+fnroot=1                                     309150059  1087411552   (FnShort x4 -> head blacklisted)
+fnroot=1,unroll=4,maxdepth=6                 421352619  1088105236   (recorded, entered, flushed Ineffective)
+fnroot=1,unroll=8,maxdepth=8                 311115470  1090406005
+fnroot=1,unroll=8,maxdepth=8,maxside=0       349431364  1088508790
+fnroot=1,framesides=1,unroll=8,maxdepth=8    327355959  1090439223
+
+rec_loop.lua 2000
+J4                                           420514233  1426218325
+T1                                           408704116  1427434458
+fnroot=1                                     439941852  1453508080
+fnroot=1,unroll=4,maxdepth=6                 444269617  1458020185
+fnroot=1,unroll=8,maxdepth=8                 446342321  1459612541
+fnroot=0,unroll=4,maxdepth=6,stitchmin=4     426267593  1430620510
+fnroot=0,unroll=8,maxdepth=8,stitchmin=4     418013611  1430229309
+(unroll=8,stitchmin=4: loop trace 1 entered 2840 times, 2840 exits (100%), by snapshot [(9,1024) (12,793) (15,264) (17,512) (25,247)] -> flushed Ineffective, head blacklisted)
+
+fib.lua 27, fnroot=1,unroll=8,maxdepth=8,maxside=0,fnmin=4 (RUSTYNAIL_JIT_VERBOSE=2)
+trace 3 (root = fib tree of the first hot argument): 1794 entries, 1794 exits; by snapshot [(1,1024) (4,266) (6,180) (8,90) (10,89) (13,90) (35,55)] -> flush Ineffective
+trace 4 (re-recorded):                                2221 entries, 2221 exits; by snapshot [(1,1024) (4,740) (7,457)] -> flush Ineffective
+
+binary_trees.lua 14: J4 999441163, T1 1085654486, fnroot=1 1077889699 (no trace; unrelated recording failures, not a recursion win or loss of this task)

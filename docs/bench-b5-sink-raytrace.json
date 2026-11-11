@@ -1,0 +1,126 @@
+{
+ "cpu": 4,
+ "runs": 5,
+ "bins": {
+  "b": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/b/lua-cli",
+  "d": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/d/lua-cli",
+  "n": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/n/lua-cli",
+  "k": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,sinkmt=1,sinkside=1 <tmp>/n/lua-cli"
+ },
+ "baseline": "b",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "raytrace": {
+   "b": {
+    "cycles_min": 189734221,
+    "cycles_median": 190597616,
+    "instructions_min": 669337110,
+    "instructions_median": 669344906,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "d": {
+    "cycles_min": 190258490,
+    "cycles_median": 190896640,
+    "instructions_min": 669338885,
+    "instructions_median": 669355213,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "n": {
+    "cycles_min": 189919305,
+    "cycles_median": 191309570,
+    "instructions_min": 669260242,
+    "instructions_median": 669309734,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "k": {
+    "cycles_min": 150203157,
+    "cycles_median": 152202241,
+    "instructions_min": 531978509,
+    "instructions_median": 531980022,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   }
+  }
+ },
+ "ratios": {
+  "d": {
+   "raytrace": {
+    "cycles_min": 1.0027631757583677,
+    "cycles_median": 1.001568875866737,
+    "instructions_min": 1.0000026518774672,
+    "instructions_median": 1.0000153986381424
+   }
+  },
+  "n": {
+   "raytrace": {
+    "cycles_min": 1.0009754908683552,
+    "cycles_median": 1.0037353772567648,
+    "instructions_min": 0.9998851580185057,
+    "instructions_median": 0.9999474530997626
+   }
+  },
+  "k": {
+   "raytrace": {
+    "cycles_min": 0.7916503212143264,
+    "cycles_median": 0.7985527006801596,
+    "instructions_min": 0.7947841245497355,
+    "instructions_median": 0.7947771279520278
+   }
+  }
+ },
+ "geomean": {
+  "d": {
+   "all_cycles_min": 1.0027631757583677,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.001568875866737,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.0000026518774672,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0000153986381424,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "n": {
+   "all_cycles_min": 1.0009754908683552,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.0037353772567648,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9998851580185057,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9999474530997626,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "k": {
+   "all_cycles_min": 0.7916503212143264,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.7985527006801596,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.7947841245497355,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.7947771279520278,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  }
+ }
+}

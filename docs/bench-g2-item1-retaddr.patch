@@ -1,0 +1,78 @@
+diff --git a/crates/lua-jit/src/calls.rs b/crates/lua-jit/src/calls.rs
+index fe4b1fca..bdd906be 100644
+--- a/crates/lua-jit/src/calls.rs
++++ b/crates/lua-jit/src/calls.rs
+@@ -260,7 +260,9 @@ impl Cx<'_> {
+         self.op(Op::Add(0, Src::V(1)));
+         self.op(Op::Add(0, Src::Imm(1)));
+         self.st(W::B8, Self::m_reg(6, ci::TOP as i32), 0); // func + 1 + fsize
+-        self.st_imm(W::B4, Self::m_reg(6, ci::CALLSTATUS as i32), c as i32); // nresults + 1
++        self.st_imm(W::B4, Self::m_reg(6, ci::CALLSTATUS as i32), c as i32 | (1 << 28)); // nresults + 1 (+ G2 JITRET)
++        self.op(Op::LeaL(4, next));
++        self.st(W::B8, Self::m_reg(6, std::mem::offset_of!(lua_core::state::CallInfo, ctx) as i32), 4);
+         self.st_imm(W::B4, Self::m_reg(6, ci::TRAP as i32), 0);
+         self.ld(0, W::B8, Self::m_reg(2, env.proto_code));
+         self.st(W::B8, Self::m_reg(6, ci::SAVEDPC as i32), 0);
+@@ -582,8 +584,25 @@ impl Cx<'_> {
+             let ret = self.l_exit(2);
+             self.op(Op::Bind(l));
+             self.ld(0, W::B4, ciw(ci::CALLSTATUS));
++            self.op(Op::MovR(1, 0));
+             self.op(Op::And(0, Src::Imm(ci::CIST_FRESH as i32)));
+             self.br(Cc::Ne, 0, Src::Imm(0), ret);
++            let old = self.p.label();
++            self.op(Op::And(1, Src::Imm(1 << 28)));
++            self.br(Cc::Eq, 1, Src::Imm(0), old);
++            self.ld(2, W::B8, thw(thr::CI));
++            self.ld(0, W::B8, ciw(std::mem::offset_of!(lua_core::state::CallInfo, ctx)));
++            self.ld(3, W::B8, Self::m_reg(2, ci::FUNC as i32));
++            self.op(Op::Shl(3, 4));
++            self.ld(4, W::B8, thw(env.stack_off as usize));
++            self.op(Op::Add(4, Src::V(3)));
++            self.ld(3, W::B8, Self::m_reg(2, ci::KCACHE as i32));
++            self.op(Op::Lea(4, Self::m_reg(4, 16)));
++            self.op(Op::SetCi(2));
++            self.op(Op::SetFrame(4));
++            self.op(Op::SetK(3));
++            self.op(Op::JmpR(0));
++            self.op(Op::Bind(old));
+             self.ld(2, W::B8, thw(thr::CI)); // the caller (popped to by the return)
+             self.ld(3, W::B8, Self::m_reg(2, ci::FUNC as i32));
+             self.op(Op::Shl(3, 4));
+diff --git a/crates/lua-jit/src/emu.rs b/crates/lua-jit/src/emu.rs
+index 6c6da12f..d630f5d8 100644
+--- a/crates/lua-jit/src/emu.rs
++++ b/crates/lua-jit/src/emu.rs
+@@ -640,6 +640,7 @@ impl Emu {
+                     }
+                 }
+                 Op::SetFrame(_) => leave!(Until::Stop(Stop::Unsupported)),
++                Op::LeaL(..) => leave!(Until::Stop(Stop::Unsupported)),
+             }
+         }
+     }
+diff --git a/crates/lua-jit/src/ir.rs b/crates/lua-jit/src/ir.rs
+index b14863ca..b35698a3 100644
+--- a/crates/lua-jit/src/ir.rs
++++ b/crates/lua-jit/src/ir.rs
+@@ -438,6 +438,8 @@ pub enum Op {
+     SetK(V),
+     /// `goto *V` (an absolute native address).
+     JmpR(V),
++    /// G2 experiment: `V = &label`.
++    LeaL(V, L),
+     /// Pinned `rbx = *(thread + stack_off) + (ci.func << 4) + 16`: the frame base re-derived from the
+     /// thread's stack pointer after anything that can move the stack. Clobbers `V7` and `V8` (`rax`, `rdx`).
+     ReloadFrame {
+diff --git a/crates/lua-jit/src/x86.rs b/crates/lua-jit/src/x86.rs
+index 5dfc5714..92a42ba5 100644
+--- a/crates/lua-jit/src/x86.rs
++++ b/crates/lua-jit/src/x86.rs
+@@ -262,6 +262,7 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
+             Op::SetCi(v) => a.mov_rr(Size::S64, R13, vr(v)),
+             Op::SetK(v) => a.mov_rr(Size::S64, R14, vr(v)),
+             Op::JmpR(v) => a.jmp_r(vr(v)),
++            Op::LeaL(d, l) => a.lea(Size::S64, vr(d), Mem::rip(lab(l))),
+             Op::ReloadFrame { stack_off } => {
+                 a.mov_rm(Size::S64, RAX, Mem::base_disp(R12, stack_off));
+                 a.mov_rm(Size::S64, RDX, Mem::base_disp(R13, callinfo::FUNC as i32));

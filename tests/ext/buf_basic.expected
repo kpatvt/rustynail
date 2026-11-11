@@ -1,0 +1,57 @@
+loaded	true	function	function	function	nil
+type	userdata
+put-multi | ok | "a12\x2e5b" | 6
+put-tbl | ERR | bad argument #2 to '?' (string/number/__tostring expected, got table)
+put-bool | ERR | bad argument #2 to '?' (string/number/__tostring expected, got boolean)
+put-nil | ERR | bad argument #2 to '?' (string/number/__tostring expected, got nil)
+put-none | ok | true
+put-tostring | ok | "T\x21\x7c\x2d7\x7c1e\x2b100"
+get0 | ok | ""
+get-1 | ERR | bad argument #2 to '?' (number out of range)
+get100 | ok | "xx"
+getfrac | ok | "a"
+getstr | ERR | bad argument #2 to '?' (number expected, got string)
+getn | ok | "a" | "b" | "c"
+get4 | ok | "a" | "b" | "c" | "d"
+get-all | ok | "abcdef"
+get-nilarg | ok | "abcdef"
+get-then-rest | ok | "ab" | 4 | "cdef" | "cdef"
+skip | ok | "cdef"
+skipbig | ok | 0
+skipneg | ERR | bad argument #2 to '?' (number out of range)
+skipstr | ERR | bad argument #2 to '?' (number expected, got string)
+putf | ok | "42\x2dz\x2d 3\x2e14 \x22q\x5c\x0a\x22 ff A    ab\x7ccd   \x7c"
+putf-bad | ERR | bad argument #3 to '?' (number expected, got string)
+putf-none | ERR | bad argument #2 to '?' (string expected, got no value)
+putf-%s-nil | ok | "nil true"
+putf-chain | ok | "12\x21"
+concat | ok | "xt" | "tx" | "xx" | "x5"
+concat-bad	false
+len | ok | 5 | true | 3
+free | ok | 0 | ""
+reuse-after-free | ok | "again"
+reset | ok | 0 | ""
+new-1 | ERR | bad argument #1 to '?' (number out of range)
+new-str | ERR | bad argument #1 to '?' (number expected, got string)
+new-100 | ok | "userdata"
+new-dict1 | ok | "userdata"
+new-dictnotstr | ERR | bad options table
+new-mtnott | ok | "userdata"
+new-mtstr | ERR | bad options table
+new-foo | ok | "userdata"
+new-true | ERR | bad argument #1 to '?' (number expected, got boolean)
+new-size+opt | ok | "userdata"
+new-huge | ERR | bad argument #1 to '?' (number out of range)
+new-nan | ERR | bad argument #1 to '?' (number out of range)
+tostring | ok | "abc" | "abc"
+tostring-keeps | ok | "bc" | 2
+chain | ok | true | true | true | true | true | true
+big-put | ok | 500000 | "0123456789" | 499990
+binary | ok | "61 00 62 ff fe" | 5
+interleave | ok | 1334 | 140 | "item1\x2c\x3bitem\x2c2\x3bite\x2cm3\x3bit\x2c\x3bitem\x2c5\x3bite\x2cm6\x3bi"
+get-multi-ret-count | ok | 3
+encode-none | ERR | bad argument #1 to '?' (value expected)
+decode-none | ERR | bad argument #1 to '?' (string expected, got no value)
+decode-num | ERR | bad argument #1 to '?' (string expected, got number)
+decode-tbl | ERR | bad argument #1 to '?' (string expected, got table)
+encode-buf | ERR | cannot serialize 'userdata'

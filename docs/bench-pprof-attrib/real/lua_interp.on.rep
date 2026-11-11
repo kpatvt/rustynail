@@ -1,0 +1,48 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 249  of event 'cycles:u'
+# Event count (approx.): 228558076
+#
+# Overhead  Shared Object         Symbol                                                               
+# ........  ....................  .....................................................................
+#
+    58.83%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    10.68%  [JIT] tid 2376538     [.] lua_proto@0x7fecd65c5070
+     9.99%  rn-cli               [.] <rn_core::state::State>::post_call
+     4.33%  rn-cli               [.] <rn_core::value::Value>::raw_equal
+     3.48%  rn-cli               [.] <rn_core::state::State>::close
+     2.62%  rn-cli               [.] <rn_core::table::TableRef>::get
+     1.74%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+     0.87%  rn-cli               [.] <rn_core::table::TableRef>::len
+     0.67%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     0.49%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.44%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.44%  rn-cli               [.] rn_jit::lower::lower_ex
+     0.44%  rn-cli               [.] rn_std::lib_base::ipairs_aux
+     0.44%  rn-cli               [.] rn_core::jit_helpers::jit_return_close
+     0.44%  rn-cli               [.] rn_core::jit_helpers::jit_tailcall
+     0.44%  rn-cli               [.] <rn_core::state::State>::concat_result::{closure#0}
+     0.44%  rn-cli               [.] rn_core::table::insertkey
+     0.43%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     0.43%  rn-cli               [.] rn_core::table::newkey
+     0.42%  rn-cli               [.] rn_core::jit_helpers::jit_tforcall
+     0.42%  rn-cli               [.] <rn_jit::t15::analysis::Analysis>::plan
+     0.37%  [JIT] tid 2376538     [.] lua_proto@0x7fecd65c5330
+     0.26%  rn-cli               [.] <alloc::raw_vec::RawVec<rn_jit::tr::cache::TrId>>::grow_one
+     0.20%  rn-cli               [.] <rn_jit::lower::Cx>::arr_slot
+     0.14%  rn-cli               [.] <rn_compiler::lexer::LexState<rn_core::heap::Heap>>::next_token
+     0.11%  libc.so.6             [.] 0x00000000000bcc43
+     0.10%  rn-cli               [.] <rn_core::state::State>::new_str_value
+     0.07%  rn-cli               [.] rn_core::table::resize
+     0.06%  ld-linux-x86-64.so.2  [.] 0x000000000001dbf9
+     0.06%  [unknown]             [k] 0000000000000000
+     0.06%  ld-linux-x86-64.so.2  [.] 0x000000000000d73d
+     0.06%  libgcc_s.so.1         [.] __cpu_indicator_init
+
+
+#
+# (Tip: Treat branches as callchains: perf record -b ... ; perf report --branch-history)
+#

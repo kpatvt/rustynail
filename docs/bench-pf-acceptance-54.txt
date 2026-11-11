@@ -1,0 +1,34 @@
+== build 5.4 tests
+  Executable tests/tr_ref.rs (target-t54/debug/deps/tr_ref-984c819abe9c7edb)
+  Executable tests/tr_runtime.rs (target-t54/debug/deps/tr_runtime-e7d894c7c30eb0c1)
+== tests 5.4 (skip live mutants, oracle_corpus, runner)
+52
+binaries 52 passed 777 failed 0
+== mutants_are_caught_by_live_programs 5.4 alone
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 45 filtered out; finished in 573.18s
+== mutant runner 5.4
+test runner::every_registered_mutant_is_caught has been running for over 60 seconds
+[tr_mutants] dep_edge_at_install        P3b      caught by tr_record_calls::dep_edges_are_registered_when_inlining
+[tr_mutants] abc_with_store             P7       not injected yet
+[tr_mutants] vbytes_no_credit           F-memory not injected yet
+[tr_mutants] vbytes_no_limit_guard      F-memory not injected yet
+[tr_mutants] 176 registered: 173 caught, 0 NOT caught, 3 not injected yet (owners: F-memory P7)
+test runner::every_registered_mutant_is_caught ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 388.96s
+== official 5.4
+-- RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=always
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=always)
+-- RUSTYNAIL_JIT=on RUSTYNAIL_JIT_THRESHOLD=2 RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_HOT=2,2
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=on RUSTYNAIL_JIT_THRESHOLD=2 RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_HOT=2,2)
+-- RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always)
+-- RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_MODE=inc
+JIT-OFFICIAL OK (RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_GC_MODE=inc)
+== jit-diff 5.4 1..500
+traces: hook=none mode=tremu seeds=500 with_trace=394 (78%) installed=8636 entered=2711784 exits=3606907
+traces: hook=none mode=tron seeds=500 with_trace=394 (78%) installed=5861 entered=2144793 exits=2902922
+traces: hook=none mode=trrand seeds=500 with_trace=394 (78%) installed=8637 entered=2713922 exits=3609551
+traces: hook=none mode=trstack seeds=500 with_trace=390 (78%) installed=8554 entered=2698028 exits=3577373
+traces: hook=none mode=trstorm seeds=500 with_trace=394 (78%) installed=8550 entered=48501 exits=1072529
+jit-diff: seeds 1..500 done=500 diffs=0 genfail=0 gensyntax=0 timeouts=0 slowskips=4 hook=none
+acc54 done

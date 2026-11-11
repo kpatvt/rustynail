@@ -1,0 +1,40 @@
+run 1/7
+run 2/7
+run 3/7
+run 4/7
+run 5/7
+run 6/7
+run 7/7
+program          bas Mcyc(min)      new Mcyc    ratio      ba2 Mcyc    ratio
+alloc_ctor               710.9         527.7   0.742          709.9   0.999~
+array_rec               1836.9        1833.7   0.998~        1835.1   0.999~
+dot                     2765.5        2780.5   1.005~        2823.6   1.021~
+field_global            1028.6         929.0   0.903          954.2   0.928 
+field_method            1369.3        1365.3   0.997~        1353.0   0.988~
+field_rw                2099.5        2124.5   1.012~        2096.6   0.999~
+float_loop              2823.3        2807.9   0.995~        2815.3   0.997~
+float_poly              1879.1        1865.3   0.993~        1871.2   0.996~
+inline_2                 702.8         671.2   0.955~         719.5   1.024~
+inline_leaf              995.2        1001.5   1.006~        1042.6   1.048~
+int_rec2                2016.7        2008.0   0.996~        1985.1   0.984~
+int_sum                 1763.4        1714.3   0.972~        1762.4   0.999~
+licm_expr                812.0         781.3   0.962~         770.9   0.949 
+multret                  726.2         719.1   0.990~         725.3   0.999~
+oop_inherit               94.9          94.8   0.999~          94.7   0.998~
+oop_override             346.2         324.4   0.937          342.3   0.989~
+rec_loop                1175.1        1185.2   1.009~        1167.5   0.993~
+short_inner             2016.9        2012.4   0.998~        2020.2   1.002~
+sink_tuple                23.3          21.3   0.914           23.2   0.992~
+sink_vec                  20.1          19.8   0.986~          19.6   0.975~
+str_concat              1645.7        1467.0   0.891         1641.6   0.997~
+tail_loop               2102.8        1951.1   0.928         2028.3   0.965~
+tfor_loops              1620.3        1579.1   0.975~        1612.1   0.995~
+type_entry              3419.3        3428.3   1.003~        3359.2   0.982~
+type_entry_stable          3271.5        3361.1   1.027~        3365.1   1.029~
+type_late               2909.5        2920.7   1.004~        2851.3   0.980~
+type_late_stable          2935.8        2931.8   0.999~        2912.7   0.992~
+upval_acc               3098.1        3083.3   0.995~        3125.1   1.009~
+upval_inv               3309.9        3329.8   1.006~        3271.4   0.988~
+geomean new: all(29) cycles min 0.971 median 0.981 instr 0.978; numeric cycles min nan median nan instr nan
+geomean ba2: all(29) cycles min 0.993 median 0.996 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

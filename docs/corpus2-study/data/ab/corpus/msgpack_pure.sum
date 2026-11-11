@@ -1,0 +1,86 @@
+== msgpack_pure (rc 0)
+[trace] recorded 40 installed 15 entered 1171075 flushes 15 rerecord 4 blacklisted 50 refused 408 deferred 8 ineffective 0 probes 427 (fn-short 19 start-refused 408)
+[trace] aborted FnShort: 19
+[trace] aborted LeaveLoop: 1
+[trace] aborted Nyi(Call): 18
+[trace] aborted StartRefused: 408
+[trace] aborted TableHash: 6
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 11 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 104 installed 24 failed 80 preludes 3
+[trace] links: nest roots 4 frame links 0 stitches 0
+[trace] exits 3619825 (live traces 0)
+aborts (count reason op depth head):
+     16 SideShort              TFORCALL  d0 side  [policy]
+     11 Nyi(CALL)              CALL      d2 side
+     10 LeaveFrame             RETURN1   d0 side
+      8 Nyi(CALL)              CALL      d3 side
+      4 FnShort                RETURN1   d0 root L39 'table.sort(keys, function(a, b)'  [policy]
+      4 SideShort              CALL      d4 side  [policy]
+      4 InnerLoop              FORPREP   d1 side
+      4 LeaveFrame             RETURN0   d0 side
+      4 FnShort                RETURN    d0 root L112 'local function frexp(x)'  [policy]
+      4 TableHash              GETTABLE  d1 root L190 'local function unpack_map(c, n)'
+      4 FnShort                RETURN1   d0 root L219 'local function unpack_double(c)'  [policy]
+      4 FnShort                TAILCALL  d0 root L176 'local function unpack_str(c, n)'  [policy]
+      3 Nyi(CLOSURE)           CLOSURE   d1 side
+      2 Nyi(CLOSURE)           CLOSURE   d2 side
+      2 Nyi(CALL)              CALL      d0 root L14 'packers['string'] = function(buffer, str)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 side
+      2 InnerLoop              TFORCALL  d2 side
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 Nyi(CALL)              CALL      d0 root L79 'packers['unsigned'] = function(buffer, n)'
+      2 Nyi(CALL)              CALL      d0 root L121 'packers['double'] = function(buffer, n)'
+      2 TableHash              GETTABLE  d0 root L164 'local function unpack_cursor(c)'
+      2 TableHash              GETTABLE  d1 side
+      2 Nyi(CALL)              CALL      d0 root L201 'local function unpack_uint(c, n)'
+      2 Nyi(CALL)              CALL      d1 root L212 'local function unpack_int(c, n)'
+      2 Nyi(CALL)              CALL      d1 root L251 '[0xD9] = function(c) return unpack_str(c, unpack_u'
+      2 LeaveFrame             RETURN    d0 side
+      2 SideShort              RETURN0   d0 side  [policy]
+      2 Nyi(CALL)              CALL      d1 root L252 '[0xDA] = function(c) return unpack_str(c, unpack_u'
+      2 TooLong                CALL      d0 side
+      2 Nyi(CALL)              CALL      d0 side
+      1 FnShort                RETURN0   d0 root L14 'packers['string'] = function(buffer, str)'  [policy]
+      1 Nyi(CALL)              CALL      d1 root L144 'packers['number'] = function(buffer, n)'
+      1 Nyi(CALL)              CALL      d1 root L95 'packers['signed'] = function(buffer, n)'
+      1 InnerLoop              FORPREP   d2 side
+      1 Nyi(CALL)              CALL      d2 root L144 'packers['number'] = function(buffer, n)'
+      1 LeaveLoop              TFORCALL  d0 root L28 'packers['map'] = function(buffer, tbl, n)'
+      1 Nyi(CALL)              CALL      d0 root L95 'packers['signed'] = function(buffer, n)'
+      1 FnShort                RETURN0   d0 root L79 'packers['unsigned'] = function(buffer, n)'  [policy]
+      1 FnShort                TAILCALL  d0 root L164 'local function unpack_cursor(c)'  [policy]
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  787.8 L0 pc10 Move 150 5251730
+  711.2 L164 pc21 Gettable 869757 818
+  2.1 L0 pc0 Move 114 18165
+  1.1 L79 pc0 Lei 53 21694
+  0.9 L65 pc0 Loadfalse 82 10391
+  0.8 L65 pc21 Tforcall 20 42224
+  0.8 L121 pc0 Loadi 35 22777
+  0.4 L65 pc34 Jmp 22 17264
+  0.2 L51 pc66 Forloop 158 1538
+  0.2 L0 pc120 Settable 101 1995
+  0.2 L0 pc11 Move 151 1313
+  0.1 L95 pc0 Gei 38 3478
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     398885 Return1    LeaveFrame     black=true gk=32
+     391888 Gettable   TableHash      black=true gk=10
+     358838 Forloop    -              black=false gk=32
+     271366 Tforcall   SideShort      black=true gk=4
+     269511 Gettable   -              black=false gk=4
+     237798 Tailcall   -              black=false gk=1
+     134672 Gettable   -              black=false gk=30
+     134633 Gettable   InnerLoop      black=true gk=48
+     134384 Gettable   -              black=false gk=10
+      89840 Call       SideShort      black=true gk=32
+      44873 Forloop    SideShort      black=true gk=32
+      44694 Return0    LeaveFrame     black=true gk=32
+      24058 Forloop    -              black=false gk=48
+       3541 Geti       -              black=false gk=16
+       2466 Settable   -              black=false gk=40
+       1607 Return     LeaveFrame     black=true gk=32
+       1026 Tforcall   SideShort      black=true gk=37
+        911 Gettabup   -              black=false gk=16
+        580 Settable   SideShort      black=true gk=40
+        550 Getfield   -              black=false gk=14

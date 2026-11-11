@@ -1,0 +1,122 @@
+{
+ "cpu": 4,
+ "runs": 5,
+ "bins": {
+  "j4": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=on RUSTYNAIL_JIT_TRACE=off RUSTYNAIL_JIT_TRACE_LIMITS=aaaaaaaaaaa <tmp>/lua-j4",
+  "jb": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=on RUSTYNAIL_JIT_TRACE=off RUSTYNAIL_JIT_TRACE_LIMITS=aaaaaaaaaaa <tmp>/lua-jb",
+  "tr": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_LIMITS=aaaaaaaaaaa <tmp>/lua-tr",
+  "rc": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=on RUSTYNAIL_JIT_T15=off RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_LIMITS=recnat=1,aa <tmp>/lua-rc"
+ },
+ "baseline": "j4",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "fib": {
+   "j4": {
+    "cycles_min": 3300355311,
+    "cycles_median": 3515971903,
+    "instructions_min": 11806087558,
+    "instructions_median": 11806087959,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "jb": {
+    "cycles_min": 3422759696,
+    "cycles_median": 3465110953,
+    "instructions_min": 11806087742,
+    "instructions_median": 11806088268,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "tr": {
+    "cycles_min": 3497433567,
+    "cycles_median": 3509410305,
+    "instructions_min": 11806094056,
+    "instructions_median": 11806095379,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "rc": {
+    "cycles_min": 2711591815,
+    "cycles_median": 2725899969,
+    "instructions_min": 10204081886,
+    "instructions_median": 10204908828,
+    "runs": 5,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "jb": {
+   "fib": {
+    "cycles_min": 1.0370882445874932,
+    "cycles_median": 0.9855343127296885,
+    "instructions_min": 1.00000001558518,
+    "instructions_median": 1.0000000261729374
+   }
+  },
+  "tr": {
+   "fib": {
+    "cycles_min": 1.0597142542026137,
+    "cycles_median": 0.9981337740513793,
+    "instructions_min": 1.0000005503940208,
+    "instructions_median": 1.0000006284893037
+   }
+  },
+  "rc": {
+   "fib": {
+    "cycles_min": 0.8216060270730045,
+    "cycles_median": 0.7752906007792976,
+    "instructions_min": 0.8643068108609397,
+    "instructions_median": 0.8643768251972583
+   }
+  }
+ },
+ "geomean": {
+  "jb": {
+   "all_cycles_min": 1.0370882445874932,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9855343127296885,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.00000001558518,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0000000261729374,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "tr": {
+   "all_cycles_min": 1.0597142542026137,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9981337740513793,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.0000005503940208,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0000006284893037,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "rc": {
+   "all_cycles_min": 0.8216060270730045,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.7752906007792976,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.8643068108609397,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.8643768251972583,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  }
+ }
+}

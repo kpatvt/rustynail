@@ -1,0 +1,97 @@
+{
+ "cpu": 4,
+ "runs": 11,
+ "set": "lib",
+ "bins": {
+  "ref": "<repo>/ref/55/build-seed0/lua",
+  "lj": "/usr/bin/luajit",
+  "pgo": "env RUSTYNAIL_SEED=0 <cache>/g1gd/lua-cli",
+  "bpgo": "env RUSTYNAIL_SEED=0 <cache>/g1gc/lua-cli"
+ },
+ "programs": {
+  "fmt_s": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 224707967,
+    "cycles_median": 225792027,
+    "instructions_min": 917965223,
+    "instructions_median": 917965408,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 3290868,
+    "cycles_median": 3600590,
+    "instructions_min": 10243509,
+    "instructions_median": 10244593,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 7748769,
+    "cycles_median": 7932188,
+    "instructions_min": 35422188,
+    "instructions_median": 35423086,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 171107641,
+    "cycles_median": 172287940,
+    "instructions_min": 664119876,
+    "instructions_median": 664121404,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   }
+  },
+  "str_eq_long": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 216011383,
+    "cycles_median": 218736498,
+    "instructions_min": 1192836059,
+    "instructions_median": 1192836312,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 21650596,
+    "cycles_median": 21829284,
+    "instructions_min": 74718531,
+    "instructions_median": 74719561,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 43692128,
+    "cycles_median": 44187648,
+    "instructions_min": 352324798,
+    "instructions_median": 352325977,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 158440912,
+    "cycles_median": 158702956,
+    "instructions_min": 904261939,
+    "instructions_median": 904262295,
+    "runs": 11,
+    "output": "same",
+    "expected": "ok"
+   }
+  }
+ }
+}

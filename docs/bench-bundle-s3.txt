@@ -1,0 +1,65 @@
+BUNDLE-S3 patc: one binary (lua-cli --features jit), RUSTYNAIL_STR_FAST per column: s0=0 (all off), def=2 (fmtc, the previous default),
+patc=6, both=7 (fmtc+patc+pat1, the new default), dup=2 again (noise). 5 runs (min), CPUs 3-7 one job per core (11-15 idle), RUSTYNAIL_SEED=0,
+identical binary path / script paths / env length. Ratios vs s0, cycles/instructions.
+
+set                   n def           patc          both          dup          
+awfy                 14 1.002/1.000  1.001/1.000  1.004/1.000  1.001/1.000    
+corpus               18 0.996/0.997  0.957/0.956  0.955/0.954  0.998/0.997    
+corpus2/dev          19 0.993/0.992  0.981/0.976  0.983/0.974  0.998/0.992    
+corpus2/heldout      13 0.990/0.985  0.981/0.979  0.986/0.979  0.988/0.985    
+programs             25 0.997/0.998  0.995/0.990  0.990/0.990  0.995/0.998    
+lib                  95 0.996/0.990  0.975/0.970  0.974/0.967  0.995/0.990    
+jit-trace            29 1.000/1.000  1.000/1.000  0.998/1.000  0.999/1.000    
+apps                  5 1.002/0.999  0.937/0.899  0.941/0.899  1.000/0.999    
+real                  5 0.998/1.000  0.939/0.935  0.937/0.923  0.998/1.000    
+real_dis(4)           4 0.950/0.941  0.915/0.908  0.920/0.909  0.953/0.941    
+ALL                 223 0.997/0.994  0.980/0.975  0.979/0.974  0.996/0.994    
+
+targets (cycles/instructions vs s0):
+corpus2/dev/real_dis_arm           0.948/0.939   0.918/0.914   0.917/0.914   0.953/0.939  
+corpus2/dev/real_dis_x86           0.965/0.954   0.921/0.905   0.926/0.907   0.966/0.954  
+corpus2/heldout/real_dis_mips      0.939/0.932   0.902/0.904   0.906/0.904   0.943/0.932  
+corpus2/heldout/real_dis_ppc       0.949/0.938   0.920/0.910   0.930/0.909   0.952/0.938  
+real/wordfreq                      1.004/1.000   0.905/0.853   0.878/0.803   1.002/1.000  
+real/json_roundtrip                0.995/1.000   0.954/0.969   0.969/0.970   0.996/1.000  
+real/template_engine               0.994/1.000   0.851/0.863   0.858/0.859   0.996/1.000  
+corpus/markdown_conv               0.999/1.000   0.883/0.866   0.889/0.868   1.001/1.000  
+corpus/parser_combinator           1.000/1.000   0.996/1.012   0.956/0.967   1.001/1.000  
+lib/gsub_fn                        0.998/1.000   0.885/0.901   0.848/0.845   0.995/1.000  
+lib/gsub_str                       0.998/1.000   1.014/1.022   1.017/1.021   0.996/1.000  
+lib/gsub_tbl                       0.982/1.000   0.861/0.883   0.822/0.816   0.994/1.000  
+lib/gmatch_words                   1.002/1.000   0.901/0.913   0.827/0.854   1.005/1.000  
+lib/find_cap                       0.996/1.000   1.024/1.006   1.023/1.006   0.993/1.000  
+lib/find_pat                       0.998/1.000   1.006/0.989   1.007/0.988   0.997/1.000  
+lib/match                          0.997/1.000   0.204/0.192   0.204/0.192   1.001/1.000  
+corpus2/dev/wordfreq_wrap          0.991/1.000   0.965/0.962   0.959/0.939   1.011/1.000  
+
+-- def vs s0: >3% worse in cycles: 3
+   1.045 cyc 0.977 ins  lib/fmt_d
+   1.033 cyc 1.042 ins  lib/fmt_q
+   1.031 cyc 1.000 ins  lib/it_ipairs
+   best: 0.812 lib/fmt_x_pad, 0.855 lib/fmt_mixed, 0.933 lib/fmt_f, 0.939 corpus2/heldout/real_dis_mips, 0.948 lib/fmt_g
+-- patc vs s0: >3% worse in cycles: 3
+   1.051 cyc 1.000 ins  programs/table_hash
+   1.046 cyc 0.977 ins  lib/fmt_d
+   1.032 cyc 1.042 ins  lib/fmt_q
+   best: 0.204 lib/match, 0.729 apps/markdown, 0.817 corpus/penlight_mix, 0.826 lib/fmt_x_pad, 0.848 lib/fmt_mixed
+-- both vs s0: >3% worse in cycles: 4
+   1.057 cyc 1.000 ins  corpus2/heldout/prototype_objects
+   1.050 cyc 0.977 ins  lib/fmt_d
+   1.034 cyc 1.042 ins  lib/fmt_q
+   1.030 cyc 1.000 ins  awfy/havlak
+   best: 0.204 lib/match, 0.730 apps/markdown, 0.809 corpus/penlight_mix, 0.814 lib/fmt_x_pad, 0.822 lib/gsub_tbl
+-- dup vs s0: >3% worse in cycles: 2
+   1.050 cyc 0.977 ins  lib/fmt_d
+   1.039 cyc 1.000 ins  programs/gc_churn
+   best: 0.817 lib/fmt_x_pad, 0.848 lib/fmt_mixed, 0.918 programs/table_hash, 0.931 lib/fmt_f, 0.936 lib/sel_count
+mismatches/errors: [] 0
+
+== flagged programs re-measured at 15 runs (cycles/instructions vs s0) ==
+awfy/havlak def=0.995/1.000 patc=0.995/1.000 both=1.006/1.000 dup=1.001/1.000
+lib/find_pat def=0.995/1.000 patc=1.005/0.989 both=1.005/0.988 dup=0.996/1.000
+lib/gsub_str def=1.005/1.000 patc=1.009/1.022 both=1.017/1.021 dup=0.996/1.000
+lib/find_cap def=1.000/1.000 patc=1.028/1.006 both=1.029/1.006 dup=1.001/1.000
+programs/table_hash def=1.008/1.000 patc=1.017/1.000 both=1.003/1.000 dup=1.008/1.000
+corpus2/heldout/prototype_objects def=1.014/1.000 patc=1.011/1.000 both=1.000/1.000 dup=1.014/1.000

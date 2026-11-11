@@ -1,0 +1,18 @@
+diff --git a/crates/lua-jit/src/tr/exit.rs b/crates/lua-jit/src/tr/exit.rs
+index 8784f9be..43e155a0 100644
+--- a/crates/lua-jit/src/tr/exit.rs
++++ b/crates/lua-jit/src/tr/exit.rs
+@@ -1147,7 +1147,12 @@ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area:
+                 )
+             };
+             let key = kv.as_strref().expect("short string key");
+-            if mat_fault() || tab.set_str(heap, key, &v).is_err() {
++            // BUNDLE-E: a fresh table without a metatable (set after the fields) and a preallocated hash part: the direct short-string
++            // insertion (`psetshortstr`: one lookup, `insertkey`); anything it declines (rehash, a barrier) takes the general `set`
++            let fault = mat_fault();
++            // SAFETY: `key` is a live short string of this state (contract).
++            let fast = !fault && !mutants::active("mat_fast_off") && unsafe { tab.psetshortstr(key.as_ptr(), v) } == lua_core::table::HOK;
++            if !fast && (fault || tab.set_str(heap, key, &v).is_err()) {
+                 // (the table is already in its slot: it is rooted, partly filled, and nothing can observe it before the
+                 // error unwinds the frame)
+                 return mat_failed!();

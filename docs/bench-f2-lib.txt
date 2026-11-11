@@ -1,0 +1,31 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)    base2 Mcyc    ratio      new Mcyc    ratio      puc Mcyc    ratio       lj Mcyc    ratio
+assert_ok                267.6         267.0   0.998~          24.7   0.092          294.9   1.102           23.7   0.088 
+byte                     260.8         260.7   1.000~         131.4   0.504          778.0   2.984           33.0   0.126 
+byte_multi               263.1         262.9   0.999~          72.1   0.274          335.0   1.273           20.0   0.076 
+find_plain               266.4         267.3   1.003~         266.3   1.000~         338.6   1.271           67.1   0.252 
+getmt                    276.4         275.0   0.995~          22.1   0.080          252.5   0.913            8.9   0.032 
+len_op                   258.0         258.3   1.001~         258.3   1.001~        1391.2   5.393          100.8   0.391 
+m_random                 276.3         276.2   1.000~         270.0   0.977~         346.0   1.253           73.1   0.265 
+pcall_ok                 278.1         277.9   0.999~         274.3   0.986~        1482.7   5.332           41.1   0.148 
+rawget_set               261.3         259.6   0.993~          24.3   0.093          385.6   1.476           14.2   0.054 
+str_eq_long              263.7         263.8   1.000~         170.5   0.647          216.1   0.819           21.6   0.082 
+str_lt                   263.6         264.5   1.004~         261.9   0.994~         227.1   0.862           66.4   0.252 
+str_lt_short             267.0         267.0   1.000~         263.7   0.987~         249.8   0.936           62.4   0.234 
+str_method_len           272.5         272.6   1.001~         248.7   0.913         1383.5   5.077           55.3   0.203 
+sub                      262.9         263.1   1.001~         262.0   0.997~         470.3   1.789           80.3   0.305 
+tostring_int             268.6         267.5   0.996~         267.9   0.998~         541.3   2.015          277.6   1.033~
+type_call                261.8         261.3   0.998~         279.3   1.067          494.9   1.891           85.6   0.327 
+geomean base2: all(16) cycles min 0.999 median 1.000 instr 1.000; numeric cycles min nan median nan instr nan
+geomean new: all(16) cycles min 0.543 median 0.543 instr 0.553; numeric cycles min nan median nan instr nan
+geomean puc: all(16) cycles min 1.721 median 1.729 instr 1.651; numeric cycles min nan median nan instr nan
+geomean lj: all(16) cycles min 0.172 median 0.172 instr 0.107; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

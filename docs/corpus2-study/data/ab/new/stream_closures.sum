@@ -1,0 +1,61 @@
+== stream_closures (rc 0)
+[trace] recorded 33 installed 5 entered 148440 flushes 5 rerecord 1 blacklisted 16 refused 128 deferred 1 ineffective 1 probes 138 (fn-short 10 start-refused 128)
+[trace] aborted CFunc: 2
+[trace] aborted DepFreed: 1
+[trace] aborted FnShort: 10
+[trace] aborted Identical: 1
+[trace] aborted InnerLoop: 5
+[trace] aborted IntMiss: 6
+[trace] aborted LeaveLoop: 2
+[trace] aborted Nyi(Call): 1
+[trace] aborted Nyi(Closure): 2
+[trace] aborted Nyi(Tforcall): 6
+[trace] aborted Nyi(Tforprep): 2
+[trace] aborted StartRefused: 128
+[trace] sink: tables 2 traces 2; materialised 3982; loops peeled 4 phis 15 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 15 installed 3 failed 12 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 179432 (live traces 0)
+aborts (count reason op depth head):
+      6 SideShort              FORLOOP   d0 side  [policy]
+      6 LeaveFrame             RETURN1   d0 side
+      6 IntMiss                GETTABLE  d1 root L48 'return function()'
+      4 FnShort                RETURN1   d0 root L165 'return function()'  [policy]
+      3 InnerLoop              TEST      d2 root L95 'return function()'
+      3 FnShort                RETURN1   d0 root L73 'return function()'  [policy]
+      3 FnShort                RETURN1   d0 root L129 'return function()'  [policy]
+      2 Nyi(TFORCALL)          TFORCALL  d0 root L138 'local function fold(f, init, src)'
+      2 InnerLoop              TEST      d1 root L30 'return function()'
+      2 LeaveLoop              FORLOOP   d0 root L176 'local function avg(arr)'
+      2 Nyi(TFORPREP)          TFORPREP  d0 root L138 'local function fold(f, init, src)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L199 'local chunk_sums = collect(map(function(c)'
+      2 Nyi(TFORCALL)          TFORCALL  d0 root L146 'local function collect(src)'
+      2 CFunc                  CALL      d0 root L0 main
+      2 Nyi(TFORCALL)          TFORCALL  d0 root L151 'local function max_by(keyfn, src)'
+      1 DepFreed               NEWTABLE  d1 root L37 'return function()'
+      1 Nyi(CALL)              CALL      d0 root L95 'return function()'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  480.7 L0 pc0 Move 13 36978072
+  178.8 L0 pc68 Gettabup 4 44700640
+  178.6 L0 pc57 Move 4 44658925
+  178.1 L0 pc61 Move 4 44517970
+  7.6 L82 pc8 Eqk 19490 391
+  1.4 L95 pc0 Getupval 54 26625
+  0.4 L193 pc0 Getfield 154 2328
+  0.3 L37 pc2 Eqk 832 408
+  0.3 L199 pc0 Getupval 7 37680
+  0.3 L48 pc12 Eqk 522 494
+  0.2 L48 pc0 Getupval 6 39103
+  0.2 L95 pc51 Settable 4 55145
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+      73948 Settable   SideShort      black=true gk=40
+      25453 Forloop    -              black=false gk=32
+      25388 Return1    LeaveFrame     black=true gk=32
+      24638 Settable   SideShort      black=true gk=32
+      24607 Forloop    LeaveFrame     black=true gk=32
+       3982 Eq         -              black=false gk=32
+       1240 Call       -              black=false gk=33
+        150 Newtable   -              black=false gk=32
+         21 Settable   SideShort      black=true gk=56
+          3 Forloop    -              black=false gk=48
+          2 Le         -              black=false gk=32

@@ -1,0 +1,25 @@
+programs   n=25  | pgo/plain min 0.929 med 0.928 instr 0.924 | hold/plain min 0.963 med 0.967 instr 0.961 | plain2/plain min 1.001 med 1.005 instr 1.000 | pgo2/pgo min 1.004 med 1.007 instr 1.000
+   plain  ours/PUC 0.243 (n=25)  ours/LuaJIT 1.017 (n=25)
+   pgo    ours/PUC 0.226 (n=25)  ours/LuaJIT 0.946 (n=25)
+   best : coroutines 0.752, load_big 0.786, json 0.814, gc_churn 0.824, varargs 0.842
+   worst: matmul 1.001, fannkuch 1.002, fib 1.006, nbody 1.019, sieve 1.053
+awfy       n=14  | pgo/plain min 0.953 med 0.949 instr 0.956 | hold/plain min 0.961 med 0.962 instr 0.962 | plain2/plain min 1.001 med 0.998 instr 1.000 | pgo2/pgo min 0.999 med 1.002 instr 1.000
+   plain  ours/PUC 0.351 (n=14)  ours/LuaJIT 1.849 (n=14)
+   pgo    ours/PUC 0.334 (n=14)  ours/LuaJIT 1.761 (n=14)
+   best : json 0.887, havlak 0.887, storage 0.891, cd 0.913, deltablue 0.926
+   worst: list 0.983, permute 0.991, nbody 0.999, mandelbrot 1.000, sieve 1.005
+apps       n=5   | pgo/plain min 0.877 med 0.879 instr 0.916 | hold/plain min 0.866 med 0.869 instr 0.922 | plain2/plain min 1.000 med 1.001 instr 1.000 | pgo2/pgo min 1.001 med 0.997 instr 1.000
+   plain  ours/PUC 0.620 (n=5)  ours/LuaJIT 1.508 (n=5)
+   pgo    ours/PUC 0.543 (n=5)  ours/LuaJIT 1.322 (n=5)
+   best : raytrace 0.840, expr_lang 0.877, markdown 0.878, events 0.887, lru_cache 0.904
+   worst: raytrace 0.840, expr_lang 0.877, markdown 0.878, events 0.887, lru_cache 0.904
+jit-trace  n=29  | pgo/plain min 0.991 med 0.988 instr 0.990 | hold/plain min 0.991 med 0.989 instr 0.991 | plain2/plain min 1.000 med 0.997 instr 1.000 | pgo2/pgo min 1.000 med 1.004 instr 1.000
+   plain  ours/PUC 0.085 (n=29)  ours/LuaJIT 1.077 (n=29)
+   pgo    ours/PUC 0.085 (n=29)  ours/LuaJIT 1.067 (n=29)
+   best : alloc_ctor 0.901, str_concat 0.954, rec_loop 0.959, sink_tuple 0.972, sink_vec 0.986
+   worst: upval_acc 1.001, type_late 1.001, short_inner 1.001, type_late_stable 1.001, int_sum 1.001
+lib        n=95  | pgo/plain min 0.927 med 0.925 instr 0.915 | hold/plain min 0.977 med 0.975 instr 0.968 | plain2/plain min 1.001 med 1.000 instr 1.000 | pgo2/pgo min 1.004 med 1.003 instr 1.000
+   plain  ours/PUC 0.308 (n=95)  ours/LuaJIT 1.284 (n=91)
+   pgo    ours/PUC 0.286 (n=95)  ours/LuaJIT 1.184 (n=91)
+   best : tsort_str 0.629, m_random 0.641, fmt_x_pad 0.662, gmatch_words 0.723, co_yield 0.728
+   worst: type_call 1.076, m_type 1.123, str_lt 1.298, str_eq_long 1.308, pcall_ok 1.312

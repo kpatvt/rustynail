@@ -1,0 +1,19 @@
+run 1/11
+run 2/11
+run 3/11
+run 4/11
+run 5/11
+run 6/11
+run 7/11
+run 8/11
+run 9/11
+run 10/11
+run 11/11
+program           r0 Mcyc(min)       r1 Mcyc    ratio      r0b Mcyc    ratio
+binary_trees            2663.0        2210.5   0.830         2668.2   1.002~
+fib                     2142.1        1327.2   0.620         2142.0   1.000~
+queens                  2150.3        2151.3   1.000~        2160.2   1.005~
+sieve                   1740.7        1725.5   0.991~        1775.2   1.020~
+geomean r1: all(4) cycles min 0.845 median 0.843 instr 0.922; numeric cycles min 0.991 median 0.997 instr 1.000
+geomean r0b: all(4) cycles min 1.007 median 1.000 instr 1.000; numeric cycles min 1.020 median 0.999 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

@@ -1,0 +1,64 @@
+== prototype_objects (rc 0)
+[trace] recorded 44 installed 11 entered 23996 flushes 11 rerecord 0 blacklisted 20 refused 152 deferred 0 ineffective 0 probes 170 (fn-short 18 start-refused 152)
+[trace] aborted FnShort: 18
+[trace] aborted Metamethod: 29
+[trace] aborted Nyi(Call): 4
+[trace] aborted StartRefused: 152
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 7 phis 23 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 106 installed 60 failed 55 preludes 0
+[trace] exits 1923698 (live traces 0)
+aborts (count reason op depth head):
+     23 Metamethod             SETFIELD  d1 side
+     13 Nyi(CALL)              CALL      d2 side
+      6 Metamethod             SETFIELD  d0 root L36 'record = function(self, what, amount)'
+      6 Metamethod             SETFIELD  d1 root L59 'Account.deposit = function(self, amount)'
+      5 Metamethod             SETFIELD  d2 side
+      5 Metamethod             SETFIELD  d0 root L87 'Savings.withdraw = function(self, amount)'
+      4 Metamethod             SETFIELD  d0 side
+      4 Metamethod             SETFIELD  d1 root L0 main
+      4 FnShort                RETURN1   d0 root L65 'Account.withdraw = function(self, amount)'  [policy]
+      4 FnShort                TAILCALL  d0 root L87 'Savings.withdraw = function(self, amount)'  [policy]
+      4 FnShort                RETURN1   d0 root L112 'Item.sell = function(self, qty)'  [policy]
+      4 FnShort                RETURN1   d0 root L126 'Perishable.price_for = function(self, qty)'  [policy]
+      3 Metamethod             SETFIELD  d0 root L112 'Item.sell = function(self, qty)'
+      3 Metamethod             SETFIELD  d0 root L132 'Perishable.new_day = function(self)'
+      2 Metamethod             SETFIELD  d2 root L0 main
+      2 Nyi(CALL)              CALL      d2 root L0 main
+      2 Nyi(CALL)              CALL      d1 root L77 'Account.accrue = function(self)'
+      1 FnShort                RETURN1   d0 root L101 'local function new_account(proto, id, balance)'  [policy]
+      1 FnShort                RETURN0   d0 root L77 'Account.accrue = function(self)'  [policy]
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1606.7 L0 pc259 Eq 107890 14892
+  48.3 L132 pc6 Lt 8 6034840
+  40.7 L0 pc367 Getfield 7 5810503
+  24.1 L132 pc0 Getfield 8 3017980
+  3.5 L126 pc0 Gettabup 101 34694
+  2.4 L0 pc326 Getfield 20 118501
+  2.1 L112 pc0 Getfield 9 231793
+  1.8 L0 pc629 Getfield 5 353240
+  1.2 L0 pc313 Getfield 19 62812
+  1.0 L87 pc0 Getfield 66 15042
+  0.9 L0 pc619 Getfield 7 123186
+  0.7 L101 pc8 Eq 1031 697
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     587286 Getfield   -              black=false gk=14
+     537783 Getfield   -              black=true gk=10
+     323503 Lei        -              black=true gk=32
+     168032 Getfield   -              black=false gk=10
+     156374 Call       -              black=false gk=1
+      38625 Getfield   -              black=false gk=4
+      35623 Getfield   MaxSide        black=true gk=14
+      19653 Call       MaxSide        black=true gk=1
+      15592 Setfield   -              black=false gk=40
+      13038 Setfield   -              black=false gk=34
+       5414 Setfield   MaxSide        black=true gk=40
+       1406 Getfield   -              black=false gk=6
+        691 Call       -              black=false gk=2
+        578 Call       -              black=false gk=11
+        359 Getfield   -              black=true gk=14
+        342 Getfield   -              black=false gk=30
+        118 Eqi        -              black=true gk=32
+         14 Eq         -              black=false gk=32
+         13 Tforcall   MaxSide        black=true gk=49
+          4 Concat     -              black=false gk=32

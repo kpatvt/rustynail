@@ -1,0 +1,24 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program           j4 Mcyc(min)tr_before Mcyc    ratio tr_after Mcyc    ratio j4_after Mcyc    ratio
+closures                3205.5        2265.8   0.707         2257.1   0.704         3207.8   1.001~
+fannkuch                1218.4        1302.9   1.069         1295.6   1.063         1218.2   1.000~
+fib                     2197.7        2200.5   1.001~        2197.9   1.000~        2195.3   0.999~
+heapsort                1679.1        1484.9   0.884         1480.9   0.882         1672.6   0.996~
+json                    2503.0        2529.1   1.010~        2538.3   1.014~        2521.7   1.007~
+mandelbrot               573.3        1036.1   1.807         1036.2   1.807          573.3   1.000~
+matmul                   656.6         525.9   0.801          522.2   0.795          656.7   1.000~
+nbody                   1161.1        2529.1   2.178          894.4   0.770         1161.0   1.000~
+oop_methods             3384.8        3400.4   1.005~        3383.1   0.999~        3384.1   1.000~
+queens                  2553.2        2442.7   0.957~        2435.9   0.954~        2552.4   1.000~
+sieve                   1693.6        2417.9   1.428         2418.4   1.428         1691.0   0.998~
+spectral_norm           2744.6         269.4   0.098          269.6   0.098         2771.5   1.010~
+table_hash              1406.9        1387.2   0.986~        1449.1   1.030~        1425.5   1.013~
+geomean tr_before: all(13) cycles min 0.907 median 0.904 instr 0.914; numeric cycles min 0.882 median 0.883 instr 0.888
+geomean tr_after: all(13) cycles min 0.839 median 0.838 instr 0.857; numeric cycles min 0.741 median 0.742 instr 0.772
+geomean j4_after: all(13) cycles min 1.002 median 0.996 instr 1.000; numeric cycles min 1.001 median 1.000 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+BENCHDONE

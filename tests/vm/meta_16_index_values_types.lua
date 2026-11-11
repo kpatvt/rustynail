@@ -1,0 +1,13 @@
+local s = setmetatable({}, {__index = "abc"})
+print(s.len, s.rep == string.rep)
+local n = setmetatable({}, {__index = 42})
+print(pcall(function() return n.x end))
+local f = setmetatable({}, {__index = print})
+print(pcall(function() return f.x end))
+local cnt = 0
+local lazy = setmetatable({}, {__index = function(t, k) cnt = cnt + 1 local v = k * 2 rawset(t, k, v) return v end})
+print(lazy[5], lazy[5], lazy[6], cnt)
+local nilidx = setmetatable({}, {__index = function() return nil end})
+print(nilidx.a, nilidx[1])
+local multi = setmetatable({}, {__index = function() return 1, 2, 3 end})
+print(multi.x)

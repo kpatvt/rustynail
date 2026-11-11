@@ -1,0 +1,48 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 4K of event 'cycles:u'
+# Event count (approx.): 3967599920
+#
+# Overhead  Shared Object         Symbol                                                                                                                              
+# ........  ....................  ....................................................................................................................................
+#
+    22.58%  [JIT] tid 2363815     [.] lua_proto@0x7fd3dbb83960
+    10.59%  [JIT] tid 2363815     [.] lua_proto@0x7fd3dbb83be0
+    10.09%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     9.44%  [JIT] tid 2363815     [.] lua_proto@0x7fd3dbb835f0
+     9.38%  rn-cli               [.] <rn_core::state::State>::get_varargs
+     7.01%  rn-cli               [.] rn_core::jit_helpers::jit_varargprep
+     6.16%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     6.03%  rn-cli               [.] <rn_core::state::State>::adjust_varargs
+     5.08%  rn-cli               [.] rn_std::lib_base::base_select
+     2.19%  rn-cli               [.] <rn_core::state::State>::gc_step
+     2.09%  rn-cli               [.] rn_core::jit_helpers::jit_vararg
+     1.77%  rn-cli               [.] rn_std::lib_table::tpack
+     1.35%  rn-cli               [.] rn_core::table::resize
+     0.65%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.60%  rn-cli               [.] <rn_core::state::State>::raw_set_str
+     0.52%  rn-cli               [.] rn_core::table::insertkey
+     0.52%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     0.50%  [JIT] tid 2363815     [.] lua_proto@0x7fd3dbb83b00
+     0.50%  rn-cli               [.] <rn_core::table::TableRef>::pset
+     0.47%  rn-cli               [.] rn_std::lib_table::tunpack
+     0.40%  rn-cli               [.] rn_core::table::mainposition
+     0.27%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.22%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.20%  rn-cli               [.] <rn_core::state::State>::post_call
+     0.20%  libc.so.6             [.] 0x00000000001ae4ab
+     0.15%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.15%  rn-cli               [.] <rn_core::state::State>::new_table_sized
+     0.15%  rn-cli               [.] <rn_core::state::State>::raw_set
+     0.10%  [unknown]             [k] 0000000000000000
+     0.10%  libc.so.6             [.] 0x00000000001ae484
+     0.10%  rn-cli               [.] <rn_core::state::State>::raw_set_int
+     0.07%  rn-cli               [.] <rn_core::state::State>::with_roots::<rn_core::gc::StepOutcome, <rn_core::state::State>::gc_step55::{closure#1}>::{closure#0}
+
+
+#
+# (Tip: Treat branches as callchains: perf record -b ... ; perf report --branch-history)
+#

@@ -1,0 +1,30 @@
+Q2 measurements. T13 method: scripts/bench-cycles.sh, RUNS=5, CPU=4, RUSTYNAIL_SEED=0, min of 5 cycles:u, interleaved.
+Columns: t1 = T15=off TRACE=off; tr = T15=off TRACE=on (Q2 binary); trbase = the P9 binary (37f6d14) TRACE=on; j4 = T15=on TRACE=off.
+Machine: AMD Ryzen AI 7 350 (Zen 5). First table: micro set (PROGDIR=bench/jit-trace). Second: sieve and the gate programs (bench/programs).
+
+program           t1 Mcyc(min)       tr Mcyc    ratio   trbase Mcyc    ratio       j4 Mcyc    ratio
+array_rec               6474.3        1819.0   0.281         1819.0   0.281         4499.8   0.695
+dot                     5666.7        1744.7   0.308         1711.6   0.302         2276.2   0.402
+float_loop             11119.8        2871.8   0.258         2780.4   0.250         3110.0   0.280
+float_poly              7473.9        3151.4   0.422         3150.2   0.421         1817.6   0.243
+inline_2                6274.6         417.8   0.067          413.3   0.066         6309.8   1.006
+inline_leaf             6372.5         663.4   0.104          665.0   0.104         6367.2   0.999
+int_rec2                5297.3        1224.9   0.231         1226.7   0.232         2531.0   0.478
+int_sum                 3104.6        1247.3   0.402         1248.1   0.402         2040.1   0.657
+licm_expr               8837.0         488.2   0.055          471.2   0.053         2072.1   0.234
+short_inner             6178.6        2329.4   0.377         2329.1   0.377         1424.5   0.231
+type_entry              5514.8        2190.2   0.397         2147.5   0.389         8467.8   1.535
+type_entry_stable       5486.9        2005.9   0.366         1989.3   0.363         2671.7   0.487
+type_late               5389.8        1793.9   0.333         2490.5   0.462         2036.9   0.378
+type_late_stable        5378.8        1792.7   0.333         1791.3   0.333         2536.2   0.472
+upval_acc               5373.1        1883.9   0.351         1847.2   0.344         5428.7   1.010
+upval_inv               7573.5        2185.9   0.289         2175.3   0.287         3834.3   0.506
+geomean tr: 0.248 of tier 1 (trbase 0.251, j4 0.512)
+
+program           t1 Mcyc(min)       tr Mcyc    ratio   trbase Mcyc    ratio       j4 Mcyc    ratio
+matmul                  1235.1         528.4   0.428          530.8   0.430          657.8   0.533
+sieve                   2362.9        2406.9   1.019         2631.6   1.114         1695.3   0.717
+spectral_norm           2742.4         269.0   0.098          268.9   0.098         2772.1   1.011
+
+Set (d): type_late / type_late_stable (tr) = 1.001 (P9 1.417); type_entry / type_entry_stable (tr) = 1.092 (P9 1.080, not fixed, see docs/JIT_TRACE_REF.md Q2).
+Layout probe (scripts/p9_layout_probe.sh shape, k = 0..4 extra traces in front, Mcyc): type_late 1798 1796 1809 1814 1841; type_late_stable 1792 1798 1824 1808 1814.

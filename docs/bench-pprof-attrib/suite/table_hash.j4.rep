@@ -1,0 +1,57 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 1490489783
+#
+# Overhead  Shared Object         Symbol                                                                                                                      
+# ........  ....................  ............................................................................................................................
+#
+    24.37%  rn-cli               [.] <rn_core::state::State>::concat_result::{closure#0}
+    16.27%  [JIT] tid 2363237     [.] lua_proto@0x7fb670f20640
+    13.93%  libc.so.6             [.] 0x00000000001b7af9
+     7.40%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     6.43%  rn-cli               [.] <rn_core::table::TableRef>::next
+     5.50%  rn-cli               [.] rn_core::number::tostring_int
+     2.39%  rn-cli               [.] rn_core::table::insertkey
+     2.36%  rn-cli               [.] rn_core::table::mainposition
+     2.28%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     2.18%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     1.78%  rn-cli               [.] rn_core::jit_helpers::jit_set
+     1.76%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     1.72%  rn-cli               [.] <rn_core::state::State>::concat_scan
+     1.70%  rn-cli               [.] <rn_core::heap::Heap>::resize_strtab
+     1.05%  libc.so.6             [.] 0x00000000001b7ac4
+     0.86%  libc.so.6             [.] 0x00000000001b7ac0
+     0.73%  libc.so.6             [.] 0x00000000001ae4a5
+     0.73%  rn-cli               [.] rn_core::jit_helpers::jit_concat
+     0.64%  rn-cli               [.] rn_core::table::resize
+     0.60%  rn-cli               [.] <rn_core::state::State>::concat
+     0.59%  rn-cli               [.] <rn_core::state::State>::finish_set
+     0.57%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.45%  rn-cli               [.] rn_core::table::newkey
+     0.40%  rn-cli               [.] rn_core::jit_helpers::jit_tforcall
+     0.40%  rn-cli               [.] <rn_core::state::State>::concat_tostring
+     0.38%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     0.31%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     0.29%  [unknown]             [k] 0000000000000000
+     0.27%  libc.so.6             [.] 0x00000000001ae484
+     0.26%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.22%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.13%  libc.so.6             [.] 0x00000000001ae4a9
+     0.13%  libc.so.6             [.] 0x00000000001ae49e
+     0.13%  rn-cli               [.] <rn_core::table::TableRef>::pset
+     0.13%  rn-cli               [.] core::ptr::drop_glue::<rn_core::heap::Heap>
+     0.13%  rn-cli               [.] <rn_core::heap::Heap>::free_string
+     0.09%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.07%  libc.so.6             [.] 0x00000000001b7b38
+     0.07%  libc.so.6             [.] 0x00000000001ae480
+     0.07%  libc.so.6             [.] 0x00000000001ae494
+     0.06%  libc.so.6             [.] 0x00000000001b7b13
+
+
+#
+# (Tip: To collect Processor Trace with samples use perf record -e '{intel_pt//,cycles}' ; perf script --call-trace or --insn-trace --xed -F +ipc (remove --xed if no xed))
+#

@@ -1,0 +1,12 @@
+local t, n = {}, nil
+print(pcall(function() return "a" .. t end))
+print(pcall(function() return t .. "a" end))
+print(pcall(function() return "a" .. n end))
+print(pcall(function() return n .. "a" end))
+print(pcall(function() return "a" .. "b" .. n end))
+print(pcall(function() return "a" .. n .. "b" end))
+print(pcall(function() return 1 .. {} end))
+print(pcall(function() return true .. "x" end))
+print(pcall(function() return t.x .. "x" end))
+print(pcall(function() local a = "x" return a .. undefinedglobal end))
+print(pcall(function() return print .. "x" end))

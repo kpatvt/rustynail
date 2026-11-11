@@ -1,0 +1,43 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program          bas Mcyc(min)      new Mcyc    ratio      nt0 Mcyc    ratio      dup Mcyc    ratio
+alloc_ctor               335.4         335.7   1.001~         333.1   0.993~         333.5   0.994~
+array_rec               1808.9        1811.4   1.001~        1811.1   1.001~        1811.1   1.001~
+dot                     1585.1        1583.6   0.999~        1583.6   0.999~        1584.6   1.000~
+field_global             537.2         548.5   1.021~         545.7   1.016~         541.9   1.009~
+field_method             809.9         810.6   1.001~         811.0   1.001~         807.6   0.997~
+field_rw                1268.1        1268.4   1.000~        1268.0   1.000~        1268.3   1.000~
+float_loop              2795.1        2790.2   0.998~        2789.3   0.998~        2793.0   0.999~
+float_poly              1838.0        1835.6   0.999~        1833.8   0.998~        1837.9   1.000~
+inline_2                 374.0         374.6   1.002~         373.8   0.999~         374.6   1.002~
+inline_leaf              513.4         513.9   1.001~         513.6   1.000~         512.9   0.999~
+int_rec2                1079.4        1080.0   1.001~        1081.1   1.002~        1078.7   0.999~
+int_sum                  991.9         989.1   0.997~         989.3   0.997~         993.8   1.002~
+licm_expr                469.2         468.8   0.999~         469.5   1.001~         468.4   0.998~
+multret                  160.5         160.4   1.000~         160.0   0.997~         161.0   1.003~
+oop_inherit               61.4          61.3   0.998~          61.1   0.995~          61.4   1.000~
+oop_override             156.9         154.2   0.983~         154.0   0.982~         156.8   0.999~
+rec_loop                 588.3         587.2   0.998~         586.6   0.997~         584.3   0.993~
+short_inner             1317.2        1317.6   1.000~        1317.1   1.000~        1321.2   1.003~
+sink_tuple                15.5          15.3   0.984~          15.1   0.976~          15.5   1.000~
+sink_vec                  14.5          14.5   1.001~          14.3   0.982~          14.6   1.006~
+str_concat              1058.1        1054.0   0.996~        1052.1   0.994~        1069.5   1.011~
+tail_loop                614.3         638.9   1.040~         638.3   1.039~         614.5   1.000~
+tfor_loops               895.0         902.8   1.009~         906.6   1.013~         897.5   1.003~
+type_entry              1928.5        1936.3   1.004~        1926.1   0.999~        1936.3   1.004~
+type_entry_stable          1871.5        1891.5   1.011~        1863.6   0.996~        1875.8   1.002~
+type_late               1652.8        1655.4   1.002~        1654.8   1.001~        1652.2   1.000~
+type_late_stable          1651.6        1655.5   1.002~        1655.7   1.002~        1652.8   1.001~
+upval_acc               1699.3        1699.7   1.000~        1698.7   1.000~        1699.5   1.000~
+upval_inv               2166.8        2193.7   1.012~        2186.9   1.009~        2160.2   0.997~
+geomean new: all(29) cycles min 1.002 median 1.000 instr 0.999; numeric cycles min nan median nan instr nan
+geomean nt0: all(29) cycles min 1.000 median 0.998 instr 1.000; numeric cycles min nan median nan instr nan
+geomean dup: all(29) cycles min 1.001 median 1.007 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

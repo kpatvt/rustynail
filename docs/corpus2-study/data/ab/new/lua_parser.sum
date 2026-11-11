@@ -1,0 +1,96 @@
+== lua_parser (rc 0)
+[trace] recorded 66 installed 11 entered 319372 flushes 11 rerecord 5 blacklisted 45 refused 451 deferred 1 ineffective 1 probes 491 (fn-short 40 start-refused 451)
+[trace] aborted CFunc: 8
+[trace] aborted Depth: 1
+[trace] aborted FnShort: 40
+[trace] aborted Identical: 1
+[trace] aborted InnerLoop: 4
+[trace] aborted LeaveFrame: 7
+[trace] aborted LeaveLoop: 4
+[trace] aborted MultRet: 4
+[trace] aborted Nyi(Closure): 6
+[trace] aborted Nyi(Concat): 6
+[trace] aborted Recursion: 4
+[trace] aborted StartRefused: 451
+[trace] aborted TailCall: 4
+[trace] aborted TooLong: 2
+[trace] aborted Unstable: 4
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 123 installed 51 failed 95 preludes 1
+[trace] links: nest roots 2 frame links 0 stitches 7
+[trace] exits 1850019 (live traces 0)
+aborts (count reason op depth head):
+     26 SideShort              CALL      d4 side  [policy]
+     12 LeaveFrame             RETURN    d0 side
+      6 SideShort              TFORCALL  d0 side  [policy]
+      6 SideShort              CALL      d1 side  [policy]
+      6 LeaveFrame             RETURN1   d0 root L154 'function Parser:expr(limit)'
+      6 Nyi(CONCAT)            CONCAT    d0 root L217 'function show(n, ind)'
+      6 LeaveFrame             RETURN1   d0 side
+      4 Unstable               TFORCALL  d0 root L258 'local function countNodes(n)'
+      4 FnShort                RETURN0   d0 root L35 'function Parser:accept(t) if self:peek() == t then'  [policy]
+      4 SideShort              TFORPREP  d0 side  [policy]
+      4 FnShort                RETURN1   d0 root L113 'function Parser:primary()'  [policy]
+      4 LeaveFrame             TAILCALL  d0 side
+      4 FnShort                RETURN1   d0 root L36 'function Parser:expect(t)'  [policy]
+      4 FnShort                CALL      d0 root L211 'local function lines(head, body, ind)'  [policy]
+      4 SideShort              RETURN1   d0 side  [policy]
+      4 FnShort                CALL      d4 root L52 'function Parser:body() local b = self:block(); sel'  [policy]
+      4 FnShort                CALL      d1 root L216 'local function block(head, body, ind) return lines'  [policy]
+      4 FnShort                CALL      d4 root L51 'function Parser:cond(kw) local e = self:expr(); se'  [policy]
+      4 FnShort                CALL      d1 root L253 'local function pretty(ast)'  [policy]
+      3 FnShort                RETURN1   d0 root L142 'function Parser:suffixed()'  [policy]
+      3 FnShort                RETURN1   d0 root L154 'function Parser:expr(limit)'  [policy]
+      2 LeaveLoop              TFORCALL  d0 root L258 'local function countNodes(n)'
+      2 InnerLoop              TFORCALL  d0 root L258 'local function countNodes(n)'
+      2 CFunc                  CALL      d0 root L10 'local function lex(src)'
+      2 MultRet                SETLIST   d0 root L154 'function Parser:expr(limit)'
+      2 InnerLoop              JMP       d2 root L71 'function Parser:statement()'
+      2 CFunc                  CALL      d0 root L211 'local function lines(head, body, ind)'
+      2 Recursion              CALL      d3 root L206 'local function list(items, ind)'
+      2 InnerLoop              JMP       d2 side
+      2 MultRet                SETLIST   d0 root L46 'function Parser:exprs()'
+      2 TailCall               TAILCALL  d2 root L217 'function show(n, ind)'
+      2 TailCall               TAILCALL  d1 side
+      2 CFunc                  CALL      d1 root L253 'local function pretty(ast)'
+      2 TooLong                GETFIELD  d5 root L71 'function Parser:statement()'
+      2 Nyi(CLOSURE)           CLOSURE   d2 root L172 'local function parse(src)'
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L32 'function Parser.new(src) return setmetatable({ tok'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L10 'local function lex(src)'
+      2 CFunc                  CALL      d0 root L0 main
+      1 Recursion              CALL      d1 root L258 'local function countNodes(n)'
+      1 LeaveLoop              TFORCALL  d0 root L183 'local function fold(n)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  468.8 L12 pc16 Return0 139 3372341
+  71.9 L142 pc62 Return1 172 417876
+  63.1 L71 pc41 Return1 64 985482
+  45.5 L181 pc0 Sub 197 230954
+  15.2 L172 pc8 Setfield 173 87897
+  11.7 L172 pc12 Return1 271 43038
+  7.0 L51 pc0 SelfOp 134 52556
+  6.6 L258 pc11 Gettabup 252 26131
+  6.0 L0 pc195 Call 116 51383
+  5.7 L0 pc189 Add 112 50947
+  5.2 L253 pc10 Settable 729 7126
+  3.2 L258 pc24 Return 230 13966
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     363358 Eqk        -              black=false gk=32
+     230904 Call       SideShort      black=true gk=32
+     161496 Gettabup   -              black=true gk=16
+     125475 Return     LeaveFrame     black=true gk=32
+     119722 Tforprep   -              black=false gk=4
+      98372 Tforcall   SideShort      black=true gk=37
+      80437 Getfield   -              black=false gk=10
+      76666 Gettable   -              black=false gk=11
+      71844 Tforcall   -              black=false gk=4
+      64090 Tailcall   LeaveFrame     black=true gk=32
+      61778 Gettable   -              black=false gk=27
+      58618 Eq         SideShort      black=true gk=32
+      58207 Gettabup   -              black=false gk=16
+      50583 Getfield   -              black=false gk=14
+      41290 Gettable   -              black=false gk=14
+      29760 Call       -              black=false gk=32
+      26680 Call       MaxSide        black=true gk=32
+      23583 Return1    LeaveFrame     black=true gk=32
+      23338 Eq         -              black=false gk=32
+      21781 Return     MaxSide        black=true gk=32

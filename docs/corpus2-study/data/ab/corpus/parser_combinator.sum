@@ -1,0 +1,79 @@
+== parser_combinator (rc 0)
+[trace] recorded 65 installed 11 entered 911295 flushes 11 rerecord 0 blacklisted 27 refused 78 deferred 0 ineffective 0 probes 91 (fn-short 13 start-refused 78)
+[trace] aborted CFunc: 2
+[trace] aborted FnShort: 13
+[trace] aborted InnerLoop: 22
+[trace] aborted LeaveFrame: 23
+[trace] aborted LeaveLoop: 1
+[trace] aborted Nyi(Call): 2
+[trace] aborted Nyi(Setupval): 2
+[trace] aborted Recursion: 2
+[trace] aborted StartRefused: 78
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 5 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 68 installed 36 failed 34 preludes 1
+[trace] links: nest roots 1 frame links 0 stitches 7
+[trace] exits 2417744 (live traces 0)
+aborts (count reason op depth head):
+     18 LeaveFrame             RETURN    d0 root L140 'local function eval(node, env)'
+     14 LeaveFrame             RETURN    d0 side
+      8 Recursion              CALL      d2 side
+      5 LeaveFrame             RETURN    d0 root L104 'return function(inp, pos)'
+      4 FnShort                CALL      d1 root L26 'return function(inp, pos)'  [policy]
+      4 FnShort                RETURN    d0 root L8 'return function(inp, pos)'  [policy]
+      4 FnShort                CALL      d0 root L16 'return function(inp, pos)'  [policy]
+      4 InnerLoop              FORPREP   d2 root L51 'return function(inp, pos)'
+      4 InnerLoop              FORPREP   d4 root L0 main
+      3 InnerLoop              FORPREP   d1 root L104 'return function(inp, pos)'
+      3 SideShort              TFORCALL  d0 side  [policy]
+      2 InnerLoop              FORPREP   d1 root L65 'return function(inp, pos)'
+      2 InnerLoop              FORPREP   d3 root L41 'return function(inp, pos)'
+      2 InnerLoop              FORPREP   d1 side
+      2 InnerLoop              JMP       d0 root L104 'return function(inp, pos)'
+      2 Nyi(SETUPVAL)          SETUPVAL  d0 root L82 'return function(inp, pos)'
+      2 Nyi(CALL)              CALL      d0 root L120 'local number = P.tok(P.map(P.pat("%d+%.?%d*"), fun'
+      2 SideShort              CALL      d2 side  [policy]
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 InnerLoop              FORPREP   d2 root L73 'return function(inp, pos)'
+      2 Recursion              CALL      d2 root L0 main
+      1 CFunc                  CALL      d2 root L26 'return function(inp, pos)'
+      1 CFunc                  CALL      d1 root L26 'return function(inp, pos)'
+      1 InnerLoop              FORPREP   d2 root L41 'return function(inp, pos)'
+      1 FnShort                RETURN    d0 root L140 'local function eval(node, env)'  [policy]
+      1 InnerLoop              FORLOOP   d0 root L41 'return function(inp, pos)'
+      1 InnerLoop              FORPREP   d3 root L104 'return function(inp, pos)'
+      1 LeaveFrame             RETURN1   d0 side
+      1 LeaveLoop              TFORCALL  d0 root L169 'local obj = P.map(P.seq(P.tok(P.lit("{")), P.sepBy'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  544.3 L26 pc7 Getupval 312 1744490
+  22.8 L129 pc0 Newtable 192 118618
+  22.3 L164 pc0 Loadtrue 199 111874
+  9.5 L16 pc11 Return 461 20555
+  5.5 L26 pc24 Return 843 6548
+  4.4 L104 pc10 Getupval 468 9302
+  4.2 L0 pc325 Newtable 230 18268
+  4.1 L169 pc0 Newtable 197 20740
+  2.9 L127 pc0 Newtable 193 14926
+  2.9 L65 pc11 Return 1593 1789
+  2.3 L162 pc0 SelfOp 199 11476
+  2.2 L166 pc0 Geti 195 11096
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     764102 Eqk        -              black=false gk=32
+     717200 Return     LeaveFrame     black=true gk=32
+     377513 Getupval   InnerLoop      black=true gk=48
+     115573 Call       -              black=false gk=32
+      92470 Test       -              black=false gk=48
+      92454 Test       -              black=true gk=16
+      70742 Call       Recursion      black=true gk=32
+      43529 Gettable   SideShort      black=true gk=16
+      35324 Eqk        SideShort      black=true gk=32
+      26978 Gettable   -              black=false gk=14
+      17629 Call       MaxSide        black=true gk=32
+      17349 Geti       -              black=false gk=16
+      14438 Geti       -              black=false gk=48
+       8951 Settable   -              black=false gk=32
+       8950 Settable   -              black=false gk=40
+       5762 Settable   SideShort      black=false gk=57
+       2893 Settable   -              black=false gk=41
+       2877 Settable   -              black=false gk=57
+       2858 Settable   SideShort      black=true gk=57
+        152 Newtable   -              black=false gk=32

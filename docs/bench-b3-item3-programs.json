@@ -1,0 +1,216 @@
+{
+ "cpu": 4,
+ "runs": 7,
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/b/lua-cli",
+  "dup": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/d/lua-cli",
+  "new": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <tmp>/n/lua-cli"
+ },
+ "baseline": "base",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "fasta": {
+   "base": {
+    "cycles_min": 1666601460,
+    "cycles_median": 1676626311,
+    "instructions_min": 6418098750,
+    "instructions_median": 6418156525,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 1668050360,
+    "cycles_median": 1701831777,
+    "instructions_min": 6418070190,
+    "instructions_median": 6418172257,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 1659588428,
+    "cycles_median": 1673644871,
+    "instructions_min": 6418138005,
+    "instructions_median": 6418187630,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "json": {
+   "base": {
+    "cycles_min": 2300252667,
+    "cycles_median": 2343169174,
+    "instructions_min": 9632174334,
+    "instructions_median": 9632249653,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 2310725797,
+    "cycles_median": 2338900960,
+    "instructions_min": 9632118567,
+    "instructions_median": 9632257941,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 2398588214,
+    "cycles_median": 2438469661,
+    "instructions_min": 9576121530,
+    "instructions_median": 9576165247,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "knucleotide": {
+   "base": {
+    "cycles_min": 1465429277,
+    "cycles_median": 1477034414,
+    "instructions_min": 8992210226,
+    "instructions_median": 8992211033,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 1461221545,
+    "cycles_median": 1464134464,
+    "instructions_min": 8992210090,
+    "instructions_median": 8992212625,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 1462607950,
+    "cycles_median": 1470793675,
+    "instructions_min": 8992204194,
+    "instructions_median": 8992209734,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  },
+  "string_ops": {
+   "base": {
+    "cycles_min": 1727185160,
+    "cycles_median": 1739607653,
+    "instructions_min": 5141898068,
+    "instructions_median": 5141905171,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "dup": {
+    "cycles_min": 1715956140,
+    "cycles_median": 1724649593,
+    "instructions_min": 5141902329,
+    "instructions_median": 5141905216,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "new": {
+    "cycles_min": 1539202851,
+    "cycles_median": 1549780896,
+    "instructions_min": 4767678654,
+    "instructions_median": 4767683198,
+    "runs": 7,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "dup": {
+   "fasta": {
+    "cycles_min": 1.000869374013389,
+    "cycles_median": 1.0150334429530492,
+    "instructions_min": 0.9999955500840494,
+    "instructions_median": 1.0000024511711327
+   },
+   "json": {
+    "cycles_min": 1.004553034608002,
+    "cycles_median": 0.9981784439436296,
+    "instructions_min": 0.9999942103415007,
+    "instructions_median": 1.0000008604428143
+   },
+   "knucleotide": {
+    "cycles_min": 0.9971286693489474,
+    "cycles_median": 0.9912663172382928,
+    "instructions_min": 0.9999999848757984,
+    "instructions_median": 1.0000001770421083
+   },
+   "string_ops": {
+    "cycles_min": 0.9934986588235856,
+    "cycles_median": 0.9914014749393609,
+    "instructions_min": 1.000000828682316,
+    "instructions_median": 1.0000000087516199
+   }
+  },
+  "new": {
+   "fasta": {
+    "cycles_min": 0.9957920161668405,
+    "cycles_median": 0.9982217623686093,
+    "instructions_min": 1.0000061162972913,
+    "instructions_median": 1.000004846407201
+   },
+   "json": {
+    "cycles_min": 1.0427498893537854,
+    "cycles_median": 1.0406716203240731,
+    "instructions_min": 0.9941806696955076,
+    "instructions_median": 0.9941774343460323
+   },
+   "knucleotide": {
+    "cycles_min": 0.998074743664344,
+    "cycles_median": 0.99577481814855,
+    "instructions_min": 0.9999993291971775,
+    "instructions_median": 0.9999998555416465
+   },
+   "string_ops": {
+    "cycles_min": 0.8911626191832265,
+    "cycles_median": 0.8908795574262744,
+    "instructions_min": 0.927221541724269,
+    "instructions_median": 0.9272211445845818
+   }
+  }
+ },
+ "geomean": {
+  "dup": {
+   "all_cycles_min": 0.9990039137875737,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9989232283873164,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9999976434919416,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0000008743514535,
+   "numeric_instructions_median": NaN,
+   "n_programs": 4
+  },
+  "new": {
+   "all_cycles_min": 0.9803185144769033,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9797837210958726,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.979857222448527,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9798561382021732,
+   "numeric_instructions_median": NaN,
+   "n_programs": 4
+  }
+ }
+}

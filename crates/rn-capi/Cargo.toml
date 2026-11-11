@@ -1,0 +1,32 @@
+[package]
+name = "rn-capi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rustynail C API: every lua.h/lauxlib.h/lualib.h symbol (ABI compatible with PUC Lua), built as a static library"
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lib]
+name = "rn_capi"
+# No cdylib: rustc's version script would hide the C shim's variadic symbols. A shared object
+# is produced from the staticlib by linking it with `--whole-archive`.
+crate-type = ["rlib", "staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+rn-core = { path = "../rn-core" }
+rn-compiler = { path = "../rn-compiler" }
+rn-std = { path = "../rn-std" }
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"

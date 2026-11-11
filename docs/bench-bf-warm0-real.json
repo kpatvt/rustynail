@@ -1,0 +1,249 @@
+{
+ "cpu": 4,
+ "runs": 11,
+ "set": "real",
+ "bins": {
+  "plain": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bfc/lua-cli",
+  "pgo": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bfd/lua-cli",
+  "pgo2": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bfe/lua-cli",
+  "bplain": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bfa/lua-cli",
+  "bpgo": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bfb/lua-cli"
+ },
+ "programs": {
+  "game_loop": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 40324856,
+    "cycles_median": 40716552,
+    "instructions_min": 196393401,
+    "instructions_median": 196394674,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 39181641,
+    "cycles_median": 39340818,
+    "instructions_min": 193692579,
+    "instructions_median": 193693945,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 39253084,
+    "cycles_median": 39385212,
+    "instructions_min": 193692472,
+    "instructions_median": 193693786,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 40131056,
+    "cycles_median": 40364390,
+    "instructions_min": 196492056,
+    "instructions_median": 196493715,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 39331175,
+    "cycles_median": 39526915,
+    "instructions_min": 193686959,
+    "instructions_median": 193689700,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "json_roundtrip": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 610176865,
+    "cycles_median": 613151505,
+    "instructions_min": 2681249326,
+    "instructions_median": 2681252256,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 512360803,
+    "cycles_median": 517105036,
+    "instructions_min": 2355777072,
+    "instructions_median": 2355781126,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 510637996,
+    "cycles_median": 515719830,
+    "instructions_min": 2355795916,
+    "instructions_median": 2355798609,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 623902485,
+    "cycles_median": 628228218,
+    "instructions_min": 2702910976,
+    "instructions_median": 2702917742,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 516488174,
+    "cycles_median": 519530534,
+    "instructions_min": 2375935085,
+    "instructions_median": 2375937147,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "lua_interp": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 113482528,
+    "cycles_median": 114738023,
+    "instructions_min": 678404400,
+    "instructions_median": 678407562,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 107181222,
+    "cycles_median": 107588214,
+    "instructions_min": 645368353,
+    "instructions_median": 645370604,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 107266988,
+    "cycles_median": 108145175,
+    "instructions_min": 645369089,
+    "instructions_median": 645370347,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 114165770,
+    "cycles_median": 115114301,
+    "instructions_min": 679721377,
+    "instructions_median": 679723711,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 106730469,
+    "cycles_median": 107553319,
+    "instructions_min": 644262827,
+    "instructions_median": 644265023,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "template_engine": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 858489185,
+    "cycles_median": 862168280,
+    "instructions_min": 3673202075,
+    "instructions_median": 3673204879,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 701836080,
+    "cycles_median": 710994995,
+    "instructions_min": 3154235341,
+    "instructions_median": 3154236807,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 718458162,
+    "cycles_median": 726042036,
+    "instructions_min": 3154235496,
+    "instructions_median": 3154237002,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 840669130,
+    "cycles_median": 849353196,
+    "instructions_min": 3703280271,
+    "instructions_median": 3703282205,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 721123797,
+    "cycles_median": 724854079,
+    "instructions_min": 3153634323,
+    "instructions_median": 3153635562,
+    "runs": 11,
+    "output": "same"
+   }
+  },
+  "wordfreq": {
+   "plain": {
+    "variant": false,
+    "cycles_min": 160609046,
+    "cycles_median": 161545117,
+    "instructions_min": 741359605,
+    "instructions_median": 741360754,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 141343999,
+    "cycles_median": 141760600,
+    "instructions_min": 622829133,
+    "instructions_median": 622831397,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 140492751,
+    "cycles_median": 142061017,
+    "instructions_min": 622829567,
+    "instructions_median": 622831153,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 161246962,
+    "cycles_median": 162839956,
+    "instructions_min": 744727523,
+    "instructions_median": 744729892,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 140135219,
+    "cycles_median": 142343298,
+    "instructions_min": 623756187,
+    "instructions_median": 623757565,
+    "runs": 11,
+    "output": "same"
+   }
+  }
+ }
+}

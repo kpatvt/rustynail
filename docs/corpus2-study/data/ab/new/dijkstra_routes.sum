@@ -1,0 +1,64 @@
+== dijkstra_routes (rc 0)
+[trace] recorded 31 installed 14 entered 5531406 flushes 14 rerecord 0 blacklisted 6 refused 45 deferred 0 ineffective 0 probes 49 (fn-short 4 start-refused 45)
+[trace] aborted Compile(asm-unsupported): 3
+[trace] aborted FnShort: 4
+[trace] aborted InnerLoop: 3
+[trace] aborted IntMiss: 2
+[trace] aborted LeaveFrame: 2
+[trace] aborted LeaveLoop: 4
+[trace] aborted Nyi(Call): 3
+[trace] aborted StartRefused: 45
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 11 phis 46 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 107 installed 46 failed 82 preludes 0
+[trace] links: nest roots 4 frame links 0 stitches 0
+[trace] exits 8656508 (live traces 0)
+aborts (count reason op depth head):
+     17 InnerLoop              JMP       d1 side
+     10 SideShort              FORLOOP   d0 side  [policy]
+     10 IntMiss                GETTABLE  d0 side
+      8 SideUntraced           FORLOOP   d0 side  [policy]
+      8 LeaveFrame             RETURN1   d0 side
+      7 LeaveFrame             RETURN    d0 side
+      4 LeaveLoop              TFORCALL  d0 root L59 'local function add_road(a, b)'
+      4 FnShort                RETURN0   d0 root L14 'local function heap_push(h, item)'  [policy]
+      3 Nyi(CALL)              CALL      d0 root L116 'local function path_to(prev, src, dst)'
+      2 LeaveFrame             RETURN0   d0 root L14 'local function heap_push(h, item)'
+      2 InnerLoop              JMP       d1 root L89 'local function dijkstra(src)'
+      1 InnerLoop              TFORCALL  d0 root L59 'local function add_road(a, b)'
+      1 IntMiss                GETTABLE  d0 root L127 'local function bfs(src)'
+      1 TooLong                GETTABUP  d1 side
+      1 IntMiss                GETTABLE  d0 root L0 main
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  199.3 L89 pc10 Forloop 4 49832525
+  67.4 L116 pc3 Test 2 33686920
+  39.8 L12 pc0 Newtable 15 2651417
+  22.4 L0 pc502 Tforcall 2 11185160
+  15.0 L127 pc20 Gettable 17 880272
+  11.4 L89 pc9 Settable 4 2851865
+  4.0 L59 pc66 Return 7 565203
+  1.0 L59 pc12 Tforcall 13 73998
+  0.7 L59 pc8 Getfield 4 171215
+  0.5 L0 pc92 Forloop 8 65695
+  0.4 L127 pc33 Tforcall 8 55185
+  0.4 L0 pc99 Forloop 6 68227
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    4140818 Lt         -              black=false gk=32
+    1868786 Eq         -              black=false gk=32
+     555249 Le         LeaveFrame     black=true gk=32
+     519938 Gettable   -              black=false gk=30
+     369163 Lt         LeaveFrame     black=true gk=32
+     349827 Gettable   -              black=false gk=32
+     242780 Tforcall   -              black=false gk=16
+     236060 Gettable   -              black=true gk=30
+     210724 Gettable   -              black=false gk=16
+      85814 Tforcall   -              black=false gk=32
+      29609 Tforcall   -              black=false gk=49
+      12914 Tforcall   -              black=false gk=48
+      12598 Tforcall   MaxSide        black=true gk=48
+       6158 Tforcall   -              black=false gk=40
+       3366 Gettable   MaxSide        black=true gk=30
+       2141 Settable   SideShort      black=true gk=32
+       1892 Gettable   MaxSide        black=true gk=48
+       1436 Le         -              black=false gk=32
+       1407 Gettable   -              black=false gk=48
+        927 Return     LeaveFrame     black=true gk=32

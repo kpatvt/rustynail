@@ -1,0 +1,149 @@
+nil	00
+false	01
+true	02
+0	07 00 00 00 00 00 00 00 00
+1	07 00 00 00 00 00 00 f0 3f
+-1	07 00 00 00 00 00 00 f0 bf
+1.5	07 00 00 00 00 00 00 f8 3f
+2^31	07 00 00 00 00 00 00 e0 41
+2^53	07 00 00 00 00 00 00 40 43
+-0	07 00 00 00 00 00 00 00 80
+inf	07 00 00 00 00 00 00 f0 7f
+-inf	07 00 00 00 00 00 00 f0 ff
+pi	07 18 2d 44 54 fb 21 09 40
+big	07 9c 75 00 88 3c e4 37 7e
+small	07 01 00 00 00 00 00 00 00
+int-ish	07 00 00 14 1a 99 be 3c 42
+empty str	20
+a	21 61
+zero byte	21 00
+embedded	24 61 00 62 ff
+strlen	30	31	3e 78 78 78 78 78	78 78
+strlen	31	32	3f 78 78 78 78 78	78 78
+strlen	32	33	40 78 78 78 78 78	78 78
+strlen	222	224	e0 1e 78 78 78 78	78 78
+strlen	223	225	e0 1f 78 78 78 78	78 78
+strlen	224	226	e0 20 78 78 78 78	78 78
+strlen	225	227	e0 21 78 78 78 78	78 78
+strlen	255	257	e0 3f 78 78 78 78	78 78
+strlen	256	258	e0 40 78 78 78 78	78 78
+strlen	479	481	e1 1f 78 78 78 78	78 78
+strlen	480	482	e1 20 78 78 78 78	78 78
+strlen	500	502	e1 34 78 78 78 78	78 78
+strlen	8000	8002	fe 80 78 78 78 78	78 78
+strlen	8159	8164	ff ff 1f 00 00 78	78 78
+strlen	8160	8165	ff 00 20 00 00 78	78 78
+strlen	8190	8195	ff 1e 20 00 00 78	78 78
+strlen	10000	10005	ff 30 27 00 00 78	78 78
+strlen	70000	70005	ff 90 11 01 00 78	78 78
+{}	08
+{1}	0c 02 07 00 00 00 00 00 00 f0 3f
+{1,2,3}	0c 04 07 00 00 00 00 00 00 f0 3f 07 00 00 00 00 00 00 00 40 07 00 00 00 00 00 00 08 40
+{x=1}	09 01 21 78 07 00 00 00 00 00 00 f0 3f
+{1,nil,3}	0c 04 07 00 00 00 00 00 00 f0 3f 00 07 00 00 00 00 00 00 08 40
+{1,2,x=1}	0d 03 01 07 00 00 00 00 00 00 f0 3f 07 00 00 00 00 00 00 00 40 21 78 07 00 00 00 00 00 00 f0 3f
+{{}}	0c 02 08
+{{{}}}	0c 02 0c 02 08
+{[1.5]=1}	09 01 07 00 00 00 00 00 00 f8 3f 07 00 00 00 00 00 00 f0 3f
+{[true]=1}	09 01 02 07 00 00 00 00 00 00 f0 3f
+{[-1]=1}	09 01 07 00 00 00 00 00 00 f0 bf 07 00 00 00 00 00 00 f0 3f
+{[100]=1}	09 01 07 00 00 00 00 00 00 59 40 07 00 00 00 00 00 00 f0 3f
+{[true]=false}	09 01 02 01
+{1,nil,nil,4}	0c 05 07 00 00 00 00 00 00 f0 3f 00 00 07 00 00 00 00 00 00 10 40
+nested	09 01 21 61 09 01 21 62 09 01 21 63 07 00 00 00 00 00 00 f0 3f
+str keys 1	09 01 24 6e 61 6d 65 25 76 61 6c 75 65
+{[0]}	0a 01 07 00 00 00 00 00 00 1c 40
+{[0],1}	0a 02 07 00 00 00 00 00 00 1c 40 07 00 00 00 00 00 00 f0 3f
+assign arr	0c 04 07 00 00 00 00 00 00 f0 3f 07 00 00 00 00 00 00 00 40 07 00 00 00 00 00 00 08 40
+trail nil	0c 03 07 00 00 00 00 00 00 f0 3f 07 00 00 00 00 00 00 00 40
+cleared	08
+mixed	{[1]=5,["x"]=1}
+ctor idx	0d 03 01 07 00 00 00 00 00 00 f0 3f 07 00 00 00 00 00 00 00 40 21 6e 07 00 00 00 00 00 00 f0 3f
+arr 300	0c e0 4d 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02 02
+arr strs	0c 04 21 61 22 62 62 23 63 63 63
+arr nested	0c 04 0c 02 07 00 00 00 00 00 00 f0 3f 0c 03 07 00 00 00 00 00 00 00 40 07 00 00 00 00 00 00 08 40 09 01 21 78 07 00 00 00 00 00 00 10 40
+arr bools	0c 04 02 01 02
+arrlen	222	0c df 02 02
+arrlen	223	0c e0 00 02
+arrlen	224	0c e0 01 02
+arrlen	225	0c e0 02 02
+arrlen	500	0c e1 15 02
+d nil | ok | nil
+d false | ok | false
+d true | ok | true
+d num | ok | 1
+d num frac | ok | 1.5
+d neg | ok | -1
+d int32 | ok | 5
+d int32 neg | ok | -1
+d str | ok | "abc"
+d empty str | ok | ""
+d str2 | ERR | left-over data in buffer
+d tab | ok | {}
+d arr | ok | {[1]=1,[2]=2}
+d arr0 | ok | {[0]=1,[1]=2}
+d hash | ok | {["x"]=1}
+d arr+hash | ok | {[1]=1,["x"]="y"}
+d arr0+hash | ok | {[0]=1,["x"]="y"}
+d nested | ok | {[1]={[1]={[1]={}}}}
+d holes | ok | {[1]=1,[3]=3}
+d tab-keys | ok | {[{}]="v"}
+d bool key | ok | {[true]="v"}
+e empty | ERR | unexpected end of buffer
+e trunc num | ERR | unexpected end of buffer
+e trunc str | ERR | unexpected end of buffer
+e trunc tab | ERR | unexpected end of buffer
+e trunc hash | ERR | unexpected end of buffer
+e tag 13 | ERR | cannot deserialize tag 0xADDR
+e tag 3 | ok | <userdata>
+e tag 4 | ok | <userdata>
+e tag 0x14 | ERR | cannot deserialize tag 0xADDR
+e tag 0x1f | ERR | cannot deserialize tag 0xADDR
+e leftover | ERR | left-over data in buffer
+e nil key | ERR | table index is nil
+e nan key | ERR | table index is NaN
+e dict no dict | ERR | cannot deserialize dictionary index 1
+e mt no mts | ERR | cannot deserialize dictionary index 1
+e huge arr | ERR | table overflow
+e huge hash | ERR | table overflow
+e huge str | ERR | unexpected end of buffer
+e str len trunc | ERR | unexpected end of buffer
+prefix	1	false	unexpected end of buffer
+prefix	2	false	unexpected end of buffer
+prefix	3	false	unexpected end of buffer
+prefix	4	false	unexpected end of buffer
+prefix	5	false	unexpected end of buffer
+prefix	6	false	unexpected end of buffer
+prefix	7	false	unexpected end of buffer
+prefix	8	false	unexpected end of buffer
+prefix	9	false	unexpected end of buffer
+prefix	10	false	unexpected end of buffer
+prefix	11	false	unexpected end of buffer
+prefix	12	false	unexpected end of buffer
+prefix	13	false	unexpected end of buffer
+prefix	14	false	unexpected end of buffer
+prefix	15	false	unexpected end of buffer
+prefix	16	false	unexpected end of buffer
+prefix	17	false	unexpected end of buffer
+prefix	18	false	unexpected end of buffer
+prefix	19	false	unexpected end of buffer
+depth ok	true	
+depth 100 | ERR | too deep to serialize
+depth 101 | ERR | too deep to serialize
+decode depth 100	true	table: 0xADDR
+decode depth 101 | ERR | too deep to serialize
+circular | ERR | too deep to serialize
+function | ERR | cannot serialize 'function'
+thread | ERR | cannot serialize 'thread'
+userdata | ERR | cannot serialize 'userdata'
+fn in table | ERR | cannot serialize 'function'
+fn key | ERR | cannot serialize 'function'
+rollback	3	pre
+stream len	34
+stream	1	"hi"
+stream	2	5
+stream	3	{[1]=1,[2]=2}
+stream	4	nil
+stream	5	false
+stream left	0
+stream eob | ERR | unexpected end of buffer

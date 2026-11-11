@@ -1,0 +1,19 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)        k Mcyc    ratio   konlyA Mcyc    ratio      dup Mcyc    ratio
+game_loop                 36.4          36.7   1.010~          36.1   0.994~          36.5   1.005~
+json_roundtrip           603.7         578.9   0.959~         602.7   0.998~         603.7   1.000~
+lua_interp               113.7         113.5   0.999~         113.0   0.995~         114.5   1.007~
+template_engine           834.3         832.8   0.998~         839.7   1.006~         838.2   1.005~
+wordfreq                 160.5         153.2   0.955~         158.2   0.985~         161.9   1.009~
+geomean k: all(5) cycles min 0.984 median 0.982 instr 0.974; numeric cycles min nan median nan instr nan
+geomean konlyA: all(5) cycles min 0.996 median 0.994 instr 0.993; numeric cycles min nan median nan instr nan
+geomean dup: all(5) cycles min 1.005 median 1.003 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

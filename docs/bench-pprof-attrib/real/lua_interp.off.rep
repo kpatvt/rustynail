@@ -1,0 +1,31 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 278  of event 'cycles:u'
+# Event count (approx.): 248531300
+#
+# Overhead  Shared Object         Symbol                                                              
+# ........  ....................  ....................................................................
+#
+    68.53%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    14.49%  rn-cli               [.] <rn_core::state::State>::post_call
+     5.93%  rn-cli               [.] <rn_core::table::TableRef>::get
+     3.98%  rn-cli               [.] <rn_core::value::Value>::raw_equal
+     2.82%  rn-cli               [.] <rn_core::state::State>::close
+     1.21%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     0.81%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+     0.40%  rn-cli               [.] rn_core::table::insertkey
+     0.40%  rn-cli               [.] rn_core::table::mainposition
+     0.40%  rn-cli               [.] <rn_core::state::State>::for_prep
+     0.28%  rn-cli               [.] rn_std::lib_base::base_ipairs
+     0.25%  rn-cli               [.] <rn_core::state::State>::ccall
+     0.07%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::discharge2reg
+     0.06%  rn-cli               [.] <rn_compiler::lexer::LexState<rn_core::heap::Heap>>::llex
+     0.05%  libc.so.6             [.] 0x00000000000bd15e
+
+
+#
+# (Tip: Treat branches as callchains: perf record -b ... ; perf report --branch-history)
+#

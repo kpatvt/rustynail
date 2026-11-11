@@ -1,0 +1,34 @@
+Artifact rows of the old bench/lib (constant arguments / unconsumed results) vs the H1 rows (varying arguments, consumed results).
+old = docs/bench-lj-lib.json (main at the P-LJ measurement), const = the old program re-measured now (F1 build, bench/lib_const/<row>_const.lua), new = bench/lib/<row>.lua now.
+row               old o/LJ  old LJ const o/LJ const LJ  new o/LJ  new LJ  (LJ in Mcyc)
+rep                 112.13     6.0     112.55      6.1      2.96    91.3
+rep_sep              97.37     5.0      95.77      5.2      2.55   104.7
+fmt_s                78.57     6.6     126.93      6.9     90.78     4.3
+fmt_q               132.03     4.3     209.78      4.6      2.52   167.3
+tonumber_flt         34.23     9.9      36.69      9.8      0.63   845.4
+tonumber_int         20.74    26.7      23.52     27.0      1.30   204.5
+getmt                32.34    19.5      32.20     19.7     30.87    14.6
+tunpack              29.47    14.1          -        -      1.76   156.2
+str_eq               29.04    27.1      28.79     27.0      1.84   254.6
+find_plain           25.79    19.6      45.84     20.0      3.86   122.4
+sub                  20.58    16.0      22.96     15.8      3.31    80.6
+byte_multi           23.21    19.1      40.75     19.3     12.97    20.5
+str_method_len       20.06    28.2       4.29     28.6      9.30    55.6
+str_lt               13.22    59.4      12.94     59.5      4.32    66.4
+str_lt_short         14.89    52.6      14.92     52.8      4.22    62.7
+len_op               11.64    47.5       2.26     47.7      5.06   101.2
+str_eq_dyn            9.29    74.0       9.07     74.2      2.23   211.8
+type_call             6.35    26.4       6.32     26.3      3.19    85.6
+len_tbl               6.44    86.2       6.36     86.6      2.49   221.7
+reverse              34.32     8.6      37.59      8.4      2.37   113.8
+lower                33.28     7.6      41.33      8.0      2.54   146.3
+upper                33.29     8.1      35.38      8.3      2.07   120.7
+concat_op_str        22.27    14.1      40.21     14.4      1.38   325.4
+setmt                27.51    13.5      15.90     13.7      0.85   579.8
+rawget_set           31.50    13.6      28.42     13.7     18.21    14.5
+pcall_ok              6.01    18.4       6.30     18.2      6.69    40.9
+assert_ok            10.05    45.0      19.70     45.2     12.43    23.7
+sub_1char             4.27    64.4       4.17     64.4      1.53   176.7
+geomean of the 28 rows: old 22.68  const (now) 22.56  new 3.75
+whole lib set: old 90 rows geomean 3.80; new 91 rows geomean 1.85
+rows that were never artifacts: old 62 rows 1.70; new 63 rows 1.35

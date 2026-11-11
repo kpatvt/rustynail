@@ -1,0 +1,39 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)      new Mcyc    ratio      dup Mcyc    ratio
+binary_trees            2131.4        2177.3   1.022~        2135.0   1.002~
+closures                 524.2         536.6   1.024~         525.8   1.003~
+coroutines              1894.4        1915.2   1.011~        1932.3   1.020~
+fannkuch                1254.6        1247.6   0.994~        1241.8   0.990~
+fasta                   1714.9        1696.2   0.989~        1699.9   0.991~
+fib                     1357.5        1358.4   1.001~        1357.7   1.000~
+gc_churn                3350.3        3359.7   1.003~        3350.6   1.000~
+heapsort                1286.7        1289.1   1.002~        1290.9   1.003~
+json                    2266.0        2227.8   0.983~        2319.9   1.024~
+knucleotide             2462.2        1479.7   0.601         2484.4   1.009~
+load_big                 828.4         817.3   0.987~         824.9   0.996~
+loops_arith              688.3         688.5   1.000~         688.3   1.000~
+mandelbrot               558.5         558.3   1.000~         558.4   1.000~
+matmul                   507.1         502.7   0.991~         505.0   0.996~
+metamethods             4309.3        4390.8   1.019~        4320.4   1.003~
+nbody                    741.0         741.4   1.000~         733.6   0.990~
+oop_methods              225.3         226.8   1.007~         227.0   1.008~
+pcall_error             2519.7        2546.6   1.011~        2450.3   0.972~
+queens                  2124.8        2098.0   0.987~        2122.4   0.999~
+sieve                   1446.6        1505.0   1.040~        1476.3   1.021~
+spectral_norm            251.4         251.9   1.002~         251.8   1.002~
+string_ops              1777.9        1828.8   1.029~        1768.8   0.995~
+table_array              368.4         364.6   0.990~         369.7   1.004~
+table_hash              1371.6        1364.6   0.995~        1352.9   0.986~
+varargs                 1458.3        1564.6   1.073         1468.4   1.007~
+geomean new: all(25) cycles min 0.986 median 0.975 instr 0.980; numeric cycles min 1.004 median 0.981 instr 1.000
+geomean dup: all(25) cycles min 1.001 median 0.989 instr 0.999; numeric cycles min 1.000 median 0.982 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+done

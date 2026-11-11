@@ -1,0 +1,3 @@
+local a, b, c = ...
+local t = {}
+for i = 1, #t do t[i] = i end

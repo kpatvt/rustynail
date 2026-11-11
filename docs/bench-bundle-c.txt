@@ -1,0 +1,59 @@
+BUNDLE-C raw numbers (one binary lua-cli --features jit; env RUSTYNAIL_JIT_TRACE_LIMITS=t1ccall=A,tfmt=B per column: base 0,0; t1c 1,0; tf 0,1; both 1,1; dup = base again)
+Method: scripts/bench_session.py, CPUs 3-7 one job per core (siblings 11-15 idle, checked with scripts/cpu_idle.py), identical binary path and env length, same script paths, min of 5 (full set) / min of 15 (re-measure of flagged programs), cycles:u / instructions:u. Ratios vs base.
+
+== all 223 programs, 5 runs: geomean cycles / instructions per set, programs > 3% worse in cycles
+set                n t1c             tf              both            dup            
+awfy              14 1.001 / 1.000   1.001 / 1.000   0.997 / 1.000   0.999 / 1.000  
+ALL              223 1.001 / 1.002   0.997 / 0.999   1.000 / 1.001   1.000 / 1.000  
+corpus            18 1.010 / 1.002   0.999 / 1.000   1.010 / 1.001   1.000 / 1.000  
+corpus2/dev       19 1.008 / 1.002   0.999 / 0.997   1.006 / 0.999   1.000 / 1.000  
+real_dis           4 1.006 / 1.003   1.005 / 0.992   1.010 / 0.994   1.000 / 1.000  
+corpus2/heldout   13 1.000 / 1.001   1.000 / 1.001   1.001 / 1.002   1.004 / 1.000  
+programs          25 0.994 / 1.001   0.995 / 1.000   0.993 / 1.001   1.005 / 1.000  
+lib               95 1.000 / 1.002   0.996 / 0.999   1.000 / 1.001   1.000 / 1.000  
+jit-trace         29 0.998 / 1.000   0.999 / 1.000   0.999 / 1.000   0.998 / 1.000  
+apps               5 0.999 / 1.001   0.998 / 1.000   0.996 / 1.001   1.002 / 1.000  
+real               5 0.995 / 1.002   0.997 / 1.000   0.996 / 1.002   0.998 / 1.000  
+worse >1.03 in t1c: corpus/parser_combinator 1.098/1.003; corpus2/dev/regex_nfa 1.076/1.000; programs/pcall_error 1.036/1.012; lib/m_abs 1.038/1.000; lib/m_sqrt 1.065/1.000; lib/sel_loop 1.153/1.000
+worse >1.03 in tf: corpus2/heldout/real_dis_mips 1.038/1.022; programs/gc_churn 1.060/1.000; lib/sel_n 1.034/1.000
+worse >1.03 in both: corpus/parser_combinator 1.094/1.003; corpus2/dev/regex_nfa 1.074/1.000; corpus2/heldout/prototype_objects 1.031/1.003; corpus2/heldout/real_dis_mips 1.037/1.025; programs/gc_churn 1.064/1.002; programs/pcall_error 1.034/1.012; lib/m_abs 1.121/1.000; lib/m_max 1.036/1.000; lib/m_sqrt 1.064/1.000; lib/sel_loop 1.154/1.000; lib/sel_n 1.039/1.000; lib/tonumber_base 1.031/1.013
+worse >1.03 in dup: programs/gc_churn 1.061/1.000; programs/table_hash 1.076/1.000; lib/pcall_err 1.038/1.000; lib/sel_n 1.047/1.000
+mismatch/err: []
+
+== targets (5 runs)
+awfy/json                          t1c 0.999/1.001  tf 0.999/1.000  dup 0.998
+corpus/json_rxi                    t1c 1.008/1.004  tf 0.996/1.000  dup 0.997
+corpus2/dev/real_dis_arm           t1c 1.008/1.003  tf 1.011/0.993  dup 0.999
+corpus2/dev/real_dis_x86           t1c 1.011/1.004  tf 0.963/0.957  dup 0.999
+corpus2/heldout/real_dis_mips      t1c 1.001/1.003  tf 1.038/1.022  dup 1.000
+corpus2/heldout/real_dis_ppc       t1c 1.005/1.003  tf 1.009/0.996  dup 1.002
+lib/find_plain                     t1c 0.999/1.000  tf 1.001/1.000  dup 1.001
+lib/fmt_d                          t1c 1.007/1.006  tf 0.895/0.916  dup 1.004
+lib/fmt_f                          t1c 0.989/1.005  tf 0.996/1.000  dup 0.997
+lib/fmt_g                          t1c 1.008/1.004  tf 1.020/1.000  dup 1.003
+lib/fmt_mixed                      t1c 0.999/1.004  tf 0.995/1.000  dup 0.998
+lib/fmt_q                          t1c 1.019/1.003  tf 1.004/1.000  dup 0.997
+lib/fmt_s                          t1c 0.978/1.001  tf 0.977/1.000  dup 0.982
+lib/fmt_x_pad                      t1c 1.004/1.003  tf 0.913/0.951  dup 0.999
+lib/it_next_empty                  t1c 0.999/1.000  tf 0.998/1.000  dup 1.000
+lib/m_abs                          t1c 1.038/1.000  tf 0.991/1.000  dup 0.991
+lib/sel_loop                       t1c 1.153/1.000  tf 1.007/1.000  dup 1.021
+lib/tonumber_int                   t1c 0.993/1.000  tf 0.992/1.000  dup 0.992
+programs/json                      t1c 0.977/1.004  tf 0.984/1.000  dup 0.980
+programs/string_ops                t1c 1.003/1.002  tf 1.002/1.000  dup 1.007
+real/json_roundtrip                t1c 1.003/1.006  tf 0.991/1.000  dup 0.993
+
+== flagged and target programs re-measured at 15 runs
+15 runs, min; cycles/instructions vs base
+corpus/parser_combinator           t1c 1.092/1.003  tf 0.998/1.000 both 1.093/1.003 dup 0.999
+corpus2/dev/real_dis_arm           t1c 1.007/1.003  tf 1.008/0.993 both 1.008/0.995 dup 0.998
+corpus2/dev/real_dis_x86           t1c 1.009/1.004  tf 0.963/0.957 both 0.972/0.961 dup 0.999
+corpus2/dev/regex_nfa              t1c 1.084/1.000  tf 0.999/1.000 both 1.087/1.000 dup 1.010
+corpus2/heldout/real_dis_mips      t1c 1.003/1.003  tf 1.042/1.022 both 1.041/1.025 dup 0.998
+corpus2/heldout/real_dis_ppc       t1c 1.005/1.003  tf 1.009/0.996 both 1.011/0.998 dup 0.999
+lib/m_abs                          t1c 1.130/1.000  tf 1.004/1.000 both 1.120/1.000 dup 1.002
+lib/m_sqrt                         t1c 1.093/1.000  tf 1.012/1.000 both 1.090/1.000 dup 1.011
+lib/sel_loop                       t1c 1.144/1.000  tf 0.995/1.000 both 1.144/1.000 dup 0.998
+lib/sel_n                          t1c 0.990/1.000  tf 1.056/1.000 both 0.991/1.000 dup 1.052
+programs/gc_churn                  t1c 0.994/1.002  tf 1.001/1.000 both 0.998/1.002 dup 0.994
+programs/table_hash                t1c 1.027/1.000  tf 1.024/1.000 both 1.030/1.000 dup 1.026

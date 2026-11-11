@@ -1,0 +1,32 @@
+same	true	true
+type	function	function
+new empty	0	nil
+new 0,0	0	nil
+fill	8	{[1]=2,[2]=4,[3]=6,[4]=8,[5]=10,[6]=12,[7]=14,[8]=16}
+hash fill	{["k1"]=1,["k2"]=2,["k3"]=3,["k4"]=4,["k5"]=5,["k6"]=6,["k7"]=7,["k8"]=8}
+trunc	0
+none | ERR | bad argument #1 to '?' (number expected, got no value)
+one | ERR | bad argument #2 to '?' (number expected, got no value)
+str | ERR | bad argument #1 to '?' (number expected, got string)
+strnum | ok | {}
+huge | ERR | table overflow
+huge2 | ERR | table overflow
+nan | ERR | table overflow
+inf | ERR | table overflow
+table | ERR | bad argument #1 to '?' (number expected, got table)
+clear ret	0	nil	0
+clear mt	mt1	mta	true	nil	nil
+reuse	{[1]="again",["x"]="y"}
+raw	0
+noargs | ERR | bad argument #1 to '?' (table expected, got no value)
+num | ERR | bad argument #1 to '?' (table expected, got number)
+str | ERR | bad argument #1 to '?' (table expected, got string)
+nil | ERR | bad argument #1 to '?' (table expected, got nil)
+extra | ok
+trav	nil
+trav2	2	nil
+big	0	nil
+big refill	100	-100	nil
+cycles	376000	nil
+gc	nil
+gc2	4	4

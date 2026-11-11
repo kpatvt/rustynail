@@ -1,0 +1,45 @@
+P-L head-offset sweep: min cycles:u (millions) of 3 runs, CPU 10, RUSTYNAIL_SEED=0, JIT=on T15=off TRACE=on, binary = P-L tree with a temporary
+RUSTYNAIL_HEAD_OFFSET override of `asm::HEAD_OFFSET` (removed again; the shipped value is 24). Machine: AMD Ryzen AI 7 350 (Zen 5), other builders running.
+The loop head is placed at `offset` bytes after a 64-byte line start (Align(64) + Pad(offset)).
+
+program                           o0    o8   o16   o24   o32   o40   o48   o56   o27
+bench/programs/oop_methods       226   292   293   225   228   225   225   226   225
+bench/jit-trace/int_sum         1648   985  1004   990   987  1651  1017  1014   988
+bench/jit-trace/inline_leaf      866   867   545   542   546   868   556   557   542
+bench/jit-trace/dot             1653  1590  1624  1609  1712  1596  1641  1601  1596
+bench/jit-trace/upval_acc       2287  1837  1706  1700  1696  1834  1698  1733  1700
+bench/programs/spectral_norm     259   251   250   250   251   251   250   251   251
+
+Reading: o16 (the value before P-L) is slow for oop_methods now that the poll is 11 bytes shorter; o24 is in the fast zone of all six.
+
+Second sweep (same method, the binary with HEAD_OFFSET 24 and a temporary RUSTYNAIL_POLL_PAD = n nop bytes in front of the poll; min of 3):
+program                         pad0  pad1  pad2  pad3  pad4  pad5  pad6  pad7  pad8  pad9 pad10 pad11 pad12 pad16 pad24
+bench/jit-trace/oop_override     215   214   216   215   187   187   186   186   187   187   186   187   186   186   187
+bench/programs/oop_methods       226   224   224   224   226   225   225   225   226   224   270   270   271   269   269
+bench/jit-trace/int_sum          980   967   981   972   966   971   975   968   970   969  1008  1246  1247  1646  1061
+
+Third sweep (nop pad before the poll, offsets 0/4/6/8; the nop is an executed micro-op):
+program                         pad0  pad4  pad6  pad8
+dot                             1583  1638  1636  1684
+inline_2                         372   392   391   392
+inline_leaf                      539   571   571   572
+int_rec2                        1078  1078  1221  1224
+field_global                     599   620   609   594
+
+Fourth sweep (head offset : poll displacement; disp 256 = `movabs rax, &P-256; cmp byte [rax+256], 0`, a 4-byte-longer encoding of the same
+micro-ops; min of 3):
+program                        16:0  24:0 16:256 24:256 32:256 8:256 40:256 48:256
+bench/jit-trace/oop_override    216   214    188    187    187   188    188    187
+bench/programs/oop_methods      292   224    225    226    226   292    228    225
+bench/jit-trace/int_sum         982   980   1089    986   1080  1646   1265   1099
+bench/jit-trace/inline_leaf     539   540    592    589    668   865    669    614
+bench/jit-trace/inline_2        372   372    411    412    413   411    437    411
+bench/jit-trace/dot            1615  1590   1688   1636   1785  2034   1636   1688
+bench/jit-trace/upval_acc      1697  1698   1754   1835   1754  2282   1834   1778
+bench/jit-trace/field_global    574   604    624    595    633   718    595    627
+bench/jit-trace/int_rec2       1103  1078   1128   1128   1127  1128   1129   1161
+bench/programs/spectral_norm    250   250    260    250    266   259    250    269
+bench/programs/sieve           1383  1400   1416   1420   1431  1496   1480   1517
+
+Conclusion: no layout is best for all; (24, no padding) is the best joint choice (only oop_override, +13%, is on the slow side; its branch
+mispredictions go 52 K -> 831 K with unchanged instructions, perf record puts them on the sign-fixup branches after the `idiv` of `i % 4`).

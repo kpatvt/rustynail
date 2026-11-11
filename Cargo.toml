@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+rust-version = "1.90"
+authors = ["Kiran Pashikanti <kpatvt@gmail.com>"]
+repository = "https://github.com/kpatvt/rustynail"
+homepage = "https://github.com/kpatvt/rustynail"
+keywords = ["lua", "interpreter", "scripting", "embedding"]
+categories = ["compilers", "development-tools"]
+# Nothing is published to crates.io (every crate also says `publish = false`).
+publish = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rustynail_lua54)', 'cfg(rustynail_lua55)', 'cfg(rustynail_lsan)'] }
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+missing_safety_doc = "warn"
+
+# P-I (docs/JIT_TRACE_REF.md "P-I results"): fat LTO + one codegen unit were already in place and stay. `panic = "unwind"`
+# is required (rn-capi turns Lua errors into unwinds across the C API, `catch_unwind` in rn-capi/glue.rs and
+# rustynail/callback.rs; `abort` would break `lua_error`/`pcall` through host callbacks). No `target-cpu` here (the
+# binary must run on generic x86-64; x86-64-v3 measured no gain). The build-level gain is PGO: `scripts/pgo.sh`
+# (the release default since 2026-11-11, `PGO_FEATURES=jit`); profile data is not committed.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1
+panic = "unwind"
+
+[profile.bench]
+inherits = "release"
+
+[profile.profiling]
+inherits = "release"
+debug = 2
+
+[profile.dev]
+opt-level = 1
+debug-assertions = true
+overflow-checks = true
+
+[profile.test]
+opt-level = 1

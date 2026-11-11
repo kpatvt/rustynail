@@ -1,0 +1,49 @@
+== diff_levenshtein (rc 0)
+[trace] recorded 15 installed 9 entered 3791361 flushes 9 rerecord 1 blacklisted 1 refused 19 deferred 5 ineffective 1 probes 19 (fn-short 0 start-refused 19)
+[trace] aborted InnerLoop: 3
+[trace] aborted LeaveLoop: 3
+[trace] aborted StartRefused: 19
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 4 phis 18 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 63 installed 34 failed 45 preludes 0
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 5309105 (live traces 0)
+aborts (count reason op depth head):
+     26 SideShort              FORLOOP   d0 side  [policy]
+      3 InnerLoop              FORPREP   d1 root L0 main
+      3 LeaveLoop              FORLOOP   d0 root L41 'local function damerau(a, b)'
+      2 LeaveFrame             TAILCALL  d0 side
+      1 LeaveFrame             RETURN1   d0 side
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  432.1 L19 pc22 Seti 48043 8995
+  3.5 L59 pc55 Call 15 234096
+  1.7 L184 pc0 Getupval 14 122036
+  1.5 L41 pc8 Seti 123 12001
+  0.6 L59 pc26 Gettable 6 103403
+  0.6 L0 pc4 Move 2 290460
+  0.2 L41 pc26 SelfOp 4 59310
+  0.2 L0 pc18 Move 205 1101
+  0.2 L59 pc25 Gettable 4 54570
+  0.1 L59 pc27 Eq 2 72670
+  0.1 L19 pc47 Lt 2 70670
+  0.1 L41 pc0 Newtable 3 29707
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    2695460 Lt         -              black=false gk=32
+     560127 Gettable   -              black=false gk=32
+     518191 Forloop    -              black=false gk=48
+     472085 Lt         SideShort      black=true gk=32
+     382449 Eq         -              black=false gk=32
+     299251 Settable   SideShort      black=true gk=40
+     168688 Forloop    -              black=false gk=32
+      39731 Gettable   -              black=false gk=48
+      36763 Forloop    MaxSide        black=true gk=48
+      36468 Return1    MaxSide        black=true gk=32
+      25577 Lt         MaxSide        black=true gk=32
+      23411 Forloop    MaxSide        black=true gk=32
+      22404 Forloop    SideShort      black=true gk=48
+      11147 Gettable   -              black=false gk=16
+       7789 Settable   MaxSide        black=true gk=40
+       5649 Call       SideShort      black=true gk=33
+       3426 Settable   MaxSide        black=true gk=56
+        269 Tailcall   LeaveFrame     black=true gk=32
+        151 Newtable   -              black=false gk=32
+         46 Call       -              black=false gk=33

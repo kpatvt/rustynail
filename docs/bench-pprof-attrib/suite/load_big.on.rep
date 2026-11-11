@@ -1,0 +1,138 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 867  of event 'cycles:u'
+# Event count (approx.): 820521710
+#
+# Overhead  Shared Object         Symbol                                                                                                                                                                                      
+# ........  ....................  ............................................................................................................................................................................................
+#
+    12.89%  rn-cli               [.] <rn_compiler::lexer::LexState<rn_core::heap::Heap>>::llex
+     9.21%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::subexpr
+     4.31%  libc.so.6             [.] 0x00000000001ae49e
+     3.56%  rn-cli               [.] <std::hash::random::DefaultHasher as core::hash::Hasher>::write.425
+     3.36%  libc.so.6             [.] cfree
+     3.10%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::single_var
+     2.87%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     2.81%  rn-cli               [.] <rn_compiler::lexer::Token<rn_core::string::StrRef> as core::cmp::PartialEq>::eq
+     2.60%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::single_var_aux
+     2.13%  rn-cli               [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&(usize, usize)>
+     2.06%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k_exp2anyreg
+     2.04%  rn-cli               [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&rn_compiler::v55::KKey>
+     2.02%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k_code
+     2.00%  rn-cli               [.] <hashbrown::raw::RawTable<(rn_compiler::v55::KKey, usize)>>::reserve_rehash::<hashbrown::map::make_hasher<rn_compiler::v55::KKey, usize, std::hash::random::RandomState>::{closure#0}>
+     1.93%  libc.so.6             [.] 0x00000000001b7ad3
+     1.91%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::body
+     1.68%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::constructor
+     1.66%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k2proto
+     1.56%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k_discharge_vars
+     1.43%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::statement
+     1.31%  rn-cli               [.] <rn_compiler::lexer::Token<rn_core::string::StrRef>>::reserved
+     1.28%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::leave_block
+     1.19%  libc.so.6             [.] realloc
+     1.08%  libc.so.6             [.] 0x00000000001ae4ab
+     1.07%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::check_match
+     0.97%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.96%  libc.so.6             [.] 0x00000000001b7b33
+     0.94%  rn-cli               [.] <rn_compiler::dump::imp::Dumper<rn_core::state::State>>::varint
+     0.84%  libc.so.6             [.] 0x00000000001ae4a5
+     0.82%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k_exp2nextreg
+     0.81%  rn-cli               [.] <rn_compiler::lexer::LexState<rn_core::heap::Heap>>::read_numeral
+     0.73%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::realloc
+     0.72%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::code_arith
+     0.71%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::discharge2reg
+     0.71%  rn-cli               [.] <alloc::raw_vec::RawVecInner>::finish_grow
+     0.64%  [unknown]             [k] 0000000000000000
+     0.61%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     0.60%  rn-cli               [.] <rn_core::func::Proto>::from_data
+     0.60%  rn-cli               [.] <alloc::raw_vec::RawVec<u32>>::grow_one
+     0.60%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::yindex
+     0.59%  libc.so.6             [.] 0x00000000001b7ac4
+     0.58%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::localstat
+     0.55%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::finish_binexpval
+     0.48%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::suffixedexp
+     0.48%  rn-cli               [.] <rn_compiler::dump::imp::Dumper<rn_core::state::State>>::function
+     0.48%  rn-cli               [.] <rn_compiler::lexer::LexState<rn_core::heap::Heap>>::new_string
+     0.48%  libc.so.6             [.] 0x00000000001b7cc6
+     0.48%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::explist
+     0.48%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::fieldsel
+     0.45%  libc.so.6             [.] malloc
+     0.42%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k_indexed
+     0.36%  libc.so.6             [.] 0x00000000001b7bdd
+     0.36%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     0.36%  libc.so.6             [.] 0x00000000000bc5ae
+     0.36%  rn-cli               [.] <alloc::vec::Vec<rn_core::protodata::ProtoData<rn_core::string::StrRef>>>::push_mut
+     0.36%  libc.so.6             [.] 0x00000000000bc527
+     0.36%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::block
+     0.36%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::recfield
+     0.35%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::test_then_block
+     0.33%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::close_func
+     0.24%  rn-cli               [.] rn_core::gc::objsize
+     0.24%  rn-cli               [.] <alloc::raw_vec::RawVec<i8>>::grow_one
+     0.24%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::restassign
+     0.24%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::testnext
+     0.24%  rn-cli               [.] <rn_compiler::dump::imp::Dumper<rn_core::state::State>>::string
+     0.24%  libc.so.6             [.] 0x00000000000bd0e4
+     0.24%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::patch_list_aux
+     0.24%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::code_order
+     0.24%  libc.so.6             [.] 0x00000000001b7b93
+     0.24%  rn-cli               [.] rn_core::number::str2num
+     0.24%  libc.so.6             [.] 0x00000000000be628
+     0.23%  rn-cli               [.] <hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global>
+     0.23%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::k_patch_to_here
+     0.20%  libc.so.6             [.] 0x00000000000bc85e
+     0.13%  rn-cli               [.] rn_std::lib_string::str_format
+     0.12%  rn-cli               [.] rn_core::state::shrink_stack
+     0.12%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.12%  libc.so.6             [.] 0x00000000000bc614
+     0.12%  libc.so.6             [.] 0x00000000001b7ac0
+     0.12%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.12%  libc.so.6             [.] 0x00000000000be0ec
+     0.12%  libc.so.6             [.] 0x00000000001b7b8b
+     0.12%  libc.so.6             [.] 0x00000000000bdc5b
+     0.12%  libc.so.6             [.] 0x00000000001b7b63
+     0.12%  libc.so.6             [.] 0x00000000000baf5b
+     0.12%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::open_func
+     0.12%  rn-cli               [.] <alloc::vec::Vec<u8> as core::clone::Clone>::clone
+     0.12%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::adjust_local_vars
+     0.12%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::exp2reg
+     0.12%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::patch_test_reg
+     0.12%  rn-cli               [.] rn_core::number::tostring_int
+     0.12%  libc.so.6             [.] 0x00000000000bc6d0
+     0.12%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     0.12%  rn-cli               [.] core::ptr::drop_glue::<rn_core::protodata::ProtoData<rn_core::string::StrRef>>
+     0.12%  libc.so.6             [.] 0x00000000000bc544
+     0.12%  libc.so.6             [.] 0x00000000000be64a
+     0.12%  libc.so.6             [.] 0x00000000000bc462
+     0.12%  libc.so.6             [.] 0x00000000001b7bf4
+     0.12%  libc.so.6             [.] 0x00000000000bc550
+     0.12%  libc.so.6             [.] 0x00000000001b7bfc
+     0.12%  libc.so.6             [.] 0x00000000001b7d6b
+     0.12%  libc.so.6             [.] 0x00000000000baf31
+     0.12%  libc.so.6             [.] 0x00000000000bcf64
+     0.12%  libc.so.6             [.] 0x00000000001b7b2c
+     0.12%  libc.so.6             [.] 0x00000000000baf3b
+     0.12%  libc.so.6             [.] 0x00000000000bc4d8
+     0.12%  rn-cli               [.] <alloc::raw_vec::RawVec<rn_core::protodata::Const<rn_core::string::StrRef>>>::grow_one
+     0.12%  libc.so.6             [.] 0x00000000000bc7d1
+     0.12%  libc.so.6             [.] 0x00000000000be766
+     0.12%  libc.so.6             [.] 0x00000000000bc5ad
+     0.12%  libc.so.6             [.] 0x00000000001ae4a9
+     0.12%  rn-cli               [.] <rn_core::heap::Heap>::finishgencycle
+     0.12%  libc.so.6             [.] 0x00000000000bd546
+     0.12%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.11%  libc.so.6             [.] 0x00000000000bd5ce
+     0.11%  libc.so.6             [.] 0x00000000000bcd34
+     0.11%  rn-cli               [.] <hashbrown::raw::RawTable<((usize, usize), u64)>>::reserve_rehash::<hashbrown::map::make_hasher<(usize, usize), u64, std::hash::random::RandomState>::{closure#0}>
+     0.11%  libc.so.6             [.] 0x00000000000bd0de
+     0.10%  libc.so.6             [.] 0x00000000000baf10
+     0.07%  libc.so.6             [.] 0x00000000000bc9b4
+     0.07%  rn-cli               [.] rn_std::lib_table::tconcat::{closure#0}
+     0.06%  rn-cli               [.] rn_jit::lower::lower_ex
+
+
+#
+# (Tip: To adjust path to source files to local file system use perf report --prefix=... --prefix-strip=...)
+#

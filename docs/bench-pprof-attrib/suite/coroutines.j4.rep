@@ -1,0 +1,46 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 1919767517
+#
+# Overhead  Shared Object         Symbol                                                                                                                              
+# ........  ....................  ....................................................................................................................................
+#
+    39.14%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    14.48%  rn-cli               [.] rn_core::vm_unsafe::finish_op
+     9.70%  rn-cli               [.] rn_std::lib_coroutine::auxwrap
+     5.60%  rn-cli               [.] <rn_core::state::State>::ccall
+     5.44%  [JIT] tid 2362946     [.] lua_proto@0x7f14702d1680
+     4.46%  rn-cli               [.] <rn_core::state::State>::post_call
+     3.99%  rn-cli               [.] rn_std::lib_coroutine::auxresume
+     3.68%  rn-cli               [.] <rn_core::state::State>::resume
+     3.01%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     2.59%  rn-cli               [.] rn_std::lib_coroutine::co_yield
+     2.02%  rn-cli               [.] rn_core::jit_helpers::jit_tforcall
+     1.35%  rn-cli               [.] <rn_core::state::State>::new_thread
+     1.02%  rn-cli               [.] <rn_core::state::State>::unroll
+     0.47%  libc.so.6             [.] cfree
+     0.36%  rn-cli               [.] rn_core::vm::execute
+     0.36%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.36%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.36%  libc.so.6             [.] malloc
+     0.31%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::realloc
+     0.26%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.16%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.16%  rn-cli               [.] rn_std::lib_coroutine::co_create
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.10%  rn-cli               [.] <rn_core::state::State>::with_roots::<rn_core::gc::StepOutcome, <rn_core::state::State>::gc_step55::{closure#1}>::{closure#0}
+     0.10%  rn-cli               [.] <rn_core::heap::Heap>::clearbyvalues
+     0.10%  rn-cli               [.] rn_core::state::shrink_stack
+     0.05%  rn-cli               [.] <rn_core::state::State>::pre_call
+     0.05%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     0.05%  rn-cli               [.] <rn_core::heap::Heap>::finishgencycle
+     0.05%  rn-cli               [.] rn_std::lib_coroutine::co_resume
+
+
+#
+# (Tip: To analyze particular parallelism levels, try: perf report --latency --parallelism=32-64)
+#

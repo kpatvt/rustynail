@@ -1,0 +1,42 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 4K of event 'cycles:u'
+# Event count (approx.): 4707969631
+#
+# Overhead  Shared Object         Symbol                                                                                                                              
+# ........  ....................  ....................................................................................................................................
+#
+    51.06%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    14.65%  rn-cli               [.] <rn_core::state::State>::adjust_varargs
+     5.74%  rn-cli               [.] rn_std::lib_base::base_select
+     5.57%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     4.73%  rn-cli               [.] <rn_core::state::State>::get_varargs
+     3.15%  rn-cli               [.] rn_std::lib_table::tunpack
+     2.98%  rn-cli               [.] <rn_core::state::State>::post_call
+     1.87%  rn-cli               [.] rn_std::lib_table::checktab
+     1.87%  rn-cli               [.] <rn_core::state::State>::raw_set_str
+     1.49%  rn-cli               [.] <rn_core::state::State>::new_table_sized
+     1.41%  rn-cli               [.] rn_std::lib_table::tpack
+     1.39%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.92%  rn-cli               [.] <rn_core::table::TableRef>::len
+     0.40%  rn-cli               [.] rn_core::table::insertkey
+     0.38%  rn-cli               [.] rn_core::table::mainposition
+     0.38%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr
+     0.32%  rn-cli               [.] <rn_core::table::TableRef>::pset
+     0.32%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     0.25%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.21%  libc.so.6             [.] 0x00000000001ae4a5
+     0.17%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.17%  rn-cli               [.] <rn_core::state::State>::raw_set_int
+     0.13%  libc.so.6             [.] 0x00000000001ae480
+     0.12%  rn-cli               [.] rn_core::table::resize
+     0.06%  [unknown]             [k] 0000000000000000
+     0.06%  libc.so.6             [.] 0x00000000001ae484
+
+
+#
+# (Tip: Profiling branch (mis)predictions with: perf record -b / perf report)
+#

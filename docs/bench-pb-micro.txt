@@ -1,0 +1,15 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program           j4 Mcyc(min)       t1 Mcyc    ratio       tr Mcyc    ratio
+alloc_ctor              1311.5        1272.4   0.970~         447.9   0.342 
+field_rw                6320.7        7474.1   1.182         1229.6   0.195 
+multret                 6467.1        6474.2   1.001~         484.8   0.075 
+sink_vec                1138.7        1083.6   0.952~          15.6   0.014 
+str_concat              1218.9        1194.1   0.980~        1150.6   0.944 
+tfor_loops              1247.0        1246.8   1.000~        1146.9   0.920 
+geomean t1: all(6) cycles min 1.011 median 1.016 instr 1.051; numeric cycles min nan median nan instr nan
+geomean tr: all(6) cycles min 0.198 median 0.200 instr 0.200; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

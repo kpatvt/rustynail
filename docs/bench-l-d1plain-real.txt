@@ -1,0 +1,18 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)       on Mcyc    ratio      dup Mcyc    ratio
+game_loop                 36.6          36.2   0.989~          36.2   0.988~
+json_roundtrip           593.8         597.3   1.006~         596.0   1.004~
+lua_interp               112.3         112.1   0.998~         111.9   0.996~
+template_engine           832.5         830.4   0.997~         832.6   1.000~
+wordfreq                 156.5         155.5   0.993~         154.3   0.986~
+geomean on: all(5) cycles min 0.997 median 0.999 instr 1.000; numeric cycles min nan median nan instr nan
+geomean dup: all(5) cycles min 0.995 median 1.000 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

@@ -1,0 +1,88 @@
+== testrunner_luaunit (rc 0)
+[trace] recorded 123 installed 5 entered 551982 flushes 5 rerecord 4 blacklisted 55 refused 530 deferred 0 ineffective 0 probes 576 (fn-short 46 start-refused 530)
+[trace] aborted CFunc: 3
+[trace] aborted FnShort: 46
+[trace] aborted InnerLoop: 2
+[trace] aborted LeaveLoop: 37
+[trace] aborted MetaTable: 24
+[trace] aborted MultRet: 2
+[trace] aborted Nyi(Call): 5
+[trace] aborted Nyi(Closure): 22
+[trace] aborted Nyi(Setupval): 8
+[trace] aborted StartRefused: 530
+[trace] aborted TableHash: 4
+[trace] aborted TailCall: 5
+[trace] aborted Unstable: 4
+[trace] aborted Vararg: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 26 installed 13 failed 13 preludes 1
+[trace] links: nest roots 1 frame links 0 stitches 1
+[trace] exits 1223138 (live traces 0)
+aborts (count reason op depth head):
+     32 LeaveLoop              TFORPREP  d0 root L111 'local function run_hooks(block, which)'
+      9 LeaveFrame             RETURN    d0 side
+      6 MetaTable              GETTABLE  d0 root L147 'function Stack:pop() if self.n == 0 then error("st'
+      6 MetaTable              GETTABLE  d1 root L160 'it("pushes and pops", function()'
+      6 MetaTable              GETTABLE  d1 root L166 'it("keeps a deep structure", function()'
+      6 MetaTable              GETTABLE  d1 root L170 'it("fails deliberately " .. variant, function()'
+      4 FnShort                CALL      d0 root L149 'local function split(s, sep)'  [policy]
+      4 FnShort                RETURN0   d0 root L60 'function asserts.equals(actual, expected, msg)'  [policy]
+      4 Nyi(CLOSURE)           CLOSURE   d0 root L122 'local function run_block(block, results)'
+      4 FnShort                CALL      d0 root L177 'it("splits " .. i, function()'  [policy]
+      4 Nyi(CLOSURE)           CLOSURE   d0 root L175 'describe("strings", function()'
+      4 FnShort                TAILCALL  d0 root L5 'local function prettystr_sub(v, indent, seen)'  [policy]
+      4 Unstable               TFORCALL  d0 root L5 'local function prettystr_sub(v, indent, seen)'
+      4 FnShort                CALL      d2 root L165 'it("errors when empty", function() asserts.error_m'  [policy]
+      4 FnShort                CALL      d0 root L55 'local function fail(msg, level)'  [policy]
+      4 FnShort                CALL      d0 root L185 'it("formats numbers", function()'  [policy]
+      4 FnShort                RETURN0   d0 root L70 'function asserts.near(a, b, eps) if math.abs(a - b'  [policy]
+      4 FnShort                RETURN0   d0 root L69 'function asserts.is_nil(v) if v ~= nil then fail("'  [policy]
+      3 LeaveLoop              TFORCALL  d0 root L36 'local function deep_equal(a, b, seen)'
+      3 Nyi(CALL)              CALL      d0 root L116 'local function full_name(block, test)'
+      3 TailCall               TAILCALL  d1 root L5 'local function prettystr_sub(v, indent, seen)'
+      3 FnShort                RETURN1   d0 root L14 'table.sort(keys, function(a, b)'  [policy]
+      3 FnShort                RETURN0   d0 root L77 'function asserts.has_key(t, k) if t[k] == nil then'  [policy]
+      2 CFunc                  TFORCALL  d0 root L149 'local function split(s, sep)'
+      2 Nyi(SETUPVAL)          SETUPVAL  d1 side
+      2 Nyi(SETUPVAL)          SETUPVAL  d1 root L111 'local function run_hooks(block, which)'
+      2 TableHash              GETTABLE  d0 root L36 'local function deep_equal(a, b, seen)'
+      2 FnShort                RETURN    d0 root L36 'local function deep_equal(a, b, seen)'  [policy]
+      2 Nyi(SETUPVAL)          SETUPVAL  d0 root L158 'before_each(function() st = Stack.new() end)'
+      2 TableHash              GETTABLE  d1 side
+      2 Nyi(SETUPVAL)          SETUPVAL  d3 root L124 'local ok, err = xpcall(function()'
+      2 Nyi(SETUPVAL)          SETUPVAL  d0 root L98 'local function describe(name, fn)'
+      2 TableHash              GETTABLE  d1 root L65 'function asserts.not_equals(actual, expected)'
+      2 TailCall               TAILCALL  d0 root L116 'local function full_name(block, test)'
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L122 'local function run_block(block, results)'
+      2 Vararg                 VARARG    d0 root L146 'function Stack:push(...) for i = 1, select("#", ..'
+      2 MultRet                SETLIST   d1 root L192 'it("records calls", function()'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L192 'it("records calls", function()'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L156 'return describe("suite" .. variant, function()'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L159 'describe("Stack", function()'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  403.4 L36 pc0 Eq 96775 4168
+  339.4 L122 pc4 Gettabup 70 4847860
+  79.4 L0 pc89 Getfield 754 105277
+  32.5 L0 pc74 Newtable 68 478339
+  6.5 L116 pc0 Newtable 99 65837
+  6.4 L0 pc87 Move 602 10680
+  5.1 L189 pc1 Getfield 11800 430
+  0.7 L55 pc0 Gettabup 160 4315
+  0.6 L156 pc12 Getupval 146 4358
+  0.4 L122 pc48 Getupval 70 6097
+  0.4 L34 pc0 Getupval 94 4088
+  0.2 L177 pc0 Gettabup 113 1891
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     429716 Gettable   -              black=false gk=11
+     287101 Gettable   -              black=false gk=10
+     180809 Getfield   -              black=false gk=10
+     143406 Gettable   TableHash      black=true gk=11
+      37804 Return     LeaveFrame     black=true gk=32
+        405 Gettable   -              black=true gk=17
+        291 Tforcall   -              black=false gk=4
+        149 Gettable   -              black=false gk=17
+        122 Gettable   -              black=false gk=14
+         44 Gettable   -              black=true gk=48
+         25 Newtable   -              black=false gk=32
+          4 Return     LeaveFrame     black=false gk=32
+          1 Tforcall   -              black=false gk=36

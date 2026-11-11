@@ -1,0 +1,231 @@
+--- <cache>/h3snap/crates/lua-jit/src/tr/sink.rs	2026-11-06 01:11:45.811781514 -0600
++++ crates/lua-jit/src/tr/sink.rs	2026-11-06 01:37:48.775375161 -0600
+@@ -66,6 +66,54 @@
+ 
+ thread_local! {
+     static NOTE: RefCell<String> = const { RefCell::new(String::new()) };
++    /// H3-G: materialisations per sunk-table shape (see [`shape_of`]) since the shape was last (re)compiled sunk.
++    static SHAPES: RefCell<HashMap<u64, u32>> = RefCell::new(HashMap::default());
++    /// H3-G: shapes whose exits materialise so often that sinking them loses; the recorder keeps their allocations.
++    static DEMOTED: RefCell<HashSet<u64>> = RefCell::new(HashSet::default());
++    /// H3-G: a shape just reached its limit: the exit handler flushes the family that materialised it.
++    static PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
++}
++
++/// H3-G: the identity of a sunk table for the per-site policy: the `NEWTABLE` sizes and the address of its first field key (the
++/// constructor idiom `{x = .., y = ..}` names its fields in a fixed order; a snapshot taken before the first store has no key).
++pub fn shape_of(b: u32, c: u32, first_key: u64) -> u64 {
++    let mut h = (u64::from(b) << 32 | u64::from(c)) ^ first_key.wrapping_mul(0x9E37_79B9_7F4A_7C15);
++    h ^= h >> 29;
++    h.wrapping_mul(0xBF58_476D_1CE4_E5B9)
++}
++
++/// H3-G: an exit materialised a table of `shape`; with `limit != 0` the shape is demoted (and the exit handler told to flush)
++/// when its count reaches `limit`.
++pub fn note_materialised(shape: u64, limit: u32) {
++    if limit == 0 || mutants::active("sink_demote_never") {
++        return;
++    }
++    let n = SHAPES.with(|m| {
++        let mut m = m.borrow_mut();
++        let c = m.entry(shape).or_insert(0);
++        *c = c.saturating_add(1);
++        *c
++    });
++    if n == limit && DEMOTED.with(|d| d.borrow_mut().insert(shape)) {
++        PENDING.with(|p| p.set(true));
++    }
++}
++
++/// H3-G: was a demotion decided since the last call?
++pub fn take_pending() -> bool {
++    PENDING.with(|p| p.replace(false))
++}
++
++/// H3-G: is `shape` demoted (the recorder must not sink it)?
++pub fn is_demoted(shape: u64) -> bool {
++    !mutants::active("sink_demote_ignored") && DEMOTED.with(|d| !d.borrow().is_empty() && d.borrow().contains(&shape))
++}
++
++/// H3-G (tests): forget every shape count and demotion of this thread.
++pub fn reset_policy() {
++    SHAPES.with(|m| m.borrow_mut().clear());
++    DEMOTED.with(|d| d.borrow_mut().clear());
++    PENDING.with(|p| p.set(false));
+ }
+ 
+ /// The one-line summary of the last [`run`] of this thread.
+@@ -392,6 +440,14 @@
+             }
+         }
+     }
++    // H3-G: a shape whose exits materialise it too often is kept as a real allocation
++    let first_key = store.first().and_then(|&(k, _)| match ir.kval(k) {
++        KVal::Ptr(a, _) => Some(a),
++        _ => None,
++    });
++    if is_demoted(shape_of(b, c, first_key.unwrap_or(0))) {
++        return None;
++    }
+     Some(cand)
+ }
+ 
+--- <cache>/h3snap/crates/lua-jit/src/tr/exit.rs	2026-11-06 01:32:03.667854888 -0600
++++ crates/lua-jit/src/tr/exit.rs	2026-11-06 01:37:55.668604380 -0600
+@@ -1163,6 +1163,8 @@
+ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area: &ExitArea) -> bool {
+     // SAFETY: `root` is the live running frame (contract of `restore`).
+     let base = unsafe { (*ctx.root).func.0 } + 1;
++    // SAFETY: the per-state data is live.
++    let demote = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkdemote };
+     let heap = st.heap();
+     let oldstp = heap.gc_stp();
+     heap.gc_set_stp(oldstp | lua_core::gc::GCSTP_GC);
+@@ -1188,6 +1190,7 @@
+     };
+     super::sink::MATERIALISED.fetch_add(s.sunk.len() as u64, std::sync::atomic::Ordering::Relaxed);
+     for t in &s.sunk {
++        super::sink::note_materialised(super::sink::shape_of(t.b, t.c, t.fields.first().map_or(0, |f| f.key)), demote);
+         let hsize = if t.b > 0 { 1u32 << (t.b - 1) } else { 0 };
+         let bytes = lua_core::table::new_table_bytes(t.c, hsize).expect("sunk table size");
+         if !mutants::active("sink_no_uncharge") {
+@@ -1473,6 +1476,10 @@
+     let mut flushed = false;
+     let mut side_started = false;
+     let mut interp_rem = 0u32;
++    if super::sink::take_pending() {
++        // H3-G: a sunk shape was demoted: the traces that sink it are recompiled without (the family of this exit first)
++        flushed = cache::sink_demoted(&mut st, id);
++    }
+     if out.site == ExitSite::Alloc && !out.entry {
+         // P-B: the exit-storm rule (allocation exits that come about once per iteration give the loop back to tier 1)
+         // SAFETY: `budget` is the live budget word (contract).
+--- <cache>/h3snap/crates/lua-jit/src/tr/cache.rs	2026-11-06 01:32:03.669295776 -0600
++++ crates/lua-jit/src/tr/cache.rs	2026-11-06 01:39:41.472094123 -0600
+@@ -291,6 +291,11 @@
+     pub sinkmt: u32,
+     /// BUNDLE-5: allocation sinking in side and stitched traces (their writeback is dead by the link target's active locals, or never runs). Default 0 here, [`SINKSIDE_PROCESS`] in a process.
+     pub sinkside: u32,
++    /// H3-G: a sunk-table shape whose exits have materialised it this many times is demoted: tables of that shape are no longer sunk (the family
++    /// that materialised it is re-recorded) (0 = never). Default 0.
++    pub sinkdemote: u32,
++    /// H3-C: after this many side recordings of the state, a side-trace attempt waits for 4x `hot_exit` exits (0 = off). Default 0.
++    pub sidelate: u32,
+     /// B2: scaled array addressing (`~idx` as the index of a scaled access: 2 instructions per element address instead of 4, and the
+     /// tag check of a variable index without the address arithmetic) (0 = the shift / negate / add sequence). Default 0 here, 1 in a process.
+     pub b2arr: u32,
+@@ -398,6 +403,8 @@
+             cnum: 0,
+             sinkmt: 0,
+             sinkside: 0,
++            sinkdemote: 0,
++            sidelate: 0,
+             b2arr: 0,
+             b2mt: 0,
+             b2tag: 0,
+@@ -503,6 +510,8 @@
+                 "cnum" => l.cnum = v.min(1),
+                 "sinkmt" => l.sinkmt = v.min(1),
+                 "sinkside" => l.sinkside = v.min(1),
++                "sinkdemote" => l.sinkdemote = v,
++                "sidelate" => l.sidelate = v,
+                 "b2arr" => l.b2arr = v.min(1),
+                 "b2mt" => l.b2mt = v.min(1),
+                 "b2tag" => l.b2tag = v.min(1),
+@@ -813,6 +822,8 @@
+ pub enum FlushWhy {
+     /// Hot type-guard exit or persistent entry failures: re-record from the observed types (`rerec += 1`).
+     Rerec,
++    /// H3-G: a sunk allocation site was demoted (its exits materialise it too often): same head transition as `Dep` (re-record, no penalty).
++    Unsink,
+     /// Q2: most entries leave through a pre-roll guard (the trace never completes an iteration); same head
+     /// transition as `Rerec` (`rerec += 1`, blacklist after [`MAX_RERECORD`]).
+     Ineffective,
+@@ -1699,6 +1710,8 @@
+     /// F2a: per exit: side-trace state and failed recordings.
+     exit_st: Vec<SideSt>,
+     fails: Vec<u8>,
++    /// H3-C (`sidelate`): per exit: how often its side-trace attempt was postponed.
++    late: Vec<u8>,
+     /// F2a: the reason of the last failed side recording of each exit if its cause cannot change (two in a row
+     /// blacklist the exit, as for a loop head, 3.3).
+     last: Vec<Option<&'static str>>,
+@@ -2720,6 +2733,7 @@
+         kids: Vec::new(),
+         exit_st: vec![SideSt::Free; nex],
+         fails: vec![0; nex],
++        late: vec![0; nex],
+         last: vec![None; nex],
+         mark: vec![None; nex],
+         nside: 0,
+@@ -2866,7 +2880,7 @@
+                         tp.on_rerecord(t.head)
+                     }
+                 }
+-                FlushWhy::Dep | FlushWhy::Cap => {
++                FlushWhy::Dep | FlushWhy::Cap | FlushWhy::Unsink => {
+                     tp.to_warm(t.head, i64::from(hot));
+                     Penalty::Wait(hot)
+                 }
+@@ -3326,6 +3340,20 @@
+     if out.count != want {
+         return HotAction::None;
+     }
++    // H3-C (`sidelate`): once the state has started `sidelate` side recordings, the attempt for an exit waits for 4x `hot_exit` exits (a
++    // program with that many side traces has exits that never repay a recording: cd and raytrace spend 25-40% of their recordings on
++    // aborted ones); a program with few side traces (nbody, events, ...) gets them at once
++    let late = d.tr.cfg.limits.sidelate;
++    if late != 0 && d.tr.stats.side_started >= u64::from(late) && !fc_new && !out.entry && !mutants::active("sidelate_ignored") {
++        let k = ex.snap as usize;
++        if let Some(Slot { body: Body::Trace(t), .. }) = d.tr.slot_mut(id) {
++            if k < t.late.len() && t.late[k] < 3 && t.exit_st.get(k) == Some(&SideSt::Free) {
++                t.late[k] += 1;
++                t.exits[k].set(0);
++                return HotAction::None;
++            }
++        }
++    }
+     side_attempt(st, ci, id, ex.snap, snap, out.entry, frame_sides, meta.extent, meta.depth)
+ }
+ 
+@@ -3687,6 +3715,17 @@
+     flush
+ }
+ 
++/// H3-G: the exit handler materialised a sunk table of a demoted shape: the family of trace `id` is flushed (re-recorded without sinking
++/// that shape). Returns whether a flush was requested.
++pub fn sink_demoted(st: &mut State, id: TrId) -> bool {
++    let family = match d_of(st).tr.slot(id) {
++        Some(Slot { body: Body::Trace(t), .. }) => t.family,
++        _ => return false,
++    };
++    request_flush(st, family, FlushWhy::Unsink);
++    true
++}
++
+ /// P2: the hop-rate rule: `p` pre-roll exits (covered by side traces or not) of `e` entries since the head's counter started, entries
+ /// `cyc` cycles apart on average: nearly every entry hops and the entries come faster than `limit` cycles.
+ pub fn hop_rate_due(p: u64, e: u64, cyc: u64, limit: u64) -> bool {
+--- <cache>/h3snap/crates/lua-jit/src/tr/mutants.rs	2026-11-06 01:34:17.133256356 -0600
++++ crates/lua-jit/src/tr/mutants.rs	2026-11-06 01:39:41.473655908 -0600
+@@ -352,6 +352,11 @@
+     "fmat_mask_skip",
+     // H3-A: a blacklisted exit keeps being reported to the handler by the frame-materialising stub
+     "black_exit_report",
++    // H3-G: the per-site sinking policy
++    "sink_demote_never",
++    // H3-C: side-trace attempts wait for more exits once the state has recorded many side traces
++    "sidelate_ignored",
++    "sink_demote_ignored",
+     // H3-F: the 64-bit key compare of HREFK
+     "hrefk_key64_hi",
+     // M1: tier 1's `k` fast paths, side recordings that stitch at recursion, nil array loads
+@@ -500,7 +505,7 @@
+ 
+     #[test]
+     fn registry_is_the_frozen_list() {
+-        assert_eq!(NAMES.len(), 373);
++        assert_eq!(NAMES.len(), 376);
+         let mut v = NAMES.to_vec();
+         v.sort_unstable();
+         v.dedup();

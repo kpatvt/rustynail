@@ -1,0 +1,42 @@
+== classic_vector (rc 0)
+[trace] recorded 3 installed 3 entered 668 flushes 3 rerecord 0 blacklisted 1 refused 13 deferred 0 ineffective 0 probes 26 (fn-short 13 start-refused 13)
+[trace] aborted FnShort: 13
+[trace] aborted StartRefused: 13
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 17 installed 14 failed 3 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 361170 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                RETURN1   d0 root L70 'function Vec:normalized()'  [policy]
+      3 FnShort                RETURN0   d0 root L85 'function Particle:integrate(dt)'  [policy]
+      3 FnShort                TAILCALL  d0 root L57 'function Vec.__mul(a, b)'  [policy]
+      3 FnShort                RETURN0   d0 root L103 'function Spring:apply()'  [policy]
+      2 SideShort              TFORCALL  d0 side  [policy]
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  181.0 L46 pc9 Return 8441 21438
+  115.9 L84 pc1 Add 94 1232616
+  67.3 L70 pc4 Div 1383 48683
+  49.2 L103 pc4 Sub 846 58203
+  23.1 L103 pc27 Unm 37 625274
+  16.2 L0 pc194 Lt 53 306299
+  16.2 L85 pc2 Div 650 24948
+  1.8 L56 pc9 Tailcall 718 2487
+  0.3 L55 pc9 Tailcall 853 329
+  0.2 L57 pc27 Tailcall 829 262
+  0.1 L0 pc181 Mul 22 5603
+  0.1 L0 pc204 Eq 81 936
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     254739 SelfOp     -              black=false gk=10
+      58703 Getfield   -              black=false gk=14
+      28352 Getfield   -              black=false gk=4
+       9590 SelfOp     -              black=false gk=14
+       7961 Lt         SideShort      black=true gk=32
+        678 Tforcall   -              black=false gk=16
+        664 Tforcall   -              black=false gk=49
+        200 Add        -              black=false gk=32
+        118 Newtable   -              black=false gk=32
+        112 Div        -              black=false gk=32
+         32 Unm        -              black=false gk=32
+         20 Sub        -              black=false gk=32
+          1 Forloop    -              black=false gk=32

@@ -1,0 +1,26 @@
+print(pcall(error))
+print(pcall(error, nil))
+print(pcall(error, 42))
+print(pcall(error, true))
+print(pcall(error, "msg", 0))
+print(pcall(error, "msg", 1))
+print(pcall(error, "msg", 2))
+print(pcall(error, "msg", 3))
+local tt = {}
+local ok, e = pcall(error, tt)
+print(ok, e == tt)
+local function lvl1() error("l1", 1) end
+local function lvl2() error("l2", 2) end
+local function caller2() lvl2() end
+print(pcall(lvl1))
+print(pcall(caller2))
+print(pcall(function() error() end))
+print(pcall(function() error("with pos") end))
+print(pcall(function() error("no pos", 0) end))
+print(pcall(function() error(setmetatable({}, {__tostring = function() return "custom" end})) end))
+print(pcall(function() assert(false) end))
+print(pcall(function() assert(nil, "assert msg") end))
+print(pcall(function() assert(false, {1}) end))
+print(pcall(assert, 1, 2, 3))
+print(select('#', pcall(assert, 1, 2, 3)))
+print(pcall(assert))

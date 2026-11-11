@@ -1,0 +1,60 @@
+set n | num | next | find | all   (cycles / instr, new/base)
+ALL 223 | 0.9932 / 0.9962 | 0.9951 / 0.9945 | 0.9966 / 0.9968 | 0.9870 / 0.9876
+awfy 14 | 0.9999 / 1.0003 | 0.9989 / 1.0000 | 0.9983 / 1.0000 | 1.0008 / 1.0003
+corpus 18 | 0.9952 / 0.9999 | 1.0010 / 0.9996 | 0.9952 / 0.9982 | 0.9961 / 0.9980
+corpus2/dev 17 | 0.9975 / 1.0001 | 0.9957 / 1.0000 | 0.9929 / 0.9921 | 0.9924 / 0.9921
+corpus2/heldout 11 | 1.0053 / 1.0000 | 1.0033 / 1.0000 | 0.9979 / 1.0000 | 1.0052 / 1.0000
+programs 25 | 0.9986 / 1.0000 | 1.0069 / 1.0000 | 1.0017 / 1.0000 | 1.0060 / 1.0000
+lib 95 | 0.9857 / 0.9911 | 0.9862 / 0.9871 | 0.9942 / 0.9944 | 0.9699 / 0.9728
+jit-trace 29 | 1.0002 / 1.0000 | 1.0023 / 1.0000 | 1.0021 / 1.0000 | 0.9993 / 1.0000
+apps 5 | 0.9929 / 1.0000 | 1.0023 / 1.0000 | 0.9913 / 1.0000 | 0.9981 / 1.0000
+real 5 | 1.0002 / 1.0000 | 1.0049 / 1.0004 | 0.9978 / 1.0000 | 1.0025 / 1.0004
+real_dis 4 | 0.9970 / 1.0000 | 0.9954 / 1.0000 | 1.0008 / 1.0000 | 0.9955 / 1.0000
+
+targets (cycles / instr):
+lib/find_plain num=0.980/1.000 next=0.980/1.000 find=0.595/0.584 all=0.594/0.584
+lib/find_cap num=1.001/1.000 next=0.993/1.000 find=1.002/1.000 all=1.011/1.000
+lib/find_pat num=1.001/1.000 next=1.013/1.000 find=0.994/1.000 all=1.002/1.000
+lib/it_next num=0.996/1.000 next=0.549/0.501 find=1.002/1.000 all=0.548/0.501
+lib/it_next_empty num=1.019/1.000 next=0.626/0.584 find=1.010/1.000 all=0.631/0.584
+lib/tonumber_flt num=0.701/0.763 next=0.995/1.000 find=0.994/1.000 all=0.686/0.763
+lib/tonumber_num num=0.997/1.000 next=0.991/1.000 find=0.987/1.000 all=0.990/1.000
+lib/tonumber_bad num=1.000/1.000 next=0.990/1.000 find=0.998/1.000 all=1.000/1.000
+lib/tonumber_int num=0.477/0.558 next=1.010/1.000 find=1.022/1.000 all=0.481/0.558
+lib/tonumber_base num=0.998/1.000 next=0.995/1.000 find=0.992/1.000 all=1.005/1.000
+
+flagged (>3% worse cycles):
+num corpus2/heldout/prototype_objects cyc 1.030 ins 1.0000
+num corpus2/heldout/log_analyzer cyc 1.046 ins 1.0000
+num programs/fib cyc 1.039 ins 1.0000
+num programs/table_hash cyc 1.125 ins 1.0000
+num lib/tostring_flt cyc 1.049 ins 1.0000
+next corpus/markdown_conv cyc 1.031 ins 1.0000
+next corpus2/heldout/log_analyzer cyc 1.039 ins 1.0000
+next awfy/towers cyc 1.040 ins 1.0000
+next programs/gc_churn cyc 1.089 ins 1.0000
+next programs/table_hash cyc 1.131 ins 1.0000
+next lib/sel_count cyc 1.055 ins 1.0000
+next lib/str_idx_concat_key cyc 1.032 ins 1.0000
+find corpus2/heldout/log_analyzer cyc 1.040 ins 1.0000
+find programs/json cyc 1.031 ins 1.0000
+find programs/gc_churn cyc 1.036 ins 1.0000
+find programs/table_hash cyc 1.053 ins 1.0000
+find jit-trace/int_rec2 cyc 1.030 ins 1.0000
+find lib/gmatch_words cyc 1.035 ins 1.0000
+find lib/str_lt cyc 1.057 ins 1.0000
+all corpus2/heldout/log_analyzer cyc 1.041 ins 1.0000
+all awfy/towers cyc 1.066 ins 1.0000
+all programs/fasta cyc 1.032 ins 1.0000
+all programs/table_hash cyc 1.170 ins 1.0000
+all lib/match cyc 1.038 ins 1.0000
+
+mismatch:
+--- 15-run re-measure of the flagged programs ---
+flagged (>3% worse cycles):
+num programs/table_hash cyc 1.129 ins 1.0000
+next programs/table_hash cyc 1.212 ins 1.0000
+find lib/sel_count cyc 1.032 ins 1.0000
+find programs/table_hash cyc 1.033 ins 1.0000
+
+mismatch:

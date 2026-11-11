@@ -1,0 +1,19 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program         base Mcyc(min)      new Mcyc    ratio       j4 Mcyc    ratio
+binary_trees            2778.1        2849.2   1.026~        2827.8   1.018~
+gc_churn                3782.5        3799.3   1.004~        3804.6   1.006~
+json                    2516.2        2526.5   1.004~        2493.8   0.991~
+knucleotide             3675.5        3637.5   0.990~        3602.7   0.980~
+matmul                   531.0         526.0   0.991~         660.5   1.244 
+sieve                   2142.7        2125.6   0.992~        1719.2   0.802 
+spectral_norm            269.3         269.8   1.002~        2744.5  10.191 
+string_ops              1859.5        1858.9   1.000~        1880.4   1.011~
+table_array             2260.4        2230.7   0.987~        2237.2   0.990~
+table_hash              1571.9        1513.0   0.963~        1545.7   0.983~
+geomean new: all(10) cycles min 0.996 median 0.998 instr 1.000; numeric cycles min 0.995 median 0.998 instr 1.000
+geomean j4: all(10) cycles min 1.258 median 1.265 instr 1.206; numeric cycles min 2.167 median 2.179 instr 1.808
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

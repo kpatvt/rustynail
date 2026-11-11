@@ -1,0 +1,36 @@
+run 1/7
+run 2/7
+run 3/7
+run 4/7
+run 5/7
+run 6/7
+run 7/7
+program           j4 Mcyc(min)    trace Mcyc    ratio    tier1 Mcyc    ratio
+binary_trees            2849.9        2942.9   1.033~        2836.0   0.995~
+closures                3248.0         581.6   0.179         3250.3   1.001~
+coroutines              1952.0        1938.2   0.993~        2067.0   1.059 
+fannkuch                1953.9        1484.0   0.759         1932.7   0.989~
+fasta                   2186.1        2208.4   1.010~        2264.6   1.036~
+fib                     2131.0        2181.4   1.024~        2133.9   1.001~
+gc_churn                4143.4        3784.3   0.913         3805.3   0.918 
+heapsort                2336.1        1591.2   0.681         2466.0   1.056 
+json                    2520.8        2833.1   1.124         2506.3   0.994~
+knucleotide             3708.2        3717.6   1.003~        3641.9   0.982~
+load_big                 728.8         852.9   1.170          679.6   0.932 
+loops_arith             2048.2         699.7   0.342         2047.1   0.999~
+mandelbrot              2752.7         558.2   0.203         2731.0   0.992~
+matmul                  1338.5         601.1   0.449         1338.3   1.000~
+metamethods             4433.1        4435.3   1.000~        4474.9   1.009~
+nbody                   2550.2         766.9   0.301         2544.4   0.998~
+oop_methods             3337.8        3400.7   1.019~        3396.8   1.018~
+pcall_error             2881.2        2888.6   1.003~        2932.8   1.018~
+queens                  2559.8        2275.2   0.889         2497.2   0.976~
+sieve                   2842.1        2563.4   0.902         2836.5   0.998~
+spectral_norm           2792.3         301.5   0.108         2798.9   1.002~
+string_ops              1832.7        1817.8   0.992~        1843.1   1.006~
+table_array             2045.0        2033.7   0.994~        2057.5   1.006~
+table_hash              1432.4        1456.2   1.017~        1421.9   0.993~
+varargs                 3972.0        4026.5   1.014~        4025.1   1.013~
+geomean trace: all(25) cycles min 0.692 median 0.706 instr 0.704; numeric cycles min 0.354 median 0.397 instr 0.401
+geomean tier1: all(25) cycles min 0.999 median 0.988 instr 1.000; numeric cycles min 0.997 median 1.034 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

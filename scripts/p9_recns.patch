@@ -1,0 +1,66 @@
+diff --git a/crates/lua-jit/src/tr/cache.rs b/crates/lua-jit/src/tr/cache.rs
+index 1f7a24f..078096b 100644
+--- a/crates/lua-jit/src/tr/cache.rs
++++ b/crates/lua-jit/src/tr/cache.rs
+@@ -1572,6 +1572,7 @@ pub(crate) fn report(d: &JitData) {
+         }
+     }
+     eprintln!("[trace] exits {exits} (live traces {traces})");
++    eprintln!("[trace] record+compile ns {}", super::rec_ns());
+ }
+ 
+ /// `jit_tr_hot`'s decision (3.1), after the descriptor lookup.
+diff --git a/crates/lua-jit/src/tr/mod.rs b/crates/lua-jit/src/tr/mod.rs
+index 9842091..4c8d1af 100644
+--- a/crates/lua-jit/src/tr/mod.rs
++++ b/crates/lua-jit/src/tr/mod.rs
+@@ -339,6 +339,13 @@ fn unchangeable(r: AbortReason) -> bool {
+ /// The recorder entry the cache calls at a hot head (`cache::StartFn`): arms the recorder for the frame `ci` at `pc`.
+ /// False: nothing armed (a transient refusal for the cache).
+ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
++    let t0 = std::time::Instant::now();
++    let r = driver_start_inner(st, ci, id, pc);
++    add_rec_ns(t0);
++    r
++}
++
++fn driver_start_inner(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
+     if cfg!(rustynail_lua54) {
+         return false;
+     }
+@@ -378,17 +385,35 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
+ /// `RecVTable::step` of the driver: the recorder's step; when it ends the recording the pipeline runs (the
+ /// `Flow::Closed` arm of 4.2) before `Leave` returns to the VM, which then requests the entry into the new trace.
+ pub fn driver_step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
++    let t0 = std::time::Instant::now();
+     let r = record::step(st, ci, pc, token);
+     if r == RecStep::Leave {
+         finish_outcome(st);
+     }
++    add_rec_ns(t0);
+     r
+ }
+ 
++/// Wall-clock nanoseconds spent in the recorder steps, the pipeline and the arming of recordings (P9 criterion 7;
++/// printed by the `RUSTYNAIL_JIT_VERBOSE` summary as `record+compile`).
++static REC_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++fn add_rec_ns(t0: std::time::Instant) {
++    let ns = u64::try_from(t0.elapsed().as_nanos()).unwrap_or(u64::MAX);
++    REC_NS.fetch_add(ns, std::sync::atomic::Ordering::Relaxed);
++}
++
++/// Total of [`add_rec_ns`] so far.
++pub fn rec_ns() -> u64 {
++    REC_NS.load(std::sync::atomic::Ordering::Relaxed)
++}
++
+ /// `RecVTable::abort` of the driver: the VM ended the recording (error, hook, frame switch, close).
+ pub fn driver_abort(st: &mut State, why: Abort, token: u64) {
++    let t0 = std::time::Instant::now();
+     record::abort(st, why, token);
+     finish_outcome(st);
++    add_rec_ns(t0);
+ }
+ 
+ /// The recorder VTABLE with the pipeline attached (what [`install_driver`] registers).

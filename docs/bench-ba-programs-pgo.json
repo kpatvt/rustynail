@@ -1,0 +1,1641 @@
+{
+ "cpu": 4,
+ "runs": 9,
+ "set": "programs",
+ "bins": {
+  "ref": "<repo>/ref/55/build-seed0/lua",
+  "plain": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bx0/lua-cli",
+  "plain2": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bx1/lua-cli",
+  "pgo": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bx2/lua-cli",
+  "pgo2": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bx3/lua-cli",
+  "hold": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0 <cache>/bx4/lua-cli",
+  "lj": "/usr/bin/luajit"
+ },
+ "programs": {
+  "binary_trees": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4371864725,
+    "cycles_median": 4414777385,
+    "instructions_min": 21019150773,
+    "instructions_median": 21019151272,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1957433170,
+    "cycles_median": 1971821276,
+    "instructions_min": 10371641321,
+    "instructions_median": 10371642566,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1944271567,
+    "cycles_median": 1966081057,
+    "instructions_min": 10371642053,
+    "instructions_median": 10371642291,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1732449116,
+    "cycles_median": 1740920753,
+    "instructions_min": 9490855279,
+    "instructions_median": 9490855975,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1734608178,
+    "cycles_median": 1746477972,
+    "instructions_min": 9490854761,
+    "instructions_median": 9490856514,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1742937963,
+    "cycles_median": 1751527173,
+    "instructions_min": 9485547698,
+    "instructions_median": 9485549560,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 2118436649,
+    "cycles_median": 2138549779,
+    "instructions_min": 7128870949,
+    "instructions_median": 7183233535,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "closures": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4985383512,
+    "cycles_median": 5013361984,
+    "instructions_min": 25098176510,
+    "instructions_median": 25098177066,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 499408881,
+    "cycles_median": 501350034,
+    "instructions_min": 3143096565,
+    "instructions_median": 3143097215,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 500031261,
+    "cycles_median": 505257322,
+    "instructions_min": 3143096657,
+    "instructions_median": 3143097784,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 455983809,
+    "cycles_median": 458179404,
+    "instructions_min": 2874319443,
+    "instructions_median": 2874320226,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 454981303,
+    "cycles_median": 459818146,
+    "instructions_min": 2874319267,
+    "instructions_median": 2874320572,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 475925805,
+    "cycles_median": 481471242,
+    "instructions_min": 2940598325,
+    "instructions_median": 2940599880,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 945797170,
+    "cycles_median": 950947803,
+    "instructions_min": 3930784107,
+    "instructions_median": 3931190739,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "coroutines": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3793400840,
+    "cycles_median": 3807410211,
+    "instructions_min": 9714870708,
+    "instructions_median": 9714872392,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1925531257,
+    "cycles_median": 1946955033,
+    "instructions_min": 9443043512,
+    "instructions_median": 9443046644,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1918711147,
+    "cycles_median": 1939344053,
+    "instructions_min": 9443043220,
+    "instructions_median": 9443047801,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1448220795,
+    "cycles_median": 1463374644,
+    "instructions_min": 7691291004,
+    "instructions_median": 7691292392,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1457898267,
+    "cycles_median": 1481129644,
+    "instructions_min": 7691290948,
+    "instructions_median": 7691292015,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1806880527,
+    "cycles_median": 1875641612,
+    "instructions_min": 9094480639,
+    "instructions_median": 9094481469,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 872108927,
+    "cycles_median": 878558522,
+    "instructions_min": 4787296224,
+    "instructions_median": 4791207076,
+    "runs": 9,
+    "output": "diff"
+   }
+  },
+  "fannkuch": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4021916221,
+    "cycles_median": 4053361093,
+    "instructions_min": 20004305344,
+    "instructions_median": 20004305686,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1159124719,
+    "cycles_median": 1163602254,
+    "instructions_min": 5942516282,
+    "instructions_median": 5942517554,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1160276078,
+    "cycles_median": 1163954230,
+    "instructions_min": 5942515988,
+    "instructions_median": 5942517776,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1161159241,
+    "cycles_median": 1163119345,
+    "instructions_min": 5944060562,
+    "instructions_median": 5944062042,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1160479142,
+    "cycles_median": 1163417068,
+    "instructions_min": 5944060707,
+    "instructions_median": 5944061974,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1161569890,
+    "cycles_median": 1162944024,
+    "instructions_min": 5944174797,
+    "instructions_median": 5944175227,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 1073915686,
+    "cycles_median": 1090686979,
+    "instructions_min": 2347531291,
+    "instructions_median": 2386307776,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "fasta": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3696054622,
+    "cycles_median": 3717583435,
+    "instructions_min": 13623128606,
+    "instructions_median": 13623128821,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1632672259,
+    "cycles_median": 1649582489,
+    "instructions_min": 6317280072,
+    "instructions_median": 6317282073,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1622114286,
+    "cycles_median": 1637952235,
+    "instructions_min": 6317279667,
+    "instructions_median": 6317281872,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1529305429,
+    "cycles_median": 1541611396,
+    "instructions_min": 5832663996,
+    "instructions_median": 5832665283,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1534229449,
+    "cycles_median": 1545081538,
+    "instructions_min": 5832664102,
+    "instructions_median": 5832665147,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1597026453,
+    "cycles_median": 1601462796,
+    "instructions_min": 6153050425,
+    "instructions_median": 6153050879,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1457778171,
+    "cycles_median": 1477140813,
+    "instructions_min": 3069889559,
+    "instructions_median": 3071691082,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "fib": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4111934112,
+    "cycles_median": 4114790548,
+    "instructions_min": 18176757018,
+    "instructions_median": 18176757037,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1441911422,
+    "cycles_median": 1478657979,
+    "instructions_min": 10399650649,
+    "instructions_median": 10399651414,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1439578382,
+    "cycles_median": 1612314035,
+    "instructions_min": 10399650413,
+    "instructions_median": 10399651376,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1450606795,
+    "cycles_median": 1460657101,
+    "instructions_min": 10399502318,
+    "instructions_median": 10399503198,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1507083006,
+    "cycles_median": 1634609842,
+    "instructions_min": 10399501905,
+    "instructions_median": 10399502970,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1443141467,
+    "cycles_median": 1621713275,
+    "instructions_min": 10399491136,
+    "instructions_median": 10399491827,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 473525896,
+    "cycles_median": 477143625,
+    "instructions_min": 2509584007,
+    "instructions_median": 2575916991,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "gc_churn": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4429904018,
+    "cycles_median": 4499830746,
+    "instructions_min": 19740345749,
+    "instructions_median": 19752648333,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 2258586641,
+    "cycles_median": 2276890056,
+    "instructions_min": 10381077649,
+    "instructions_median": 10381139475,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 2271261593,
+    "cycles_median": 2296839095,
+    "instructions_min": 10381108490,
+    "instructions_median": 10381146546,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1861053973,
+    "cycles_median": 1873917010,
+    "instructions_min": 8545752086,
+    "instructions_median": 8545782274,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1856863233,
+    "cycles_median": 1878768658,
+    "instructions_min": 8545731149,
+    "instructions_median": 8545770559,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1871936331,
+    "cycles_median": 1881924672,
+    "instructions_min": 8568475469,
+    "instructions_median": 8568524335,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 3465754789,
+    "cycles_median": 3532496173,
+    "instructions_min": 9126560823,
+    "instructions_median": 9128186704,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "heapsort": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3980275942,
+    "cycles_median": 4045872810,
+    "instructions_min": 18209674247,
+    "instructions_median": 18209674661,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1243776276,
+    "cycles_median": 1248524656,
+    "instructions_min": 3935506764,
+    "instructions_median": 3935507056,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1242816716,
+    "cycles_median": 1247849966,
+    "instructions_min": 3935504826,
+    "instructions_median": 3935506188,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1244081540,
+    "cycles_median": 1249139150,
+    "instructions_min": 3948593650,
+    "instructions_median": 3948593975,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1244249692,
+    "cycles_median": 1247555835,
+    "instructions_min": 3948593066,
+    "instructions_median": 3948594317,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1244625918,
+    "cycles_median": 1249095157,
+    "instructions_min": 3956096984,
+    "instructions_median": 3956098310,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1228432249,
+    "cycles_median": 1231747718,
+    "instructions_min": 1823182986,
+    "instructions_median": 1823184967,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "json": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3082540415,
+    "cycles_median": 3100692262,
+    "instructions_min": 12371795366,
+    "instructions_median": 12372413796,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 2141277384,
+    "cycles_median": 2160547154,
+    "instructions_min": 9097668490,
+    "instructions_median": 9097672571,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 2143385706,
+    "cycles_median": 2152575174,
+    "instructions_min": 9097667562,
+    "instructions_median": 9097671222,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1742097674,
+    "cycles_median": 1755875619,
+    "instructions_min": 7812664826,
+    "instructions_median": 7812668248,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1757898524,
+    "cycles_median": 1783420861,
+    "instructions_min": 7812667647,
+    "instructions_median": 7812669257,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1875412718,
+    "cycles_median": 1891503891,
+    "instructions_min": 8351039617,
+    "instructions_median": 8351041721,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1418437622,
+    "cycles_median": 1464243212,
+    "instructions_min": 5197149752,
+    "instructions_median": 5220713840,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "knucleotide": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4119357635,
+    "cycles_median": 4148254003,
+    "instructions_min": 22525054364,
+    "instructions_median": 22525054638,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1411407475,
+    "cycles_median": 1425991423,
+    "instructions_min": 8677406543,
+    "instructions_median": 8677408706,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1413048461,
+    "cycles_median": 1417827159,
+    "instructions_min": 8677407100,
+    "instructions_median": 8677408259,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1329120599,
+    "cycles_median": 1332120822,
+    "instructions_min": 8079066762,
+    "instructions_median": 8079068956,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1330772295,
+    "cycles_median": 1332437545,
+    "instructions_min": 8079067858,
+    "instructions_median": 8079068624,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1463860743,
+    "cycles_median": 1474308781,
+    "instructions_min": 9134330333,
+    "instructions_median": 9134331744,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 690824128,
+    "cycles_median": 695430613,
+    "instructions_min": 3603339845,
+    "instructions_median": 3620841074,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "load_big": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 1751824893,
+    "cycles_median": 1759893570,
+    "instructions_min": 6566715356,
+    "instructions_median": 6567970820,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 750493047,
+    "cycles_median": 753644866,
+    "instructions_min": 2871346228,
+    "instructions_median": 2871542944,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 755330562,
+    "cycles_median": 757176336,
+    "instructions_min": 2871156806,
+    "instructions_median": 2871507279,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 589881437,
+    "cycles_median": 593014944,
+    "instructions_min": 2466365989,
+    "instructions_median": 2466665954,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 590904742,
+    "cycles_median": 593276825,
+    "instructions_min": 2466301994,
+    "instructions_median": 2466649924,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 624165227,
+    "cycles_median": 628731007,
+    "instructions_min": 2632705724,
+    "instructions_median": 2632910682,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 481762102,
+    "cycles_median": 491085274,
+    "instructions_min": 1918028687,
+    "instructions_median": 1928701843,
+    "runs": 9,
+    "output": "diff"
+   }
+  },
+  "loops_arith": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4345580317,
+    "cycles_median": 4352348975,
+    "instructions_min": 24765086429,
+    "instructions_median": 24765086712,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 543441473,
+    "cycles_median": 548100097,
+    "instructions_min": 3567189923,
+    "instructions_median": 3567190235,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 547835624,
+    "cycles_median": 548745349,
+    "instructions_min": 3567189915,
+    "instructions_median": 3567190566,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 543720093,
+    "cycles_median": 548117431,
+    "instructions_min": 3566894996,
+    "instructions_median": 3566895478,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 544102778,
+    "cycles_median": 548535814,
+    "instructions_min": 3566895411,
+    "instructions_median": 3566896563,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 547537544,
+    "cycles_median": 548110118,
+    "instructions_min": 3566850318,
+    "instructions_median": 3566850858,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 1108632369,
+    "cycles_median": 1109381371,
+    "instructions_min": 3091143545,
+    "instructions_median": 3091143907,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "mandelbrot": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4655262043,
+    "cycles_median": 4714833450,
+    "instructions_min": 26758701982,
+    "instructions_median": 26758702103,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 556663142,
+    "cycles_median": 557084299,
+    "instructions_min": 2094241640,
+    "instructions_median": 2094242938,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 556913351,
+    "cycles_median": 557209511,
+    "instructions_min": 2094241593,
+    "instructions_median": 2094242596,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 556695420,
+    "cycles_median": 557269554,
+    "instructions_min": 2093854847,
+    "instructions_median": 2093855733,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 556588975,
+    "cycles_median": 557340706,
+    "instructions_min": 2093854992,
+    "instructions_median": 2093855932,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 556673807,
+    "cycles_median": 557130972,
+    "instructions_min": 2093768103,
+    "instructions_median": 2093769169,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 521785037,
+    "cycles_median": 521981565,
+    "instructions_min": 1199440201,
+    "instructions_median": 1199440850,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "matmul": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3164550662,
+    "cycles_median": 3347279253,
+    "instructions_min": 14518543476,
+    "instructions_median": 14518543611,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 438881405,
+    "cycles_median": 442050836,
+    "instructions_min": 2696407826,
+    "instructions_median": 2696409159,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 440716004,
+    "cycles_median": 443627103,
+    "instructions_min": 2696407061,
+    "instructions_median": 2696407714,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 439381299,
+    "cycles_median": 442724803,
+    "instructions_min": 2696397682,
+    "instructions_median": 2696399119,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 435167500,
+    "cycles_median": 443401704,
+    "instructions_min": 2696396997,
+    "instructions_median": 2696398813,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 438805166,
+    "cycles_median": 446044219,
+    "instructions_min": 2698198211,
+    "instructions_median": 2698199197,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 268590510,
+    "cycles_median": 273221094,
+    "instructions_min": 1123017138,
+    "instructions_median": 1123043571,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "metamethods": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4559871199,
+    "cycles_median": 4583433359,
+    "instructions_min": 23217286556,
+    "instructions_median": 23217287764,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 838058849,
+    "cycles_median": 842375818,
+    "instructions_min": 4687856565,
+    "instructions_median": 4687859561,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 836766433,
+    "cycles_median": 841121870,
+    "instructions_min": 4687858130,
+    "instructions_median": 4687859692,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 814871733,
+    "cycles_median": 819042036,
+    "instructions_min": 4499317642,
+    "instructions_median": 4499318713,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 806975434,
+    "cycles_median": 822092191,
+    "instructions_min": 4499317509,
+    "instructions_median": 4499318239,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 810680574,
+    "cycles_median": 823101979,
+    "instructions_min": 4522025899,
+    "instructions_median": 4522026962,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 533005588,
+    "cycles_median": 541790455,
+    "instructions_min": 2992731922,
+    "instructions_median": 3016170164,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "nbody": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4265921842,
+    "cycles_median": 4409297975,
+    "instructions_min": 24002343210,
+    "instructions_median": 24002343519,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 633626398,
+    "cycles_median": 646773753,
+    "instructions_min": 3565518280,
+    "instructions_median": 3565519995,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 633577597,
+    "cycles_median": 647787896,
+    "instructions_min": 3565516524,
+    "instructions_median": 3565520038,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 645936169,
+    "cycles_median": 647099694,
+    "instructions_min": 3564301906,
+    "instructions_median": 3564303304,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 645887509,
+    "cycles_median": 648396496,
+    "instructions_min": 3564301539,
+    "instructions_median": 3564302905,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 645931421,
+    "cycles_median": 646443141,
+    "instructions_min": 3563991925,
+    "instructions_median": 3563996084,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 344771374,
+    "cycles_median": 345701810,
+    "instructions_min": 1698642783,
+    "instructions_median": 1699643810,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "oop_methods": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4693738572,
+    "cycles_median": 4701316815,
+    "instructions_min": 25827176490,
+    "instructions_median": 25827176764,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 154979737,
+    "cycles_median": 155827963,
+    "instructions_min": 968437539,
+    "instructions_median": 968438978,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 155070843,
+    "cycles_median": 156106408,
+    "instructions_min": 968438349,
+    "instructions_median": 968439976,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 153642049,
+    "cycles_median": 155826349,
+    "instructions_min": 966928586,
+    "instructions_median": 966931571,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 154639173,
+    "cycles_median": 155930693,
+    "instructions_min": 966928795,
+    "instructions_median": 966930900,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 152700737,
+    "cycles_median": 155776482,
+    "instructions_min": 966849961,
+    "instructions_median": 966850736,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 305142637,
+    "cycles_median": 305787460,
+    "instructions_min": 956061051,
+    "instructions_median": 957143278,
+    "runs": 9,
+    "output": "diff"
+   }
+  },
+  "pcall_error": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4078504004,
+    "cycles_median": 4137624711,
+    "instructions_min": 14227695132,
+    "instructions_median": 14227695249,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 2406203416,
+    "cycles_median": 2425379326,
+    "instructions_min": 11651034726,
+    "instructions_median": 11651035921,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 2416286623,
+    "cycles_median": 2442742102,
+    "instructions_min": 11651034070,
+    "instructions_median": 11651035837,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 2046504164,
+    "cycles_median": 2065217424,
+    "instructions_min": 9757456356,
+    "instructions_median": 9757457974,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 2143046553,
+    "cycles_median": 2164941171,
+    "instructions_min": 9757455769,
+    "instructions_median": 9757457113,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 2276780044,
+    "cycles_median": 2311052331,
+    "instructions_min": 10795560393,
+    "instructions_median": 10795561697,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 8383976674,
+    "cycles_median": 8501786795,
+    "instructions_min": 38761282652,
+    "instructions_median": 38769638200,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "queens": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4434060023,
+    "cycles_median": 4467148491,
+    "instructions_min": 15646463393,
+    "instructions_median": 15646463650,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1927866165,
+    "cycles_median": 1934722887,
+    "instructions_min": 6173605154,
+    "instructions_median": 6173606892,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1927110304,
+    "cycles_median": 1941237210,
+    "instructions_min": 6173605617,
+    "instructions_median": 6173606555,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1924257819,
+    "cycles_median": 1929454211,
+    "instructions_min": 6172778766,
+    "instructions_median": 6172779404,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1925990995,
+    "cycles_median": 1928981503,
+    "instructions_min": 6172778043,
+    "instructions_median": 6172779569,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1925673918,
+    "cycles_median": 1933235295,
+    "instructions_min": 6172875066,
+    "instructions_median": 6172877388,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 1893610198,
+    "cycles_median": 1898397046,
+    "instructions_min": 4335131121,
+    "instructions_median": 4335132231,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "sieve": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3093551643,
+    "cycles_median": 3099671688,
+    "instructions_min": 13032030361,
+    "instructions_median": 13032031641,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 605682491,
+    "cycles_median": 608524564,
+    "instructions_min": 3510562400,
+    "instructions_median": 3510563274,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 607000419,
+    "cycles_median": 608662880,
+    "instructions_min": 3510562168,
+    "instructions_median": 3510563371,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 637674376,
+    "cycles_median": 639754621,
+    "instructions_min": 3742879669,
+    "instructions_median": 3742882164,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 639278648,
+    "cycles_median": 639749183,
+    "instructions_min": 3742879762,
+    "instructions_median": 3742882230,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 662051135,
+    "cycles_median": 665721900,
+    "instructions_min": 3925237598,
+    "instructions_median": 3925239584,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 1000106939,
+    "cycles_median": 1003101752,
+    "instructions_min": 980848222,
+    "instructions_median": 980849428,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "spectral_norm": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4791760386,
+    "cycles_median": 4972090690,
+    "instructions_min": 23292862736,
+    "instructions_median": 23292863105,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 229440449,
+    "cycles_median": 229629682,
+    "instructions_min": 1948808462,
+    "instructions_median": 1948810345,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 229447527,
+    "cycles_median": 229810882,
+    "instructions_min": 1948809325,
+    "instructions_median": 1948810435,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 229179757,
+    "cycles_median": 229517760,
+    "instructions_min": 1945609070,
+    "instructions_median": 1945610012,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 229508405,
+    "cycles_median": 229967042,
+    "instructions_min": 1945608922,
+    "instructions_median": 1945610281,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 228812694,
+    "cycles_median": 229463399,
+    "instructions_min": 1944567686,
+    "instructions_median": 1944569067,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 171080078,
+    "cycles_median": 171217109,
+    "instructions_min": 744630605,
+    "instructions_median": 744631062,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "string_ops": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 2718080594,
+    "cycles_median": 2747940593,
+    "instructions_min": 6713678522,
+    "instructions_median": 6713678653,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1470393909,
+    "cycles_median": 1491780831,
+    "instructions_min": 4684976436,
+    "instructions_median": 4684978413,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1483822321,
+    "cycles_median": 1505119511,
+    "instructions_min": 4684974749,
+    "instructions_median": 4684976655,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1317609336,
+    "cycles_median": 1334051577,
+    "instructions_min": 3908475140,
+    "instructions_median": 3908476054,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1331715700,
+    "cycles_median": 1351210157,
+    "instructions_min": 3908474836,
+    "instructions_median": 3908476911,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1387659976,
+    "cycles_median": 1409013302,
+    "instructions_min": 4300607723,
+    "instructions_median": 4300608856,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 2145272858,
+    "cycles_median": 2190453865,
+    "instructions_min": 3535134569,
+    "instructions_median": 3535992528,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "table_array": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 3400455668,
+    "cycles_median": 3558978540,
+    "instructions_min": 18914943247,
+    "instructions_median": 18914943749,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 361031064,
+    "cycles_median": 362194173,
+    "instructions_min": 1485755010,
+    "instructions_median": 1485755697,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 361299715,
+    "cycles_median": 362689370,
+    "instructions_min": 1485755254,
+    "instructions_median": 1485756457,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 318695240,
+    "cycles_median": 320377982,
+    "instructions_min": 1030186026,
+    "instructions_median": 1030187295,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 317186079,
+    "cycles_median": 318490559,
+    "instructions_min": 1030185137,
+    "instructions_median": 1030185980,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 350787742,
+    "cycles_median": 352652041,
+    "instructions_min": 1194803959,
+    "instructions_median": 1194805473,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 597706059,
+    "cycles_median": 598552718,
+    "instructions_min": 3063609441,
+    "instructions_median": 3063610869,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "table_hash": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 1669379440,
+    "cycles_median": 1681949600,
+    "instructions_min": 2581077323,
+    "instructions_median": 2581077996,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 632692641,
+    "cycles_median": 655095426,
+    "instructions_min": 1509944169,
+    "instructions_median": 1509947046,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 634539895,
+    "cycles_median": 657535603,
+    "instructions_min": 1509944130,
+    "instructions_median": 1509946081,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 609191747,
+    "cycles_median": 625628311,
+    "instructions_min": 1372239000,
+    "instructions_median": 1372240457,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 607099107,
+    "cycles_median": 615810462,
+    "instructions_min": 1372238356,
+    "instructions_median": 1372241386,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 608388955,
+    "cycles_median": 616250499,
+    "instructions_min": 1402991787,
+    "instructions_median": 1402992656,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 402730734,
+    "cycles_median": 407878580,
+    "instructions_min": 667036671,
+    "instructions_median": 667362976,
+    "runs": 9,
+    "output": "same"
+   }
+  },
+  "varargs": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 5305165519,
+    "cycles_median": 5345308784,
+    "instructions_min": 28129141816,
+    "instructions_median": 28129142020,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1385780374,
+    "cycles_median": 1397413009,
+    "instructions_min": 7580122836,
+    "instructions_median": 7580123251,
+    "runs": 9,
+    "output": "same"
+   },
+   "plain2": {
+    "variant": false,
+    "cycles_min": 1384207671,
+    "cycles_median": 1393987513,
+    "instructions_min": 7580122184,
+    "instructions_median": 7580124184,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1166753960,
+    "cycles_median": 1185862174,
+    "instructions_min": 6483181419,
+    "instructions_median": 6483182220,
+    "runs": 9,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1167042865,
+    "cycles_median": 1169882374,
+    "instructions_min": 6483181934,
+    "instructions_median": 6483182256,
+    "runs": 9,
+    "output": "same"
+   },
+   "hold": {
+    "variant": false,
+    "cycles_min": 1242050156,
+    "cycles_median": 1243883104,
+    "instructions_min": 6903067393,
+    "instructions_median": 6903068005,
+    "runs": 9,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 2196624043,
+    "cycles_median": 2208757803,
+    "instructions_min": 11130103142,
+    "instructions_median": 11130754380,
+    "runs": 9,
+    "output": "same"
+   }
+  }
+ }
+}

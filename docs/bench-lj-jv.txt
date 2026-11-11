@@ -1,0 +1,122 @@
+# LuaJIT -jv trace/abort counts (LJ) and our RUSTYNAIL_JIT_VERBOSE=1 trace summary; regenerate with the same commands
+bench/luajit/metamethods.lua: traces=7 aborts=6       6 NYI: return to lower frame at metamethods.lua:19];
+bench/programs/knucleotide.lua: traces=4 aborts=0 
+bench/programs/table_hash.lua: traces=8 aborts=0 
+bench/programs/fib.lua: traces=20 aborts=1       1 call unroll limit reached];
+bench/luajit/coroutines.lua: traces=12 aborts=20      13 NYI: bytecode FNEW  ];      7 NYI: bytecode FNEW   at coroutines.lua:8];
+bench/programs/nbody.lua: traces=5 aborts=2       2 leaving loop in root trace at nbody.lua:25];
+bench/programs/matmul.lua: traces=15 aborts=0 
+bench/real/game_loop.lua: traces=67 aborts=0 
+bench/lj/real/lua_interp.lua: traces=73 aborts=18       4 inner loop in root trace at lua_interp.lua:56];      4 call unroll limit reached at lua_interp.lua:102];      3 leaving loop in root trace at lua_interp.lua:111];
+bench/jit-trace/tail_loop.lua: traces=4 aborts=0 
+bench/jit-trace/rec_loop.lua: traces=26 aborts=6       6 call unroll limit reached];
+bench/jit-trace/tfor_loops.lua: traces=5 aborts=0 
+bench/lj/jit-trace/multret.lua: traces=4 aborts=0 
+bench/jit-trace/str_concat.lua: traces=1 aborts=0 
+bench/jit-trace/field_method.lua: traces=2 aborts=0 
+
+# ours (verbose summary lines)
+######## bench/luajit/metamethods.lua
+OURS:
+[trace] recorded 2 installed 0 entered 0 flushes 0 rerecord 0 blacklisted 0 refused 0 deferred 0 ineffective 0
+[trace] aborted Metamethod: 2
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 0 (live traces 0)
+######## bench/programs/knucleotide.lua
+OURS:
+[trace] recorded 7 installed 1 entered 18749053 flushes 1 rerecord 0 blacklisted 1 refused 0 deferred 0 ineffective 0
+[trace] aborted UpvalAlias: 6
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 149997893 (live traces 0)
+######## bench/programs/table_hash.lua
+OURS:
+[trace] recorded 10 installed 4 entered 4 flushes 4 rerecord 0 blacklisted 3 refused 0 deferred 0 ineffective 0
+[trace] aborted TableHash: 6
+[trace] sink: tables 0 traces 0; loops peeled 1 phis 4 wb-stores 0
+[trace] exits 4 (live traces 0)
+######## bench/programs/fib.lua
+OURS:
+[trace] recorded 4 installed 3 entered 96 flushes 3 rerecord 0 blacklisted 0 refused 0 deferred 0 ineffective 0
+[trace] aborted FnShort: 1
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 39038252 (live traces 0)
+######## bench/luajit/coroutines.lua
+OURS:
+[trace] recorded 10 installed 0 entered 0 flushes 0 rerecord 0 blacklisted 5 refused 0 deferred 0 ineffective 0
+[trace] aborted CFunc: 8
+[trace] aborted Nyi(Closure): 2
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 0 (live traces 0)
+######## bench/programs/nbody.lua
+OURS:
+[trace] recorded 4 installed 2 entered 8993224 flushes 2 rerecord 0 blacklisted 1 refused 0 deferred 0 ineffective 0
+[trace] aborted InnerLoop: 2
+[trace] sink: tables 0 traces 0; loops peeled 1 phis 14 wb-stores 0
+[trace] side aborted LeaveFrame: 2
+[trace] side aborted SideUntraced: 2
+[trace] exits 4996164 (live traces 0)
+######## bench/programs/matmul.lua
+OURS:
+[trace] recorded 7 installed 7 entered 320372 flushes 7 rerecord 1 blacklisted 0 refused 0 deferred 2 ineffective 0
+[trace] sink: tables 0 traces 0; loops peeled 4 phis 17 wb-stores 0
+[trace] side aborted SideShort: 14
+[trace] side aborted SideUntraced: 2
+[trace] exits 168131 (live traces 0)
+######## bench/real/game_loop.lua
+OURS:
+[trace] recorded 11 installed 5 entered 147744 flushes 5 rerecord 0 blacklisted 1 refused 0 deferred 0 ineffective 0
+[trace] aborted FnShort: 4
+[trace] aborted UpvalAlias: 2
+[trace] sink: tables 0 traces 0; loops peeled 3 phis 17 wb-stores 0
+[trace] side aborted SideShort: 9
+[trace] side aborted SideUntraced: 5
+######## bench/lj/real/lua_interp.lua
+OURS:
+[trace] recorded 8 installed 0 entered 0 flushes 0 rerecord 0 blacklisted 2 refused 0 deferred 0 ineffective 0
+[trace] aborted Nyi(Return): 4
+[trace] aborted Recursion: 4
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 0 (live traces 0)
+######## bench/jit-trace/tail_loop.lua
+OURS:
+[trace] recorded 7 installed 1 entered 2891880 flushes 1 rerecord 0 blacklisted 1 refused 0 deferred 0 ineffective 0
+[trace] aborted UpvalAlias: 6
+[trace] sink: tables 0 traces 0; loops peeled 1 phis 5 wb-stores 0
+[trace] side aborted LeaveFrame: 2
+[trace] exits 2891864 (live traces 0)
+######## bench/jit-trace/rec_loop.lua
+OURS:
+[trace] recorded 13 installed 3 entered 1998511 flushes 3 rerecord 0 blacklisted 3 refused 0 deferred 0 ineffective 0
+[trace] aborted Recursion: 4
+[trace] aborted UpvalAlias: 6
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 10787703 (live traces 0)
+######## bench/jit-trace/tfor_loops.lua
+OURS:
+[trace] recorded 6 installed 2 entered 323 flushes 2 rerecord 1 blacklisted 3 refused 0 deferred 1 ineffective 0
+[trace] aborted CFunc: 2
+[trace] aborted Identical: 1
+[trace] aborted LeaveLoop: 1
+[trace] sink: tables 0 traces 0; loops peeled 1 phis 4 wb-stores 0
+[trace] side aborted LeaveLoop: 2
+######## bench/lj/jit-trace/multret.lua
+OURS:
+[trace] recorded 17 installed 1 entered 9474 flushes 1 rerecord 0 blacklisted 2 refused 0 deferred 0 ineffective 0
+[trace] aborted FnShort: 7
+[trace] aborted LeaveFrame: 3
+[trace] aborted UpvalAlias: 6
+[trace] sink: tables 0 traces 0; loops peeled 1 phis 10 wb-stores 0
+[trace] side aborted LeaveFrame: 2
+######## bench/jit-trace/str_concat.lua
+OURS:
+[trace] recorded 1 installed 1 entered 75626 flushes 1 rerecord 0 blacklisted 0 refused 0 deferred 0 ineffective 0
+[trace] sink: tables 0 traces 0; loops peeled 0 phis 0 wb-stores 0
+[trace] exits 75626 (live traces 0)
+######## bench/jit-trace/field_method.lua
+OURS:
+[trace] recorded 4 installed 1 entered 99536 flushes 1 rerecord 0 blacklisted 1 refused 0 deferred 0 ineffective 0
+[trace] aborted InnerLoop: 2
+[trace] aborted LeaveLoop: 1
+[trace] sink: tables 0 traces 0; loops peeled 1 phis 6 wb-stores 0
+[trace] side aborted LeaveFrame: 4
+[trace] exits 99504 (live traces 0)

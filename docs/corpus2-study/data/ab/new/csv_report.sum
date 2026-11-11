@@ -1,0 +1,47 @@
+== csv_report (rc 0)
+[trace] recorded 18 installed 5 entered 70106 flushes 5 rerecord 3 blacklisted 11 refused 48 deferred 9 ineffective 0 probes 56 (fn-short 8 start-refused 48)
+[trace] aborted CFunc: 10
+[trace] aborted FnShort: 8
+[trace] aborted LeaveFrame: 1
+[trace] aborted StartRefused: 48
+[trace] aborted TableHash: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 3 phis 15 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 21 installed 9 failed 12 preludes 2
+[trace] links: nest roots 0 frame links 0 stitches 1
+[trace] exits 212165 (live traces 0)
+aborts (count reason op depth head):
+      8 SideShort              CALL      d1 side  [policy]
+      4 FnShort                CALL      d0 root L16 'local function quote(s)'  [policy]
+      4 CFunc                  CALL      d0 root L40 'local function parseLine(line)'
+      4 FnShort                CALL      d0 root L40 'local function parseLine(line)'  [policy]
+      2 SideShort              TFORCALL  d0 side  [policy]
+      2 CFunc                  CALL      d1 root L75 'local function parseCSV(text)'
+      2 CFunc                  CALL      d0 root L0 main
+      2 TableHash              GETTABLE  d0 side
+      2 TableHash              GETTABLE  d0 root L93 'local function groupBy(records, keyfn)'
+      2 CFunc                  CALL      d1 root L0 main
+      1 LeaveFrame             RETURN1   d0 root L40 'local function parseLine(line)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  454.0 L0 pc51 Gettabup 1 454027700
+  173.0 L0 pc48 Move 1 172996620
+  17.4 L93 pc0 Newtable 1 17435120
+  17.1 L0 pc4 Move 1 17076300
+  7.9 L93 pc51 Lt 2 3960170
+  6.5 L0 pc0 Move 3 2154387
+  5.2 L93 pc55 Lt 2 2594330
+  4.2 L40 pc0 Newtable 8 530140
+  1.9 L16 pc2 Call 8 238975
+  1.2 L93 pc8 Move 9 135073
+  1.0 L75 pc7 Getupval 2 495240
+  1.0 L0 pc126 Len 2 482720
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     137192 Call       SideShort      black=true gk=32
+      73315 Eqi        -              black=false gk=32
+       1354 Settable   SideShort      black=true gk=41
+        110 Lt         -              black=false gk=32
+         98 Move       -              black=false gk=17
+         45 Newtable   -              black=false gk=32
+         33 Move       TableHash      black=true gk=17
+         11 Call       -              black=false gk=33
+          4 Concat     -              black=false gk=32
+          3 Tforcall   -              black=false gk=16

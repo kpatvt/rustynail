@@ -1,0 +1,23 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 796  of event 'cycles:u'
+# Event count (approx.): 768509945
+#
+# Overhead  Shared Object         Symbol                                                                                
+# ........  ....................  ......................................................................................
+#
+    33.66%  rn-cli               [.] rn_core::jit_helpers::jit_call
+    30.77%  rn-cli               [.] <rn_core::state::State>::raw_set_int
+    25.69%  rn-cli               [.] rn_std::lib_math::math_random
+     6.65%  rn-cli               [.] rn_std::lib_math::load_rand
+     2.86%  [JIT] tid 2374036     [.] lua_proto@0x7fd890f93500.v1
+     0.09%  rn-cli               [.] rn_jit::t15::runtime::jit_t15_promote
+     0.09%  rn-cli               [.] <rn_jit::tr::record::Rec>::record_one
+
+
+#
+# (Tip: To measure approximate function latency with Processor Trace use perf record -e intel_pt// ... ; perf script --call-ret-trace)
+#

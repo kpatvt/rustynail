@@ -1,0 +1,67 @@
+== json_rxi (rc 0)
+[trace] recorded 30 installed 8 entered 4423542 flushes 8 rerecord 0 blacklisted 26 refused 249 deferred 0 ineffective 0 probes 269 (fn-short 20 start-refused 249)
+[trace] aborted CFunc: 4
+[trace] aborted FnShort: 20
+[trace] aborted InnerLoop: 12
+[trace] aborted LeaveFrame: 2
+[trace] aborted LeaveLoop: 2
+[trace] aborted StartRefused: 249
+[trace] aborted TableHash: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 9 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 71 installed 35 failed 49 preludes 1
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 14471102 (live traces 0)
+aborts (count reason op depth head):
+     17 LeaveFrame             RETURN1   d0 side
+      6 SideShort              TFORCALL  d0 side  [policy]
+      6 Nyi(CONCAT)            CONCAT    d0 side
+      4 FnShort                CALL      d0 root L78 'local function encode_string(val)'  [policy]
+      4 FnShort                TAILCALL  d0 root L98 'encode = function(val, stack)'  [policy]
+      4 CFunc                  CALL      d1 root L32 'local function encode_table(val, stack)'
+      4 FnShort                TAILCALL  d0 root L82 'local function encode_number(val)'  [policy]
+      4 FnShort                TAILCALL  d0 root L324 'parse = function(str, idx)'  [policy]
+      4 InnerLoop              FORPREP   d1 root L268 'local function parse_object(str, i)'
+      4 InnerLoop              FORPREP   d1 root L242 'local function parse_array(str, i)'
+      3 FnShort                RETURN1   d0 root L24 'local function escape_char(c)'  [policy]
+      2 LeaveLoop              TFORCALL  d0 root L32 'local function encode_table(val, stack)'
+      2 TableHash              GETTABLE  d0 root L32 'local function encode_table(val, stack)'
+      2 SideShort              CALL      d1 side  [policy]
+      2 LeaveFrame             RETURN1   d0 root L135 'local function next_char(str, idx, set, negate)'
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 InnerLoop              FORPREP   d1 root L223 'local function parse_number(str, i)'
+      2 InnerLoop              FORPREP   d1 root L233 'local function parse_literal(str, i)'
+      2 TableHash              GETTABLE  d1 side
+      1 FnShort                RETURN1   d0 root L135 'local function next_char(str, idx, set, negate)'  [policy]
+      1 Nyi(LOADK)             LOADK     d0 side
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  834.7 L0 pc3 Move 71 11757026
+  819.9 L0 pc21 Move 140 5856247
+  4.2 L233 pc0 Getupval 194 21525
+  3.8 L242 pc0 Newtable 194 19390
+  1.0 L82 pc0 Eq 89 10701
+  0.6 L0 pc152 Settable 172 3307
+  0.3 L242 pc27 Move 725 480
+  0.3 L0 pc0 Move 71 4504
+  0.3 L268 pc69 Move 219 1219
+  0.2 L268 pc37 Move 602 379
+  0.2 L78 pc0 Loadk 45 5005
+  0.1 L32 pc0 Newtable 22 5906
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    9478485 Gettable   -              black=false gk=11
+    1733597 Return1    LeaveFrame     black=true gk=32
+     852560 SelfOp     -              black=true gk=16
+     656314 Gettable   SideShort      black=true gk=14
+     417180 Call       -              black=false gk=32
+     307498 Settable   SideShort      black=true gk=40
+     163413 Return1    MaxSide        black=true gk=32
+      88582 Gettable   MaxSide        black=true gk=11
+      55744 Call       SideShort      black=true gk=32
+      54870 Tforcall   SideShort      black=true gk=4
+      27940 Tforcall   -              black=false gk=4
+      27668 Call       MaxSide        black=true gk=32
+       2324 Getfield   -              black=false gk=4
+        140 Forprep    -              black=false gk=32
+         53 Tforprep   TableHash      black=true gk=48
+         16 SelfOp     -              black=false gk=16
+          2 Call       MaxSide        black=true gk=33
+          1 Forloop    -              black=false gk=32

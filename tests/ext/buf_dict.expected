@@ -1,0 +1,28 @@
+dict1	09 01 0f 00 07 00 00 00 00 00 00 f0 3f
+dict2	09 01 0f 02 23 66 6f 6f
+dict3	09 01 21 7a 21 78
+dict-dup	09 01 0f 00 07 00 00 00 00 00 00 f0 3f
+dict-nested	09 01 0f 00 09 01 0f 01 02
+dict-arr	0c 03 21 61 21 61
+dict-hole	09 01 21 62 07 00 00 00 00 00 00 f0 3f
+dict-many	09 01 0f e0 4b 07 00 00 00 00 00 00 f0 3f
+mt1	0e 00 0c 02 07 00 00 00 00 00 00 f0 3f
+mt2	0e 01 0c 02 07 00 00 00 00 00 00 f0 3f
+mt-unknown	0c 02 07 00 00 00 00 00 00 f0 3f
+mt-none-listed	0c 02 07 00 00 00 00 00 00 f0 3f
+mt-named	0c 02 07 00 00 00 00 00 00 f0 3f
+mt-nested	0c 03 0e 00 08 0e 01 09 01 21 78 07 00 00 00 00 00 00 f0 3f
+both	0e 00 09 01 0f 00 07 00 00 00 00 00 00 f0 3f
+plain encode ignores mt	0c 02 07 00 00 00 00 00 00 f0 3f
+rt dict	{["age"]=30,["name"]="bob",["tags"]={[1]="a",[2]="b"}}
+rt mt	true	true	1	2	hi
+shared dict	{["alpha"]=1,["beta"]=2}
+miss dict idx | ERR | cannot deserialize dictionary index 6
+no dict | ERR | cannot deserialize dictionary index 1
+no mts | ERR | cannot deserialize dictionary index 1
+mt miss | ERR | cannot deserialize dictionary index 6
+mt non-table next | ERR | cannot deserialize tag 0xADDR
+mt ok | ok | {}
+opt dict nonstr | ERR | bad options table
+opt mt nontable | ERR | bad options table
+opt dict not table | ok | "userdata"

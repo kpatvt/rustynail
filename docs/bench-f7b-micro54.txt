@@ -1,0 +1,38 @@
+run 1/7
+run 2/7
+run 3/7
+run 4/7
+run 5/7
+run 6/7
+run 7/7
+program           j4 Mcyc(min)    trace Mcyc    ratio    tier1 Mcyc    ratio
+alloc_ctor              1260.5         734.9   0.583         1260.1   1.000~
+array_rec               6561.8        4513.1   0.688         6649.6   1.013~
+dot                     6802.4        2123.8   0.312         6562.7   0.965~
+field_global           12007.7         624.4   0.052        12049.8   1.004~
+field_method            9391.6         852.0   0.091         9412.7   1.002~
+field_rw                9293.6        1229.2   0.132         9286.8   0.999~
+float_loop             11193.4        2775.6   0.248        11187.5   0.999~
+float_poly              7628.9        1822.5   0.239         7532.4   0.987~
+inline_2                7170.1         410.7   0.057         6308.3   0.880 
+inline_leaf             6524.5         671.3   0.103         6523.4   1.000~
+int_rec2                5764.2        2926.7   0.508         5769.1   1.001~
+int_sum                 3241.2        1246.5   0.385         3237.8   0.999~
+licm_expr               9911.5         561.5   0.057         9044.3   0.913 
+multret                 6541.8         489.9   0.075         6734.3   1.029~
+rec_loop                 771.2         792.4   1.028~         777.0   1.008~
+short_inner             6177.8        1801.0   0.292         6177.8   1.000~
+sink_tuple              1838.4          22.1   0.012         1840.4   1.001~
+sink_vec                1087.7          17.7   0.016         1076.5   0.990~
+str_concat              1279.3        1715.9   1.341         1273.9   0.996~
+tail_loop               7561.0        1421.7   0.188         7583.1   1.003~
+tfor_loops              1164.3        1066.2   0.916         1176.0   1.010~
+type_entry              6030.6        2463.9   0.409         6112.8   1.014~
+type_entry_stable          6054.2        2305.0   0.381         6055.3   1.000~
+type_late               6064.5        2059.7   0.340         9717.6   1.602 
+type_late_stable          6056.0        2048.8   0.338         5581.3   0.922 
+upval_acc               5685.2        2116.9   0.372         5690.9   1.001~
+upval_inv               8188.3        2509.1   0.306         8176.1   0.999~
+geomean trace: all(27) cycles min 0.212 median 0.218 instr 0.231; numeric cycles min nan median nan instr nan
+geomean tier1: all(27) cycles min 1.007 median 0.995 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

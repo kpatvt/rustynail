@@ -1,0 +1,53 @@
+== coro_scheduler (rc 0)
+[trace] recorded 39 installed 2 entered 72910 flushes 2 rerecord 0 blacklisted 21 refused 75 deferred 0 ineffective 0 probes 83 (fn-short 8 start-refused 75)
+[trace] aborted CFunc: 10
+[trace] aborted Compile(asm-unsupported): 2
+[trace] aborted FnShort: 8
+[trace] aborted InnerLoop: 13
+[trace] aborted LeaveLoop: 2
+[trace] aborted Nyi(Closure): 2
+[trace] aborted StartRefused: 75
+[trace] aborted TailCall: 8
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 8 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 8 installed 4 failed 4 preludes 0
+[trace] exits 72982 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                CALL      d0 root L19 'function Scheduler:step()'  [policy]
+      4 TailCall               TAILCALL  d1 root L153 'sched:spawn(function(s, period)'
+      4 InnerLoop              FORPREP   d2 root L136 'sched:spawn(function(s)'
+      4 FnShort                TAILCALL  d0 root L82 'function Channel.new(sched, cap)'  [policy]
+      2 InnerLoop              FORPREP   d1 root L86 'function Channel:send(v)'
+      2 InnerLoop              FORPREP   d1 root L92 'function Channel:recv()'
+      2 CFunc                  TFORCALL  d0 root L0 main
+      2 CFunc                  CALL      d0 root L19 'function Scheduler:step()'
+      2 SideShort              JMP       d0 side  [policy]
+      2 CFunc                  CALL      d0 root L103 'return cowrap(function()'
+      2 CFunc                  TFORCALL  d0 root L108 'return cowrap(function()'
+      2 InnerLoop              FORPREP   d1 root L51 'function Scheduler:run()'
+      2 CFunc                  CALL      d0 root L113 'return cowrap(function()'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L0 main
+      2 InnerLoop              FORPREP   d2 root L126 'sched:spawn(function(s, id)'
+      2 LeaveLoop              FORLOOP   d0 root L71 'function Event:signal(value)'
+      2 LeaveFrame             RETURN0   d0 side
+      2 TailCall               TAILCALL  d2 root L126 'sched:spawn(function(s, id)'
+      2 TailCall               TAILCALL  d2 root L148 'sched:spawn(function(s)'
+      1 InnerLoop              FORPREP   d2 root L148 'sched:spawn(function(s)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  631.6 L82 pc0 Gettabup 4 157891105
+  316.7 L102 pc0 Getupval 197 1607364
+  5.1 L51 pc47 Jmp 229 22397
+  4.3 L19 pc0 Getfield 4 1071805
+  1.0 L51 pc44 Call 3 329167
+  0.6 L7 pc0 Gettabup 132 4845
+  0.3 L136 pc4 Eqk 1437 183
+  0.3 L126 pc11 Modk 925 276
+  0.1 L0 pc97 SelfOp 2 37450
+  0.1 L19 pc8 Gettable 2 34460
+  0.1 L153 pc0 Loadi 2 29500
+  0.1 L148 pc4 Getupval 3 18340
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+      72490 Forloop    LeaveFrame     black=true gk=32
+        318 Settable   SideShort      black=true gk=40
+        104 Call       -              black=false gk=32
+         66 Le         -              black=false gk=32
+          4 Gettable   -              black=false gk=16

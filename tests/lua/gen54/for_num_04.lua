@@ -1,0 +1,3 @@
+local a, b, c = ...
+local t = {}
+for i = a, b do end

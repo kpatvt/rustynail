@@ -1,0 +1,319 @@
+# P9b A.1/A.2 correctness (commit 7de3f4a + docs only)
+Fri Oct 30 07:22:31 PM CDT 2026
+
+### cargo test -p lua-jit --features tr_mutants --no-fail-fast
+start 19:22:31
+     Running unittests src/lib.rs (target/debug/deps/lua_jit-68d67091e654ccdf)
+test result: ok. 81 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+     Running tests/arith_diff.rs (target/debug/deps/arith_diff-22c46e6b68763f55)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/emu_diff.rs (target/debug/deps/emu_diff-22ed00a3904e8b98)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/emu_ops_diff.rs (target/debug/deps/emu_ops_diff-faa25f10cbbc27b9)
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/jit_alloc.rs (target/debug/deps/jit_alloc-6a61ab69b246585a)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/jit_alloc_stress.rs (target/debug/deps/jit_alloc_stress-cd4971e2f6c2a321)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/jit_arith.rs (target/debug/deps/jit_arith-6b3a55d772af2d69)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/jit_calls.rs (target/debug/deps/jit_calls-ee7f2bb6ede62809)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests/jit_cstack.rs (target/debug/deps/jit_cstack-6fe1026fdc7612c7)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/jit_j3c.rs (target/debug/deps/jit_j3c-dd03ec6fc30c94d1)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.27s
+     Running tests/jit_j3c_env.rs (target/debug/deps/jit_j3c_env-00c362b5b5328514)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+     Running tests/jit_lifetime.rs (target/debug/deps/jit_lifetime-07ea0d11f5ad8b7b)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/jit_loops.rs (target/debug/deps/jit_loops-e457d7003b8409fc)
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/jit_memlimit.rs (target/debug/deps/jit_memlimit-68bca454ac814cc1)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/jit_review_backoff.rs (target/debug/deps/jit_review_backoff-08cde101e2e223b8)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/jit_review_count.rs (target/debug/deps/jit_review_count-ab2e4c7c8118bfcb)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/jit_review_hooks.rs (target/debug/deps/jit_review_hooks-058b28a2ba384f27)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/jit_review_uaf.rs (target/debug/deps/jit_review_uaf-8455aaca003b3b9f)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/jit_skeleton.rs (target/debug/deps/jit_skeleton-3fdb5e52b02550ab)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/jit_stress.rs (target/debug/deps/jit_stress-394f47154b626561)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/jit_table.rs (target/debug/deps/jit_table-fb0851b3992865d5)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/t15_analysis.rs (target/debug/deps/t15_analysis-068fcd6d708a2df9)
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+     Running tests/t15_core.rs (target/debug/deps/t15_core-32adcbf41a697464)
+test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.37s
+     Running tests/t15_core_emu.rs (target/debug/deps/t15_core_emu-68a15ef5520ca071)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.13s
+     Running tests/t15_oracle.rs (target/debug/deps/t15_oracle-2112b85123b58e85)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/t15_policy.rs (target/debug/deps/t15_policy-2b56c867676c018e)
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+     Running tests/t15_runtime.rs (target/debug/deps/t15_runtime-f8294516b0706869)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/t15_upvaluejoin_tier1.rs (target/debug/deps/t15_upvaluejoin_tier1-adc622b7f07aa345)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/table_diff.rs (target/debug/deps/table_diff-814b668d2dce08b2)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+     Running tests/thresholds.rs (target/debug/deps/thresholds-095bebf3c6cdab98)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_asm.rs (target/debug/deps/tr_asm-2948bae4169b32fd)
+test mutants_are_caught ... ok
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 23.02s
+     Running tests/tr_core.rs (target/debug/deps/tr_core-61307e378479ef27)
+test mutants_are_caught_by_live_programs has been running for over 60 seconds
+test mutants_are_caught_by_live_programs ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 163.16s
+     Running tests/tr_exit.rs (target/debug/deps/tr_exit-0df71e92f6e7be75)
+test mutants_are_caught ... ok
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/tr_hook.rs (target/debug/deps/tr_hook-69689893e607a93d)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_identity.rs (target/debug/deps/tr_identity-24037f250678a618)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_identity_pre.rs (target/debug/deps/tr_identity_pre-43e8d0854f6d0f43)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_ir.rs (target/debug/deps/tr_ir-950894fbc29094b5)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_loop.rs (target/debug/deps/tr_loop-b984d76f0dc20a1c)
+test mutants_are_caught ... ok
+test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests/tr_mutants.rs (target/debug/deps/tr_mutants-a730721894e1906b)
+test runner::every_registered_mutant_is_caught has been running for over 60 seconds
+test runner::every_registered_mutant_is_caught ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 300.80s
+     Running tests/tr_oracle.rs (target/debug/deps/tr_oracle-109b030de5914363)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_passes.rs (target/debug/deps/tr_passes-0f6f75687d4ae19a)
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/tr_ra.rs (target/debug/deps/tr_ra-09cc920303c507e0)
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running tests/tr_record.rs (target/debug/deps/tr_record-c14de0d678ec7cb6)
+test mutants_are_caught ... ok
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+     Running tests/tr_record_calls.rs (target/debug/deps/tr_record_calls-9838992888a5d160)
+test dep_edges_are_registered_when_inlining ... ok
+test mutants_are_caught ... ok
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running tests/tr_record_count.rs (target/debug/deps/tr_record_count-e0999c39992959fa)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_ref.rs (target/debug/deps/tr_ref-43491227d9f045ed)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/tr_runtime.rs (target/debug/deps/tr_runtime-34e3c492671e6e09)
+test mutants_are_caught ... ok
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit rc=0 end 19:31:18
+TR_ASM_VB=mem
+
+### cargo test -p lua-jit --features tr_mutants,t15_oracle --no-fail-fast --test tr_identity --test tr_oracle --test tr_core --test tr_asm --test tr_hook --test tr_record_count --test tr_identity_pre --test tr_mutants -- --nocapture
+start 19:31:18
+     Running tests/tr_asm.rs (target/debug/deps/tr_asm-d0b0e26fa053642e)
+test mutants_are_caught ... ok
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 22.93s
+     Running tests/tr_core.rs (target/debug/deps/tr_core-842fce600323038f)
+error_late               insns 11030    recorded 8 installed 3 entered 11 exits 33 flushes 3 rerec 1 black 1 ineff 0 hot(type/other) 1/2 aborts {"DepFreed": 1, "Nyi(Len)": 1, "TableHash": 3}
+test mutants_are_caught_by_live_programs has been running for over 60 seconds
+mutant rolled_no_writeback: caught
+mutant snap_drop_last: caught
+mutant snap_prune_dead: caught
+mutant fcmp_negated: caught
+mutant entry_no_typecheck: caught
+mutant callee_guard_skip: caught
+mutant entry_no_ci_spare: caught
+mutant budget_no_store: caught
+mutant refund_off_by_one: caught
+mutant land_pre_mid_swap: caught
+mutant exit_refund_sign_flipped: caught
+test mutants_are_caught_by_live_programs ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 185.05s
+     Running tests/tr_hook.rs (target/debug/deps/tr_hook-fb38ef04d37c308a)
+test mutant_hooked_head_no_trap_is_caught ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/tr_identity.rs (target/debug/deps/tr_identity-e12c050309e312dc)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.82s
+     Running tests/tr_identity_pre.rs (target/debug/deps/tr_identity_pre-5d8efb96d4773a30)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.08s
+     Running tests/tr_mutants.rs (target/debug/deps/tr_mutants-55f2cace3e52d723)
+test runner::every_registered_mutant_is_caught has been running for over 60 seconds
+[tr_mutants] snap_drop_last             P3a      caught by tr_record::ir_replay_matches_the_interpreter, tr_core::mutant_probe_live_programs, tr_oracle::mutant_probe
+[tr_mutants] snap_prune_dead            P3a      caught by tr_record::ir_replay_matches_the_interpreter, tr_core::mutant_probe_live_programs, tr_oracle::mutant_probe
+[tr_mutants] refund_off_by_one          P3a      caught by tr_record::count_model_is_exact, tr_record::ir_replay_matches_the_interpreter, tr_record_count::tier1_count_failures_match_the_snapshots, tr_identity::mutant_probe, tr_oracle::mutant_probe
+[tr_mutants] land_pre_mid_swap          P3a      caught by tr_record::count_model_is_exact, tr_record::ir_replay_matches_the_interpreter, tr_record_count::tier1_guard_exits_match_the_snapshots, tr_identity::mutant_probe, tr_oracle::mutant_probe
+[tr_mutants] budget_no_check            P5b      caught by tr_asm::hand_budget_charge_and_exit_value, tr_asm::emu_peeled_matches_interp, tr_identity::mutant_probe
+[tr_mutants] budget_no_store            P5b      caught by tr_asm::hand_budget_charge_and_exit_value, tr_asm::emu_rolled_matches_interp, tr_identity::mutant_probe
+[tr_mutants] phi_skip_move              P5a      caught by tr_ra::allocation_matches_interpreter; not by tr_ra::swap_cycles
+[tr_mutants] phi_swap                   P5a      caught by tr_ra::phi_swap_cycles, tr_ra::parallel_moves_match_simultaneous_assignment
+[tr_mutants] spill_no_reload            P5a      caught by tr_ra::pressure, tr_ra::allocation_matches_interpreter
+[tr_mutants] exit_rename_ignored        P5a      caught by tr_ra::shared_snapshots_keep_exit_maps_identical; not by tr_ra::allocation_matches_interpreter
+[tr_mutants] fcmp_negated               P5b      caught by tr_asm::emu_peeled_matches_interp
+[tr_mutants] fold_nan                   P2       caught by tr_passes::float_folds_never_decide_nan_or_signed_zero, tr_passes::float_const_folds_equal_the_vm_arithmetic_or_stay
+[tr_mutants] fold_x_plus_zero           P2       caught by tr_passes::float_folds_never_decide_nan_or_signed_zero, tr_passes::float_identities_differential
+[tr_mutants] alias_may_as_no            P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] alias_upval_by_index       P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] fwd_across_store           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] alias_maytable_as_must     P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] cse_across_store           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] tbar_skip                  P5b      caught by tr_asm::hand_tbar_calls_the_barrier_exactly_for_black_tables_and_white_values, tr_asm::e2e_tbar_in_an_incremental_gc_cycle
+[tr_mutants] entry_no_extent            P5b      caught by tr_asm::hand_entry_checks_tr6
+[tr_mutants] entry_no_ci_spare          P5b      caught by tr_asm::hand_entry_checks_tr6
+[tr_mutants] entry_no_typecheck         P5b      caught by tr_asm::emu_peeled_matches_interp, tr_asm::hand_entry_failure_bookkeeping_follows_the_free_peel_rule
+[tr_mutants] callee_guard_skip          P3b      caught by tr_record_calls::callee_identity_guards_are_recorded
+[tr_mutants] upval_range_skip           P3a      caught by tr_record::upvalue_accesses_have_the_range_guard, tr_record::upvalue_range_guard_exits
+[tr_mutants] poll_skip                  P5b      caught by tr_asm::hand_poll_trap_and_interrupt
+[tr_mutants] frame_savedpc_caller_off   P4       caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] frame_nresults_off         P4       caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] dep_edge_skip              P6       caught by tr_runtime::lifetime_freeing_an_inlined_callee_flushes_the_dependent_trace, tr_runtime::lifetime_a_dependency_freed_during_a_recording_aborts_it
+[tr_mutants] flush_in_handler           P6       caught by tr_runtime::deferred_flush_requested_inside_the_exit_handler_runs_at_the_next_safe_point, tr_runtime::deferred_flush_api_semantics, tr_runtime::a_collection_inside_the_exit_handler_does_not_free_the_running_trace, tr_exit::handler::flush_requested_inside_the_handler_is_deferred_and_the_trace_memory_stays_valid
+[tr_mutants] peel_subst_stale           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] popped_frame_drop          P3b      caught by tr_record_calls::popped_frame_slots_stay_in_snapshots, tr_record_calls::ir_replay_matches_the_interpreter
+[tr_mutants] native_room_skip           P3b      caught by tr_record_calls::room_and_ci_conditions
+[tr_mutants] native_ci_skip             P3b      caught by tr_record_calls::room_and_ci_conditions, tr_record_calls::frames_and_snapshots_are_well_formed
+[tr_mutants] hooked_head_no_trap        P1       caught by tr_hook::recorder_log_equals_the_instruction_oracle
+[tr_mutants] rec_no_validate            P3a      caught by tr_record::stale_context_is_rejected_by_the_recorder_validation, tr_record_calls::stale_context_in_a_reused_callee_frame_is_rejected
+[tr_mutants] phi_before_guard           P5a      caught by tr_ra::loop_slice, tr_ra::allocation_matches_interpreter
+[tr_mutants] entry_guard_past_store     P3b      caught by tr_record_calls::entry_guard_snapshot_rules
+[tr_mutants] leave_trap_kept            P3a      caught by tr_record::traps_are_clear_after_the_recording
+[tr_mutants] nonslot_phi_skip           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] rolled_no_writeback        P5b      caught by tr_asm::emu_rolled_matches_interp, tr_asm::e2e_traces_run_and_equal_the_interpreter; not by tr_core::mutant_probe_live_programs
+[tr_mutants] dep_edge_at_install        P3b      caught by tr_record_calls::dep_edges_are_registered_when_inlining
+[tr_mutants] exit_kcache_wrong          P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] exit_top_off_by_one        P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_resume_from_the_restored_frames_equals_the_interpreter_alone
+[tr_mutants] exit_th_top_not_written    P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] exit_refund_sign_flipped   P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::inline_stub_equals_restore_for_every_budget_kind, tr_identity::mutant_probe
+[tr_mutants] bounds_key_no_bound        P7b      caught by tr_loop::bounds_checks_of_different_tables_are_kept
+[tr_mutants] hdr_op_no_barrier          P7b      caught by tr_loop::header_mutating_ops_stop_the_optimiser
+[tr_mutants] forloop_step_guard_skip    P7b      caught by tr_loop::recorded::forloop_records_a_step_guard
+[tr_mutants] forloop_step_add_wrong     P7b      caught by tr_loop::recorded::forloop_records_a_step_guard
+[tr_mutants] cycle_stale_xmm            Q1       caught by tr_ra::cycles_of_every_length_use_v7
+[tr_mutants] ineffective_never          Q2       caught by tr_core::ineffective_trace_rule
+[tr_mutants] abc_with_store             P7       not injected yet
+[tr_mutants] sink_escape_ignored        F8       not injected yet
+[tr_mutants] sink_store_order           F8       not injected yet
+[tr_mutants] sink_slots_after_alloc     F8       not injected yet
+[tr_mutants] sink_no_gcstp              F8       not injected yet
+[tr_mutants] vbytes_no_credit           F-memory not injected yet
+[tr_mutants] vbytes_no_limit_guard      F-memory not injected yet
+[tr_mutants] atouch_skip                F7a      not injected yet
+[tr_mutants] atouch_hoisted             F7a      not injected yet
+[tr_mutants] forloop54_no_ctl_copy      F7a      not injected yet
+[tr_mutants] cell_stale_version         F5       not injected yet
+[tr_mutants] 62 registered: 51 caught, 0 NOT caught, 11 not injected yet (owners: F-memory F5 F7a F8 P7)
+test runner::every_registered_mutant_is_caught ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 307.27s
+     Running tests/tr_oracle.rs (target/debug/deps/tr_oracle-ab91dcc26ddc556b)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 55.02s
+     Running tests/tr_record_count.rs (target/debug/deps/tr_record_count-3f3531a758d377dc)
+test mutants_are_caught ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+exit rc=0 end 19:41:55
+TR_ASM_VB=reg
+
+### cargo test -p lua-jit --features tr_mutants,t15_oracle --no-fail-fast --test tr_identity --test tr_oracle --test tr_core --test tr_asm --test tr_hook --test tr_record_count --test tr_identity_pre --test tr_mutants -- --nocapture
+start 19:41:55
+     Running tests/tr_asm.rs (target/debug/deps/tr_asm-d0b0e26fa053642e)
+test mutants_are_caught ... ok
+test result: ok. 34 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 22.95s
+     Running tests/tr_core.rs (target/debug/deps/tr_core-842fce600323038f)
+error_late               insns 11030    recorded 8 installed 3 entered 11 exits 33 flushes 3 rerec 1 black 1 ineff 0 hot(type/other) 1/2 aborts {"DepFreed": 1, "Nyi(Len)": 1, "TableHash": 3}
+test mutants_are_caught_by_live_programs has been running for over 60 seconds
+mutant rolled_no_writeback: caught
+mutant snap_drop_last: caught
+mutant snap_prune_dead: caught
+mutant fcmp_negated: caught
+mutant entry_no_typecheck: caught
+mutant callee_guard_skip: caught
+mutant entry_no_ci_spare: caught
+mutant budget_no_store: caught
+mutant refund_off_by_one: caught
+mutant land_pre_mid_swap: caught
+mutant exit_refund_sign_flipped: caught
+test mutants_are_caught_by_live_programs ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 185.06s
+     Running tests/tr_hook.rs (target/debug/deps/tr_hook-fb38ef04d37c308a)
+test mutant_hooked_head_no_trap_is_caught ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/tr_identity.rs (target/debug/deps/tr_identity-e12c050309e312dc)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.24s
+     Running tests/tr_identity_pre.rs (target/debug/deps/tr_identity_pre-5d8efb96d4773a30)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.33s
+     Running tests/tr_mutants.rs (target/debug/deps/tr_mutants-55f2cace3e52d723)
+test runner::every_registered_mutant_is_caught has been running for over 60 seconds
+[tr_mutants] snap_drop_last             P3a      caught by tr_record::ir_replay_matches_the_interpreter, tr_core::mutant_probe_live_programs, tr_oracle::mutant_probe
+[tr_mutants] snap_prune_dead            P3a      caught by tr_record::ir_replay_matches_the_interpreter, tr_core::mutant_probe_live_programs, tr_oracle::mutant_probe
+[tr_mutants] refund_off_by_one          P3a      caught by tr_record::count_model_is_exact, tr_record::ir_replay_matches_the_interpreter, tr_record_count::tier1_count_failures_match_the_snapshots, tr_identity::mutant_probe, tr_oracle::mutant_probe
+[tr_mutants] land_pre_mid_swap          P3a      caught by tr_record::count_model_is_exact, tr_record::ir_replay_matches_the_interpreter, tr_record_count::tier1_guard_exits_match_the_snapshots, tr_identity::mutant_probe, tr_oracle::mutant_probe
+[tr_mutants] budget_no_check            P5b      caught by tr_asm::hand_budget_charge_and_exit_value, tr_asm::emu_peeled_matches_interp, tr_identity::mutant_probe
+[tr_mutants] budget_no_store            P5b      caught by tr_asm::hand_budget_charge_and_exit_value, tr_asm::emu_rolled_matches_interp, tr_identity::mutant_probe
+[tr_mutants] phi_skip_move              P5a      caught by tr_ra::allocation_matches_interpreter; not by tr_ra::swap_cycles
+[tr_mutants] phi_swap                   P5a      caught by tr_ra::phi_swap_cycles, tr_ra::parallel_moves_match_simultaneous_assignment
+[tr_mutants] spill_no_reload            P5a      caught by tr_ra::pressure, tr_ra::allocation_matches_interpreter
+[tr_mutants] exit_rename_ignored        P5a      caught by tr_ra::shared_snapshots_keep_exit_maps_identical; not by tr_ra::allocation_matches_interpreter
+[tr_mutants] fcmp_negated               P5b      caught by tr_asm::emu_peeled_matches_interp
+[tr_mutants] fold_nan                   P2       caught by tr_passes::float_folds_never_decide_nan_or_signed_zero, tr_passes::float_const_folds_equal_the_vm_arithmetic_or_stay
+[tr_mutants] fold_x_plus_zero           P2       caught by tr_passes::float_folds_never_decide_nan_or_signed_zero, tr_passes::float_identities_differential
+[tr_mutants] alias_may_as_no            P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] alias_upval_by_index       P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] fwd_across_store           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] alias_maytable_as_must     P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] cse_across_store           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] tbar_skip                  P5b      caught by tr_asm::hand_tbar_calls_the_barrier_exactly_for_black_tables_and_white_values, tr_asm::e2e_tbar_in_an_incremental_gc_cycle
+[tr_mutants] entry_no_extent            P5b      caught by tr_asm::hand_entry_checks_tr6
+[tr_mutants] entry_no_ci_spare          P5b      caught by tr_asm::hand_entry_checks_tr6
+[tr_mutants] entry_no_typecheck         P5b      caught by tr_asm::emu_peeled_matches_interp, tr_asm::hand_entry_failure_bookkeeping_follows_the_free_peel_rule
+[tr_mutants] callee_guard_skip          P3b      caught by tr_record_calls::callee_identity_guards_are_recorded
+[tr_mutants] upval_range_skip           P3a      caught by tr_record::upvalue_accesses_have_the_range_guard, tr_record::upvalue_range_guard_exits
+[tr_mutants] poll_skip                  P5b      caught by tr_asm::hand_poll_trap_and_interrupt
+[tr_mutants] frame_savedpc_caller_off   P4       caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] frame_nresults_off         P4       caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] dep_edge_skip              P6       caught by tr_runtime::lifetime_freeing_an_inlined_callee_flushes_the_dependent_trace, tr_runtime::lifetime_a_dependency_freed_during_a_recording_aborts_it
+[tr_mutants] flush_in_handler           P6       caught by tr_runtime::deferred_flush_requested_inside_the_exit_handler_runs_at_the_next_safe_point, tr_runtime::deferred_flush_api_semantics, tr_runtime::a_collection_inside_the_exit_handler_does_not_free_the_running_trace, tr_exit::handler::flush_requested_inside_the_handler_is_deferred_and_the_trace_memory_stays_valid
+[tr_mutants] peel_subst_stale           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] popped_frame_drop          P3b      caught by tr_record_calls::popped_frame_slots_stay_in_snapshots, tr_record_calls::ir_replay_matches_the_interpreter
+[tr_mutants] native_room_skip           P3b      caught by tr_record_calls::room_and_ci_conditions
+[tr_mutants] native_ci_skip             P3b      caught by tr_record_calls::room_and_ci_conditions, tr_record_calls::frames_and_snapshots_are_well_formed
+[tr_mutants] hooked_head_no_trap        P1       caught by tr_hook::recorder_log_equals_the_instruction_oracle
+[tr_mutants] rec_no_validate            P3a      caught by tr_record::stale_context_is_rejected_by_the_recorder_validation, tr_record_calls::stale_context_in_a_reused_callee_frame_is_rejected
+[tr_mutants] phi_before_guard           P5a      caught by tr_ra::loop_slice, tr_ra::allocation_matches_interpreter
+[tr_mutants] entry_guard_past_store     P3b      caught by tr_record_calls::entry_guard_snapshot_rules
+[tr_mutants] leave_trap_kept            P3a      caught by tr_record::traps_are_clear_after_the_recording
+[tr_mutants] nonslot_phi_skip           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] rolled_no_writeback        P5b      caught by tr_asm::emu_rolled_matches_interp, tr_asm::e2e_traces_run_and_equal_the_interpreter; not by tr_core::mutant_probe_live_programs
+[tr_mutants] dep_edge_at_install        P3b      caught by tr_record_calls::dep_edges_are_registered_when_inlining
+[tr_mutants] exit_kcache_wrong          P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] exit_top_off_by_one        P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_resume_from_the_restored_frames_equals_the_interpreter_alone
+[tr_mutants] exit_th_top_not_written    P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] exit_refund_sign_flipped   P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::inline_stub_equals_restore_for_every_budget_kind, tr_identity::mutant_probe
+[tr_mutants] bounds_key_no_bound        P7b      caught by tr_loop::bounds_checks_of_different_tables_are_kept
+[tr_mutants] hdr_op_no_barrier          P7b      caught by tr_loop::header_mutating_ops_stop_the_optimiser
+[tr_mutants] forloop_step_guard_skip    P7b      caught by tr_loop::recorded::forloop_records_a_step_guard
+[tr_mutants] forloop_step_add_wrong     P7b      caught by tr_loop::recorded::forloop_records_a_step_guard
+[tr_mutants] cycle_stale_xmm            Q1       caught by tr_ra::cycles_of_every_length_use_v7
+[tr_mutants] ineffective_never          Q2       caught by tr_core::ineffective_trace_rule
+[tr_mutants] abc_with_store             P7       not injected yet
+[tr_mutants] sink_escape_ignored        F8       not injected yet
+[tr_mutants] sink_store_order           F8       not injected yet
+[tr_mutants] sink_slots_after_alloc     F8       not injected yet
+[tr_mutants] sink_no_gcstp              F8       not injected yet
+[tr_mutants] vbytes_no_credit           F-memory not injected yet
+[tr_mutants] vbytes_no_limit_guard      F-memory not injected yet
+[tr_mutants] atouch_skip                F7a      not injected yet
+[tr_mutants] atouch_hoisted             F7a      not injected yet
+[tr_mutants] forloop54_no_ctl_copy      F7a      not injected yet
+[tr_mutants] cell_stale_version         F5       not injected yet
+[tr_mutants] 62 registered: 51 caught, 0 NOT caught, 11 not injected yet (owners: F-memory F5 F7a F8 P7)
+test runner::every_registered_mutant_is_caught ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 300.89s
+     Running tests/tr_oracle.rs (target/debug/deps/tr_oracle-ab91dcc26ddc556b)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 54.26s
+     Running tests/tr_record_count.rs (target/debug/deps/tr_record_count-3f3531a758d377dc)
+test mutants_are_caught ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+exit rc=0 end 19:52:15
+ALL DONE

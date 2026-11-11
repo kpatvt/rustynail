@@ -1,0 +1,37 @@
+R1 rearm raw numbers (one binary, pass 5 runs; then 15-run rerun of the flagged programs). Columns: puc = rearm=0 (base), r0b = rearm=0 again (noise), r4, r16, r64.
+geomean cycles/instructions vs puc
+set                n r0b            r4             r16            r64           
+apps               5 1.0088/1.0000  0.9975/1.0009  1.0092/1.0010  1.0041/1.0010 
+awfy              14 0.9989/1.0000  0.9911/0.9989  1.0047/0.9990  0.9964/0.9991 
+corpus            18 1.0056/0.9998  0.9805/0.9847  0.9860/0.9842  0.9896/0.9845 
+corpus2/dev       17 1.0031/1.0000  0.9951/0.9967  0.9997/0.9955  0.9969/0.9956 
+corpus2/heldout   11 0.9939/1.0000  0.9925/1.0036  0.9870/1.0037  0.9911/1.0041 
+jit-trace         29 0.9997/1.0000  0.9982/1.0000  0.9996/1.0000  0.9988/1.0000 
+lib               95 0.9993/1.0000  0.9997/1.0000  0.9999/1.0000  0.9992/1.0000 
+programs          25 0.9984/1.0000  0.9967/0.9999  0.9908/0.9999  0.9955/0.9999 
+real               5 0.9907/1.0000  0.9938/0.9995  0.9919/0.9996  0.9978/0.9997 
+real_dis           4 0.9967/1.0000  1.0024/1.0013  1.0131/1.0015  1.0020/1.0016 
+ALL              223 0.9997/1.0000  0.9962/0.9986  0.9976/0.9985  0.9973/0.9986 
+mismatches/errors: [] 0
+focus (cyc/ins):
+  awfy/cd                            r0b 1.009/1.000 r4 0.982/1.000 r16 1.037/1.000 r64 0.996/1.000
+  awfy/richards                      r0b 1.052/1.000 r4 0.997/1.000 r16 1.043/1.000 r64 1.023/1.000
+  corpus/class_middleclass           r0b 0.998/1.000 r4 0.754/0.786 r16 0.743/0.785 r64 0.744/0.785
+  corpus/classic_vector              r0b 1.003/1.000 r4 0.885/0.944 r16 0.899/0.944 r64 0.922/0.944
+  corpus/containers_lru_heap         r0b 1.010/1.000 r4 1.010/1.005 r16 1.015/1.005 r64 1.031/1.005
+  corpus/inspect_lua                 r0b 1.002/1.000 r4 1.000/0.997 r16 1.012/0.997 r64 1.003/0.997
+  corpus2/dev/expr_compiler          r0b 0.998/1.000 r4 0.990/1.000 r16 0.994/1.000 r64 0.992/1.000
+  corpus2/dev/iter_pipeline          r0b 1.023/1.000 r4 1.017/1.001 r16 1.001/1.001 r64 1.024/1.002
+  corpus2/dev/real_dis_x86           r0b 0.989/1.000 r4 1.006/1.000 r16 1.011/1.000 r64 0.992/1.000
+  corpus2/dev/regex_nfa              r0b 1.000/1.000 r4 1.007/1.000 r16 1.001/1.000 r64 1.006/1.000
+worst cyc r4 dev/particles_physics 1.151 havlak 1.076 heldout/stream_closures 1.045 alloc_ctor 1.030 find_cap 1.029 type_call 1.022 towers 1.021 sieve 1.020 heldout/real_dis_mips 1.018 coro_scheduler 1.017 dev/iter_pipeline 1.017 sel_count 1.016
+best cyc r4 corpus/class_middleclass 0.754 corpus/classic_vector 0.885 awfy/queens 0.925 corpus2/dev/ecs_world 0.925 corpus2/dev/lua_parser 0.928 awfy/deltablue 0.934 corpus2/heldout/scheme_interp 0.946 awfy/storage 0.949
+worst cyc r16 havlak 1.093 dev/particles_physics 1.088 dev/event_promise 1.052 towers 1.047 richards 1.043 csv_ini_yaml 1.039 cd 1.037 alloc_ctor 1.034 find_plain 1.032 list 1.026 coro_scheduler 1.026 heldout/real_dis_mips 1.025
+best cyc r16 corpus/class_middleclass 0.743 corpus/classic_vector 0.899 awfy/queens 0.925 programs/binary_trees 0.928 awfy/deltablue 0.929 corpus2/dev/ecs_world 0.939 corpus2/heldout/sudoku_solver 0.941 programs/gc_churn 0.944
+worst cyc r64 astar_jumper 1.046 csv_ini_yaml 1.044 json 1.039 markdown 1.034 containers_lru_heap 1.031 coro_scheduler 1.030 dev/event_promise 1.028 penlight_mix 1.026 sieve 1.026 dev/iter_pipeline 1.024 richards 1.023 markdown_conv 1.022
+best cyc r64 corpus/class_middleclass 0.744 awfy/queens 0.916 corpus/classic_vector 0.922 programs/binary_trees 0.933 corpus2/heldout/sudoku_solver 0.941 lib/concat_op_str 0.941 corpus2/dev/ecs_world 0.952 programs/heapsort 0.962
+
+15-run rerun:
+geomean cycles/instructions vs puc
+set                n r0b            r4             r16            r64           
+awfy               4 1.0019/1.0000  0.9997/1.0013  0.9949/1.0013  0.9935/1.0014 

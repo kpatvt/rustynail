@@ -1,0 +1,28 @@
+P-D array bounds-check elimination: ceiling measurements (main@9ecd030, release lua-cli --features jit, trace on, RUSTYNAIL_SEED=0,
+scripts/bench-cycles.sh RUNS=7 CPU=10, min cycles:u, machine load average 17-30 from other builders).
+Experimental unsound build (not committed): asm.rs skipped the ULT of every guarded bounds check in the selected traces
+(env PD_NOABC=<trace ids|all>). Only traces whose run produced identical output were selected: traces with append/growth checks
+crash or write out of bounds without them (first attempt with "all": sieve, heapsort, matmul, table_array crashed).
+bas/ba2 = same binary with PD_NOABC unset (noise columns); ratio = no / bas.
+
+== bench/programs
+-- run 1 (PD_NOABC=all; sieve, heapsort, matmul, table_array crashed and show "-")
+program          bas Mcyc(min)       no Mcyc    ratio      ba2 Mcyc    ratio
+fannkuch                1965.1        1945.1   0.990~        2000.9   1.018~
+queens                  2962.7        2909.7   0.982~        3008.0   1.015~
+spectral_norm            488.5         457.9   0.937          476.5   0.975~
+-- run 2 (selected traces: sieve 14,15,1,2,4,5,7,9; heapsort 1,20,31,4,5; matmul 10,11,18,1,23,24; table_array 1,2,4,8)
+sieve                   2209.1        2240.3   1.014~        2198.1   0.995~
+heapsort                3061.5        2882.4   0.942         3042.6   0.994~
+matmul                   858.4         846.3   0.986~         838.6   0.977~
+table_array             3808.5        3788.5   0.994~        3779.3   0.991~
+
+geomean of the 7 (sieve counted as 1.000): 0.9756, i.e. an upper bound of 2.4%. Instructions:u of the all-checks-deleted runs: 0.945-0.954.
+
+== bench/jit-trace (PD_NOABC=all)
+program          bas Mcyc(min)       no Mcyc    ratio      ba2 Mcyc    ratio
+array_rec               1839.3        1833.9   0.997~        1840.6   1.001~
+dot                     2752.9        2424.5   0.881         2816.6   1.023~
+float_loop              2990.8        2954.8   0.988~        2950.3   0.986~
+sink_vec                  23.5          22.0   0.937           24.0   1.021~
+tfor_loops              1845.3        1833.1   0.993~        1847.6   1.001~

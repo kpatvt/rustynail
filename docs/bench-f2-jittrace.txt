@@ -1,0 +1,21 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program         base Mcyc(min)    base2 Mcyc    ratio      new Mcyc    ratio      puc Mcyc    ratio       lj Mcyc    ratio
+alloc_ctor               334.7         329.4   0.984~         333.8   0.997~        1906.5   5.696          276.8   0.827 
+array_rec               1806.3        1805.8   1.000~        1806.1   1.000~        9666.5   5.352         1756.0   0.972~
+dot                     1238.3        1237.4   0.999~        1237.9   1.000~       11149.1   9.003         1166.1   0.942 
+field_global             548.4         546.9   0.997~         544.5   0.993~       17888.1  32.619          492.0   0.897 !X
+field_method             814.0         813.2   0.999~         811.5   0.997~       20197.7  24.813          422.8   0.519 
+field_rw                1224.5        1224.1   1.000~        1209.5   0.988~       19610.0  16.014          929.7   0.759 
+geomean base2: all(6) cycles min 0.996 median 0.998 instr 1.000; numeric cycles min nan median nan instr nan
+geomean new: all(6) cycles min 0.996 median 0.997 instr 1.000; numeric cycles min nan median nan instr nan
+geomean puc: all(6) cycles min 12.355 median 12.332 instr 11.016; numeric cycles min nan median nan instr nan
+geomean lj: all(6) cycles min 0.803 median 0.797 instr 0.375; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

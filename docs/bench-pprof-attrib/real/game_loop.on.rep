@@ -1,0 +1,58 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 83  of event 'cycles:u'
+# Event count (approx.): 62150379
+#
+# Overhead  Shared Object         Symbol                                                                                                        
+# ........  ....................  ..............................................................................................................
+#
+    27.24%  [JIT] tid 2376558     [.] lua_proto@0x7f4b007f0dc0
+    17.39%  [JIT] tid 2376558     [.] lua_proto@0x7f4b007f1230
+     7.37%  [JIT] tid 2376558     [.] lua_proto@0x558ac2191030
+     3.16%  [JIT] tid 2376558     [.] 0x00007f4b006fa7b9
+     3.10%  [JIT] tid 2376558     [.] 0x00007f4b006fd257
+     1.89%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fa67c
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fa7d8
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fa888
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fd1e7
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fa7a2
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fa88f
+     1.61%  [JIT] tid 2376558     [.] 0x00007f4b006fa89d
+     1.60%  [JIT] tid 2376558     [.] 0x00007f4b006fa8c8
+     1.60%  [JIT] tid 2376558     [.] 0x00007f4b006fb6a0
+     1.60%  [JIT] tid 2376558     [.] 0x00007f4b006fa804
+     1.60%  [JIT] tid 2376558     [.] 0x00007f4b006fa87d
+     1.59%  [JIT] tid 2376558     [.] 0x00007f4b006fa8c2
+     1.57%  [JIT] tid 2376558     [.] 0x00007f4b006fa8a2
+     1.53%  rn-cli               [.] <rn_core::table::TableRef>::len
+     1.47%  rn-cli               [.] <rn_jit::arch::x86_64::asm::Assembler>::rm_op
+     1.45%  [JIT] tid 2376558     [.] 0x00007f4b006fa62b
+     1.44%  [JIT] tid 2376558     [.] 0x00007f4b006fbaeb
+     1.39%  rn-cli               [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write
+     1.35%  [JIT] tid 2376558     [.] 0x00007f4b006fa8ce
+     1.31%  rn-cli               [.] <rn_jit::tr::record::Rec>::lockstep
+     1.27%  rn-cli               [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u16>
+     1.22%  rn-cli               [.] <rn_jit::tr::record::Rec>::guard_with
+     1.15%  rn-cli               [.] rn_jit::tr::opt_loop::transform
+     1.07%  rn-cli               [.] <rn_jit::tr::ir::TraceIr>::konst
+     0.85%  rn-cli               [.] core::slice::sort::unstable::quicksort::quicksort::<(u32, u32), <(u32, u32) as core::cmp::PartialOrd>::lt>
+     0.70%  [unknown]             [k] 0000000000000000
+     0.53%  rn-cli               [.] rn_core::table::insertkey
+     0.44%  libc.so.6             [.] 0x00000000001b7bc7
+     0.36%  rn-cli               [.] <rn_compiler::v55::Parser<rn_core::heap::Heap>>::subexpr
+     0.32%  libc.so.6             [.] 0x00000000001b7ad3
+     0.24%  libc.so.6             [.] 0x00000000000a4dd0
+     0.22%  ld-linux-x86-64.so.2  [.] 0x0000000000013053
+     0.21%  ld-linux-x86-64.so.2  [.] 0x00000000000316b7
+     0.21%  ld-linux-x86-64.so.2  [.] 0x000000000001f790
+     0.16%  ld-linux-x86-64.so.2  [.] 0x000000000000c830
+     0.10%  ld-linux-x86-64.so.2  [.] 0x000000000001dbd4
+
+
+#
+# (Tip: Treat branches as callchains: perf record -b ... ; perf report --branch-history)
+#

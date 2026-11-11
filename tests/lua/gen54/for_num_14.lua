@@ -1,0 +1,3 @@
+local a, b, c = ...
+local t = {}
+for _ = 1, 3 do goto cont; ::cont:: end

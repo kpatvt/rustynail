@@ -1,0 +1,31 @@
+int	integer:1	integer:-5	integer:9007199254740992	integer:9007199254740992
+float	float:1.5	float:1e+300	float:-0.0	float:inf	float:0.25
+float integral	integer:3	integer:1099511627776
+bigint bytes	10 ff ff ff ff ff ff ff 7f	10 00 00 00 00 00 00 00 80	10 01 00 00 00 00 00 20 00
+bigint rt	integer:9223372036854775807	integer:-9223372036854775808	integer:9007199254740993	integer:-9007199254740993
+int tags	07 00 00 00 00 00 00 40 43	07 00 00 00 00 00 00 40 c3
+int32 tag	integer:5	-1
+uint64 tag	float:1.8446744073709552e+19	integer
+int64 tag	-1
+keys	integer	10	x	true	2
+null	userdata	03
+lightud32	userdata	04 01 02 03 04
+lightud64	userdata	05 01 02 03 04 05 06 00 00
+reserve	false	string.buffer: 'reserve' is not supported (no FFI/cdata)
+commit	false	string.buffer: 'commit' is not supported (no FFI/cdata)
+putcdata	false	string.buffer: 'putcdata' is not supported (no FFI/cdata)
+ref	false	string.buffer: 'ref' is not supported (no FFI/cdata)
+putf %d 2.5 | ERR | bad argument #3 to '?' (number has no integer representation)
+putf	3 1.0 3
+put numbers	1.0 2 0.5
+decode number | ERR | bad argument #1 to '?' (string expected, got number)
+set number | ERR | bad argument #2 to '?' (string expected, got number)
+reentrant put	a[inner]Xb
+reentrant reset	R!
+gc buffers	true
+decode big	300	20487
+after free	0		
+large	52428800	10	52428790
+size 2^31 | ERR | bad argument #1 to '?' (number out of range)
+size 1<<62 | ERR | bad argument #1 to '?' (number out of range)
+encode huge string ok | ok | 1000005

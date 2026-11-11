@@ -1,0 +1,53 @@
+== iter_pipeline__whileloop (rc 0)
+[trace] recorded 21 installed 10 entered 198860 flushes 10 rerecord 3 blacklisted 10 refused 62 deferred 6 ineffective 0 probes 73 (fn-short 11 start-refused 62)
+[trace] aborted FnShort: 11
+[trace] aborted InnerLoop: 8
+[trace] aborted LeaveFrame: 1
+[trace] aborted Nyi(Closure): 2
+[trace] aborted StartRefused: 62
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 6 phis 24 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 19 installed 8 failed 11 preludes 3
+[trace] links: nest roots 1 frame links 0 stitches 0
+[trace] exits 284564 (live traces 0)
+aborts (count reason op depth head):
+      6 LeaveFrame             RETURN1   d0 side
+      4 FnShort                TAILCALL  d0 root L95 'return wrap(function()'  [policy]
+      4 FnShort                RETURN1   d0 root L123 'return wrap(function()'  [policy]
+      3 FnShort                RETURN1   d0 root L144 'return wrap(function()'  [policy]
+      2 SideShort              FORLOOP   d0 side  [policy]
+      2 InnerLoop              FORPREP   d1 root L103 'return wrap(function()'
+      2 InnerLoop              FORPREP   d2 root L177 'function Iter:totable()'
+      2 InnerLoop              TEST      d2 side
+      2 InnerLoop              TEST      d2 root L170 'function Iter:reduce(f, init)'
+      2 InnerLoop              JMP       d0 root L170 'function Iter:reduce(f, init)'
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L256 'local nested = Iter.range(1, math.max(3, math.floo'
+      1 SideShort              TFORCALL  d0 side  [policy]
+      1 LeaveFrame             RETURN1   d0 root L230 ':filter(function(n)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  19.0 L0 pc0 Move 2 9487290
+  2.8 L256 pc0 Gettabup 179 15556
+  0.5 L177 pc3 Move 2 256700
+  0.4 L170 pc2 Move 4 100725
+  0.3 L123 pc0 Getupval 4 70400
+  0.2 L170 pc4 Eqk 319 602
+  0.2 L10 pc6 Move 3 57627
+  0.1 L177 pc5 Eqk 67 1827
+  0.1 L95 pc0 Getupval 4 30000
+  0.1 L24 pc5 Move 3 31340
+  0.1 L144 pc0 Getupval 67 1326
+  0.1 L250 pc0 Getfield 150 482
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+      99424 Return1    LeaveFrame     black=true gk=32
+      90020 Eqi        -              black=false gk=32
+      84417 Gei        -              black=false gk=32
+       9512 Forloop    -              black=false gk=32
+        697 Newtable   -              black=false gk=32
+        230 Eqk        InnerLoop      black=true gk=32
+        179 Move       -              black=false gk=17
+         34 Settable   SideShort      black=true gk=32
+         26 Settable   -              black=false gk=40
+         15 Call       SideShort      black=false gk=41
+          6 Settable   -              black=false gk=32
+          2 Le         -              black=false gk=32
+          1 Tforcall   -              black=false gk=16
+          1 Forloop    -              black=false gk=48

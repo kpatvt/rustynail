@@ -1,0 +1,84 @@
+{
+ "cpu": [
+  4
+ ],
+ "runs": 11,
+ "set": "real",
+ "mode": "default",
+ "bins": {
+  "ref": "<repo>/ref/55/build-seed0/lua",
+  "lj": "/usr/bin/luajit",
+  "plain": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/a/lua-cli",
+  "pgo": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/b/lua-cli",
+  "pgo2": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/c/lua-cli",
+  "bplain": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/d/lua-cli",
+  "bpgo": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/e/lua-cli"
+ },
+ "programs": {
+  "lua_interp": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 223543062,
+    "cycles_median": 225553495,
+    "instructions_min": 1108207326,
+    "instructions_median": 1108208821,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 58034707,
+    "cycles_median": 63178082,
+    "instructions_min": 248406382,
+    "instructions_median": 270340240,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 117959582,
+    "cycles_median": 119279597,
+    "instructions_min": 671470461,
+    "instructions_median": 671473915,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 110533794,
+    "cycles_median": 111367965,
+    "instructions_min": 641673947,
+    "instructions_median": 641676854,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 109802612,
+    "cycles_median": 110734421,
+    "instructions_min": 641675768,
+    "instructions_median": 641677139,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 116489993,
+    "cycles_median": 117118344,
+    "instructions_min": 672535072,
+    "instructions_median": 672537176,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 109957690,
+    "cycles_median": 110974215,
+    "instructions_min": 642746290,
+    "instructions_median": 642748201,
+    "runs": 11,
+    "output": "same"
+   }
+  }
+ }
+}

@@ -1,0 +1,8 @@
+session-bm3, 2026-11-10 (pass A 11:13-11:36, pass B 11:37-12:06, 15-run rerun and knob runs after)
+CPU: AMD Ryzen AI 7 350 w/ Radeon 860M, 16 logical CPUs, SMT on (CPU 4 sibling is 12; benchmark CPUs 3-7, siblings 11-15 idle-checked)
+cpufreq: amd-pstate-epp, governor powersave, EPP balance_performance, boost 1; cpu4 scaling_cur_freq 4.94 GHz at start of pass A (max 5.09 GHz)
+Temperature at pass A start (sensors Tctl, first seconds under load): 88 C (no throttling visible; duplicate-binary column 0.999-1.003 in every set)
+Kernel: Linux x86_64. SPIN_MS=300 (300 ms spin on the pinned CPU before each timed run).
+Idle checks (scripts/cpu_idle.py, 3 s): before and after every pass all benchmark CPUs and siblings under 2% busy; no cargo/rustc/lua/perf processes (other processes at a few percent on other cores).
+Builds: sources extracted with git archive into ~/.cache/bm3/<hash8>/src (equal-length 8-char directories, binaries at ~/.cache/bm3/<hash8>/{tplain,tnojit,pgoout/pgo}/release/lua-cli); plain = --features jit, nojit = default features, PGO = scripts/pgo-build.sh (181 training runs, 0 failed, both subjects).
+Script path for all columns: this worktree's bench/ (same length as the one used for bm2).

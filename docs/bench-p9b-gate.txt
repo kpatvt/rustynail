@@ -1,0 +1,95 @@
+=== baseline = J4 column of the J5 binary (the gate's definition)
+program             base Mcyc   tr Mcyc  tr/base  t1/base
+spectral_norm          2772.3     269.2    0.097    0.999  (a)
+matmul                  652.5     519.6    0.796    1.903  (a)
+licm_expr              2025.1     470.2    0.232    4.465  (b)
+array_rec              4501.4    1818.9    0.404    1.437  (b)
+upval_acc              5428.6    2010.2    0.370    0.988  (b)
+int_rec2               2518.6    1224.2    0.486    2.098  (b)
+inline_leaf            6367.2     663.2    0.104    1.000  (c)
+inline_2               6268.9     409.4    0.065    1.001  (c)
+int_sum                2039.3    1246.5    0.611    1.522  (b')
+float_poly             1815.6    1824.0    1.005    4.181  (b')
+float_loop             2908.3    2867.4    0.986    3.823  (b')
+dot                    2246.4    1763.8    0.785    2.526  (b')
+upval_inv              3835.9    2175.3    0.567    1.984  (b')
+loops_arith             800.3     697.0    0.871    2.603  info
+mandelbrot              573.6    1035.4    1.805    4.782  info
+fannkuch               1216.2    1295.6    1.065    1.395  info
+heapsort               1673.9    1479.8    0.884    1.268  info
+queens                 2547.5    2439.8    0.958    0.961  info
+sieve                  1693.2    2391.6    1.412    1.402  info
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.796 (<= 0.95) PASS
+crit 4 set (b) geomean 0.360 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.234 (<= 0.85) PASS; worst gate program matmul 0.796 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.946 (<= 1.15) PASS; worst mandelbrot 1.805 (<= 1.30) FAIL
+   informational programs above 1.05 x base: mandelbrot 1.805, fannkuch 1.065, sieve 1.412
+
+=== sensitivity: baseline = main@89963c6 binary, T15=on
+program             base Mcyc   tr Mcyc  tr/base  t1/base
+spectral_norm          2769.3     269.2    0.097    1.000  (a)
+matmul                  649.4     519.6    0.800    1.912  (a)
+licm_expr              2071.7     470.2    0.227    4.364  (b)
+array_rec              4499.8    1818.9    0.404    1.438  (b)
+upval_acc              5035.1    2010.2    0.399    1.066  (b)
+int_rec2               2730.9    1224.2    0.448    1.935  (b)
+inline_leaf            6371.3     663.2    0.104    0.999  (c)
+inline_2               6263.7     409.4    0.065    1.002  (c)
+int_sum                2039.4    1246.5    0.611    1.522  (b')
+float_poly             1815.1    1824.0    1.005    4.182  (b')
+float_loop             2921.7    2867.4    0.981    3.805  (b')
+dot                    2296.3    1763.8    0.768    2.471  (b')
+upval_inv              3794.1    2175.3    0.573    2.006  (b')
+loops_arith             800.3     697.0    0.871    2.603  info
+mandelbrot              573.4    1035.4    1.806    4.784  info
+fannkuch               1205.3    1295.6    1.075    1.408  info
+heapsort               1689.8    1479.8    0.876    1.256  info
+queens                 2550.2    2439.8    0.957    0.960  info
+sieve                  1679.8    2391.6    1.424    1.413  info
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.800 (<= 0.95) PASS
+crit 4 set (b) geomean 0.358 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.233 (<= 0.85) PASS; worst gate program matmul 0.800 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.945 (<= 1.15) PASS; worst mandelbrot 1.806 (<= 1.30) FAIL
+   informational programs above 1.05 x base: mandelbrot 1.806, fannkuch 1.075, sieve 1.424
+
+=== criterion 5b: every program of the 25 (bench/programs), tr / t1 (<= 1.05)
+  binary_trees     2769.8 /    2770.1 = 1.000
+  closures         2242.3 /    3203.1 = 0.700
+  coroutines       1904.2 /    1900.1 = 1.002
+  fannkuch         1295.6 /    1696.9 = 0.763
+  fasta            2172.2 /    2177.1 = 0.998
+  fib              2195.9 /    2196.7 = 1.000
+  gc_churn         3745.8 /    3778.1 = 0.991
+  heapsort         1479.8 /    2122.6 = 0.697
+  json             2477.3 /    2486.7 = 0.996
+  knucleotide      3585.8 /    3685.6 = 0.973
+  load_big          814.2 /     812.7 = 1.002
+  loops_arith       697.0 /    2082.9 = 0.335
+  mandelbrot       1035.4 /    2742.7 = 0.378
+  matmul            519.6 /    1241.4 = 0.419
+  metamethods      4380.5 /    4384.2 = 0.999
+  nbody            2530.1 /    2517.7 = 1.005
+  oop_methods      3399.4 /    3381.7 = 1.005
+  pcall_error      2762.0 /    2838.4 = 0.973
+  queens           2439.8 /    2447.9 = 0.997
+  sieve            2391.6 /    2373.3 = 1.008
+  spectral_norm     269.2 /    2770.4 = 0.097
+  string_ops       1845.0 /    1831.4 = 1.007
+  table_array      2204.4 /    2200.1 = 1.002
+  table_hash       1378.2 /    1385.6 = 0.995
+  varargs          4069.7 /    4084.2 = 0.996
+crit 5b PASS; above: []
+
+=== criterion 5c: set (d), tr column of each program vs the tr column of its stable twin (<= 1.05)
+  type_entry     2188.3 / type_entry_stable    2007.2 = 1.090 FAIL
+  type_late      1794.1 / type_late_stable     1791.6 = 1.001 PASS
+
+=== baseline verification: J5 binary J4 column vs main@89963c6 binary (T15=on), ref89 / j4, band +-5%
+  micro: outside the band: int_rec2 1.084, type_entry 0.833, type_entry_stable 0.821, type_late 1.247, type_late_stable 0.804, upval_acc 0.928
+  programs: outside the band: load_big 1.066
+
+=== all programs, instructions:u identity of ref89 vs j4 (max relative difference)
+  micro: worst float_poly 0.99999
+  programs: worst coroutines 0.99461

@@ -1,0 +1,43 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 4K of event 'cycles:u'
+# Event count (approx.): 4361567150
+#
+# Overhead  Shared Object         Symbol                                                                                                                              
+# ........  ....................  ....................................................................................................................................
+#
+    61.82%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     8.21%  rn-cli               [.] rn_core::vm_unsafe::mm_return
+     5.58%  rn-cli               [.] rn_std::lib_base::base_setmetatable
+     3.61%  rn-cli               [.] rn_core::vm_unsafe::finish_op
+     3.54%  rn-cli               [.] rn_core::vm_unsafe::mm_eq
+     2.47%  rn-cli               [.] rn_core::vm_unsafe::mm_bin
+     2.19%  rn-cli               [.] <rn_core::state::State>::precall_c
+     1.81%  rn-cli               [.] <rn_core::value::Value>::raw_equal
+     1.65%  rn-cli               [.] <rn_core::state::State>::pre_call
+     1.49%  rn-cli               [.] rn_core::table::insertkey
+     1.28%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     1.12%  rn-cli               [.] rn_core::vm_unsafe::index_chain_short_str
+     1.12%  rn-cli               [.] rn_core::vm_unsafe::mm_index
+     0.82%  rn-cli               [.] <rn_core::state::State>::post_call
+     0.64%  rn-cli               [.] <rn_core::state::State>::pre_tail_call
+     0.46%  rn-cli               [.] <rn_core::state::State>::gc_step
+     0.43%  rn-cli               [.] <rn_core::state::State>::concat
+     0.37%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.27%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.23%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.23%  rn-cli               [.] rn_core::table::mainposition
+     0.11%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr_after
+     0.11%  rn-cli               [.] <rn_core::heap::Heap>::clearbyvalues
+     0.09%  rn-cli               [.] rn_core::table::resize
+     0.07%  [unknown]             [k] 0000000000000000
+     0.07%  rn-cli               [.] <rn_core::heap::Heap>::finishgencycle
+     0.07%  rn-cli               [.] rn_core::state::shrink_stack
+
+
+#
+# (Tip: To analyze particular parallelism levels, try: perf report --latency --parallelism=32-64)
+#

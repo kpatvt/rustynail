@@ -1,0 +1,62 @@
+== text_adventure (rc 0)
+[trace] recorded 18 installed 7 entered 379946 flushes 7 rerecord 0 blacklisted 22 refused 235 deferred 0 ineffective 0 probes 267 (fn-short 32 start-refused 235)
+[trace] aborted CFunc: 3
+[trace] aborted FnShort: 32
+[trace] aborted LeaveLoop: 3
+[trace] aborted Nyi(Call): 4
+[trace] aborted Nyi(Concat): 1
+[trace] aborted StartRefused: 235
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 3 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 72 installed 54 failed 22 preludes 0
+[trace] links: nest roots 3 frame links 0 stitches 1
+[trace] exits 3816505 (live traces 0)
+aborts (count reason op depth head):
+     12 LeaveFrame             RETURN    d0 side
+      4 FnShort                CALL      d1 root L178 'function Game:exec(line)'  [policy]
+      4 FnShort                CALL      d0 root L79 'function Game:parse(line)'  [policy]
+      4 FnShort                RETURN1   d0 root L194 'local function genCommand()'  [policy]
+      4 CFunc                  CALL      d2 side
+      4 FnShort                CALL      d1 root L168 'function handlers.unlock(g, what)'  [policy]
+      4 FnShort                RETURN1   d0 root L77 'function Game:has(item) return indexOf(self.inv, i'  [policy]
+      3 FnShort                TAILCALL  d0 root L95 'function handlers.go(g, dir)'  [policy]
+      3 FnShort                TAILCALL  d0 root L141 'function handlers.talk(g)'  [policy]
+      2 CFunc                  TFORCALL  d0 root L79 'function Game:parse(line)'
+      2 Nyi(CONCAT)            CONCAT    d1 side
+      2 Nyi(CALL)              CALL      d0 root L105 'function handlers.take(g, item)'
+      2 Nyi(CALL)              CALL      d0 root L116 'function handlers.drop(g, item)'
+      2 FnShort                TAILCALL  d0 root L157 'function handlers.use(g, item)'  [policy]
+      2 FnShort                CALL      d1 root L157 'function handlers.use(g, item)'  [policy]
+      1 CFunc                  CALL      d2 root L0 main
+      1 Nyi(CONCAT)            CONCAT    d1 root L0 main
+      1 FnShort                CALL      d1 root L95 'function handlers.go(g, dir)'  [policy]
+      1 FnShort                CALL      d1 root L141 'function handlers.talk(g)'  [policy]
+      1 LeaveLoop              TFORCALL  d0 root L73 'local function indexOf(list, v)'
+      1 LeaveLoop              TFORPREP  d0 root L73 'local function indexOf(list, v)'
+      1 LeaveLoop              TFORPREP  d0 root L134 'function handlers.inv(g)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  85.1 L134 pc13 Call 30 2835457
+  17.0 L73 pc10 Return 8 2120688
+  15.0 L157 pc0 Test 199 75318
+  11.5 L116 pc0 Testset 195 59028
+  10.5 L126 pc0 Getfield 167 62911
+  6.6 L73 pc6 Return 4 1653015
+  6.4 L77 pc0 Getupval 69 93139
+  5.4 L134 pc0 Newtable 165 32556
+  3.8 L105 pc0 Getfield 193 19603
+  2.2 L73 pc4 Eq 4 543415
+  1.4 L168 pc0 Getfield 176 8084
+  1.3 L141 pc0 Getfield 176 7221
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    1819605 Call       -              black=false gk=32
+     637546 Lei        CFunc          black=true gk=32
+     318118 Call       CFunc          black=true gk=32
+     120875 Call       MaxSide        black=true gk=32
+     104154 Tforcall   -              black=false gk=4
+      78976 Return     LeaveFrame     black=true gk=32
+      60123 Tforcall   -              black=false gk=16
+      22036 Tforprep   -              black=false gk=16
+      13703 Eq         -              black=false gk=32
+        843 Tforcall   -              black=false gk=32
+        558 Tforcall   MaxSide        black=true gk=33
+        136 Newtable   -              black=false gk=32
+         36 Concat     -              black=false gk=32

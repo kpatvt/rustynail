@@ -1,0 +1,96 @@
+{
+ "cpu": 4,
+ "runs": 25,
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,recdead=0,deep=0 <cache>/j2bin/p/lua-cli",
+  "i1": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,recdead=1,deep=0 <cache>/j2bin/p/lua-cli",
+  "dup": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=warm=0,recdead=0,deep=0 <cache>/j2bin/p/lua-cli"
+ },
+ "baseline": "base",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "short_inner": {
+   "base": {
+    "cycles_min": 1803756287,
+    "cycles_median": 1806665327,
+    "instructions_min": 6731272797,
+    "instructions_median": 6731274616,
+    "runs": 25,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "i1": {
+    "cycles_min": 1803819822,
+    "cycles_median": 1806391538,
+    "instructions_min": 6731005293,
+    "instructions_median": 6731006224,
+    "runs": 25,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   },
+   "dup": {
+    "cycles_min": 1804777019,
+    "cycles_median": 1806422475,
+    "instructions_min": 6731273687,
+    "instructions_median": 6731275052,
+    "runs": 25,
+    "variant": false,
+    "output_matches_baseline": true,
+    "expected_ok": true
+   }
+  }
+ },
+ "ratios": {
+  "i1": {
+   "short_inner": {
+    "cycles_min": 1.000035223716451,
+    "cycles_median": 0.9998484561606911,
+    "instructions_min": 0.9999602595217774,
+    "instructions_median": 0.9999601276109933
+   }
+  },
+  "dup": {
+   "short_inner": {
+    "cycles_min": 1.000565892414267,
+    "cycles_median": 0.9998655799741265,
+    "instructions_min": 1.0000001322186793,
+    "instructions_median": 1.0000000647722793
+   }
+  }
+ },
+ "geomean": {
+  "i1": {
+   "all_cycles_min": 1.000035223716451,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9998484561606911,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.9999602595217774,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9999601276109933,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "dup": {
+   "all_cycles_min": 1.000565892414267,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.9998655799741265,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.0000001322186793,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0000000647722793,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  }
+ }
+}

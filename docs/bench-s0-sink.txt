@@ -1,0 +1,13 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program       nosink Mcyc(min)     sink Mcyc    ratio nosinkwb Mcyc    ratio   sinkwb Mcyc    ratio
+alloc_ctor              1716.8         804.5   0.469         1726.7   1.006~         805.1   0.469 
+sink_tuple              2074.4          19.1   0.009         2079.8   1.003~          25.2   0.012 
+sink_vec                1517.2          15.1   0.010         1514.5   0.998~          17.9   0.012 
+geomean sink: all(3) cycles min 0.035 median 0.035 instr 0.037; numeric cycles min nan median nan instr nan
+geomean nosinkwb: all(3) cycles min 1.002 median 0.993 instr 1.000; numeric cycles min nan median nan instr nan
+geomean sinkwb: all(3) cycles min 0.041 median 0.041 instr 0.041; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

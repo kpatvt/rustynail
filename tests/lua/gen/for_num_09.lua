@@ -1,0 +1,3 @@
+local a, b, c = ...
+local t = {}
+for i = 1, 2 do for j = i, 2 do local x = i + j end end

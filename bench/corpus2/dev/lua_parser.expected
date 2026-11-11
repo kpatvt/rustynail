@@ -1,0 +1,32 @@
+local limit = 4
+local names = {"ab", x = 7, [limit] = -9}
+local function fact(n)
+  if n <= 1 then
+    return 1
+  elseif n == 2 then
+    return 2
+  else
+    return n * fact(n - 1)
+  end
+end
+local total = 0
+for i = 1, limit, 2 do
+  total = total + fact(i % 7) * 5
+  if total > 1000 and not names["x"] then
+    total = total - 100
+  else
+    total = total + 1
+  end
+end
+while total > 1 do
+  total = total - 100
+end
+function report(t, extra)
+  return t["x"] .. "=" .. total
+end
+local s = report(names, #names, nil, true)
+samples=1500 nodes=174000 folds=15000 pretty bytes=781344
+local = 3          -> line 1: expected 'name' near '='
+if x then          -> line 1: expected 'end' near '<eof>'
+x = (1 +           -> line 1: unexpected '<eof>'
+for i = 1 do end   -> line 1: expected ',' near 'do'

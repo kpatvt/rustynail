@@ -1,0 +1,257 @@
+docs/bench-pi-bolt-progs-off.json  metric=cycles_min  n=25
+  p5   geomean 0.9012  worst fasta 0.979  best load_big 0.810  above1.05: []  n_above=0
+  p6   geomean 0.8999  worst fasta 0.975  best knucleotide 0.783  above1.05: []  n_above=0
+  p1b  geomean 1.0005  worst loops_arith 1.011  best heapsort 0.971  above1.05: []  n_above=0
+docs/bench-pi-bolt-progs-off.json  metric=instructions_min  n=25
+  p5   geomean 0.8987  worst coroutines 0.933  best table_array 0.846  above1.05: []  n_above=0
+  p6   geomean 0.8937  worst coroutines 0.928  best table_array 0.845  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst load_big 1.000  best string_ops 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-bolt-progs-tr.json  metric=cycles_min  n=25
+  p5   geomean 0.9527  worst queens 1.060  best load_big 0.805  above1.05: [(1.06, 'queens')]  n_above=1
+  p6   geomean 0.9510  worst knucleotide 1.073  best load_big 0.801  above1.05: [(1.073, 'knucleotide')]  n_above=1
+  p1b  geomean 1.0328  worst nbody 1.917  best closures 0.968  above1.05: [(1.917, 'nbody'), (1.14, 'fannkuch')]  n_above=2
+docs/bench-pi-bolt-progs-tr.json  metric=instructions_min  n=25
+  p5   geomean 0.9568  worst sieve 1.047  best table_array 0.841  above1.05: []  n_above=0
+  p6   geomean 0.9581  worst sieve 1.047  best table_array 0.840  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst queens 1.001  best spectral_norm 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-bolt-short-off.json  metric=cycles_min  n=132
+  p5   geomean 0.9769  worst closures_10_vararg_in_closure 1.066  best gc_16_native_alloc_collected 0.769  above1.05: [(1.066, 'closures_10_vararg_in_closure'), (1.056, 'co_01_generators')]  n_above=2
+  p6   geomean 0.9823  worst closures_10_vararg_in_closure 1.089  best gc_16_native_alloc_collected 0.729  above1.05: [(1.089, 'closures_10_vararg_in_closure'), (1.072, 'co_01_generators'), (1.067, 'err_09_error_in_error_handling'), (1.054, 'co_03_errors'), (1.052, 'co_04_pcall_yield')]  n_above=5
+  p1b  geomean 1.0082  worst arith_15_error_messages 1.047  best co_10_gc 0.876  above1.05: []  n_above=0
+docs/bench-pi-bolt-short-off.json  metric=instructions_min  n=132
+  p5   geomean 0.9227  worst vararg_07_many_args 1.011  best heavy_tail_02_million 0.766  above1.05: []  n_above=0
+  p6   geomean 0.9238  worst vararg_07_many_args 1.022  best heavy_tail_02_million 0.757  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst meta_04_arith_events 1.001  best closures_03_nested_upvalues 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-bolt-short-tr.json  metric=cycles_min  n=132
+  p5   geomean 0.9746  worst for_04_float_loops 1.084  best gc_16_native_alloc_collected 0.779  above1.05: [(1.084, 'for_04_float_loops'), (1.059, 'gc_01_close_finalizers')]  n_above=2
+  p6   geomean 0.9764  worst co_09_stack_and_args 1.088  best gc_16_native_alloc_collected 0.732  above1.05: [(1.088, 'co_09_stack_and_args'), (1.076, 'for_04_float_loops'), (1.065, 'gc_01_close_finalizers'), (1.054, 'for_05_generic_basic'), (1.053, 'err_11_load_errors')]  n_above=5
+  p1b  geomean 1.0086  worst for_04_float_loops 1.070  best for_01_numeric_basic 0.867  above1.05: [(1.07, 'for_04_float_loops'), (1.067, 'gc_01_close_finalizers'), (1.056, 'meta_12_close_break_goto'), (1.055, 'err_11_load_errors'), (1.051, 'err_08_stack_overflow')]  n_above=5
+docs/bench-pi-bolt-short-tr.json  metric=instructions_min  n=132
+  p5   geomean 0.9225  worst vararg_07_many_args 1.010  best gc_16_native_alloc_collected 0.765  above1.05: []  n_above=0
+  p6   geomean 0.9238  worst vararg_07_many_args 1.021  best heavy_tail_02_million 0.757  above1.05: []  n_above=0
+  p1b  geomean 1.0004  worst for_09_nested_and_large 1.025  best arith_10_string_coercion 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-jt-j4.json  metric=cycles_min  n=29
+  p2   geomean 0.9742  worst licm_expr 1.346  best tail_loop 0.673  above1.05: [(1.346, 'licm_expr'), (1.064, 'type_late')]  n_above=2
+  p5   geomean 0.9304  worst type_entry 1.100  best alloc_ctor 0.673  above1.05: [(1.1, 'type_entry'), (1.095, 'licm_expr'), (1.076, 'type_late')]  n_above=3
+  p1b  geomean 0.9998  worst short_inner 1.186  best alloc_ctor 0.821  above1.05: [(1.186, 'short_inner'), (1.094, 'tail_loop'), (1.074, 'inline_leaf')]  n_above=3
+docs/bench-pi-jt-j4.json  metric=instructions_min  n=29
+  p2   geomean 0.9939  worst upval_acc 1.000  best multret 0.943  above1.05: []  n_above=0
+  p5   geomean 0.9604  worst upval_acc 1.000  best tail_loop 0.801  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst oop_override 1.000  best sink_vec 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-jt-tr.json  metric=cycles_min  n=29
+  p2   geomean 0.9739  worst oop_override 1.152  best multret 0.765  above1.05: [(1.152, 'oop_override'), (1.061, 'type_late')]  n_above=2
+  p5   geomean 0.9533  worst oop_override 1.138  best multret 0.745  above1.05: [(1.138, 'oop_override'), (1.085, 'type_late')]  n_above=2
+  p1b  geomean 0.9829  worst sink_vec 1.127  best alloc_ctor 0.602  above1.05: [(1.127, 'sink_vec'), (1.1, 'type_late')]  n_above=2
+docs/bench-pi-jt-tr.json  metric=instructions_min  n=29
+  p2   geomean 0.9971  worst sink_tuple 1.016  best multret 0.963  above1.05: []  n_above=0
+  p5   geomean 0.9783  worst sink_vec 1.008  best alloc_ctor 0.830  above1.05: []  n_above=0
+  p1b  geomean 1.0002  worst sink_vec 1.005  best inline_2 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-noisy-cpu7-progs-off.json  metric=cycles_min  n=25
+  p2   geomean 0.9621  worst mandelbrot 1.493  best loops_arith 0.684  above1.05: [(1.493, 'mandelbrot')]  n_above=1
+  p4   geomean 1.0190  worst mandelbrot 1.918  best loops_arith 0.558  above1.05: [(1.918, 'mandelbrot'), (1.152, 'metamethods'), (1.091, 'fib'), (1.081, 'json'), (1.068, 'spectral_norm'), (1.051, 'coroutines')]  n_above=6
+  p5   geomean 0.8719  worst mandelbrot 1.629  best loops_arith 0.476  above1.05: [(1.629, 'mandelbrot'), (1.315, 'fasta'), (1.058, 'gc_churn')]  n_above=3
+  p1b  geomean 0.9948  worst mandelbrot 1.820  best loops_arith 0.553  above1.05: [(1.82, 'mandelbrot'), (1.386, 'fasta'), (1.232, 'gc_churn'), (1.189, 'closures'), (1.185, 'metamethods')]  n_above=5
+docs/bench-pi-noisy-cpu7-progs-off.json  metric=instructions_min  n=25
+  p2   geomean 0.9477  worst table_array 0.998  best mandelbrot 0.909  above1.05: []  n_above=0
+  p4   geomean 0.9941  worst matmul 1.012  best oop_methods 0.970  above1.05: []  n_above=0
+  p5   geomean 0.8986  worst coroutines 0.933  best table_array 0.846  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst string_ops 1.000  best fasta 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-pie-jt-j4.json  metric=cycles_min  n=29
+  p5   geomean 0.9522  worst type_entry 1.495  best tail_loop 0.716  above1.05: [(1.495, 'type_entry'), (1.106, 'int_sum'), (1.052, 'type_entry_stable')]  n_above=3
+  p7   geomean 0.9634  worst sink_tuple 1.530  best oop_inherit 0.599  above1.05: [(1.53, 'sink_tuple'), (1.169, 'type_entry'), (1.063, 'type_late'), (1.055, 'type_late_stable')]  n_above=4
+  p1b  geomean 1.0015  worst sink_tuple 1.830  best oop_inherit 0.627  above1.05: [(1.83, 'sink_tuple'), (1.521, 'type_entry'), (1.054, 'type_late'), (1.053, 'type_late_stable')]  n_above=4
+docs/bench-pi-pie-jt-j4.json  metric=instructions_min  n=29
+  p5   geomean 0.9604  worst upval_acc 1.000  best tail_loop 0.801  above1.05: []  n_above=0
+  p7   geomean 0.9720  worst float_poly 1.001  best tail_loop 0.835  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst sink_vec 1.000  best oop_inherit 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-jt-tr.json  metric=cycles_min  n=29
+  p5   geomean 0.9428  worst oop_override 1.130  best int_sum 0.479  above1.05: [(1.13, 'oop_override'), (1.104, 'tail_loop')]  n_above=2
+  p7   geomean 0.9573  worst type_entry 1.046  best int_sum 0.548  above1.05: []  n_above=0
+  p1b  geomean 0.9851  worst sink_vec 1.149  best int_sum 0.549  above1.05: [(1.149, 'sink_vec'), (1.058, 'float_loop'), (1.055, 'licm_expr')]  n_above=3
+docs/bench-pi-pie-jt-tr.json  metric=instructions_min  n=29
+  p5   geomean 0.9782  worst sink_vec 1.003  best alloc_ctor 0.830  above1.05: []  n_above=0
+  p7   geomean 0.9832  worst sink_tuple 1.005  best alloc_ctor 0.836  above1.05: []  n_above=0
+  p1b  geomean 1.0001  worst oop_inherit 1.003  best sink_tuple 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-progs-j4.json  metric=cycles_min  n=25
+  p5   geomean 0.9241  worst table_hash 1.017  best load_big 0.751  above1.05: []  n_above=0
+  p7   geomean 0.9352  worst fasta 1.040  best load_big 0.738  above1.05: []  n_above=0
+  p1b  geomean 0.9859  worst json 1.162  best fannkuch 0.803  above1.05: [(1.162, 'json'), (1.06, 'fasta'), (1.051, 'varargs')]  n_above=3
+docs/bench-pi-pie-progs-j4.json  metric=instructions_min  n=25
+  p5   geomean 0.9516  worst sieve 1.036  best table_array 0.842  above1.05: []  n_above=0
+  p7   geomean 0.9593  worst sieve 1.036  best table_array 0.843  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst load_big 1.000  best string_ops 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-progs-off.json  metric=cycles_min  n=25
+  p5   geomean 0.8908  worst metamethods 1.099  best load_big 0.752  above1.05: [(1.099, 'metamethods'), (1.067, 'varargs'), (1.055, 'oop_methods')]  n_above=3
+  p7   geomean 0.9191  worst oop_methods 1.148  best load_big 0.749  above1.05: [(1.148, 'oop_methods'), (1.14, 'varargs'), (1.126, 'metamethods')]  n_above=3
+  p1b  geomean 1.0047  worst varargs 1.324  best spectral_norm 0.732  above1.05: [(1.324, 'varargs'), (1.235, 'oop_methods'), (1.235, 'metamethods')]  n_above=3
+docs/bench-pi-pie-progs-off.json  metric=instructions_min  n=25
+  p5   geomean 0.8987  worst coroutines 0.933  best table_array 0.846  above1.05: []  n_above=0
+  p7   geomean 0.9659  worst loops_arith 1.024  best table_array 0.849  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst string_ops 1.000  best load_big 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-progs-tr.json  metric=cycles_min  n=25
+  p5   geomean 0.9596  worst sieve 1.059  best table_array 0.802  above1.05: [(1.059, 'sieve')]  n_above=1
+  p7   geomean 0.9571  worst fannkuch 1.049  best load_big 0.802  above1.05: []  n_above=0
+  p1b  geomean 1.0021  worst table_hash 1.019  best nbody 0.989  above1.05: []  n_above=0
+docs/bench-pi-pie-progs-tr.json  metric=instructions_min  n=25
+  p5   geomean 0.9563  worst sieve 1.047  best table_array 0.841  above1.05: []  n_above=0
+  p7   geomean 0.9662  worst sieve 1.047  best table_array 0.842  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst load_big 1.000  best mandelbrot 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-recheck-jt-tr.json  metric=cycles_min  n=6
+  p5   geomean 0.9445  worst oop_override 1.070  best sink_tuple 0.850  above1.05: [(1.07, 'oop_override')]  n_above=1
+  p7   geomean 0.9993  worst type_entry 1.049  best tail_loop 0.924  above1.05: []  n_above=0
+  p1b  geomean 1.0010  worst int_sum 1.059  best sink_tuple 0.953  above1.05: [(1.059, 'int_sum')]  n_above=1
+docs/bench-pi-pie-recheck-jt-tr.json  metric=instructions_min  n=6
+  p5   geomean 0.9806  worst oop_override 1.002  best tail_loop 0.911  above1.05: []  n_above=0
+  p7   geomean 0.9919  worst sink_tuple 1.008  best tail_loop 0.941  above1.05: []  n_above=0
+  p1b  geomean 0.9947  worst type_entry 1.000  best sink_vec 0.978  above1.05: []  n_above=0
+
+docs/bench-pi-pie-recheck-off.json  metric=cycles_min  n=10
+  p5   geomean 0.8646  worst sieve 1.267  best oop_methods 0.668  above1.05: [(1.267, 'sieve')]  n_above=1
+  p7   geomean 0.9298  worst sieve 1.344  best varargs 0.839  above1.05: [(1.344, 'sieve')]  n_above=1
+  p1b  geomean 1.0189  worst sieve 1.385  best queens 0.874  above1.05: [(1.385, 'sieve')]  n_above=1
+docs/bench-pi-pie-recheck-off.json  metric=instructions_min  n=10
+  p5   geomean 0.8991  worst coroutines 0.933  best closures 0.856  above1.05: []  n_above=0
+  p7   geomean 0.9635  worst fib 1.007  best gc_churn 0.911  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst gc_churn 1.000  best json 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-recheck-tr.json  metric=cycles_min  n=10
+  p5   geomean 0.9185  worst queens 0.998  best closures 0.804  above1.05: []  n_above=0
+  p7   geomean 0.9263  worst sieve 1.005  best closures 0.836  above1.05: []  n_above=0
+  p1b  geomean 0.9906  worst metamethods 1.019  best sieve 0.946  above1.05: []  n_above=0
+docs/bench-pi-pie-recheck-tr.json  metric=instructions_min  n=10
+  p5   geomean 0.9530  worst sieve 1.047  best gc_churn 0.886  above1.05: []  n_above=0
+  p7   geomean 0.9669  worst sieve 1.046  best gc_churn 0.902  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst varargs 1.000  best closures 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-pie-short-off.json  metric=cycles_min  n=132
+  p5   geomean 0.9462  worst meta_15_rawops 1.111  best heavy_tail_02_million 0.644  above1.05: [(1.111, 'meta_15_rawops'), (1.095, 'meta_10_close_errors'), (1.092, 'closures_01_counter')]  n_above=3
+  p7   geomean 0.9526  worst meta_10_close_errors 1.201  best heavy_tail_02_million 0.690  above1.05: [(1.201, 'meta_10_close_errors'), (1.12, 'closures_01_counter'), (1.09, 'meta_11_close_return_values'), (1.054, 'for_12_integer_loop_var_types'), (1.052, 'meta_15_rawops')]  n_above=5
+  p1b  geomean 0.9983  worst meta_10_close_errors 1.143  best arith_04_comparison_nan 0.873  above1.05: [(1.143, 'meta_10_close_errors'), (1.098, 'arith_01_int_basic'), (1.093, 'arith_17_immediate_compares'), (1.08, 'closures_01_counter'), (1.065, 'arith_18_for_in_expr_contexts'), (1.065, 'arith_06_shift_immediates')]  n_above=10
+docs/bench-pi-pie-short-off.json  metric=instructions_min  n=132
+  p5   geomean 0.9227  worst vararg_07_many_args 1.011  best heavy_tail_02_million 0.766  above1.05: []  n_above=0
+  p7   geomean 0.9517  worst vararg_07_many_args 1.044  best gc_16_native_alloc_collected 0.780  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst err_01_names_local_upvalue_field 1.002  best arith_19_logic 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-pie-short-tr.json  metric=cycles_min  n=132
+  p5   geomean 0.9334  worst tables_02_setlist_large 1.207  best heavy_tail_02_million 0.659  above1.05: [(1.207, 'tables_02_setlist_large'), (1.14, 'vararg_08_main_chunk_varargs'), (1.126, 'co_05_close_tbc'), (1.124, 'goto_05_loops_with_close'), (1.067, 'co_04_pcall_yield'), (1.066, 'err_10_tostring_of_errors_non_strings')]  n_above=8
+  p7   geomean 0.9430  worst err_10_tostring_of_errors_non_strings 1.219  best heavy_tail_02_million 0.696  above1.05: [(1.219, 'err_10_tostring_of_errors_non_strings'), (1.136, 'meta_03_call'), (1.083, 'for_06_generic_modify_and_break'), (1.078, 'goto_05_loops_with_close'), (1.078, 'err_14_arith_on_field_names'), (1.064, 'concat_03_metamethod')]  n_above=8
+  p1b  geomean 0.9891  worst meta_15_rawops 1.188  best err_15_select_and_misc_native_errors 0.781  above1.05: [(1.188, 'meta_15_rawops'), (1.174, 'tables_04_border_len'), (1.167, 'meta_03_call'), (1.163, 'strings_02_compare_and_eq'), (1.149, 'for_10_loop_var_semantics'), (1.149, 'err_10_tostring_of_errors_non_strings')]  n_above=27
+docs/bench-pi-pie-short-tr.json  metric=instructions_min  n=132
+  p5   geomean 0.9211  worst vararg_07_many_args 1.010  best heavy_tail_02_million 0.766  above1.05: []  n_above=0
+  p7   geomean 0.9474  worst vararg_07_many_args 1.044  best gc_16_native_alloc_collected 0.772  above1.05: []  n_above=0
+  p1b  geomean 0.9987  worst gc_16_native_alloc_collected 1.003  best for_09_nested_and_large 0.864  above1.05: []  n_above=0
+
+docs/bench-pi-progs-j4.json  metric=cycles_min  n=25
+  p2   geomean 0.9970  worst queens 1.098  best load_big 0.935  above1.05: [(1.098, 'queens')]  n_above=1
+  p4   geomean 0.9936  worst queens 1.128  best metamethods 0.793  above1.05: [(1.128, 'queens'), (1.072, 'coroutines')]  n_above=2
+  p5   geomean 0.9142  worst coroutines 1.147  best closures 0.558  above1.05: [(1.147, 'coroutines'), (1.09, 'queens')]  n_above=2
+  p1b  geomean 0.9932  worst coroutines 1.426  best closures 0.591  above1.05: [(1.426, 'coroutines'), (1.144, 'metamethods'), (1.125, 'queens')]  n_above=3
+docs/bench-pi-progs-j4.json  metric=instructions_min  n=25
+  p2   geomean 0.9923  worst fib 1.000  best metamethods 0.964  above1.05: []  n_above=0
+  p4   geomean 0.9974  worst closures 1.014  best oop_methods 0.985  above1.05: []  n_above=0
+  p5   geomean 0.9516  worst sieve 1.036  best table_array 0.842  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst table_hash 1.000  best string_ops 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-progs-off.json  metric=cycles_min  n=25
+  p2   geomean 0.9568  worst varargs 1.035  best mandelbrot 0.848  above1.05: []  n_above=0
+  p4   geomean 1.0001  worst json 1.089  best load_big 0.963  above1.05: [(1.089, 'json'), (1.061, 'binary_trees')]  n_above=2
+  p5   geomean 0.8980  worst sieve 0.975  best load_big 0.805  above1.05: []  n_above=0
+  p1b  geomean 0.9985  worst varargs 1.019  best queens 0.972  above1.05: []  n_above=0
+docs/bench-pi-progs-off.json  metric=instructions_min  n=25
+  p2   geomean 0.9477  worst table_array 0.998  best mandelbrot 0.909  above1.05: []  n_above=0
+  p4   geomean 0.9941  worst matmul 1.012  best oop_methods 0.970  above1.05: []  n_above=0
+  p5   geomean 0.8987  worst coroutines 0.933  best table_array 0.846  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst json 1.000  best fasta 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-progs-tr.json  metric=cycles_min  n=25
+  p2   geomean 0.9946  worst fasta 1.034  best load_big 0.952  above1.05: []  n_above=0
+  p4   geomean 0.9985  worst pcall_error 1.061  best varargs 0.943  above1.05: [(1.061, 'pcall_error')]  n_above=1
+  p5   geomean 0.9498  worst queens 1.056  best load_big 0.804  above1.05: [(1.056, 'queens')]  n_above=1
+  p1b  geomean 1.0001  worst fannkuch 1.024  best varargs 0.973  above1.05: []  n_above=0
+docs/bench-pi-progs-tr.json  metric=instructions_min  n=25
+  p2   geomean 0.9930  worst fannkuch 1.018  best metamethods 0.964  above1.05: []  n_above=0
+  p4   geomean 0.9978  worst pcall_error 1.010  best sieve 0.984  above1.05: []  n_above=0
+  p5   geomean 0.9564  worst sieve 1.047  best table_array 0.841  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst fasta 1.000  best string_ops 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-recheck-j4.json  metric=cycles_min  n=8
+  p5   geomean 0.9658  worst sieve 1.003  best gc_churn 0.910  above1.05: []  n_above=0
+  p1b  geomean 0.9963  worst metamethods 1.005  best fib 0.985  above1.05: []  n_above=0
+  p5b  geomean 0.9676  worst fib 1.020  best gc_churn 0.916  above1.05: []  n_above=0
+docs/bench-pi-recheck-j4.json  metric=instructions_min  n=8
+  p5   geomean 0.9556  worst sieve 1.036  best gc_churn 0.886  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst gc_churn 1.000  best fasta 1.000  above1.05: []  n_above=0
+  p5b  geomean 0.9556  worst sieve 1.036  best gc_churn 0.886  above1.05: []  n_above=0
+
+docs/bench-pi-recheck-jt-j4.json  metric=cycles_min  n=6
+  p5   geomean 0.9465  worst licm_expr 1.018  best sink_vec 0.857  above1.05: []  n_above=0
+  p1b  geomean 1.0001  worst short_inner 1.001  best sink_vec 1.000  above1.05: []  n_above=0
+  p5b  geomean 0.9465  worst licm_expr 1.018  best sink_vec 0.858  above1.05: []  n_above=0
+docs/bench-pi-recheck-jt-j4.json  metric=instructions_min  n=6
+  p5   geomean 0.9698  worst type_late 1.000  best sink_vec 0.894  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst oop_override 1.000  best short_inner 1.000  above1.05: []  n_above=0
+  p5b  geomean 0.9698  worst type_late 1.000  best sink_vec 0.894  above1.05: []  n_above=0
+
+docs/bench-pi-recheck-jt-tr.json  metric=cycles_min  n=6
+  p5   geomean 1.0090  worst oop_override 1.144  best type_late 0.955  above1.05: [(1.144, 'oop_override')]  n_above=1
+  p1b  geomean 1.0002  worst type_entry 1.005  best sink_vec 0.996  above1.05: []  n_above=0
+  p5b  geomean 1.0095  worst oop_override 1.144  best type_late 0.954  above1.05: [(1.144, 'oop_override')]  n_above=1
+docs/bench-pi-recheck-jt-tr.json  metric=instructions_min  n=6
+  p5   geomean 1.0005  worst short_inner 1.002  best licm_expr 1.000  above1.05: []  n_above=0
+  p1b  geomean 0.9991  worst oop_override 1.000  best sink_vec 0.995  above1.05: []  n_above=0
+  p5b  geomean 1.0005  worst short_inner 1.002  best licm_expr 1.000  above1.05: []  n_above=0
+
+docs/bench-pi-recheck-tr.json  metric=cycles_min  n=8
+  p5   geomean 0.9668  worst sieve 1.027  best closures 0.875  above1.05: []  n_above=0
+  p1b  geomean 0.9982  worst gc_churn 1.015  best sieve 0.981  above1.05: []  n_above=0
+  p5b  geomean 0.9653  worst sieve 1.029  best closures 0.874  above1.05: []  n_above=0
+docs/bench-pi-recheck-tr.json  metric=instructions_min  n=8
+  p5   geomean 0.9574  worst sieve 1.047  best gc_churn 0.886  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst queens 1.000  best closures 1.000  above1.05: []  n_above=0
+  p5b  geomean 0.9574  worst sieve 1.047  best gc_churn 0.886  above1.05: []  n_above=0
+
+docs/bench-pi-short-j4.json  metric=cycles_min  n=132
+  p2   geomean 1.0087  worst for_09_nested_and_large 1.142  best err_15_select_and_misc_native_errors 0.880  above1.05: [(1.142, 'for_09_nested_and_large'), (1.084, 'concat_05_numbers_in_chain'), (1.063, 'tables_07_table_of_tables'), (1.057, 'strings_01_methods'), (1.055, 'err_04_nested_pcall'), (1.054, 'tables_10_weak')]  n_above=9
+  p4   geomean 1.0133  worst concat_05_numbers_in_chain 1.089  best err_15_select_and_misc_native_errors 0.880  above1.05: [(1.089, 'concat_05_numbers_in_chain'), (1.073, 'tables_10_weak'), (1.071, 'err_02_call_errors'), (1.069, 'co_06_metamethods'), (1.069, 'closures_05_upvalue_in_loop_break'), (1.068, 'vararg_06_named_closure')]  n_above=19
+  p5   geomean 0.9506  worst for_09_nested_and_large 1.098  best heavy_tail_02_million 0.644  above1.05: [(1.098, 'for_09_nested_and_large'), (1.051, 'for_12_integer_loop_var_types')]  n_above=2
+  p1b  geomean 1.0057  worst strings_02_compare_and_eq 1.059  best goto_01_basic 0.937  above1.05: [(1.059, 'strings_02_compare_and_eq'), (1.057, 'strings_01_methods')]  n_above=2
+docs/bench-pi-short-j4.json  metric=instructions_min  n=132
+  p2   geomean 0.9728  worst err_09_error_in_error_handling 1.000  best heavy_tail_02_million 0.949  above1.05: []  n_above=0
+  p4   geomean 0.9957  worst heavy_tail_02_million 1.024  best err_15_select_and_misc_native_errors 0.821  above1.05: []  n_above=0
+  p5   geomean 0.9223  worst vararg_07_many_args 1.010  best heavy_tail_02_million 0.766  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst tables_05_next_and_pairs_order 1.001  best dbg_02_hook_mode_switch 0.999  above1.05: []  n_above=0
+
+docs/bench-pi-short-off.json  metric=cycles_min  n=132
+  p2   geomean 1.0140  worst arith_05_bitwise 1.197  best for_09_nested_and_large 0.788  above1.05: [(1.197, 'arith_05_bitwise'), (1.123, 'err_07_runtime_error_in_called_function'), (1.078, 'arith_04_comparison_nan'), (1.063, 'closures_07_many_upvalues'), (1.063, 'arith_12_integer_float_keys'), (1.062, 'arith_02_float_basic')]  n_above=14
+  p4   geomean 1.0200  worst arith_05_bitwise 1.208  best err_15_select_and_misc_native_errors 0.873  above1.05: [(1.208, 'arith_05_bitwise'), (1.156, 'err_07_runtime_error_in_called_function'), (1.08, 'strings_04_pattern_start_filter'), (1.078, 'closures_07_many_upvalues'), (1.073, 'closures_03_nested_upvalues'), (1.073, 'arith_18_for_in_expr_contexts')]  n_above=31
+  p5   geomean 0.9730  worst err_07_runtime_error_in_called_function 1.139  best heavy_tail_02_million 0.643  above1.05: [(1.139, 'err_07_runtime_error_in_called_function'), (1.125, 'arith_05_bitwise')]  n_above=2
+  p1b  geomean 1.0090  worst err_07_runtime_error_in_called_function 1.199  best err_15_select_and_misc_native_errors 0.847  above1.05: [(1.199, 'err_07_runtime_error_in_called_function'), (1.162, 'arith_05_bitwise'), (1.058, 'for_12_integer_loop_var_types'), (1.051, 'err_08_stack_overflow')]  n_above=4
+docs/bench-pi-short-off.json  metric=instructions_min  n=132
+  p2   geomean 0.9710  worst gc_16_native_alloc_collected 0.991  best for_09_nested_and_large 0.914  above1.05: []  n_above=0
+  p4   geomean 0.9955  worst heavy_tail_02_million 1.024  best err_15_select_and_misc_native_errors 0.821  above1.05: []  n_above=0
+  p5   geomean 0.9227  worst vararg_07_many_args 1.010  best heavy_tail_02_million 0.766  above1.05: []  n_above=0
+  p1b  geomean 1.0000  worst tables_07_table_of_tables 1.001  best tables_02_setlist_large 0.998  above1.05: []  n_above=0
+
+docs/bench-pi-short-tr.json  metric=cycles_min  n=132
+  p2   geomean 1.0078  worst tables_06_nil_and_nan_keys 1.080  best err_15_select_and_misc_native_errors 0.890  above1.05: [(1.08, 'tables_06_nil_and_nan_keys'), (1.076, 'tables_01_constructors'), (1.064, 'goto_05_loops_with_close'), (1.063, 'strings_02_compare_and_eq'), (1.061, 'strings_01_methods'), (1.057, 'tables_10_weak')]  n_above=10
+  p4   geomean 1.0239  worst co_04_pcall_yield 1.093  best err_15_select_and_misc_native_errors 0.868  above1.05: [(1.093, 'co_04_pcall_yield'), (1.09, 'strings_01_methods'), (1.088, 'tables_06_nil_and_nan_keys'), (1.072, 'tables_10_weak'), (1.069, 'err_07_runtime_error_in_called_function'), (1.069, 'arith_04_comparison_nan')]  n_above=32
+  p5   geomean 0.9619  worst err_07_runtime_error_in_called_function 1.026  best heavy_tail_02_million 0.643  above1.05: []  n_above=0
+  p1b  geomean 1.0079  worst goto_05_loops_with_close 1.068  best err_15_select_and_misc_native_errors 0.903  above1.05: [(1.068, 'goto_05_loops_with_close'), (1.064, 'meta_04_arith_events'), (1.061, 'err_14_arith_on_field_names'), (1.052, 'meta_01_index_chain'), (1.051, 'strings_06_format_paths')]  n_above=5
+docs/bench-pi-short-tr.json  metric=instructions_min  n=132
+  p2   geomean 0.9725  worst err_09_error_in_error_handling 1.000  best heavy_tail_02_million 0.949  above1.05: []  n_above=0
+  p4   geomean 0.9957  worst heavy_tail_02_million 1.024  best err_15_select_and_misc_native_errors 0.822  above1.05: []  n_above=0
+  p5   geomean 0.9223  worst vararg_07_many_args 1.011  best heavy_tail_02_million 0.766  above1.05: []  n_above=0
+  p1b  geomean 0.9997  worst goto_02_closures_and_scope 1.002  best co_08_nested_resume 0.988  above1.05: []  n_above=0
+

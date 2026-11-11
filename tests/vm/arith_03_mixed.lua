@@ -1,0 +1,7 @@
+print(1 + 1.0, 1 - 1.0, 2 * 3.0, 4 // 2.0, 4 % 2.0, 4 / 2, 2 ^ 2)
+print(math.type(1 + 1), math.type(1 + 1.0), math.type(4 // 2), math.type(4 // 2.0), math.type(2 ^ 2))
+print(1 == 1.0, 1 < 1.5, 2 > 1.5, 1 <= 1.0, math.maxinteger < math.huge, math.mininteger > -math.huge)
+print(math.maxinteger + 0.0 == math.maxinteger, math.maxinteger + 0.0, 2^63 == math.maxinteger + 1.0)
+print(2^53 == 2^53 + 1, (2^53|0) + 1 == 2^53 + 1)
+print(9007199254740993 < 9007199254740992.0, 9007199254740993 > 9007199254740992.0)
+print(math.mininteger <= -2^63, math.mininteger < -2^63, math.maxinteger < 2^63, math.maxinteger >= 2^63)

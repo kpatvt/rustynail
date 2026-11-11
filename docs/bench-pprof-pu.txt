@@ -1,0 +1,17 @@
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program           tr Mcyc(min)      tr2 Mcyc    ratio      ref Mcyc    ratio
+loops_arith              688.3         688.2   1.000~        4345.1   6.313 
+loops_arith_p2           548.7         548.2   0.999~        4310.9   7.856 
+oop_methods              225.7         225.3   0.998~        4563.0  20.221 
+oop_methods_p2           136.2         135.8   0.997~        4509.1  33.102 
+geomean tr2: all(4) cycles min 0.999 median 0.999 instr 1.000; numeric cycles min 1.000 median 1.000 instr 1.000
+geomean ref: all(4) cycles min 13.498 median 13.490 instr 13.062; numeric cycles min 6.313 median 6.321 instr 6.182
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline

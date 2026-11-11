@@ -1,0 +1,53 @@
+== event_promise (rc 0)
+[trace] recorded 41 installed 2 entered 11350 flushes 2 rerecord 0 blacklisted 21 refused 184 deferred 0 ineffective 0 probes 192 (fn-short 8 start-refused 184)
+[trace] aborted CFunc: 6
+[trace] aborted FnShort: 8
+[trace] aborted Nyi(Closure): 31
+[trace] aborted StartRefused: 184
+[trace] aborted Vararg: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 6 installed 0 failed 6 preludes 0
+[trace] exits 11302 (live traces 0)
+aborts (count reason op depth head):
+      4 LeaveFrame             RETURN1   d0 side
+      4 Nyi(CLOSURE)           CLOSURE   d1 root L0 main
+      4 FnShort                RETURN1   d0 root L96 'local function isPromise(v) return type(v) == "tab'  [policy]
+      4 Nyi(CLOSURE)           CLOSURE   d0 root L100 'local function settle(state, value)'
+      4 Nyi(CLOSURE)           CLOSURE   d4 root L30 'local function drainMicrotasks()'
+      2 LeaveFrame             RETURN    d0 side
+      2 Vararg                 VARARG    d0 root L84 'function Emitter:emit(name, ...)'
+      2 CFunc                  CALL      d1 root L0 main
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L98 'function Promise.new(executor)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L123 'return Promise.new(function(resolve, reject)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L160 'return Promise.new(function(resolve, reject)'
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L146 'return Promise.new(function(resolve, reject)'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L106 'local function resolve(v)'
+      2 Nyi(CLOSURE)           CLOSURE   d3 root L103 'for _, cb in ipairs(p.callbacks) do loop.queueMicr'
+      2 Nyi(CLOSURE)           CLOSURE   d2 root L161 'loop.setTimeout(function()'
+      2 FnShort                RETURN1   d0 root L198 ':andThen(function(v)'  [policy]
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L113 'local function reject(e) settle("rejected", e) end'
+      2 Nyi(CLOSURE)           CLOSURE   d1 root L108 'v:andThen(function(x) settle("fulfilled", x) end, '
+      2 FnShort                TAILCALL  d0 root L202 ':andThen(function(v) return delay(rnd(10), v) end)'  [policy]
+      1 Nyi(CLOSURE)           CLOSURE   d2 root L124 'local function handle(state, value)'
+      1 CFunc                  SETTABLE  d2 root L103 'for _, cb in ipairs(p.callbacks) do loop.queueMicr'
+      1 CFunc                  SETTABUP  d2 root L124 'local function handle(state, value)'
+      1 CFunc                  SETTABUP  d4 root L30 'local function drainMicrotasks()'
+      1 CFunc                  GETUPVAL  d2 root L124 'local function handle(state, value)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  178.9 L96 pc9 Eq 3891 45988
+  138.0 L145 pc0 Gettabup 198 696799
+  3.4 L113 pc0 Getupval 158 21610
+  2.3 L41 pc21 Jmp 185 12453
+  2.0 L143 pc0 SelfOp 165 12211
+  0.9 L169 pc0 Getupval 164 5739
+  0.5 L11 pc26 Lt 4 129260
+  0.5 L41 pc19 Getupval 184 2742
+  0.4 L96 pc0 Gettabup 4 111910
+  0.4 L161 pc10 Return0 98 4358
+  0.4 L30 pc11 Addi 119 3159
+  0.3 L124 pc27 Jmp 48 6228
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+       8198 Lt         LeaveFrame     black=true gk=32
+       3102 Forloop    LeaveFrame     black=true gk=32
+          1 Forloop    -              black=false gk=32
+          1 Gti        -              black=false gk=32

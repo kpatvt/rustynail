@@ -1,0 +1,151 @@
+{
+ "cpu": 4,
+ "runs": 9,
+ "bins": {
+  "ref": "env RUSTYNAIL_SEED=0 <repo>/ref/55/build-seed0/lua",
+  "tr": "env RUSTYNAIL_SEED=0 <tmp>/release/lua-cli",
+  "j4": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE=off <tmp>/release/lua-cli",
+  "off": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=off <tmp>/release/lua-cli",
+  "tr2": "env RUSTYNAIL_SEED=0 <tmp>/release/lua-cli"
+ },
+ "baseline": "ref",
+ "numeric_subset": [
+  "fannkuch",
+  "loops_arith",
+  "mandelbrot",
+  "matmul",
+  "nbody",
+  "sieve",
+  "spectral_norm"
+ ],
+ "noise_band": 0.05,
+ "programs": {
+  "many_loops": {
+   "ref": {
+    "cycles_min": 39061002,
+    "cycles_median": 39148116,
+    "instructions_min": 191612781,
+    "instructions_median": 191615089,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "tr": {
+    "cycles_min": 59885544,
+    "cycles_median": 60524355,
+    "instructions_min": 255822492,
+    "instructions_median": 256004381,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "j4": {
+    "cycles_min": 36006114,
+    "cycles_median": 36435598,
+    "instructions_min": 186363702,
+    "instructions_median": 186514216,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "off": {
+    "cycles_min": 34682884,
+    "cycles_median": 34795482,
+    "instructions_min": 208183582,
+    "instructions_median": 208191555,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true
+   },
+   "tr2": {
+    "cycles_min": 59727677,
+    "cycles_median": 60299095,
+    "instructions_min": 255689393,
+    "instructions_median": 255996605,
+    "runs": 9,
+    "variant": false,
+    "output_matches_baseline": true
+   }
+  }
+ },
+ "ratios": {
+  "tr": {
+   "many_loops": {
+    "cycles_min": 1.5331287200466592,
+    "cycles_median": 1.5460349356275536,
+    "instructions_min": 1.3351013991076097,
+    "instructions_median": 1.3360345593660423
+   }
+  },
+  "j4": {
+   "many_loops": {
+    "cycles_min": 0.921791868011988,
+    "cycles_median": 0.930711403838693,
+    "instructions_min": 0.972605799192487,
+    "instructions_median": 0.9733795859886587
+   }
+  },
+  "off": {
+   "many_loops": {
+    "cycles_min": 0.8879158809085338,
+    "cycles_median": 0.888816258744099,
+    "instructions_min": 1.086480666443644,
+    "instructions_median": 1.0865091892632734
+   }
+  },
+  "tr2": {
+   "many_loops": {
+    "cycles_min": 1.5290871698580595,
+    "cycles_median": 1.5402808911672787,
+    "instructions_min": 1.3344067742537489,
+    "instructions_median": 1.335993978010782
+   }
+  }
+ },
+ "geomean": {
+  "tr": {
+   "all_cycles_min": 1.5331287200466592,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.5460349356275536,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.3351013991076097,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.3360345593660423,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "j4": {
+   "all_cycles_min": 0.921791868011988,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.930711403838693,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 0.972605799192487,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 0.9733795859886587,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "off": {
+   "all_cycles_min": 0.8879158809085338,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 0.888816258744099,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.086480666443644,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.0865091892632734,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  },
+  "tr2": {
+   "all_cycles_min": 1.5290871698580595,
+   "numeric_cycles_min": NaN,
+   "all_cycles_median": 1.5402808911672787,
+   "numeric_cycles_median": NaN,
+   "all_instructions_min": 1.3344067742537489,
+   "numeric_instructions_min": NaN,
+   "all_instructions_median": 1.335993978010782,
+   "numeric_instructions_median": NaN,
+   "n_programs": 1
+  }
+ }
+}

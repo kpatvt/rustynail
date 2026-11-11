@@ -1,0 +1,72 @@
+== bigint_rsa (rc 0)
+[trace] recorded 52 installed 15 entered 5060235 flushes 15 rerecord 0 blacklisted 8 refused 101 deferred 0 ineffective 0 probes 101 (fn-short 0 start-refused 101)
+[trace] aborted InnerLoop: 14
+[trace] aborted IntMiss: 1
+[trace] aborted LeaveFrame: 7
+[trace] aborted LeaveLoop: 10
+[trace] aborted Nyi(Call): 5
+[trace] aborted StartRefused: 101
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 5 phis 23 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 97 installed 26 failed 71 preludes 0
+[trace] links: nest roots 4 frame links 0 stitches 0
+[trace] exits 5127174 (live traces 0)
+aborts (count reason op depth head):
+     25 LeaveFrame             RETURN1   d0 side
+     14 LeaveFrame             TAILCALL  d0 side
+      8 LeaveLoop              FORLOOP   d0 root L94 'local function mul(a, b)'
+      8 SideShort              FORLOOP   d0 side  [policy]
+      6 SideShort              ADD       d0 side  [policy]
+      5 Nyi(CALL)              CALL      d0 root L116 'local function divmod(a, b)'
+      4 LeaveFrame             RETURN1   d0 root L46 'local function cmp(a, b)'
+      4 TailCall               TAILCALL  d0 side
+      4 LeaveFrame             RETURN    d0 side
+      4 InnerLoop              JMP       d1 side
+      4 IntMiss                GETTABLE  d0 side
+      3 InnerLoop              FORPREP   d1 root L116 'local function divmod(a, b)'
+      2 InnerLoop              FORLOOP   d0 side
+      2 InnerLoop              FORLOOP   d0 root L94 'local function mul(a, b)'
+      2 InnerLoop              FORPREP   d1 root L147 'local function modexp(base, exp, m)'
+      2 LeaveLoop              FORLOOP   d0 root L41 'local function copy(a)'
+      2 InnerLoop              FORPREP   d1 root L164 'local function is_probable_prime(n)'
+      2 InnerLoop              FORPREP   d1 root L239 'local function big_to_bytes(a, len)'
+      1 LeaveFrame             RETURN1   d0 root L71 'local function mul_small(a, m)'
+      1 LeaveFrame             RETURN1   d0 root L11 'local function trim(a)'
+      1 InnerLoop              FORPREP   d1 root L138 'local function mod(a, m)'
+      1 InnerLoop              FORPREP   d2 root L138 'local function mod(a, m)'
+      1 LeaveFrame             RETURN1   d0 root L16 'local function from_int(n)'
+      1 IntMiss                GETTABLE  d0 root L53 'local function add(a, b)'
+      1 InnerLoop              JMP       d1 root L164 'local function is_probable_prime(n)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  341.2 L256 pc15 Geti 45 7581767
+  114.3 L0 pc0 Move 67 1705935
+  9.7 L147 pc32 Move 215 45208
+  8.9 L16 pc0 Newtable 46 192647
+  5.6 L138 pc4 Return1 106 53148
+  5.4 L147 pc43 Move 57 94993
+  1.2 L145 pc0 Len 37 31994
+  0.8 L0 pc17 Move 110 7397
+  0.8 L0 pc26 Move 129 5913
+  0.6 L62 pc0 Newtable 81 7436
+  0.4 L147 pc30 Move 325 1333
+  0.4 L116 pc74 Move 730 507
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    1413949 Forloop    -              black=false gk=32
+    1379755 Return1    LeaveFrame     black=true gk=32
+    1267877 Eq         LeaveFrame     black=true gk=32
+     337127 Eqi        LeaveFrame     black=true gk=32
+     228524 Lti        -              black=false gk=32
+     137354 Gti        -              black=false gk=32
+      95629 Forloop    TailCall       black=true gk=32
+      94449 Settable   SideShort      black=true gk=40
+      83924 Forloop    SideShort      black=true gk=32
+      32031 Settable   SideShort      black=true gk=32
+      22277 Tailcall   LeaveFrame     black=true gk=32
+      13451 Forloop    InnerLoop      black=true gk=32
+      10976 Return     LeaveFrame     black=true gk=32
+       2799 Forloop    LeaveFrame     black=true gk=32
+       2301 Settable   -              black=false gk=40
+       2272 Eqi        InnerLoop      black=true gk=32
+        885 Newtable   -              black=false gk=32
+        468 Gti        LeaveFrame     black=true gk=32
+        360 Gettable   TailCall       black=true gk=16
+        356 Gettable   -              black=false gk=32

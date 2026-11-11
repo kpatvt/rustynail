@@ -1,0 +1,244 @@
+# rustynail CI: the full gate of docs/STATUS.md for both Lua versions.
+# The same steps run locally with `scripts/ci-local.sh` (see README.md, "Continuous integration").
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # weekly: Miri subset and a longer fuzz smoke
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  lint:
+    name: fmt, clippy, docs, cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - name: clippy (Lua 5.5)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy (Lua 5.4)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        env:
+          RUSTFLAGS: --cfg rustynail_lua54
+          CARGO_TARGET_DIR: target-54
+      - name: rustdoc (Lua 5.5)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: rustdoc (Lua 5.4)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTFLAGS: --cfg rustynail_lua54
+          RUSTDOCFLAGS: -D warnings --cfg rustynail_lua54
+          CARGO_TARGET_DIR: target-54
+      - name: cargo-deny (licenses, bans, sources, advisories)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  test:
+    name: tests + official suite (Lua ${{ matrix.lua }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: ["5.5", "5.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lua-${{ matrix.lua }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      # The differential tests compare against the reference C Lua built from vendor/ (both versions:
+      # some 5.5 tests also use ref/54 and vice versa), so cache ref/ by the inputs of the build.
+      - name: Cache reference builds
+        id: ref-cache
+        uses: actions/cache@v4
+        with:
+          path: ref
+          key: ref-${{ runner.os }}-${{ hashFiles('vendor/lua-5.5/src/**', 'vendor/lua-5.4/src/**', 'tools/refrun.c', 'xtask/src/main.rs') }}
+      - name: Build the reference interpreters (cargo xtask ref-build --all)
+        if: steps.ref-cache.outputs.cache-hit != 'true'
+        run: cargo xtask ref-build --all
+      - name: cargo test (Lua 5.5)
+        if: matrix.lua == '5.5'
+        run: cargo test --workspace
+      - name: cargo nextest (Lua ${{ matrix.lua }})
+        run: cargo xtask test --lua-version ${{ matrix.lua }}
+      - name: official test suite (Lua ${{ matrix.lua }})
+        run: cargo xtask official --release --lua-version ${{ matrix.lua }}
+      - name: official suite status file unchanged
+        run: git diff --exit-code tests/
+
+  asan:
+    name: AddressSanitizer (Lua ${{ matrix.lua }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: ["5.5", "5.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly toolchain with rust-src
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: asan-${{ matrix.lua }}
+      - name: scripts/asan.sh
+        run: scripts/asan.sh "$RUNNER_TEMP/asan"
+        env:
+          LUA_VERSION: ${{ matrix.lua }}
+
+  jit:
+    name: JIT (cargo feature `jit`, x86-64 Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the .text identity check builds the base commit
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: jit
+      - name: clippy with the feature
+        run: cargo clippy --workspace --all-targets --features rn-cli/jit,rustynail/jit -- -D warnings
+      - name: rn-jit tests (Lua 5.5)
+        run: cargo test -p rn-jit --features jit
+      - name: rn-jit and facade tests (Lua 5.4)
+        run: cargo test -p rn-jit -p rustynail --features rn-jit/jit,rustynail/jit
+        env:
+          RUSTFLAGS: --cfg rustynail_lua54
+          CARGO_TARGET_DIR: target-54
+      - name: facade tests (JitMode, limits)
+        run: cargo test -p rustynail --features jit
+      - name: rnlua with the JIT
+        run: cargo build --release -p rn-cli --features jit
+      - name: official suite, RUSTYNAIL_JIT=always
+        run: scripts/jit-official.sh target/release/rnlua RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=off
+      - name: official suite, RUSTYNAIL_JIT=on (low thresholds)
+        run: scripts/jit-official.sh target/release/rnlua RUSTYNAIL_JIT=on RUSTYNAIL_JIT_THRESHOLD=2,20 RUSTYNAIL_JIT_TRACE=off
+      - name: official suite, default configuration (traces on)
+        run: scripts/jit-official.sh target/release/rnlua
+      - name: jit-diff, 500 seeds (off vs always, on with thresholds 2 and 10)
+        run: JITDIFF_ON=1 scripts/jit-diff.sh 1 500 target/release/rnlua
+      - name: build without the feature has the same machine code as the base
+        # A difference is expected only for a change that intentionally alters the interpreter (review it).
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          scripts/jit-text-identity.sh "${base:-HEAD^}"
+
+  asan-jit:
+    name: AddressSanitizer with the JIT
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly toolchain with rust-src
+        run: rustup toolchain install nightly --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: asan-jit
+      - name: scripts/asan-jit.sh
+        run: scripts/asan-jit.sh "$RUNNER_TEMP/asan-jit"
+
+  miri:
+    name: Miri subset of rn-core (Lua ${{ matrix.lua }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        lua: ["5.5", "5.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly toolchain with Miri
+        run: rustup toolchain install nightly --profile minimal --component miri,rust-src
+      - name: cargo miri test (strings, heap, tables, GC, values, allocator)
+        run: "cargo +nightly miri test -p rn-core --lib -- string:: heap:: tests_table tests_gc value:: alloc::"
+        env:
+          RUSTFLAGS: ${{ matrix.lua == '5.4' && '--cfg rustynail_lua54' || '' }}
+
+  miri-jit:
+    name: Miri, pure-Rust parts of rn-jit
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly toolchain with Miri
+        run: rustup toolchain install nightly --profile minimal --component miri,rust-src
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: scripts/miri.sh jit
+
+  fuzz:
+    name: cargo-fuzz smoke (Lua 5.5)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Seed corpora (uses target/debug/rnlua)
+        run: |
+          cargo build -p rn-cli
+          fuzz/make_seeds.sh
+      - name: Run every target briefly (60 s each, 10 min each on the weekly schedule)
+        working-directory: fuzz
+        run: |
+          secs=60
+          [ "${{ github.event_name }}" = schedule ] && secs=600
+          for t in $(cargo +nightly fuzz list); do
+            echo "== $t"
+            cargo +nightly fuzz run "$t" -- -max_total_time=$secs -rss_limit_mb=2500 -timeout=30
+          done
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+
+  release:
+    name: release build (default + fast, both versions)
+    runs-on: ubuntu-24.04
+    needs: [lint, test, jit]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: scripts/release.sh
+        run: scripts/release.sh --versions 5.5,5.4 --variants default,fast
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustynail-dist
+          path: dist

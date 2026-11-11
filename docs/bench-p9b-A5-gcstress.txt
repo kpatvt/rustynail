@@ -1,0 +1,10 @@
+# P9b A.5 official subset under RUSTYNAIL_JIT=on T15=off TRACE=always with GC stress (lua-cli --features jit,trace, generational default); db.lua skipped under stress 2 (CLAUDE.md)
+stress=1 gc.lua rc=0 time=0s last: weak tables +   >>> testC not active: skipping userdata GC tests <<<  self-referenced threads OK >>> closing state <<<  
+stress=1 gengc.lua rc=0 time=0s last: testing generational garbage collection +   >>> testC not active: skipping some generational tests <<<  OK 
+stress=1 closure.lua rc=0 time=0s last: testing closures + OK 
+stress=1 db.lua rc=0 time=0s last: ection of parameters/returned values + + testing traceback sizes testing debug functions on chunk without debug info OK 
+stress=2 gc.lua rc=0 time=0s last: weak tables +   >>> testC not active: skipping userdata GC tests <<<  self-referenced threads OK >>> closing state <<<  
+stress=2 gengc.lua rc=0 time=0s last: testing generational garbage collection +   >>> testC not active: skipping some generational tests <<<  OK 
+stress=2 closure.lua rc=0 time=0s last: testing closures + OK 
+stress=2 db.lua SKIPPED (expected non-termination, CLAUDE.md)
+ALL DONE

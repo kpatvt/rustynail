@@ -1,0 +1,74 @@
+== real_dis_x86 (rc 0)
+[trace] recorded 19 installed 7 entered 356256 flushes 7 rerecord 0 blacklisted 32 refused 293 deferred 0 ineffective 0 probes 357 (fn-short 64 start-refused 293)
+[trace] aborted CFunc: 4
+[trace] aborted FnShort: 64
+[trace] aborted InnerLoop: 2
+[trace] aborted LeaveLoop: 4
+[trace] aborted StartRefused: 293
+[trace] aborted TableHash: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 0 phis 0 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 48 installed 21 failed 31 preludes 1
+[trace] links: nest roots 2 frame links 0 stitches 0
+[trace] exits 522209 (live traces 0)
+aborts (count reason op depth head):
+     16 SideShort              TFORCALL  d0 side  [policy]
+      7 SideShort              FORLOOP   d0 side  [policy]
+      4 FnShort                CALL      d0 root L710 main  [policy]
+      4 FnShort                TAILCALL  d0 root L737 main  [policy]
+      4 FnShort                CALL      d0 root L419 main  [policy]
+      4 FnShort                CALL      d0 root L81 'local function out(s)'  [policy]
+      4 FnShort                CALL      d0 root L500 main  [policy]
+      4 FnShort                RETURN1   d0 root L482 main  [policy]
+      4 FnShort                TAILCALL  d0 root L765 main  [policy]
+      4 FnShort                RETURN1   d0 root L697 main  [policy]
+      4 FnShort                CALL      d0 root L9 'local function tohex(x, n)'  [policy]
+      4 FnShort                TAILCALL  d0 root L770 main  [policy]
+      4 FnShort                RETURN0   d0 root L759 main  [policy]
+      4 FnShort                TAILCALL  d0 root L841 main  [policy]
+      4 FnShort                TAILCALL  d0 root L823 main  [policy]
+      4 FnShort                TAILCALL  d0 root L476 main  [policy]
+      4 FnShort                CALL      d0 root L776 main  [policy]
+      4 FnShort                CALL      d0 root L834 main  [policy]
+      3 LeaveLoop              FORLOOP   d0 root L48 'local function gen_code(len)'
+      2 CFunc                  CALL      d0 root L419 main
+      2 CFunc                  CALL      d0 root L500 main
+      2 LeaveFrame             TAILCALL  d0 side
+      2 SideShort              JMP       d0 side  [policy]
+      2 TableHash              SETTABLE  d0 root L834 main
+      1 LeaveLoop              TFORCALL  d0 root L48 'local function gen_code(len)'
+      1 InnerLoop              FORLOOP   d0 root L48 'local function gen_code(len)'
+      1 InnerLoop              JMP       d1 root L76 'local function run(modname, blocks, blocklen)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  308.5 L0 pc0 Move 150 2056625
+  209.4 L914 pc0 Newtable 112 1870001
+  51.2 L0 pc0 Move 29 1767058
+  38.9 L899 pc28 Jmp 10051 3866
+  24.2 L476 pc0 Getupval 169 143323
+  20.8 L823 pc0 Getupval 194 107196
+  20.2 L776 pc0 Getfield 196 102888
+  8.8 L834 pc0 Getfield 203 43122
+  6.2 L884 pc0 Getfield 192 32353
+  3.7 L76 pc18 Getfield 35 105085
+  3.6 L879 pc0 Getupval 185 19421
+  3.0 L48 pc107 Tforcall 15 197637
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     137013 Eqk        -              black=true gk=17
+     107048 Tforcall   SideShort      black=true gk=16
+      73550 Eqi        -              black=false gk=32
+      44122 Forloop    -              black=false gk=32
+      38183 Eqk        -              black=false gk=16
+      38167 Eqk        -              black=true gk=32
+      33941 Lti        -              black=false gk=32
+      28548 Tforcall   -              black=false gk=33
+       7689 Tforcall   SideShort      black=true gk=56
+       6769 Tforcall   SideShort      black=true gk=41
+       5930 Settable   SideShort      black=true gk=40
+        583 Settable   -              black=false gk=40
+        294 Lt         -              black=false gk=32
+        268 Tailcall   LeaveFrame     black=true gk=32
+         51 Tforcall   MaxSide        black=true gk=48
+         19 Tforcall   MaxSide        black=true gk=57
+         13 Tforcall   -              black=false gk=41
+          9 Tforcall   -              black=false gk=40
+          5 Newtable   -              black=false gk=32
+          4 Eqi        MaxSide        black=true gk=32

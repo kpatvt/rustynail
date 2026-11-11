@@ -1,0 +1,40 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 709  of event 'cycles:u'
+# Event count (approx.): 694093362
+#
+# Overhead  Shared Object         Symbol                                                                                             
+# ........  ....................  ...................................................................................................
+#
+    52.07%  rn-cli               [.] rn_std::lib_string::str_rep::{closure#0}
+     7.77%  rn-cli               [.] <rn_core::state::State>::push_filled::<rn_std::lib_string::str_rep::{closure#0}>::{closure#0}
+     6.63%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     6.22%  rn-cli               [.] rn_std::lib_string::str_rep
+     4.34%  libc.so.6             [.] 0x00000000001ae757
+     3.91%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     3.03%  [JIT] tid 2374116     [.] lua_proto@0x7f00db7725a0.v1
+     2.75%  libc.so.6             [.] 0x00000000001ae4d3
+     2.17%  libc.so.6             [.] 0x00000000001ae4c6
+     1.98%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     1.71%  libc.so.6             [.] 0x00000000001b7ac0
+     1.45%  libc.so.6             [.] 0x00000000001b7ac4
+     1.45%  libc.so.6             [.] 0x00000000001ae751
+     1.16%  libc.so.6             [.] 0x00000000001b7b33
+     0.87%  libc.so.6             [.] 0x00000000001ae755
+     0.77%  libc.so.6             [.] 0x00000000001ae4d1
+     0.58%  libc.so.6             [.] 0x00000000001b7b2c
+     0.29%  libc.so.6             [.] 0x00000000001ae4cd
+     0.14%  libc.so.6             [.] 0x00000000001ae488
+     0.14%  libc.so.6             [.] 0x00000000001ae484
+     0.14%  libc.so.6             [.] 0x00000000001ae480
+     0.12%  rn-cli               [.] <rn_jit::arch::x86_64::asm::Assembler>::rm_op
+     0.11%  rn-cli               [.] rn_jit::rt::hot_loop
+     0.06%  libc.so.6             [.] 0x00000000001b7b13
+
+
+#
+# (Tip: If you prefer Intel style assembly, try: perf annotate -M intel)
+#

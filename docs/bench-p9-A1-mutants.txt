@@ -1,0 +1,62 @@
+[tr_mutants] 60 registered: 49 caught, 0 NOT caught, 11 not injected yet (owners: F-memory F5 F7a F8 P7)
+[tr_mutants] abc_with_store             P7       not injected yet
+[tr_mutants] alias_may_as_no            P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] alias_maytable_as_must     P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] alias_upval_by_index       P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] atouch_hoisted             F7a      not injected yet
+[tr_mutants] atouch_skip                F7a      not injected yet
+[tr_mutants] bounds_key_no_bound        P7b      caught by tr_loop::bounds_checks_of_different_tables_are_kept
+[tr_mutants] budget_no_check            P5b      caught by tr_asm::hand_budget_charge_and_exit_value, tr_asm::emu_peeled_matches_interp, tr_identity::mutant_probe
+[tr_mutants] budget_no_store            P5b      caught by tr_asm::hand_budget_charge_and_exit_value, tr_asm::emu_rolled_matches_interp, tr_identity::mutant_probe
+[tr_mutants] callee_guard_skip          P3b      caught by tr_record_calls::callee_identity_guards_are_recorded
+[tr_mutants] cell_stale_version         F5       not injected yet
+[tr_mutants] cse_across_store           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] dep_edge_at_install        P3b      caught by tr_record_calls::dep_edges_are_registered_when_inlining
+[tr_mutants] dep_edge_skip              P6       caught by tr_runtime::lifetime_freeing_an_inlined_callee_flushes_the_dependent_trace, tr_runtime::lifetime_a_dependency_freed_during_a_recording_aborts_it
+[tr_mutants] entry_guard_past_store     P3b      caught by tr_record_calls::entry_guard_snapshot_rules
+[tr_mutants] entry_no_ci_spare          P5b      caught by tr_asm::hand_entry_checks_tr6
+[tr_mutants] entry_no_extent            P5b      caught by tr_asm::hand_entry_checks_tr6
+[tr_mutants] entry_no_typecheck         P5b      caught by tr_asm::emu_peeled_matches_interp, tr_asm::hand_entry_failure_bookkeeping_follows_the_free_peel_rule
+[tr_mutants] exit_kcache_wrong          P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] exit_refund_sign_flipped   P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::inline_stub_equals_restore_for_every_budget_kind, tr_identity::mutant_probe
+[tr_mutants] exit_rename_ignored        P5a      caught by tr_ra::shared_snapshots_keep_exit_maps_identical; not by tr_ra::allocation_matches_interpreter
+[tr_mutants] exit_th_top_not_written    P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] exit_top_off_by_one        P4c      caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_resume_from_the_restored_frames_equals_the_interpreter_alone
+[tr_mutants] fcmp_negated               P5b      caught by tr_asm::emu_peeled_matches_interp
+[tr_mutants] flush_in_handler           P6       caught by tr_runtime::deferred_flush_requested_inside_the_exit_handler_runs_at_the_next_safe_point, tr_runtime::deferred_flush_api_semantics, tr_runtime::a_collection_inside_the_exit_handler_does_not_free_the_running_trace, tr_exit::handler::flush_requested_inside_the_handler_is_deferred_and_the_trace_memory_stays_valid
+[tr_mutants] fold_nan                   P2       caught by tr_passes::float_folds_never_decide_nan_or_signed_zero, tr_passes::float_const_folds_equal_the_vm_arithmetic_or_stay
+[tr_mutants] fold_x_plus_zero           P2       caught by tr_passes::float_folds_never_decide_nan_or_signed_zero, tr_passes::float_identities_differential
+[tr_mutants] forloop54_no_ctl_copy      F7a      not injected yet
+[tr_mutants] forloop_step_add_wrong     P7b      caught by tr_loop::recorded::forloop_records_a_step_guard
+[tr_mutants] forloop_step_guard_skip    P7b      caught by tr_loop::recorded::forloop_records_a_step_guard
+[tr_mutants] frame_nresults_off         P4       caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] frame_savedpc_caller_off   P4       caught by tr_exit::restore_matches_the_model_for_0_to_4_frames, tr_exit::twin_restore_equals_the_interpreter_for_0_to_4_frames
+[tr_mutants] fwd_across_store           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] hdr_op_no_barrier          P7b      caught by tr_loop::header_mutating_ops_stop_the_optimiser
+[tr_mutants] hooked_head_no_trap        P1       caught by tr_hook::recorder_log_equals_the_instruction_oracle
+[tr_mutants] land_pre_mid_swap          P3a      caught by tr_record::count_model_is_exact, tr_record::ir_replay_matches_the_interpreter, tr_record_count::tier1_guard_exits_match_the_snapshots, tr_identity::mutant_probe, tr_oracle::mutant_probe
+[tr_mutants] leave_trap_kept            P3a      caught by tr_record::traps_are_clear_after_the_recording
+[tr_mutants] mutant                     owner    result
+[tr_mutants] native_ci_skip             P3b      caught by tr_record_calls::room_and_ci_conditions, tr_record_calls::frames_and_snapshots_are_well_formed
+[tr_mutants] native_room_skip           P3b      caught by tr_record_calls::room_and_ci_conditions
+[tr_mutants] nonslot_phi_skip           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] peel_subst_stale           P7       caught by tr_loop::*; not by tr_passes::*
+[tr_mutants] phi_before_guard           P5a      caught by tr_ra::loop_slice, tr_ra::allocation_matches_interpreter
+[tr_mutants] phi_skip_move              P5a      caught by tr_ra::allocation_matches_interpreter; not by tr_ra::swap_cycles
+[tr_mutants] phi_swap                   P5a      caught by tr_ra::phi_swap_cycles, tr_ra::parallel_moves_match_simultaneous_assignment
+[tr_mutants] poll_skip                  P5b      caught by tr_asm::hand_poll_trap_and_interrupt
+[tr_mutants] popped_frame_drop          P3b      caught by tr_record_calls::popped_frame_slots_stay_in_snapshots, tr_record_calls::ir_replay_matches_the_interpreter
+[tr_mutants] rec_no_validate            P3a      caught by tr_record::stale_context_is_rejected_by_the_recorder_validation, tr_record_calls::stale_context_in_a_reused_callee_frame_is_rejected
+[tr_mutants] refund_off_by_one          P3a      caught by tr_record::count_model_is_exact, tr_record::ir_replay_matches_the_interpreter, tr_record_count::tier1_count_failures_match_the_snapshots, tr_identity::mutant_probe, tr_oracle::mutant_probe
+[tr_mutants] rolled_no_writeback        P5b      caught by tr_asm::emu_rolled_matches_interp, tr_asm::e2e_traces_run_and_equal_the_interpreter; not by tr_core::mutant_probe_live_programs
+[tr_mutants] sink_escape_ignored        F8       not injected yet
+[tr_mutants] sink_no_gcstp              F8       not injected yet
+[tr_mutants] sink_slots_after_alloc     F8       not injected yet
+[tr_mutants] sink_store_order           F8       not injected yet
+[tr_mutants] snap_drop_last             P3a      caught by tr_record::ir_replay_matches_the_interpreter, tr_core::mutant_probe_live_programs, tr_oracle::mutant_probe
+[tr_mutants] snap_prune_dead            P3a      caught by tr_record::ir_replay_matches_the_interpreter, tr_core::mutant_probe_live_programs, tr_oracle::mutant_probe
+[tr_mutants] spill_no_reload            P5a      caught by tr_ra::pressure, tr_ra::allocation_matches_interpreter
+[tr_mutants] tbar_skip                  P5b      caught by tr_asm::hand_tbar_calls_the_barrier_exactly_for_black_tables_and_white_values, tr_asm::e2e_tbar_in_an_incremental_gc_cycle
+[tr_mutants] upval_range_skip           P3a      caught by tr_record::upvalue_accesses_have_the_range_guard, tr_record::upvalue_range_guard_exits
+[tr_mutants] vbytes_no_credit           F-memory not injected yet
+[tr_mutants] vbytes_no_limit_guard      F-memory not injected yet

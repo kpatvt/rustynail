@@ -1,0 +1,31 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 2214144641
+#
+# Overhead  Shared Object         Symbol                                                                                                                                                                                                                 
+# ........  ....................  .......................................................................................................................................................................................................................
+#
+    41.23%  rn-cli               [.] rn_std::lib_table::tremove
+    41.10%  rn-cli               [.] rn_std::lib_table::tinsert
+     7.30%  rn-cli               [.] rn_std::lib_table::auxsort
+     3.37%  rn-cli               [.] <rn_core::state::State>::raw_set_int
+     2.31%  rn-cli               [.] rn_std::lib_table::sort_comp
+     1.33%  rn-cli               [.] <rn_core::state::State>::compare_lt_le
+     0.93%  [JIT] tid 2363286     [.] lua_proto@0x55fb021052f0
+     0.71%  rn-cli               [.] <rn_core::state::State>::ccall
+     0.49%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     0.49%  rn-cli               [.] rn_core::vm::execute
+     0.16%  rn-cli               [.] <rn_core::table::TableRef>::len
+     0.09%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.09%  rn-cli               [.] rn_std::lib_table::seti
+     0.09%  rn-cli               [.] rn_core::jit_helpers::jit_len
+     0.08%  rn-cli               [.] rn_core::table::resize
+
+
+#
+# (Tip: To set sampling period of individual events use perf record -e cpu/cpu-cycles,period=100001/,cpu/branches,period=10001/ ...)
+#

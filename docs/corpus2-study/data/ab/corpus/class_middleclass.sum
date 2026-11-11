@@ -1,0 +1,59 @@
+== class_middleclass (rc 0)
+[trace] recorded 11 installed 7 entered 120155 flushes 7 rerecord 0 blacklisted 7 refused 47 deferred 0 ineffective 0 probes 70 (fn-short 23 start-refused 47)
+[trace] aborted FnShort: 23
+[trace] aborted Nyi(Loadk): 2
+[trace] aborted Recursion: 2
+[trace] aborted StartRefused: 47
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 12 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 66 installed 34 failed 34 preludes 0
+[trace] links: nest roots 2 frame links 0 stitches 3
+[trace] exits 2879914 (live traces 0)
+aborts (count reason op depth head):
+     22 SideShort              FORLOOP   d0 side  [policy]
+      4 FnShort                RETURN0   d0 root L198 'function Animal:update(dt)'  [policy]
+      4 FnShort                RETURN0   d0 root L221 'function Bird:update(dt)'  [policy]
+      4 FnShort                RETURN0   d0 root L209 'function Dog:update(dt)'  [policy]
+      4 FnShort                RETURN1   d0 root L227 'function Parrot:speak() return "hello " .. Bird.sp'  [policy]
+      4 SideUntraced           FORLOOP   d0 side  [policy]
+      3 FnShort                RETURN1   d0 root L59 '__index = function(_,k)'  [policy]
+      2 FnShort                RETURN1   d0 root L140 'isSubclassOf = function(self, other)'  [policy]
+      2 FnShort                RETURN1   d0 root L97 'isInstanceOf = function(self, aClass)'  [policy]
+      2 SideShort              FORPREP   d0 side  [policy]
+      2 Recursion              CALL      d2 root L97 'isInstanceOf = function(self, aClass)'
+      2 Recursion              CALL      d3 side
+      2 Nyi(LOADK)             LOADK     d1 side
+      2 Nyi(LOADK)             LOADK     d0 root L107 'allocate = function(self)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  107.4 L112 pc13 SelfOp 472 227571
+  36.9 L227 pc1 Gettabup 4151 8896
+  2.9 L0 pc206 Forloop 26 113333
+  1.7 L0 pc202 Lt 134 12753
+  1.0 L97 pc11 Eq 722 1417
+  0.7 L198 pc34 Lt 4 163650
+  0.4 L221 pc0 Gettabup 937 452
+  0.4 L198 pc0 Gettabup 991 381
+  0.4 L209 pc0 Gettabup 857 431
+  0.2 L0 pc197 Lt 6 27883
+  0.1 L0 pc167 SelfOp 6 23873
+  0.1 L59 pc9 Return1 690 130
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    1070998 SelfOp     -              black=false gk=10
+     754860 Getfield   -              black=false gk=14
+     508661 Getfield   -              black=false gk=10
+     145807 Lt         -              black=false gk=32
+      79710 Call       Recursion      black=true gk=32
+      61837 Eq         -              black=false gk=42
+      53959 Forloop    SideShort      black=true gk=48
+      53051 SelfOp     -              black=false gk=30
+      39973 Jmp        -              black=true gk=32
+      35119 Gettable   -              black=false gk=43
+      27533 SelfOp     -              black=false gk=14
+      25512 Forloop    SideShort      black=true gk=32
+      14414 Call       SideShort      black=true gk=33
+       6584 Lei        MaxSide        black=true gk=32
+        942 Forloop    -              black=false gk=48
+        292 SelfOp     -              black=false gk=43
+        140 Eq         -              black=true gk=32
+         52 Lti        -              black=false gk=32
+          8 Lt         MaxSide        black=true gk=32
+          2 Gettable   -              black=false gk=10

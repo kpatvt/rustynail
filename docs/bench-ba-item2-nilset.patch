@@ -1,0 +1,553 @@
+diff --git a/crates/lua-core/src/table.rs b/crates/lua-core/src/table.rs
+index de97e728..abde8d6c 100644
+--- a/crates/lua-core/src/table.rs
++++ b/crates/lua-core/src/table.rs
+@@ -1812,6 +1812,12 @@ impl TableRef {
+                 if val.is_nil() {
+                     return HOK;
+                 }
++                if !slot.is_null() {
++                    // BUNDLE-A item 2: the key exists with a nil value: what `finish_set` does (the caller issues the barrier)
++                    set_nval(slot, &val);
++                    self.invalidate_tm_cache();
++                    return HOK;
++                }
+                 let need_barrier =
+                     (*t).marked & BLACKBIT != 0 && (*key).hdr.marked & WHITEBITS != 0;
+                 if slot.is_null() && !need_barrier {
+diff --git a/crates/lua-jit/src/calls.rs b/crates/lua-jit/src/calls.rs
+index d5cad0dd..0070cc45 100644
+--- a/crates/lua-jit/src/calls.rs
++++ b/crates/lua-jit/src/calls.rs
+@@ -72,6 +72,9 @@ pub struct CallEnv {
+     pub idx_hash: u32,
+     /// T3: number of `__index` levels the table templates probe inline (0 = none).
+     pub idx_levels: u8,
++    /// BUNDLE-A item 2: the table-store templates also handle an existing key with a nil value and an empty array slot of a table whose
++    /// metatable has no `__newindex` inline.
++    pub nilset: bool,
+ }
+ 
+ /// R1: bits of [`CallEnv::tail_mut`], the test-only code mutations of the inline tail call (`tr::mutants`).
+diff --git a/crates/lua-jit/src/rt.rs b/crates/lua-jit/src/rt.rs
+index a55cb615..4fef80e1 100644
+--- a/crates/lua-jit/src/rt.rs
++++ b/crates/lua-jit/src/rt.rs
+@@ -831,6 +831,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
+         e.tail_fast = tail_fast(d);
+         e.tail_mut = tail_mut();
+         (e.idx_name, e.idx_hash, e.idx_levels) = idx_name(st, d);
++        e.nilset = nilset(d);
+         return e;
+     }
+     let pl = lua_core::jit_layout::proto_layout_probe();
+@@ -845,10 +846,11 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
+         idx_name: 0,
+         idx_hash: 0,
+         idx_levels: 0,
++        nilset: false,
+     };
+     d.env = Some(e);
+     let (idx_name, idx_hash, idx_levels) = idx_name(st, d);
+-    CallEnv { tail_fast: tail_fast(d), tail_mut: tail_mut(), idx_name, idx_hash, idx_levels, ..e }
++    CallEnv { tail_fast: tail_fast(d), tail_mut: tail_mut(), idx_name, idx_hash, idx_levels, nilset: nilset(d), ..e }
+ }
+ 
+ /// R1: the mutants of the inline tail call (`calls::TM_*`).
+@@ -878,6 +880,20 @@ fn idx_name(st: &State, d: &JitData) -> (u64, u32, u8) {
+     (0, 0, 0)
+ }
+ 
++/// BUNDLE-A item 2: inline stores to nil-valued nodes / empty array slots of tables with a metatable (`nilset` limit); with traces on
++/// only, so that `RUSTYNAIL_JIT_TRACE=off` stays J4 exactly.
++fn nilset(d: &JitData) -> bool {
++    #[cfg(feature = "trace")]
++    {
++        d.tr.cfg.mode != crate::tr::cache::TrMode::Off && d.tr.cfg.limits.nilset != 0
++    }
++    #[cfg(not(feature = "trace"))]
++    {
++        let _ = d;
++        false
++    }
++}
++
+ /// R1: the inline tail call of tier 1 (`tailfast`): with traces on only, so that `RUSTYNAIL_JIT_TRACE=off` stays J4 exactly.
+ fn tail_fast(d: &JitData) -> bool {
+     #[cfg(feature = "trace")]
+diff --git a/crates/lua-jit/src/templates_alloc.rs b/crates/lua-jit/src/templates_alloc.rs
+index 729a71a9..8c8a03ba 100644
+--- a/crates/lua-jit/src/templates_alloc.rs
++++ b/crates/lua-jit/src/templates_alloc.rs
+@@ -55,6 +55,8 @@ pub(crate) enum Cold {
+     /// (no metatable, `__index` absent or not a table) goes to the helper at `x`. A key that is absent (or nil) in an `__index` table
+     /// without a metatable of its own is a final nil: `R[a] = nil` (and `R[a+1] = R[selfb]` for `SELF`, `selfb != u32::MAX`), continue at `fin`.
+     Chain { l: L, back: L, x: L, fin: L, kidx: u32, a: u32, selfb: u32 },
++    /// BUNDLE-A item 2: store to a node whose key exists but whose value is nil (`V0` = table, `V2` = node), rejoining at `back` (the store).
++    SetNil { l: L, back: L, x: L, v: crate::templates_table::Vop },
+     /// C2: out-of-line comparison of two non-numbers (`jit_cmp`): `H_TRUE` jumps to `lt`, `H_FALSE` to `lf`, `H_EXIT` leaves at `pc`.
+     Cmp { l: L, pc: u32, instr: u32, lt: L, lf: L },
+     /// Non-`H_DONE` result in `V0`: `H_EXIT` leaves at the instruction, everything else is an error exit.
+@@ -218,6 +220,7 @@ impl Cx<'_> {
+                     self.op(Op::Jmp(t));
+                 }
+                 Cold::Chain { l, back, x, fin, kidx, a, selfb } => self.emit_chain(l, back, x, fin, kidx, a, selfb),
++                Cold::SetNil { l, back, x, v } => self.emit_set_nil(l, back, x, v),
+                 Cold::Cmp { l, pc, instr, lt, lf } => {
+                     self.op(Op::Bind(l));
+                     // (mutant `c2cmp_swap`: the two outcomes are exchanged; `c2cmp_exit_skip`: a non-string operand counts as "false")
+diff --git a/crates/lua-jit/src/templates_table.rs b/crates/lua-jit/src/templates_table.rs
+index 785b2521..694550ac 100644
+--- a/crates/lua-jit/src/templates_table.rs
++++ b/crates/lua-jit/src/templates_table.rs
+@@ -22,6 +22,7 @@ use crate::templates_alloc::Cold;
+ use lua_core::gc::{BLACKBIT, WHITEBITS};
+ use lua_core::instruction::Instruction;
+ use lua_core::jit_layout::{node, string, table};
++use lua_core::meta::{Tm, MASKFLAGS};
+ use lua_core::value::{ctb, Value, BIT_ISCOLLECTABLE, LUA_VNIL, LUA_VNUMINT, LUA_VSHRSTR, LUA_VTABLE};
+ use lua_core::ver::active::OpCode;
+ 
+@@ -30,6 +31,12 @@ const TAG_TABLE: i32 = ctb(LUA_VTABLE) as i32;
+ const TAG_SHRSTR: i32 = ctb(LUA_VSHRSTR) as i32;
+ const NODE_SIZE: i32 = node::SIZE as i32;
+ 
++/// Bits of `tr::nilset_mutants()` (test-only code mutations of the `nilset` stores).
++pub(crate) const NS_FLAGS_SKIP: u8 = 1;
++pub(crate) const NS_MT_SKIP: u8 = 2;
++pub(crate) const NS_BARRIER_SKIP: u8 = 4;
++pub(crate) const NS_ARR_MT_SKIP: u8 = 16;
++
+ /// Classification of the opcodes this file implements (`None` = not ours).
+ pub(crate) fn kind(op: OpCode, i: Instruction, k: &[Value]) -> Option<Kind> {
+     use OpCode as O;
+@@ -63,16 +70,16 @@ enum Idx {
+ }
+ 
+ /// Whether the stored value can be collectable.
+-#[derive(Clone, Copy, PartialEq, Eq)]
+-enum Coll {
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum Coll {
+     No,
+     Yes,
+     Maybe,
+ }
+ 
+ /// A value operand of a store: memory of its tag byte and payload.
+-#[derive(Clone, Copy)]
+-struct Vop {
++#[derive(Clone, Copy, Debug)]
++pub(crate) struct Vop {
+     tag: M,
+     pay: M,
+     coll: Coll,
+@@ -327,7 +334,18 @@ impl Cx<'_> {
+         self.op(Op::And(4, Src::Imm(0x0F)));
+         self.br(Cc::Ne, 4, Src::Imm(0), ok); // non-empty slot: no __newindex
+         self.ld(4, W::B8, rm(0, table::METATABLE as i32));
+-        self.br(Cc::Ne, 4, Src::Imm(0), x); // empty slot of a table with a metatable
++        if self.nilset_on() {
++            // BUNDLE-A item 2: an empty slot of a table whose metatable is known to have no `__newindex` (`checknoTM`: the flag bit
++            // is set once the absence was looked up) is a plain store, like `psetint`
++            self.br(Cc::Eq, 4, Src::Imm(0), ok);
++            if !self.nilset_mut(NS_ARR_MT_SKIP) {
++                self.ld(4, W::B1, rm(4, table::FLAGS as i32));
++                self.op(Op::And(4, Src::Imm(1 << Tm::NewIndex as i32)));
++                self.br(Cc::Eq, 4, Src::Imm(0), x);
++            }
++        } else {
++            self.br(Cc::Ne, 4, Src::Imm(0), x); // empty slot of a table with a metatable
++        }
+         self.op(Op::Bind(ok));
+         self.barrier_exit(v, x);
+         self.ld(4, W::B1, v.tag);
+@@ -336,6 +354,25 @@ impl Cx<'_> {
+         self.st(W::B8, rm(3, -(table::ARRAY_PAYLOAD_STRIDE as i32)), 5);
+     }
+ 
++    /// BUNDLE-A item 2 (`nilset`): do the tier-1 stores handle an existing key with a nil value and an empty array slot of a table with a
++    /// metatable inline (needs the out-of-line calls environment: the knob lives in [`CallEnv`])?
++    fn nilset_on(&self) -> bool {
++        self.calls_on() && self.env().nilset
++    }
++
++    /// The active `nilset` mutant `bit` (test-only; always false without the `tr_mutants` feature).
++    fn nilset_mut(&self, bit: u8) -> bool {
++        #[cfg(feature = "trace")]
++        {
++            crate::tr::nilset_mutants() & bit != 0
++        }
++        #[cfg(not(feature = "trace"))]
++        {
++            let _ = bit;
++            false
++        }
++    }
++
+     /// `if barrier_back(t, v) would do anything -> exit x`: table (`V0`) black, value collectable and white.
+     /// Clobbers V4, V5.
+     fn barrier_exit(&mut self, v: Vop, x: L) {
+@@ -503,18 +540,57 @@ impl Cx<'_> {
+         self.ty[a as usize] = Ty::Unk;
+     }
+ 
+-    /// Store to the node in `V2` (which must hold a non-nil value).
++    /// Store to the node in `V2`. A node that holds a non-nil value is overwritten; with `nilset` a node of an existing key whose value is
++    /// nil goes to the out-of-line [`Cold::SetNil`] (otherwise it exits).
+     fn set_node(&mut self, v: Vop, x: L) {
+         self.ld(4, W::B1, rm(2, node::VAL_TT as i32));
+         self.op(Op::And(4, Src::Imm(0x0F)));
+-        self.br(Cc::Eq, 4, Src::Imm(0), x);
++        let back = self.p.label();
++        if self.nilset_on() {
++            let l = self.p.label();
++            self.cold.push(Cold::SetNil { l, back, x, v });
++            self.br(Cc::Eq, 4, Src::Imm(0), l);
++        } else {
++            self.br(Cc::Eq, 4, Src::Imm(0), x);
++        }
+         self.barrier_exit(v, x);
++        self.op(Op::Bind(back));
+         self.ld(4, W::B1, v.tag);
+         self.ld(5, W::B8, v.pay);
+         self.st(W::B1, rm(2, node::VAL_TT as i32), 4);
+         self.st(W::B8, rm(2, node::VAL as i32), 5);
+     }
+ 
++    /// The out-of-line nil-valued-node store of [`Cold::SetNil`] (`V0` = table, `V2` = the node of the existing key, whose value is nil):
++    /// exactly what `psetshortstr_miss` + `finish_set` do for such a slot when the table has no `__newindex`: the value must not be nil
++    /// (the helper keeps the dead-slot variants), the metatable must be known to lack `__newindex`, the barrier is the one of the plain
++    /// overwrite, and the store invalidates the table's metamethod-absence flags (the key may be a metamethod name). Rejoins at `back`,
++    /// where the store itself is. Every exit comes before the flags are touched.
++    pub(crate) fn emit_set_nil(&mut self, l: L, back: L, x: L, v: Vop) {
++        self.op(Op::Bind(l));
++        self.ld(4, W::B1, v.tag);
++        self.op(Op::And(4, Src::Imm(0x0F)));
++        self.br(Cc::Eq, 4, Src::Imm(0), x);
++        if !self.nilset_mut(NS_MT_SKIP) {
++            let ok = self.p.label();
++            self.ld(4, W::B8, rm(0, table::METATABLE as i32));
++            self.br(Cc::Eq, 4, Src::Imm(0), ok);
++            self.ld(4, W::B1, rm(4, table::FLAGS as i32));
++            self.op(Op::And(4, Src::Imm(1 << Tm::NewIndex as i32)));
++            self.br(Cc::Eq, 4, Src::Imm(0), x);
++            self.op(Op::Bind(ok));
++        }
++        if !self.nilset_mut(NS_BARRIER_SKIP) {
++            self.barrier_exit(v, x);
++        }
++        if !self.nilset_mut(NS_FLAGS_SKIP) {
++            self.ld(4, W::B1, rm(0, table::FLAGS as i32));
++            self.op(Op::And(4, Src::Imm(i32::from(!MASKFLAGS))));
++            self.st(W::B1, rm(0, table::FLAGS as i32), 4);
++        }
++        self.op(Op::Jmp(back));
++    }
++
+     // ---- GETTABLE ------------------------------------------------------------------------------
+ 
+     /// `R[A] = R[B][R[C]]` for an integer key in the array part or a short-string key in the hash part.
+diff --git a/crates/lua-jit/src/tr/cache.rs b/crates/lua-jit/src/tr/cache.rs
+index a2ac0084..f976acbc 100644
+--- a/crates/lua-jit/src/tr/cache.rs
++++ b/crates/lua-jit/src/tr/cache.rs
+@@ -69,6 +69,9 @@ pub const B2_PROCESS: u32 = 1;
+ pub const F2_PROCESS: u32 = 1;
+ /// T3: process default of [`TrLimits::t3idx`] (two inline `__index` levels in the tier-1 table templates; the struct default, used by the tests, is 0).
+ pub const T3IDX_PROCESS: u32 = 2;
++/// BUNDLE-A item 2: process default of [`TrLimits::nilset`] (inline stores to nil-valued nodes and to empty array slots of tables with a
++/// metatable in the tier-1 table templates; the struct default, used by the tests, is 0).
++pub const NILSET_PROCESS: u32 = 1;
+ /// P2: process defaults of [`TrLimits::ineffcover`] and [`TrLimits::typesides`] (the struct defaults, used by the tests, are 0).
+ pub const INEFFCOVER_PROCESS: u32 = 1;
+ pub const TYPESIDES_PROCESS: u32 = 1;
+@@ -203,6 +206,9 @@ pub struct TrLimits {
+     pub tailfast: u32,
+     /// T3: the tier-1 `GETFIELD` / `SELF` / `GETTABUP` templates probe this many `__index` tables (instance -> class -> base class ...) inline (0 = the `jit_get` helper).
+     pub t3idx: u32,
++    /// BUNDLE-A item 2: the tier-1 `SETFIELD` / `SETTABUP` / `SETI` / `SETTABLE` templates also store inline into a node of an existing key
++    /// whose value is nil and into an empty array slot of a table whose metatable is known to have no `__newindex` (0 = the `jit_set` helper).
++    pub nilset: u32,
+     /// P2: the ineffective-trace rule counts only the pre-roll exits that leave the trace (no side trace attached to the exit,
+     /// or a type-guard exit, which keeps the ping-pong rule of F2a); an exit that continues in a side trace is coverage, not
+     /// a failed entry (0 = as before). A root whose tree still grows is not flushed by `Ineffective`; the exit-storm and
+@@ -340,6 +346,7 @@ impl Default for TrLimits {
+             monwarm: 2,
+             tailfast: 1,
+             t3idx: 0,
++            nilset: 0,
+             ineffcover: 0,
+             typesides: 0,
+             hopcyc: HOP_CYCLES as u32,
+@@ -436,6 +443,7 @@ impl TrLimits {
+                 "monwarm" => l.monwarm = v.min(2),
+                 "tailfast" => l.tailfast = v.min(1),
+                 "t3idx" => l.t3idx = v.min(4),
++                "nilset" => l.nilset = v.min(1),
+                 "ineffcover" => l.ineffcover = v.min(1),
+                 "typesides" => l.typesides = v.min(1),
+                 "hopcyc" => l.hopcyc = v,
+@@ -604,6 +612,10 @@ impl TrConfig {
+         if !limits_env.is_some_and(|s| s.contains("t3idx")) && !mutants::active("t3_default_ignored") {
+             self.limits.t3idx = T3IDX_PROCESS;
+         }
++        // BUNDLE-A: inline nil-slot stores in tier 1 unless named
++        if !limits_env.is_some_and(|s| s.contains("nilset")) && !mutants::active("ba_default_ignored") {
++            self.limits.nilset = NILSET_PROCESS;
++        }
+         // BUNDLE-1: a deterministic work budget instead of the time gate (`warm=` or `wgate=` named: as named; `warm=0` switches every gate off)
+         if !limits_env.is_some_and(|s| s.contains("warm") || s.contains("wgate")) && !mutants::active("b1_default_ignored") {
+             self.limits.wgate = WGATE_PROCESS;
+diff --git a/crates/lua-jit/src/tr/mod.rs b/crates/lua-jit/src/tr/mod.rs
+index ed0a1c24..8207d23b 100644
+--- a/crates/lua-jit/src/tr/mod.rs
++++ b/crates/lua-jit/src/tr/mod.rs
+@@ -1876,6 +1876,20 @@ pub(crate) fn tail_mutants() -> u8 {
+         | u8::from(mutants::active("tailfast_close_skip")) << 3
+ }
+ 
++/// BUNDLE-A item 2: the active `nilset` mutants as the bit set of `templates_table::NS_*`.
++pub(crate) fn nilset_mutants() -> u8 {
++    use crate::templates_table::{NS_ARR_MT_SKIP, NS_BARRIER_SKIP, NS_FLAGS_SKIP, NS_MT_SKIP};
++    [
++        ("nilset_flags_skip", NS_FLAGS_SKIP),
++        ("nilset_mt_skip", NS_MT_SKIP),
++        ("nilset_barrier_skip", NS_BARRIER_SKIP),
++        ("nilset_arr_mt_skip", NS_ARR_MT_SKIP),
++    ]
++    .iter()
++    .filter(|(n, _)| mutants::active(n))
++    .fold(0, |a, (_, b)| a | b)
++}
++
+ /// T3: the active mutants `(t3idx_nil_hit, t3idx_use_mt)` of the inline `__index` level of the tier-1 table templates.
+ pub(crate) fn t3idx_mut() -> (bool, bool) {
+     (mutants::active("t3idx_nil_hit"), mutants::active("t3idx_use_mt"))
+diff --git a/crates/lua-jit/src/tr/mutants.rs b/crates/lua-jit/src/tr/mutants.rs
+index fe66d0c9..157494e7 100644
+--- a/crates/lua-jit/src/tr/mutants.rs
++++ b/crates/lua-jit/src/tr/mutants.rs
+@@ -397,6 +397,12 @@ pub const NAMES: &[&str] = &[
+     "hdrlib_third_stale",
+     "wgate_full_rearm",
+     "b1_default_ignored",
++    // BUNDLE-A item 2: inline nil-slot stores of tier 1
++    "nilset_flags_skip",
++    "nilset_mt_skip",
++    "nilset_barrier_skip",
++    "nilset_arr_mt_skip",
++    "ba_default_ignored",
+     // BUNDLE-4
+     "b4_default_ignored",
+     "nopay_all_types",
+@@ -458,7 +464,7 @@ mod tests {
+ 
+     #[test]
+     fn registry_is_the_frozen_list() {
+-        assert_eq!(NAMES.len(), 338);
++        assert_eq!(NAMES.len(), 343);
+         let mut v = NAMES.to_vec();
+         v.sort_unstable();
+         v.dedup();
+diff --git a/crates/lua-jit/src/tr/record.rs b/crates/lua-jit/src/tr/record.rs
+index db4e3fa0..ea92a850 100644
+--- a/crates/lua-jit/src/tr/record.rs
++++ b/crates/lua-jit/src/tr/record.rs
+@@ -540,6 +540,7 @@ pub fn lower_for_landing(p: &Proto) -> Option<Lowered> {
+                 idx_name: 0,
+                 idx_hash: 0,
+                 idx_levels: 0,
++                nilset: false,
+             }),
+             consts: p.k(),
+             t15_warmup: None,
+diff --git a/crates/lua-jit/tests/jit_calls.rs b/crates/lua-jit/tests/jit_calls.rs
+index d41b3ec3..21163932 100644
+--- a/crates/lua-jit/tests/jit_calls.rs
++++ b/crates/lua-jit/tests/jit_calls.rs
+@@ -212,6 +212,7 @@ fn resume_points_are_valid_instruction_starts() {
+                     idx_name: 0,
+                     idx_hash: 0,
+                     idx_levels: 0,
++                    nilset: false,
+                 }),
+             };
+             if let Some(low) = lower(p.code(), cfg) {
+diff --git a/crates/lua-jit/tests/t15_core_emu.rs b/crates/lua-jit/tests/t15_core_emu.rs
+index 124a425f..25248e52 100644
+--- a/crates/lua-jit/tests/t15_core_emu.rs
++++ b/crates/lua-jit/tests/t15_core_emu.rs
+@@ -638,6 +638,7 @@ fn calls_cfg(f: &Func, irq: *const u8) -> LowerCfg<'_> {
+             idx_name: 0,
+             idx_hash: 0,
+             idx_levels: 0,
++            nilset: false,
+         }),
+         ..cfg(f, irq)
+     }
+diff --git a/crates/lua-jit/tests/tr_core.rs b/crates/lua-jit/tests/tr_core.rs
+index 2ec2358a..269a0e11 100644
+--- a/crates/lua-jit/tests/tr_core.rs
++++ b/crates/lua-jit/tests/tr_core.rs
+@@ -2583,6 +2583,40 @@ fn c2_programs() {
+     assert!(!res.is_empty());
+ }
+ 
++/// BUNDLE-A item 2: the tier-1 stores into nil-valued nodes and empty array slots of tables with a metatable (limit `nilset`, struct default
++/// 0): programs `ba_nilset` and `r2_nilstore` against the interpreter run, in every trace mode, with exit storms, budgets, GC stress and the
++/// stack-move stress, with the knob on and (for the control) off. Mutants `nilset_flags_skip`, `nilset_mt_skip`, `nilset_barrier_skip`,
++/// `nilset_arr_mt_skip`.
++#[test]
++fn ba_nilset_programs() {
++    let mut jobs = Vec::new();
++    for p in ["ba_nilset", "r2_nilstore"] {
++        for trace in ["always", "on2", "on"] {
++            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 3), ("", 17), ("-loop", 0)] {
++                let mut j = Job::new(p, trace).opts(opts);
++                if budget != 0 {
++                    j = j.budget(budget);
++                }
++                jobs.push(j);
++            }
++            for gc in ["1", "2"] {
++                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", gc));
++            }
++            jobs.push(Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
++        }
++    }
++    for j in jobs.iter_mut() {
++        j.limits = "nilset=1".into();
++    }
++    for p in ["ba_nilset", "r2_nilstore"] {
++        let mut off = Job::new(p, "always").opts("+verify");
++        off.limits = "nilset=0".into();
++        jobs.push(off);
++    }
++    let res = compare(jobs);
++    assert!(!res.is_empty());
++}
++
+ /// T3: the inline first `__index` level of the tier-1 `GETFIELD` / `SELF` / `GETTABUP` templates (limit `t3idx`, struct default 0): every
+ /// receiver-miss shape of program `t3_index` against the interpreter run, in every trace mode, with exit storms, budgets, GC stress and
+ /// the stack-move stress, with the knob on and (for the control) off. Mutants `t3idx_nil_hit`, `t3idx_use_mt`.
+diff --git a/crates/lua-jit/tests/tr_core/progs.rs b/crates/lua-jit/tests/tr_core/progs.rs
+index 7ba325cd..e66a4ec6 100644
+--- a/crates/lua-jit/tests/tr_core/progs.rs
++++ b/crates/lua-jit/tests/tr_core/progs.rs
+@@ -8526,6 +8526,115 @@ end)
+ local cs = 0
+ for i = 1, 1000 do cs = cs + co() end
+ print(cs)
++"##,
++    },
++    Prog {
++        name: "ba_nilset",
++        small: true,
++        src: r##"
++-- BUNDLE-A item 2: tier-1 stores into a node of an existing key whose value is nil (SETFIELD / SETTABUP) and into an empty array slot of a
++-- table with a metatable (SETI / SETTABLE), in hot functions, with the situation changed in the middle of the loop.
++local log = {}
++-- 1. a metatable gets `__newindex` through the same hot store that fills nil slots: the cached "no __newindex" bit of the metatable must
++-- be dropped by the store into the nil-valued `__newindex` node
++local P = {}
++local function setfield(t, v) t.x = v end
++local function setmeta(m, f) m.__newindex = f end
++local obj = setmetatable({ x = 0, y = 1 }, P)
++setmeta(P, false); setmeta(P, nil)           -- the key exists in P with a nil value
++local cnt = 0
++for i = 1, 600 do
++  setfield(obj, nil)
++  setfield(obj, i)                              -- nil slot of obj; P has no __newindex
++  if i == 200 then setmeta(P, function(t, k, v) cnt = cnt + 1; rawset(t, k, v) end) end
++  if i == 400 then setmeta(P, nil) end
++  rawset(obj, "x", nil)
++end
++print("newindex", cnt, obj.x)
++-- 2. fields that alternate between nil and a value in a plain table and in a table with a metatable without `__newindex`
++local C = {}
++C.__index = C
++local function set3(t, a, b, c) t.a = a; t.b = b; t.c = c end
++local plain, inst = { a = 1, b = 2, c = 3 }, setmetatable({ a = 1, b = 2, c = 3 }, C)
++local sum = 0
++for i = 1, 500 do
++  set3(plain, nil, i, nil); set3(inst, nil, i, nil)
++  set3(plain, i, nil, i); set3(inst, i, nil, i)
++  sum = sum + (plain.a or 0) + (inst.c or 0) + (plain.b or -1) + (inst.b or -1)
++end
++print("alt", sum)
++-- 3. upvalue-table stores (SETTABUP): a global that is set to nil and set again, with and without a metatable on _ENV
++local env = setmetatable({}, { __index = _G })
++local function gset(v) gslot = v end
++local f = load("local gset = ... ; gslot = nil; for i = 1, 300 do gslot = i; gslot = nil end; gslot = 7; return gslot", "=g", "t", env)
++print("settabup", f(), rawget(env, "gslot"))
++-- 4. empty slots of the array part: table.pack / constructor with nils, a metatable without and with `__newindex`
++local function seti(t, v) t[2] = v end
++local function settable(t, k, v) t[k] = v end
++local plain_mt = setmetatable({ 1, 2, 3 }, C)
++local ni_log = 0
++local ni_mt = setmetatable({ 1, 2, 3 }, { __newindex = function(t, k, v) ni_log = ni_log + 1; rawset(t, k, v * 10) end })
++local s4 = 0
++for i = 1, 300 do
++  plain_mt[2] = nil; ni_mt[2] = nil
++  rawset(ni_mt, 2, nil)
++  seti(plain_mt, i)
++  settable(plain_mt, 1, nil); settable(plain_mt, 1, i)
++  seti(ni_mt, i)
++  s4 = s4 + plain_mt[2] + (rawget(ni_mt, 2) or 0)
++  rawset(ni_mt, 2, nil)
++  settable(ni_mt, 3, nil)
++  rawset(ni_mt, 3, nil)
++  settable(ni_mt, 3, i)
++  s4 = s4 + (rawget(ni_mt, 3) or 0)
++end
++print("array", s4, ni_log)
++-- the cached bit goes stale in the other direction: the metatable gets `__newindex` only after the array slots were filled once
++local Q = {}
++local q = setmetatable({ 1, 2, 3 }, Q)
++local qn = 0
++for i = 1, 400 do
++  q[2] = nil
++  seti(q, i)
++  q[2] = nil
++  if i == 150 then Q.__newindex = function(t, k, v) qn = qn + 1; rawset(t, k, v) end end
++  if i == 300 then Q.__newindex = nil end
++end
++print("late", qn)
++-- 5. collectable values into nil slots of old tables (write barrier), in both collector modes
++local holder = { a = nil, b = nil, c = nil }
++local arr = { nil, nil, nil, nil }
++local function fill(i)
++  holder.a = { i }; holder.b = "s" .. i; holder.c = function() return i end
++  arr[1] = { i }; arr[2] = "t" .. i
++end
++local function clear() holder.a = nil; holder.b = nil; holder.c = nil; arr[1] = nil; arr[2] = nil end
++local keep = 0
++for mode = 1, 2 do
++  collectgarbage(mode == 1 and "incremental" or "generational")
++  for round = 1, 60 do
++    collectgarbage("step", 0)
++    fill(round)
++    collectgarbage("step", 0)
++    collectgarbage("step", 0)
++    keep = keep + holder.a[1] + #holder.b + holder.c() + arr[1][1] + #arr[2]
++    clear()
++  end
++end
++collectgarbage()
++print("barrier", keep)
++-- 6. event-name keys stored into nil slots of a table that is another table's metatable
++local M = {}
++local obj2 = setmetatable({}, M)
++M.__index = function(t, k) return k .. "!" end
++M.__index = nil
++local ev = 0
++for i = 1, 600 do
++  local a = obj2.zz
++  ev = ev + (a == nil and 1 or #a)
++  if i % 3 == 0 then M.__index = function(t, k) return k .. "?" end else M.__index = nil end
++end
++print("events", ev)
+ "##,
+     },
+ ];

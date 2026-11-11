@@ -1,0 +1,56 @@
+== markov_text (rc 0)
+[trace] recorded 26 installed 9 entered 8519361 flushes 9 rerecord 0 blacklisted 15 refused 200 deferred 0 ineffective 0 probes 212 (fn-short 12 start-refused 200)
+[trace] aborted FnShort: 12
+[trace] aborted LeaveLoop: 1
+[trace] aborted MultRet: 8
+[trace] aborted Nyi(Concat): 4
+[trace] aborted StartRefused: 200
+[trace] aborted TableHash: 4
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 4 phis 15 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 25 installed 17 failed 9 preludes 0
+[trace] exits 71981201 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                RETURN1   d0 root L22 'local function noun() return vocab[rnd(30)] end'  [policy]
+      4 FnShort                RETURN1   d0 root L23 'local function verb() return vocab[30 + rnd(30)] e'  [policy]
+      4 FnShort                RETURN1   d0 root L24 'local function adj() return vocab[60 + rnd(30)] en'  [policy]
+      4 Nyi(CONCAT)            CONCAT    d0 root L0 main
+      4 SideShort              TFORCALL  d0 side  [policy]
+      2 MultRet                SETLIST   d1 side
+      2 MultRet                SETLIST   d0 root L29 'function() return { "every", noun(), verb(), "when'
+      2 MultRet                SETLIST   d0 root L30 'function() return { "the", noun(), "of", "the", no'
+      2 MultRet                SETLIST   d0 root L31 'function() return { "then", "the", noun(), verb(),'
+      2 MultRet                SETLIST   d0 root L27 'function() return { "the", adj(), noun(), verb(), '
+      2 TableHash              GETTABLE  d0 root L45 'local function build_chain(words)'
+      2 TableHash              GETTABLE  d0 root L60 'local function generate(chain, words, count)'
+      2 TableHash              GETTABLE  d0 side
+      1 LeaveLoop              TFORCALL  d0 root L34 'local function make_corpus(nsent)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  1.9 L85 pc17 Gettable 18 105879
+  0.4 L29 pc0 Newtable 5 74288
+  0.2 L30 pc0 Newtable 6 38450
+  0.2 L27 pc0 Newtable 18 12762
+  0.0 L28 pc0 Newtable 9 4993
+  0.0 L29 pc5 Getupval 35 322
+  0.0 L29 pc11 Getupval 42 112
+  0.0 L27 pc5 Getupval 43 107
+  0.0 L30 pc13 Getupval 43 100
+  0.0 L30 pc11 Getupval 43 93
+  0.0 L29 pc7 Loadk 39 76
+  0.0 L28 pc5 Loadk 36 78
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+   37987997 Gettable   -              black=false gk=11
+   12720950 Gettable   -              black=false gk=14
+   12660820 Gettable   TableHash      black=false gk=11
+    8406328 Gettable   -              black=false gk=10
+     112944 Tforcall   -              black=false gk=33
+      90424 Call       MultRet        black=true gk=1
+       1631 Gettable   MaxSide        black=true gk=11
+         72 Newtable   -              black=false gk=32
+          9 Forloop    -              black=false gk=32
+          6 Settable   SideShort      black=false gk=40
+          5 Tforcall   -              black=false gk=16
+          5 Tforcall   -              black=false gk=4
+          3 Settable   -              black=false gk=34
+          3 Settable   SideShort      black=false gk=34
+          3 Settable   -              black=false gk=40
+          1 Gettable   -              black=false gk=2

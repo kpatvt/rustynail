@@ -1,0 +1,22 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 2151596041
+#
+# Overhead  Shared Object         Symbol                                   
+# ........  ....................  .........................................
+#
+    95.52%  [JIT] tid 2363905     [.] lua_proto@0x7efecfa5da50
+     2.22%  [JIT] tid 2363905     [.] lua_proto@0x7efecfa5d860
+     1.66%  [JIT] tid 2363905     [.] lua_proto@0x7efecfa5bf30
+     0.20%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.15%  [unknown]             [k] 0000000000000000
+     0.09%  rn-cli               [.] rn_core::table::newkey
+
+
+#
+# (Tip: To trace calls using Processor Trace use perf record -e intel_pt// ... ; perf script --call-trace. Then use perf script --time A-B --insn-trace to look at region of interest.)
+#

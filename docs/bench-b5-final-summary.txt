@@ -1,0 +1,15 @@
+programs   rows  25 new/base cyc min 1.001 med 1.007 instr 1.000 dup nan | ours/PUC 0.252 (base 0.252) | ours/LJ 1.062 (base 1.061) n=25
+   best : table_hash 0.894, matmul 0.977, closures 0.988, fasta 0.991, fib 0.998
+   worst: coroutines 1.017, json 1.018, binary_trees 1.021, string_ops 1.033, pcall_error 1.043
+awfy       rows  14 new/base cyc min 0.987 med 0.985 instr 0.991 dup 1.000 | ours/PUC 0.364 (base 0.369) | ours/LJ 1.929 (base 1.955) n=14
+   best : richards 0.819, json 0.994, queens 0.995, deltablue 0.996, towers 0.999
+   worst: storage 1.002, permute 1.004, havlak 1.006, nbody 1.007, cd 1.013
+apps       rows   5 new/base cyc min 1.004 med 1.005 instr 1.000 dup 0.997 | ours/PUC 0.669 (base 0.667) | ours/LJ 1.605 (base 1.599) n=5
+   best : events 0.958, lru_cache 0.997, raytrace 1.009, expr_lang 1.023, markdown 1.033
+   worst: events 0.958, lru_cache 0.997, raytrace 1.009, expr_lang 1.023, markdown 1.033
+jit-trace  rows  29 new/base cyc min 1.001 med 0.998 instr 1.000 dup nan | ours/PUC 0.087 (base 0.087) | ours/LJ 1.106 (base 1.105) n=29
+   best : sink_tuple 0.989, inline_2 0.990, rec_loop 0.992, str_concat 0.995, tail_loop 0.999
+   worst: float_poly 1.003, field_global 1.009, alloc_ctor 1.013, dot 1.019, type_entry_stable 1.025
+lib        rows  95 new/base cyc min 1.001 med 1.001 instr 1.000 dup nan | ours/PUC 0.319 (base 0.319) | ours/LJ 1.329 (base 1.328) n=91
+   best : fmt_x_pad 0.922, fmt_mixed 0.950, char 0.956, match 0.962, tunpack 0.979
+   worst: lower 1.026, reverse 1.027, gsub_str 1.030, tconcat 1.032, load_small 1.051

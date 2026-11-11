@@ -1,0 +1,106 @@
+[package]
+name = "rustynail-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# its own workspace: the root workspace builds on stable, this one needs nightly (libFuzzer + ASan)
+[workspace]
+
+# Lua 5.4 build: `RUSTFLAGS="--cfg rustynail_lua54" cargo +nightly fuzz run <t> --target-dir target-54`
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rustynail_lua54)', 'cfg(rustynail_lua55)'] }
+
+[lib]
+name = "rustynail_fuzz"
+path = "src/lib.rs"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+rn-core = { path = "../crates/rn-core" }
+rn-compiler = { path = "../crates/rn-compiler" }
+rn-std = { path = "../crates/rn-std" }
+rn-capi = { path = "../crates/rn-capi" }
+rn-jit = { path = "../crates/rn-jit", optional = true }
+
+[features]
+# compiled code in the execution targets: `cargo fuzz run --features jit jit_diff` (x86-64 only)
+jit = ["dep:rn-jit", "rn-jit/jit", "rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "rn-std/jit"]
+
+# J5 trace compiler (crates/rn-jit `tr`): the `trace_ir` target and the trace modes of `jit_diff` / `run_source`
+# (`cargo fuzz run --features trace <t>`; build.rs slices the emulator harness out of crates/rn-jit/tests/tr_asm.rs)
+trace = ["jit", "rn-jit/trace"]
+
+[profile.release]
+debug = 1
+panic = "unwind"
+opt-level = 1
+debug-assertions = true
+overflow-checks = true
+
+[[bin]]
+name = "lex_parse"
+path = "fuzz_targets/lex_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "undump"
+path = "fuzz_targets/undump.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "run_source"
+path = "fuzz_targets/run_source.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "string_lib"
+path = "fuzz_targets/string_lib.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "buffer_ops"
+path = "fuzz_targets/buffer_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "table_ops"
+path = "fuzz_targets/table_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capi_calls"
+path = "fuzz_targets/capi_calls.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trace_ir"
+path = "fuzz_targets/trace_ir.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jit_diff"
+path = "fuzz_targets/jit_diff.rs"
+test = false
+doc = false
+bench = false

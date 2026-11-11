@@ -1,0 +1,48 @@
+== template_etlua (rc 0)
+[trace] recorded 17 installed 2 entered 326 flushes 2 rerecord 0 blacklisted 13 refused 104 deferred 0 ineffective 0 probes 126 (fn-short 22 start-refused 104)
+[trace] aborted CFunc: 3
+[trace] aborted FnShort: 22
+[trace] aborted Nyi(Call): 4
+[trace] aborted Nyi(Closure): 2
+[trace] aborted Nyi(Loadk): 2
+[trace] aborted Nyi(Setupval): 4
+[trace] aborted StartRefused: 104
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 6 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 17 installed 16 failed 3 preludes 0
+[trace] exits 121692 (live traces 0)
+aborts (count reason op depth head):
+      4 FnShort                CALL      d0 root L8 'local function html_escape(str)'  [policy]
+      4 FnShort                CALL      d0 root L29 'function Parser:next_tag()'  [policy]
+      4 FnShort                RETURN0   d0 root L77 'function Parser:push_code(kind, start, text)'  [policy]
+      4 FnShort                RETURN0   d0 root L73 'function Parser:push_raw(text)'  [policy]
+      4 Nyi(CALL)              CALL      d0 root L0 main
+      3 FnShort                CALL      d2 root L123 'function Parser:compile(str)'  [policy]
+      3 FnShort                CALL      d1 root L81 'function Parser:parse(str)'  [policy]
+      2 CFunc                  CALL      d1 root L81 'function Parser:parse(str)'
+      2 Nyi(LOADK)             LOADK     d0 root L93 'function Parser:chunks_to_lua()'
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L127 'return function(env)'
+      2 Nyi(SETUPVAL)          SETUPVAL  d0 root L152 'return function(env)'
+      2 Nyi(SETUPVAL)          SETUPVAL  d1 root L0 main
+      1 CFunc                  CALL      d0 root L93 'function Parser:chunks_to_lua()'
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  846.9 L0 pc110 Gettabup 319135 2654
+  50.2 L0 pc9 Gettabup 3375 14862
+  11.9 L0 pc20 Gettabup 7978 1491
+  7.9 L0 pc27 Gettabup 7978 994
+  3.8 L0 pc49 Gettabup 3989 955
+  3.3 L123 pc3 Test 154 21178
+  2.9 L0 pc0 Varargprep 24 122752
+  2.8 L0 pc0 Move 21 131904
+  2.7 L0 pc0 Varargprep 21 128982
+  2.7 L0 pc60 Gettabup 3989 670
+  2.6 L0 pc0 Varargprep 19 138248
+  2.5 L0 pc0 Varargprep 20 127446
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+      88608 Call       -              black=false gk=32
+      10017 Gettable   -              black=false gk=16
+       9785 Call       MaxSide        black=true gk=32
+       7063 Eqk        -              black=false gk=32
+       3544 Settable   -              black=false gk=40
+       2349 Concat     -              black=false gk=32
+        326 Forloop    -              black=false gk=32

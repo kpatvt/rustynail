@@ -1,0 +1,81 @@
+== roguelike_turns (rc 0)
+[trace] recorded 84 installed 21 entered 4896552 flushes 21 rerecord 3 blacklisted 17 refused 215 deferred 4 ineffective 3 probes 215 (fn-short 0 start-refused 215)
+[trace] aborted Identical: 2
+[trace] aborted InnerLoop: 11
+[trace] aborted IntMiss: 43
+[trace] aborted LeaveLoop: 1
+[trace] aborted Nyi(Call): 3
+[trace] aborted Nyi(Concat): 1
+[trace] aborted Nyi(Setupval): 2
+[trace] aborted StartRefused: 215
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 15 phis 53 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 132 installed 38 failed 97 preludes 1
+[trace] links: nest roots 8 frame links 0 stitches 0
+[trace] exits 7793115 (live traces 0)
+aborts (count reason op depth head):
+     18 SideShort              FORLOOP   d0 side  [policy]
+     16 IntMiss                GETTABLE  d1 side
+     12 Nyi(SETUPVAL)          SETUPVAL  d1 side
+     12 InnerLoop              FORPREP   d1 side
+     10 IntMiss                GETTABLE  d1 root L120 'local function wander_step(x, y)'
+      8 LeaveFrame             RETURN1   d0 side
+      7 SideShort              TFORCALL  d0 side  [policy]
+      6 IntMiss                GETTABLE  d1 root L107 'local function step_towards(x, y, tx, ty, away)'
+      6 IntMiss                GETTABLE  d2 root L148 'wander = function(p)'
+      6 IntMiss                GETTABLE  d0 root L194 'local function player_act(p)'
+      6 LeaveFrame             RETURN0   d0 side
+      6 IntMiss                GETTABLE  d1 root L234 'local function run_level(depth, player)'
+      5 IntMiss                GETTABLE  d2 root L164 'flee = function(p)'
+      4 Nyi(CLOSE)             CLOSE     d0 side
+      4 IntMiss                GETTABLE  d2 root L151 'chase = function(p)'
+      3 SideUntraced           FORLOOP   d0 side  [policy]
+      2 InnerLoop              JMP       d1 root L80 'local function compute_fov(m, px, py, radius)'
+      2 Nyi(SETUPVAL)          SETUPVAL  d0 root L180 'function self.act(p)'
+      2 SideShort              JMP       d0 side  [policy]
+      2 InnerLoop              FORPREP   d1 root L194 'local function player_act(p)'
+      2 InnerLoop              FORLOOP   d0 root L80 'local function compute_fov(m, px, py, radius)'
+      2 InnerLoop              TFORCALL  d0 root L107 'local function step_towards(x, y, tx, ty, away)'
+      2 Nyi(CALL)              CALL      d0 side
+      2 Nyi(CALL)              CALL      d0 root L95 'local function log(kind, text)'
+      2 InnerLoop              FORPREP   d1 root L37 'local function gen_level()'
+      2 LeaveFrame             RETURN    d0 side
+      1 InnerLoop              FORLOOP   d0 root L120 'local function wander_step(x, y)'
+      1 InnerLoop              LT        d2 side
+      1 Nyi(CONCAT)            CONCAT    d0 root L151 'chase = function(p)'
+      1 Nyi(CALL)              CALL      d1 root L151 'chase = function(p)'
+      1 SideShort              FORPREP   d0 side  [policy]
+      1 LeaveLoop              FORLOOP   d0 root L0 main
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  225.9 L164 pc0 Getupval 204 1107154
+  66.5 L151 pc0 Gettabup 205 324336
+  65.0 L174 pc0 Getupval 198 328064
+  62.7 L37 pc74 Tforcall 10 6265012
+  15.7 L107 pc0 Loadnil 6 2618403
+  15.7 L33 pc0 Gettabup 8 1958735
+  10.3 L104 pc14 Eq 16 646254
+  8.8 L173 pc0 Getupval 11 795769
+  7.8 L234 pc113 Tforcall 13 602188
+  7.1 L170 pc0 Getupval 8 887128
+  5.0 L95 pc0 Getupval 26 191777
+  3.3 L194 pc6 Getfield 19 175606
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    2937359 Eq         -              black=false gk=32
+    1943569 Lt         -              black=false gk=32
+     774426 Return1    LeaveFrame     black=true gk=32
+     739157 Call       -              black=false gk=33
+     653431 Test       -              black=true gk=17
+     220593 Call       -              black=false gk=32
+      81319 Eq         MaxSide        black=true gk=32
+      76848 Return1    MaxSide        black=true gk=32
+      59387 Eq         SideShort      black=true gk=32
+      15779 Forloop    SideShort      black=true gk=32
+      12279 Settable   SideShort      black=true gk=32
+       9202 Settable   SideShort      black=true gk=40
+       5693 Lt         SideShort      black=true gk=32
+       2434 Eq         -              black=true gk=32
+       1826 Forloop    -              black=false gk=32
+       1705 Return0    LeaveFrame     black=true gk=32
+        659 Lt         SideShort      black=true gk=48
+        192 Tforcall   InnerLoop      black=true gk=16
+        142 Tforcall   InnerLoop      black=true gk=32
+         86 Tforcall   -              black=false gk=16

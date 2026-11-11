@@ -1,0 +1,19 @@
+P-C number narrowing: ceiling measurements (main@d6ae02c, release lua-cli --features jit, trace on, RUSTYNAIL_SEED=0,
+taskset -c 4, perf stat cycles:u / instructions:u, min of N runs, machine load average ~18 (other builders)).
+Variants replace `x % c` by `x & mask` (a bound for any constant-divisor strength reduction; control flow may differ).
+
+program                      runs  cycles:u      instructions:u
+loops_arith                  5     973636043     3974783014
+loops_arith (% -> &)         5     932476618     3524903060     ratio 0.958
+oop_methods                  5     294381023     1205896964
+oop_methods (% -> &)         5     205236465      746026293     ratio 0.697 (includes changed withdraw/interest pattern)
+heapsort                     3     1866729281    4364038273     (1.2M % in the fill loop: est. <= 2%)
+table_array                  3     3892404846   14550596959     (est. < 1%)
+table_hash                   3     1894459385    1874311219     (1.6M %: est. ~2%)
+matmul                       3      816557508    3281798901     (init n^2 only: < 0.5%)
+sieve                        3     1873891213    4035251700     (// in setup only)
+jit-trace/field_rw           3     2355624639    8162767552     (one `% 3` per 15.7 cycles/iteration: large ceiling)
+jit-trace/field_method       3     1444449220    5354198670
+jit-trace/oop_override       3      363367581    1009489501
+jit-trace/oop_inherit        3       98040759     301971774
+jit-trace/rec_loop           3     1284527456    4273151901

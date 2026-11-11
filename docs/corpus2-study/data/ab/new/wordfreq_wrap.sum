@@ -1,0 +1,46 @@
+== wordfreq_wrap (rc 0)
+[trace] recorded 26 installed 2 entered 281013 flushes 2 rerecord 0 blacklisted 15 refused 138 deferred 0 ineffective 0 probes 142 (fn-short 4 start-refused 138)
+[trace] aborted CFunc: 14
+[trace] aborted FnShort: 4
+[trace] aborted InnerLoop: 2
+[trace] aborted MultRet: 8
+[trace] aborted StartRefused: 138
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 2 phis 10 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 22 installed 16 failed 10 preludes 0
+[trace] exits 540496 (live traces 0)
+aborts (count reason op depth head):
+      6 SideShort              FORLOOP   d0 side  [policy]
+      4 MultRet                SETLIST   d2 root L29 'local function paragraph(n)'
+      4 FnShort                CALL      d0 root L92 'local function justify(line, width)'  [policy]
+      2 MultRet                SETLIST   d1 root L23 'local function sentence()'
+      2 MultRet                SETLIST   d0 root L19 'local function clause()'
+      2 InnerLoop              FORPREP   d1 root L0 main
+      2 CFunc                  TFORCALL  d0 root L40 'local function wordFreq(s)'
+      2 CFunc                  TFORCALL  d0 root L72 'local function wrap(s, width)'
+      2 CFunc                  CALL      d0 root L92 'local function justify(line, width)'
+      2 CFunc                  TFORCALL  d0 root L92 'local function justify(line, width)'
+      2 CFunc                  CALL      d1 root L0 main
+      2 CFunc                  TFORCALL  d0 root L0 main
+      2 CFunc                  CALL      d0 root L0 main
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  350.1 L0 pc279 Modk 2 175055350
+  164.1 L92 pc0 Newtable 5 32811648
+  79.9 L0 pc0 Move 1 79864220
+  35.8 L40 pc0 Newtable 1 35838460
+  29.5 L0 pc91 Settable 996 29627
+  5.2 L29 pc8 Settable 616 8374
+  3.8 L0 pc85 Move 2 1895800
+  2.4 L0 pc218 Move 2 1209130
+  1.7 L92 pc68 Call 12 143577
+  0.9 L92 pc25 Tforcall 2 446350
+  0.9 L0 pc275 SelfOp 2 432110
+  0.8 L0 pc327 Gei 4 194410
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+     219609 Gei        SideShort      black=true gk=32
+     212205 Call       -              black=false gk=32
+      40916 Call       MaxSide        black=true gk=32
+      22490 Tforcall   -              black=false gk=16
+      20119 Lei        SideShort      black=true gk=32
+      18747 Tforcall   -              black=false gk=32
+       6409 Le         -              black=false gk=32
+          1 Newtable   -              black=false gk=32

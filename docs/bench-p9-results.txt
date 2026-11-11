@@ -1,0 +1,616 @@
+J5 PROTOTYPE GATE (P-gate, docs/JIT_TRACE.md 1.6): RESULTS OF TASK P9
+=====================================================================
+Commit: 8154671 (merge of J5-P8b/c) + P9 scripts/docs only; no source of crates/ was changed for the measured binaries.
+Machine: 16 logical CPUs, perf stat cycles:u / instructions:u, CPU 4 pinned, governor powersave, nothing else running
+during the timed sessions (the orchestrator ran nothing; correctness suites ran AFTER the last timed measurement,
+except the compile-time instrumentation build, which ran before the short-script and compile-time measurements).
+
+VERDICT: NO-GO.   Criteria 2, 3, 4 and the 5a part pass with large margins; criterion 5 FAILS (sieve is 1.12-1.13 x tier 1;
+both set-(d) programs are above 1.05 x their stable twin) and criterion 6 FAILS (float_poly 1.74, mandelbrot 1.81, sieve
+1.59 x J4, limit 1.30 each; the first two are not attributable to F1/F2a/F2b). Criterion 4 passes, so this is NOT the
+"2 passes but 4 fails: inlining only" case of the document; it is the plain rule "NO-GO if any of 1-5 fails, or 6 fails
+without a fix inside the prototype". No threshold, program or method was adjusted.
+
+Binaries (all release, same flags, built from clean worktrees):
+  J5   = lua-cli --features jit,trace at 8154671.   Columns: j4 = JIT=on T15=on TRACE=off (the BASELINE of all ratios);
+         t1 = T15=off TRACE=off; tr = T15=off TRACE=on.  Every column also sets RUSTYNAIL_SEED=0 and RUSTYNAIL_JIT=on.
+  ref89 = lua-cli --features jit at main@89963c6, JIT=on T15=on (+ an ignored RUSTYNAIL_JIT_TRACE=off).
+  Method: scripts/bench-cycles.sh (= scripts/bench_cycles.py), RUNS=9, min of 9 cycles:u, interleaved per run, +-5% band.
+  Micro-benchmarks through PROGDIR=bench/jit-trace; spectral_norm and matmul (set a) and the 25 programs through
+  bench/programs.  Three measured sessions of the micro set / 25 programs exist (see the files): the first ("unpadded") and
+  a second ("PAD") session in which every column's environment strings and binary path were given the same total length
+  (the first run showed 20-25% differences between binaries on six micro programs; a stack-alignment cause was suspected
+  and excluded, see "Baseline verification").  The two sessions agree to 1% on every number used below; the PAD session
+  is the primary one (docs/bench-p9-micro.txt, docs/bench-p9-progs.txt), the first is kept as a repeat
+  (docs/bench-p9-*-unpadded.txt).
+
+---------------------------------------------------------------------------------------------------------------------
+PER-CRITERION SUMMARY
+---------------------------------------------------------------------------------------------------------------------
+ 1  correctness (section 9 gates, prototype)                    PASS   (details below; known pre-existing J4 failure t15_oracle::oracle_corpus listed)
+ 2  spectral_norm trace/J4 <= 0.70                              PASS   0.097 (268.6 vs 2756.8 Mcyc)   [repeat 0.097]
+ 3  matmul trace/J4 <= 0.95                                     PASS   0.800 (526.1 vs 658.0)          [repeat 0.809]
+ 4  set (b) geomean trace/J4 <= 0.90                            PASS   0.352 (licm_expr 0.232, array_rec 0.404, upval_acc 0.340, int_rec2 0.480)
+ 5a gate set a+b+c geomean <= 0.85; every gate program <= 1.05  PASS   geomean 0.231; worst gate program matmul 0.800
+ 5b every program of the 25 <= 1.05 x tier 1                    FAIL   sieve 1.134 (repeat 1.117); every other program <= 1.016
+ 5c set (d): program <= 1.05 x stable twin; head Traced         FAIL   type_entry 1.080 (twin 1989.0 vs 2147.6); type_late 1.417 (1791.3 vs 2537.7).
+                                                                       Head state PASS: inner heads end Traced, 0 (type_entry) / 1 (type_late) re-records
+ 6  informational (b' + 6 programs): geomean <= 1.15, each <= 1.30   FAIL   geomean 0.994 PASS; max float_poly 1.735, mandelbrot 1.806, sieve 1.592 (> 1.30)
+ 7  cost: record+compile <= 2% ; short scripts in band ; code <= 1.5 x tier 1   PASS  0.48% worst (spectral_norm); short-script geomean 0.991 (132 scripts; 2 scripts above 1.05, see below); code ratio worst 1.26 (queens)
+
+Sensitivity: with main@89963c6 (T15=on) as the baseline instead of the J4 column of the J5 binary, 2/3/4/5a/6 give
+0.097 / 0.806 / 0.352 / 0.232 / 0.994 and the same three informational programs above 1.30: the verdict does not depend on
+which J4 is used.
+
+---------------------------------------------------------------------------------------------------------------------
+BASELINE VERIFICATION (criterion "baseline protocol")
+---------------------------------------------------------------------------------------------------------------------
+(a) Machine code (docs/bench-p9-B-dump-identity.txt; the method of scripts/jit-dump-identity.sh on prebuilt binaries,
+    JIT=always, all 25 bench/programs, per-proto disassembly with movabs immediates masked):
+    * main@89963c6 vs 61680f8 (J5 base before P0y): tier 1 69 protos IDENTICAL, regions (T15=always) 121 protos IDENTICAL.
+    * main@89963c6 vs HEAD with TRACE=off: NOT identical.  Every proto that has a counted block differs (69/69 tier-1,
+      121/121 region protos), and ONLY by the intentional J5-P0y change (commit 86befc1, "exact instruction counts in tier 1 /
+      J4"): after removing addresses and branch targets, the only instruction lines present on one side only are (a) the
+      budget refund "mov edi,[r15]; add rdi,N; mov [r15],edi" that every failed CountSub now executes before leaving (G1), plus
+      "sub rdi,N" in the erroring-RETURN close (G3a), and (b) the 12-line exit tail "mov eax,T; mov rdx,r13; add rsp,T;
+      pop r15; pop r14; pop r13; pop r12; pop rbx; pop rbp; ret; movabs rsi,IMM; mov [r13+0x20],rsi" whose number of copies
+      changes (904 -> 928 in tier 1: the refund exits need their own stub).  Nothing else differs, but every branch target
+      after the first changed stub moves, i.e. the whole code layout shifts.
+      scripts/jit-dump-identity.sh itself (builds both, JITDUMP_FEATURES_HEAD=jit,trace TRACE=off) reports DIFFERENT for
+      all 25 programs against 89963c6 AND against 61680f8 (docs/bench-p9-A6-misc.txt), consistent with the above.
+    * main@89963c6 (jit) vs HEAD (jit, trace feature compiled out) tier-1 .text: scripts/jit-text-identity.sh says nothing
+      changes for jit-less builds (see correctness).
+(b) Timing, ref89 / j4 per program (docs/bench-p9-progs.txt, -micro.txt, in-session interleaved):
+    * 25 programs: ALL within +-5% (geomean 0.999); instructions:u equal to
+      0.5% (coroutines 0.9946, all others closer).
+    * 16 micro programs: ten within the band; SIX OUTSIDE: int_rec2 1.071, upval_acc 0.927, type_entry 0.829,
+      type_entry_stable 0.821, type_late 1.247, type_late_stable 0.803.  Explanation: instructions:u are identical to the
+      million between the two binaries on all six (e.g. type_late 15141 M vs 15141 M), so the cycle differences are pure
+      microarchitectural layout effects of the P0y code shift above; they are deterministic (min of 9 = every run), not
+      alignment of the stack/environment (the PAD session reproduces them), not heap alignment (an unrelated allocation
+      before the program changes nothing), and they follow the code: the 61680f8 binary (pre-P0y) reproduces the 89963c6
+      numbers (type_late 2541 vs 2537 Mcyc) while HEAD gives 2045 for the same program (type_late and its stable twin swap
+      places between the binaries: 2037/2536 vs 2539/2036).  The size of the layout effect is shown directly by the layout
+      probe below.  These six were not used to relax anything: all ratios are given against both baselines.
+(c) The J5 binary's J4 column reproduces the T13 table of docs/bench-t13-j4.txt: geomean over the 25 of (P9 J4 / T13 J4)
+    absolute cycles 0.999; J4/tier-1 geomean 0.825 in both.
+
+LAYOUT SENSITIVITY (finding; docs/bench-p9-layout-probe.txt, scripts/p9_layout_probe.sh)
+    type_late and type_late_stable with k = 0..4 extra hot loops (each leaving one 1.5 KB trace) prepended execute the
+    same instruction stream but take 1.80 G or 2.55 G cycles (+42%) depending only on where in the code arena the trace
+    lands (type_late: 2524 2548 1806 1810 1817; stable: 1793 1801 1898 2558 2565 Mcyc).  A trace loop top that is not
+    aligned (or a jcc-erratum crossing) is the likely cause (the type_late trace after the re-record is at 0x...e50, the
+    stable twin's at 0x...730; unverified).  The set-(d) rule "<= 1.05 x the stable twin" is therefore decided by placement
+    luck for type_late (1.417 here, it can be ~1.0 or ~1.42 for the same code); type_entry's 1.080 is NOT layout: it executes
+    two exits per entry (19.99 M exits vs 9.996 M for its twin; hot "other" exits 2 vs 1, the integer->float change of
+    `a` in the first iteration), about 15 cycles each, which is the F2a side-trace case.  The trace assembler does not
+    align loop heads; aligning them (32/64 B) is a candidate for the full build whatever the verdict.
+
+---------------------------------------------------------------------------------------------------------------------
+CRITERION 1: CORRECTNESS (section 9 gates for the prototype; all on HEAD 8154671 sources)
+---------------------------------------------------------------------------------------------------------------------
+ (1) cargo test -p lua-jit --features tr_mutants --no-fail-fast : 664 passed, 0 failed, 3 ignored (tr_asm e2e_dump_one,
+     e2e_one_config; tr_loop debug_seed); (the task expected ~665).  docs/bench-p9-A1-tests.txt
+ (2) --features tr_mutants,t15_oracle, binaries tr_identity tr_oracle tr_core tr_asm tr_hook tr_record_count
+     tr_identity_pre tr_mutants, once with TR_ASM_VB=mem and once =reg: both 83 passed, 0 failed, 2 ignored
+     (tr_asm 34, tr_core 16 (incl. twins_gc_stress: GC stress 1 and 2, GC_VERIFY, stackmove), tr_hook 16, tr_identity 5,
+     tr_identity_pre 2, tr_mutants 2, tr_oracle 5, tr_record_count 3).  fetch+insns identity: 0 mismatches
+     (tr_identity: mutant probe 18/18, budget sweep 94/94, trace modes 738 of 741 fully checked, 3 inconclusive = gen:6
+     which also is inconclusive with traces off; option variants 1722/1729; tr_oracle: option variants 1392/1392, exits
+     1392/1392, trace modes 1645/1652 checked with 7 inconclusive).
+     tr_mutants every-mutant runner: 60 registered, 49 caught, 0 NOT caught, 11 not injected yet (owners F8 4, F-memory 2,
+     F7a 3, F5 1, P7 abc_with_store 1) = exactly the expected set.  docs/bench-p9-A1-mutants.txt
+     KNOWN ISSUE (not a J5 failure): t15_oracle::oracle_corpus FAILS at HEAD and at 89963c6 alike (same panic site
+     t15_oracle.rs:1104 "oracle failures: --- gen:9 ... plan effects ..." on generated programs; confirmed by running it
+     in a scratch worktree at 89963c6 (233 s, FAILED) and at HEAD (FAILED)); logs docs/bench-p9-A6-misc.txt.
+ (3) Official suite 5.5 through lua-cli --features jit,trace (scripts/jit-official.sh; 32 files, all.lua/heavy.lua
+     excluded as in the script; tests/official-status.toml lists 31 reference=pass/ours=pass files, no status file touched):
+     JIT=on T15=off TRACE=always: 32/32 OK; JIT=on T15=off TRACE=on: 32/32 OK; JIT=always T15=off TRACE=always: 32/32 OK.
+     (The vendored suite runs in "soft" mode, ~1 s for all.)  docs/bench-p9-A3-official.txt
+ (4) jit-diff, JITDIFF_ENTERS=1, modes "off tr tron trstack trstorm tremu trrand", hook=none, seeds 1..2000 in chunks of
+     500: 0 diffs, 0 genfail, 0 timeouts in every chunk (31 slow-skips in total); NOTRACES/FEWTRACES not raised; trace
+     fraction (seeds that installed AND entered a trace) in `tr`: 410+392+393+394 = 1589 / 2000 = 79.5% (82/78/78/78%),
+     `tron` the same seeds (410/392/393/393).  With JITDIFF_HOOK=all (hook variants none/count/line/both) seeds 1..400,
+     same modes: 0 diffs, trace fraction 81-82% (hook variants) / 80%; docs/bench-p9-A4-*.txt
+ (5) GC stress: tr_core twins_gc_stress (stress 1 and 2, + GC_VERIFY) is in the tr_core run above and passed.  Official
+     gc.lua gengc.lua closure.lua db.lua through lua-cli with TRACE=always: RUSTYNAIL_GC_STRESS=1 all four OK;
+     RUSTYNAIL_GC_STRESS=2 gc.lua gengc.lua closure.lua OK (db.lua skipped, CLAUDE.md).  docs/bench-p9-A5-gcstress.txt
+ (6) scripts/jit-text-identity.sh against 3fcfe13: TEXT IDENTICAL (1014184 bytes), against 89963c6: TEXT IDENTICAL, and
+     --fast-copy: FAST COPY IDENTICAL (6275 instructions) (jit vs jit_trace).  jit-dump-identity.sh vs 89963c6: not
+     identical, fully explained above (P0y exit sequence only); machine code identical to 61680f8-era 89963c6.
+ (7) Lua 5.4 (RUSTFLAGS=--cfg rustynail_lua54, target-54): `cargo test -p lua-jit -p rustynail --features
+     lua-jit/jit,rustynail/jit` rc=0 (all pass) and `cargo test -p lua-jit --features trace` rc=0 (the tr_* test binaries
+     that need traces compile to 0 tests under 5.4 as designed - traces are refused - while t15_*, tr_hook (13), tr_ir,
+     tr_passes, tr_ra, tr_loop and the other tests run and pass).
+ NOT RUN: 9.8's ASan/Miri/60-minute fuzz campaigns (belong to F6 / P8 scripts, not to the P-gate's list of this task),
+ `trnosink`/`trnoopt`/`trverify` jit-diff modes beyond the seven requested, official suite with GC stress under
+ TRACE=on (only =always), 5.4 official suite with traces.
+
+---------------------------------------------------------------------------------------------------------------------
+CRITERIA 2-6: TABLES (primary session; ratios trace / J4 column of the J5 binary; scripts/p9_gate.py)
+---------------------------------------------------------------------------------------------------------------------
+=== baseline = J4 column of the J5 binary (the gate's definition)
+program             base Mcyc   tr Mcyc  tr/base  t1/base
+spectral_norm          2756.8     268.6    0.097    1.001  (a)
+matmul                  658.0     526.1    0.800    1.885  (a)
+licm_expr              2026.2     469.4    0.232    4.469  (b)
+array_rec              4502.8    1819.0    0.404    1.442  (b)
+upval_acc              5428.5    1846.0    0.340    0.988  (b)
+int_rec2               2551.3    1225.2    0.480    2.075  (b)
+inline_leaf            6364.0     663.1    0.104    1.001  (c)
+inline_2               6271.6     413.5    0.066    1.000  (c)
+int_sum                2039.4    1247.2    0.612    1.522  (b')
+float_poly             1815.4    3149.2    1.735    4.185  (b')
+float_loop             2910.9    2777.3    0.954    3.820  (b')
+dot                    2255.4    1712.5    0.759    2.511  (b')
+upval_inv              3833.8    2166.6    0.565    1.986  (b')
+loops_arith             800.3     694.0    0.867    2.602  info
+mandelbrot              573.4    1035.7    1.806    4.782  info
+fannkuch               1213.9    1254.7    1.034    1.396  info
+heapsort               1672.5    1470.5    0.879    1.269  info
+queens                 2562.6    2444.0    0.954    0.956  info
+sieve                  1679.0    2673.6    1.592    1.404  info
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.800 (<= 0.95) PASS
+crit 4 set (b) geomean 0.352 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.231 (<= 0.85) PASS; worst gate program matmul 0.800 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.994 (<= 1.15) PASS; worst mandelbrot 1.806 (<= 1.30) FAIL
+   informational programs above 1.05 x base: float_poly 1.735, mandelbrot 1.806, sieve 1.592
+
+=== sensitivity: baseline = main@89963c6 binary, T15=on
+program             base Mcyc   tr Mcyc  tr/base  t1/base
+spectral_norm          2758.8     268.6    0.097    1.000  (a)
+matmul                  656.4     526.1    0.802    1.889  (a)
+licm_expr              2028.2     469.4    0.231    4.465  (b)
+array_rec              4505.8    1819.0    0.404    1.441  (b)
+upval_acc              5032.6    1846.0    0.367    1.065  (b)
+int_rec2               2731.7    1225.2    0.449    1.938  (b)
+inline_leaf            6372.6     663.1    0.104    0.999  (c)
+inline_2               6254.6     413.5    0.066    1.003  (c)
+int_sum                2039.1    1247.2    0.612    1.523  (b')
+float_poly             1814.3    3149.2    1.736    4.187  (b')
+float_loop             2911.2    2777.3    0.954    3.819  (b')
+dot                    2252.2    1712.5    0.760    2.515  (b')
+upval_inv              3790.8    2166.6    0.572    2.008  (b')
+loops_arith             800.1     694.0    0.867    2.603  info
+mandelbrot              573.3    1035.7    1.807    4.783  info
+fannkuch               1208.7    1254.7    1.038    1.402  info
+heapsort               1688.2    1470.5    0.871    1.257  info
+queens                 2559.4    2444.0    0.955    0.958  info
+sieve                  1695.1    2673.6    1.577    1.391  info
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.802 (<= 0.95) PASS
+crit 4 set (b) geomean 0.352 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.232 (<= 0.85) PASS; worst gate program matmul 0.802 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.994 (<= 1.15) PASS; worst mandelbrot 1.807 (<= 1.30) FAIL
+   informational programs above 1.05 x base: float_poly 1.736, mandelbrot 1.807, sieve 1.577
+
+=== criterion 5b: every program of the 25 (bench/programs), tr / t1 (<= 1.05)
+  binary_trees     2765.8 /    2787.6 = 0.992
+  closures         2260.2 /    3238.4 = 0.698
+  coroutines       1928.6 /    1910.4 = 1.010
+  fannkuch         1254.7 /    1694.6 = 0.740
+  fasta            2175.2 /    2172.8 = 1.001
+  fib              2174.8 /    2173.8 = 1.000
+  gc_churn         3592.3 /    3594.3 = 0.999
+  heapsort         1470.5 /    2121.8 = 0.693
+  json             2512.3 /    2503.5 = 1.004
+  knucleotide      3644.7 /    3674.6 = 0.992
+  load_big          835.2 /     832.8 = 1.003
+  loops_arith       694.0 /    2082.8 = 0.333
+  mandelbrot       1035.7 /    2742.0 = 0.378
+  matmul            526.1 /    1240.0 = 0.424
+  metamethods      4370.1 /    4372.9 = 0.999
+  nbody            2557.1 /    2545.2 = 1.005
+  oop_methods      3394.9 /    3342.5 = 1.016
+  pcall_error      2699.8 /    2753.5 = 0.980
+  queens           2444.0 /    2450.9 = 0.997
+  sieve            2673.6 /    2357.6 = 1.134 <-- above 1.05
+  spectral_norm     268.6 /    2759.8 = 0.097
+  string_ops       1831.4 /    1828.1 = 1.002
+  table_array      2256.9 /    2254.9 = 1.001
+  table_hash       1382.4 /    1395.4 = 0.991
+  varargs          4198.7 /    4168.4 = 1.007
+crit 5b FAIL; above: ['sieve']
+
+=== criterion 5c: set (d), tr column of each program vs the tr column of its stable twin (<= 1.05)
+  type_entry     2147.6 / type_entry_stable    1989.0 = 1.080 FAIL
+  type_late      2537.7 / type_late_stable     1791.3 = 1.417 FAIL
+
+=== baseline verification: J5 binary J4 column vs main@89963c6 binary (T15=on), ref89 / j4, band +-5%
+  micro: outside the band: int_rec2 1.071, type_entry 0.829, type_entry_stable 0.821, type_late 1.247, type_late_stable 0.803, upval_acc 0.927
+  programs: outside the band: none
+
+=== all programs, instructions:u identity of ref89 vs j4 (max relative difference)
+  micro: worst float_poly 0.99999
+  programs: worst coroutines 0.99461
+
+---------------------------------------------------------------------------------------------------------------------
+CRITERION 5c: SET (d) (tr column vs tr column of the stable twin; VERBOSE=2, docs/bench-p9-codebytes.txt)
+---------------------------------------------------------------------------------------------------------------------
+ type_entry         2147.6 Mcyc  recorded 5 installed 1 rerecord 0, 9.996 M entries, 19.99 M exits (hot other 2), inner head Traced
+ type_entry_stable  1989.0       recorded 5 installed 1 rerecord 0, 9.996 M entries,  9.996 M exits (hot other 1)          ratio 1.080 FAIL
+ type_late          2537.7       recorded 6 installed 2 rerecord 1 (one hot type-guard exit), inner head Traced afterwards (the
+                                  outer loops go Black: Nyi(Forprep)); instructions 14661 M = twin's 14660 M
+ type_late_stable   1791.3       recorded 5 installed 1 rerecord 0                                                           ratio 1.417 FAIL
+ "Head ending Traced (not Black) after at most 3 re-records": PASS for both (0 and 1 re-record).  spectral_norm: 1 re-record.
+ The cycle ratio is the failing part: type_entry has one extra (the first-iteration int->float) exit per entry; type_late
+ is a code-placement effect (see LAYOUT SENSITIVITY): equal instructions, +42% cycles.
+
+---------------------------------------------------------------------------------------------------------------------
+CRITERION 6 and the programs above 1.05 x J4: VERBOSE ATTRIBUTION (trace / J4; entries / exits from the [trace] summary)
+---------------------------------------------------------------------------------------------------------------------
+ float_poly   1.735  (b')  199 k entries, 2 hot other-exits, 0 re-records; instructions 7230 M vs J4 6029 M but cycles 1.73x:
+              a LATENCY effect on the loop-carried chain.  The loop's back-edge is a 3-cycle of XMM registers resolved through
+              the memory slot 255 ("backedge: [255]<-X3 X3<-X0 X0<-X2 X2<-[255]", trace dump): a store-to-load round trip per
+              iteration on the acc chain, plus two write-only temporaries kept only for TR3 (P7 decisions).
+              NOT removed by F1 / F2a / F2b.  Fix would be an XMM scratch register in ra::sequentialise (small, inside RA).
+              UNATTRIBUTED -> criterion 6 FAIL for this program.
+ mandelbrot   1.806  (info)  2.25 M entries = one per pixel (the inner `while` of <= 50 iterations is the traced loop, its
+              enclosing `for x` aborts InnerLoop), 2.25 M exits, 0 re-records; instructions 2294 M vs J4 2562 M (fewer) but
+              cycles 1.81x.  Two causes: the same XMM back-edge cycle through slot 255 ("backedge: [255]<-X1 X1<-X0 X0<-[255]";
+              zr/zi swap) on the latency-bound loop, and an entry+exit per pixel (J4's region contains the nest).
+              The second cause is F2b (inner/outer nests, linking); the first is not an F1/F2a/F2b item.  Partly unattributed.
+ sieve        1.592  (info)  and 1.13 x tier 1: 9 traces installed, 8 re-records (hot type-guard exits 8), 64.7 M entries and 64.7 M
+              exits, i.e. every entry exits at once: the loop `for i=2,N do if flags[i] then c=c+1 end end` and the marking loop
+              have a data-dependent boolean branch / value type (flags[i] true vs false) that the root trace records one way
+              (inferred from the log, not dissected: 8 hot type-guard exits, 8 re-records); the fill loop `flags[i]=true` aborts Insert 6x.  Attributable: F2a (side traces instead of re-record,
+              exit counters) and F3 (NEWREF insertion).  Fails the 1.30 cap and criterion 5b regardless.
+ short_inner  1.635  (X3, not in the gate sets) 11.5 M entries and exits (inner while <= 20 iterations per entry) - F2b/F2a.
+ nbody        2.199  (one of the 25, not informational; 1.005 x tier 1) not traced: TableHash aborts - F1.
+ fannkuch     1.034, heapsort 0.879, queens 0.954, loops_arith 0.867, float_loop 0.954: within 1.05.
+
+---------------------------------------------------------------------------------------------------------------------
+CRITERION 7: COST
+---------------------------------------------------------------------------------------------------------------------
+ * Record+compile time: the P9 build carries an Instant-based counter around driver_start/driver_step/driver_abort
+   (scripts/p9_recns.patch, applied only to the build used for this measurement; "[trace] record+compile ns" in the VERBOSE
+   summary).  It was NOT instrumented before.  docs/bench-p9-recns.txt: fraction of wall time, min of 5 runs, 41 programs:
+   worst spectral_norm 0.48%, matmul 0.41%, heapsort 0.39%, fannkuch 0.25%, table_hash 0.24%; all others < 0.21%.  PASS (<= 2%).
+   (Recording one iteration in the hooked interpreter costs a little more than the step functions measure; the counter
+   does not see that part, but the instruction-count of such iterations is small - one iteration per recording.)
+ * Short-script suite: tests/vm (132 *.lua scripts incl. heavy_*, cycles dominated by start-up, 1.3-10 Mcyc each),
+   PAD session, 9 runs: geomean tr/t1 0.991, tr/J4 0.965 (docs/bench-p9-shortscripts.txt, scripts/p9_short.py).  Two scripts
+   exceed 1.05 x tier 1: tables_08_growth_and_rehash 1.141 (2.2 Mcyc total, +0.3 M cycles of recording attempts that abort)
+   and strings_04_pattern_start_filter 1.089 (9.5 Mcyc).  Suite geomean within the band: PASS; the two outliers are named.
+ * Code bytes of traces / tier-1 code bytes of the same program (all traces ever installed, flushed ones included, over the
+   tier-1 `code` of `T15=off TRACE=off`; docs/bench-p9-codebytes.txt): worst queens 1.26 (4 re-recorded traces), sieve 1.20,
+   loops_arith 0.52, fannkuch 0.43, spectral_norm 0.35; all gate programs 0.14-0.35 (spectral_norm 0.35).  PASS (<= 1.5).
+
+---------------------------------------------------------------------------------------------------------------------
+CRITERION 5b: ALL 25 PROGRAMS, tr / tier 1 and the comparison with the T13 table (scripts/p9_t13.py; Mcyc, min of 9)
+---------------------------------------------------------------------------------------------------------------------
+program        T13 t1   P9 t1  T13 J4   P9 j4 P9 89963c6 P9 trace  tr/j4  tr/t1 T13 J4/t1 P9 J4/t1
+binary_trees     2755    2788    2742    2765       2772     2766  1.000  0.992     0.995    0.992
+closures         3241    3238    3249    3248       3281     2260  0.696  0.698     1.003    1.003
+coroutines       1880    1910    1864    1912       1915     1929  1.009  1.010     0.992    1.001
+fannkuch         1695    1695    1204    1214       1209     1255  1.034  0.740     0.711    0.716
+fasta            2181    2173    2196    2185       2152     2175  0.996  1.001     1.007    1.006
+fib              2203    2174    2202    2179       2174     2175  0.998  1.000     0.999    1.002
+gc_churn         3738    3594    3745    3593       3566     3592  1.000  0.999     1.002    1.000
+heapsort         2125    2122    1696    1673       1688     1471  0.879  0.693     0.798    0.788
+json             2442    2504    2487    2527       2489     2512  0.994  1.004     1.019    1.010
+knucleotide      3698    3675    3661    3663       3637     3645  0.995  0.992     0.990    0.997
+load_big          820     833     822     832        814      835  1.004  1.003     1.002    0.999
+loops_arith      2082    2083     800     800        800      694  0.867  0.333     0.384    0.384
+mandelbrot       2751    2742     573     573        573     1036  1.806  0.378     0.208    0.209
+matmul           1240    1240     655     658        656      526  0.800  0.424     0.528    0.531
+metamethods      4393    4373    4391    4370       4386     4370  1.000  0.999     1.000    0.999
+nbody            2520    2545    1141    1163       1166     2557  2.199  1.005     0.453    0.457
+oop_methods      3384    3343    3412    3393       3375     3395  1.001  1.016     1.008    1.015
+pcall_error      2790    2754    2723    2691       2750     2700  1.003  0.980     0.976    0.977
+queens           2457    2451    2571    2563       2559     2444  0.954  0.997     1.046    1.046
+sieve            2339    2358    1691    1679       1695     2674  1.592  1.134     0.723    0.712
+spectral_norm    2743    2760    2765    2757       2759      269  0.097  0.097     1.008    0.999
+string_ops       1887    1828    1861    1832       1836     1831  1.000  1.002     0.987    1.002
+table_array      2213    2255    2216    2262       2217     2257  0.998  1.001     1.001    1.003
+table_hash       1408    1395    1423    1392       1407     1382  0.993  0.991     1.011    0.998
+varargs          4139    4168    4134    4161       4129     4199  1.009  1.007     0.999    0.998
+
+geomean over the 25: tr/j4 0.947  tr/t1 0.782  | J4/t1: T13 0.825, P9 0.825 | P9 j4 / T13 J4 (absolute cycles, other day) 0.999
+
+---------------------------------------------------------------------------------------------------------------------
+REPEAT SESSION (unpadded environments; docs/bench-p9-progs-unpadded.txt, -micro-unpadded.txt): same criteria
+---------------------------------------------------------------------------------------------------------------------
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.809 (<= 0.95) PASS
+crit 4 set (b) geomean 0.353 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.232 (<= 0.85) PASS; worst gate program matmul 0.809 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.994 (<= 1.15) PASS; worst mandelbrot 1.808 (<= 1.30) FAIL
+   informational programs above 1.05 x base: float_poly 1.735, mandelbrot 1.808, sieve 1.577
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.806 (<= 0.95) PASS
+crit 4 set (b) geomean 0.351 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.231 (<= 0.85) PASS; worst gate program matmul 0.806 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.992 (<= 1.15) PASS; worst mandelbrot 1.806 (<= 1.30) FAIL
+   informational programs above 1.05 x base: float_poly 1.735, mandelbrot 1.806, sieve 1.563
+  sieve            2641.5 /    2365.1 = 1.117 <-- above 1.05
+crit 5b FAIL; above: ['sieve']
+  type_entry     2149.6 / type_entry_stable    1988.9 = 1.081 FAIL
+  type_late      2540.0 / type_late_stable     1792.5 = 1.417 FAIL
+  micro: outside the band: int_rec2 1.079, type_entry 0.831, type_entry_stable 0.823, type_late 1.247, type_late_stable 0.803, upval_acc 0.927
+  programs: outside the band: none
+
+RAW TABLES: docs/bench-p9-micro.txt (16 micro programs), docs/bench-p9-progs.txt (25 programs), docs/bench-p9-shortscripts.txt; the *.json hold min and median of cycles and instructions per program and column.
+Scripts added: scripts/p9_gate.py p9_t13.py p9_short.py p9_dumpdiff.py p9_recns.py p9_recns.patch p9_layout_probe.sh; scripts/jit-dump-identity.sh gained JITDUMP_FEATURES_BASE/HEAD.
+
+
+=====================================================================================================================
+P9b GATE RESULTS (rerun of the J5 prototype gate on 7de3f4a = P9 + Q1 XMM cycle scratch + Q2 alignment / ineffective-trace rule)
+=====================================================================================================================
+VERDICT (rule of JIT_TRACE.md 1.6, unchanged): still NO-GO.  Passing: 1, 2, 3, 4, 5a, 5b (new), 7a/7b.  Failing: 5c (type_entry 1.090),
+6 (mandelbrot 1.805, sieve 1.412 > 1.30) and 7c (trace code bytes / tier-1 bytes: sieve 1.67, limit 1.5).  Compared with P9 the
+Q1 / Q2 fixes cured float_poly (1.735 -> 1.005), type_late (1.417 -> 1.001) and sieve vs tier 1 (1.134 -> 1.008); they did not touch
+mandelbrot or type_entry (the two expected remaining failures, F2b / F2a).  Two failures are NEW or unexpected relative to the
+brief: sieve still fails criterion 6 (1.412 x J4; it now mostly runs tier-1 code because its traces are flushed Ineffective / Rerec)
+and fails the code-size cap of criterion 7 (1.67 x tier 1, 12 traces installed for 3 distinct loops).  Nothing (threshold,
+program, method) was changed.
+
+Binary and method: lua-cli --features jit,trace, release, built at 7de3f4a (worktree <worktree>; no source change, docs and
+scripts only); ref89 = the same main@89963c6 --features jit binary as in P9 (/tmp/p9/bin/luaj4).  Columns, PAD (equal environment
+and path lengths), RUNS=9, min cycles:u, CPU 4, RUSTYNAIL_SEED=0, interleaved: exactly the P9 PAD session
+(scripts/bench-cycles.sh via the P9 bench.sh shape; PROGDIR=bench/jit-trace for the 16 micro programs, default for the 25).
+One session only (the P9 repeat session was not redone; P9's two sessions agreed to 1%).  Machine: Ryzen AI 7 350 (Zen 5),
+nothing else running during the timed sessions (correctness suites ran afterwards).  Raw data: docs/bench-p9b-*.txt / *.json.
+
+Q1/Q2 side effects visible in the numbers (all inside their limits, listed for honesty): upval_acc 0.340 -> 0.370, dot 0.759 -> 0.785,
+float_loop 0.954 -> 0.986, fannkuch 1.034 -> 1.065 (now above 1.05, informational, <= 1.30), int_rec2 0.480 -> 0.486.  The cause was
+not investigated (cycle-only changes on traces whose code was re-placed by the Q2 64-byte blocks / head at +16; layout, not instruction
+count, is the likely cause given the P9 layout probe).
+
+PER-CRITERION SUMMARY (P9b vs P9)
+ 1  correctness                                              PASS   (details below)
+ 2  spectral_norm trace/J4 <= 0.70                           PASS   0.097   (P9 0.097)
+ 3  matmul <= 0.95                                           PASS   0.796   (P9 0.800)
+ 4  set (b) geomean <= 0.90                                  PASS   0.360   (P9 0.352; licm_expr 0.232, array_rec 0.404, upval_acc 0.370, int_rec2 0.486)
+ 5a gate a+b+c geomean <= 0.85; each gate program <= 1.05    PASS   0.234 / worst matmul 0.796   (P9 0.231 / 0.800)
+ 5b every one of the 25 <= 1.05 x tier 1                     PASS   worst sieve 1.008 (P9 sieve 1.134; all others <= 1.007)
+ 5c set (d) <= 1.05 x stable twin, head Traced               FAIL   type_entry 1.090 (P9 1.080), type_late 1.001 (P9 1.417, now PASS).
+                                                                    Heads: type_entry Traced, 0 re-records; type_late Traced, 1 re-record
+ 6  informational geomean <= 1.15, each <= 1.30, >1.05 attributed   FAIL  geomean 0.946 (P9 0.994) PASS; mandelbrot 1.805 (F2b + per-pixel entry/exit),
+                                                                    sieve 1.412 (> 1.30, see below); fannkuch 1.065 (>1.05, <= 1.30, attributed F2a/F2b: 35.3 M entries = 35.3 M exits,
+                                                                    8 hot other-exits); float_poly 1.005 (P9 1.735) now PASS
+ 7  cost: record+compile <= 2%                               PASS   0.477% worst (spectral_norm; P9 0.48%)
+    short-script suite within the band                       PASS   132 scripts: geomean tr/t1 0.989 (P9 0.991), tr/J4 0.955; two above 1.05 x t1: tables_08_growth_and_rehash 1.137,
+                                                                    strings_04_pattern_start_filter 1.103 (the same two as P9: 1.141, 1.089)
+    trace code bytes <= 1.5 x tier-1 bytes per program       FAIL   sieve 1.67 (21464 B / 12838 B; P9 1.20), queens 1.38 (P9 1.26), loops_arith 0.55, fannkuch 0.46,
+                                                                    spectral_norm 0.37, all gate programs 0.13-0.37
+
+CRITERION 1: CORRECTNESS (all on 7de3f4a; logs docs/bench-p9b-A*.txt)
+ (1) cargo test -p lua-jit --features tr_mutants --no-fail-fast: 666 passed, 0 failed, 3 ignored (P9 664; +2 tests from Q1/Q2).
+ (2) --features tr_mutants,t15_oracle, binaries tr_identity tr_oracle tr_core tr_asm tr_hook tr_record_count tr_identity_pre (+ tr_mutants), TR_ASM_VB=mem and =reg:
+     84 passed, 0 failed, 2 ignored in each (P9 83).  Every-mutant runner (tr_mutants, run under `ulimit -v 16000000` instead of systemd-run as CLAUDE.md says):
+     62 registered, 51 caught, 0 NOT caught, 11 not injected yet (the same 11 owners as P9: F8 4, F-memory 2, F7a 3, F5 1, P7 abc_with_store 1; Q1 added the
+     mutant cycle_stale_xmm, Q2 ineffective_never, both caught).
+ (3) Official 5.5 suite through the jit,trace lua-cli (scripts/jit-official.sh, 32 files): JIT=on T15=off TRACE=always OK, TRACE=on OK, JIT=always TRACE=always OK.
+ (4) jit-diff, JITDIFF_ENTERS=1, modes off tr tron trstack trstorm tremu trrand, seeds 1..2000 in chunks of 500: 0 diffs, 0 genfail, 0 timeouts
+     (slow-skips 7+9+6+3 = 25); trace fraction in `tr`: 410+392+393+394 = 1589/2000 = 79.5% (identical to P9); hooks (JITDIFF_HOOK=all) 1..400: 0 diffs, 80-82%.
+     NEW (skipped in P9): modes off trnoopt trnosink trverify: seeds 1..1000, 0 diffs; HOOK=all 1..200, 0 diffs.
+ (5) GC stress: tr_core twins_gc_stress is inside (2).  Official gc.lua gengc.lua closure.lua db.lua through lua-cli with TRACE=always: stress 1 all OK, stress 2 gc/gengc/closure OK
+     (db.lua skipped per CLAUDE.md).  NEW: the same with TRACE=on: stress 1 all four OK, stress 2 gc/gengc/closure OK.
+ (6) scripts/jit-text-identity.sh 3fcfe13: TEXT IDENTICAL (1014184 bytes); against 89963c6: TEXT IDENTICAL; --fast-copy: IDENTICAL (6275 instructions).  So the
+     TRACE-off / jit-less interpreter machine code is unchanged by J5 including Q1/Q2.  scripts/jit-dump-identity.sh (jit,trace HEAD, TRACE=off) against 89963c6 and
+     61680f8 reports DIFFERENT for the 25 programs, as in P9: the intentional P0y exit-sequence change (and nothing in Q1/Q2: they only touch tr/ code).
+ (7) Lua 5.4 (target-54): cargo test -p lua-jit -p rustynail --features lua-jit/jit,rustynail/jit rc=0; cargo test -p lua-jit --features trace rc=0.
+ NOT RUN: ASan/Miri/60-min fuzz (F6 / P8 scripts), official suite with traces under 5.4, t15_oracle::oracle_corpus at 89963c6 (the scratch checkout of P9 is gone;
+ known pre-existing failure in P9: fails at 89963c6 and HEAD alike; this run's (2) does not include that test).
+
+ATTRIBUTION OF THE REMAINING FAILURES (VERBOSE=2 profile, docs/bench-p9b-verbose.txt, docs/bench-p9b-codebytes.txt)
+ mandelbrot 1.805 (info): 2.25 M entries and exits (one per pixel; enclosing `for x` aborts InnerLoop), 0 re-records; the XMM cycle is gone
+     (Q1) and the ratio did not move (1.806 -> 1.805), so the whole excess is the per-pixel trace entry/exit: F2b (nests / linking).
+ type_entry 1.090 (5c): 9.996 M entries, 19.99 M exits (twin 9.996 M exits): the first-iteration int->float change of `a` exits once
+     per entry: F2a (side trace). Q2 did not claim to fix it.
+ sieve 1.412 (info) and 1.67 code bytes: tr/t1 is 1.008 so the program effectively runs tier 1 (J4 is 0.71 x tier 1).  19 recorded, 12 installed,
+     12 flushed (4 `Ineffective` identical 1597 B traces for pc 42, 8 `Rerec` 1873 B traces for pcs 34/50, entries 16-22 each), 6 `Insert` aborts of
+     the fill loop (pc 22, blacklisted), 1058 entries total.  The code-byte excess is the same loops being recorded and installed again after
+     every flush (an `Ineffective` head is re-recorded 4 times before the blacklist).  Attributable to F2a (side traces instead of re-record for
+     the data-dependent `flags[i]` branch), F3 (NEWREF / Insert) -- but the repeated re-install of an identical ineffective trace (no memory of a
+     flushed ineffective head except the counter) is a prototype behaviour that no F-task is named for; I list it as UNATTRIBUTED for the
+     code-size part of criterion 7.
+ fannkuch 1.065 (info): 35.3 M entries = exits (inner loops), hot other exits 8: F2a / F2b.
+ Baseline check: ref89 / J4 over the 25 programs: all within +-5% except load_big 1.066 (the ref89 column read 868 Mcyc vs 814 for J4, tier 1 and
+     trace and 820 in T13: a noise/layout outlier of the ref89 binary; instructions equal).  Micro: the same six programs outside the band as in P9
+     (int_rec2 1.084, upval_acc 0.928, type_entry 0.833, type_entry_stable 0.821, type_late 1.247, type_late_stable 0.804; layout of the P0y shift).
+     Verdicts against the 89963c6 baseline (sensitivity table in bench-p9b-gate.txt) are the same.
+ Layout probe (scripts/p9_layout_probe.sh, k = 0..4 extra traces in front, Mcyc): type_late 1812 1799 1804 1810 1815; type_late_stable 1794 1796 1826 1810 1816
+     (P9: 2524 2548 1806 1810 1817 / 1793 1801 1898 2558 2565): the +-42% placement dependence is gone (docs/bench-p9b-layout-probe.txt).
+
+---------------------------------------------------------------------------------------------------------------------
+TABLES (generated from docs/bench-p9b-micro.json and docs/bench-p9b-progs.json, with the P9 numbers alongside)
+---------------------------------------------------------------------------------------------------------------------
+Table 1: criteria 2-6, trace / J4 (J4 = J5 binary, T15=on TRACE=off; Mcyc = min of 9 cycles:u)
+program         set   J4 Mcyc  tr Mcyc  tr/J4 P9b   tr/J4 P9   limit  verdict(P9b)
+spectral_norm   a       2772.3    269.2     0.097      0.097    0.70   PASS
+matmul          a        652.5    519.6     0.796      0.800    0.95   PASS
+licm_expr       b       2025.1    470.2     0.232      0.232    1.05   PASS
+array_rec       b       4501.4   1818.9     0.404      0.404    1.05   PASS
+upval_acc       b       5428.6   2010.2     0.370      0.340    1.05   PASS
+int_rec2        b       2518.6   1224.2     0.486      0.480    1.05   PASS
+inline_leaf     c       6367.2    663.2     0.104      0.104    1.05   PASS
+inline_2        c       6268.9    409.4     0.065      0.066    1.05   PASS
+int_sum         b'      2039.3   1246.5     0.611      0.612    1.30   PASS
+float_poly      b'      1815.6   1824.0     1.005      1.735    1.30   PASS
+float_loop      b'      2908.3   2867.4     0.986      0.954    1.30   PASS
+dot             b'      2246.4   1763.8     0.785      0.759    1.30   PASS
+upval_inv       b'      3835.9   2175.3     0.567      0.565    1.30   PASS
+loops_arith     info     800.3    697.0     0.871      0.867    1.30   PASS
+mandelbrot      info     573.6   1035.4     1.805      1.806    1.30   FAIL
+fannkuch        info    1216.2   1295.6     1.065      1.034    1.30   PASS (>1.05, attributed)
+heapsort        info    1673.9   1479.8     0.884      0.879    1.30   PASS
+queens          info    2547.5   2439.8     0.958      0.954    1.30   PASS
+sieve           info    1693.2   2391.6     1.412      1.592    1.30   FAIL
+
+geomeans trace/J4:               P9b     P9    limit
+  crit 4 set (b)               0.360   0.352   0.90
+  crit 5a gate a+b+c           0.234   0.231   0.85
+  crit 6  b' + 6 informational 0.946   0.994   1.15
+
+Table 2: criterion 5b, every program of the 25, tr / tier 1 (limit 1.05)
+program         tr Mcyc  t1 Mcyc  tr/t1 P9b  tr/t1 P9
+binary_trees      2769.8   2770.1     1.000     0.992
+closures          2242.3   3203.1     0.700     0.698
+coroutines        1904.2   1900.1     1.002     1.010
+fannkuch          1295.6   1696.9     0.763     0.740
+fasta             2172.2   2177.1     0.998     1.001
+fib               2195.9   2196.7     1.000     1.000
+gc_churn          3745.8   3778.1     0.991     0.999
+heapsort          1479.8   2122.6     0.697     0.693
+json              2477.3   2486.7     0.996     1.004
+knucleotide       3585.8   3685.6     0.973     0.992
+load_big           814.2    812.7     1.002     1.003
+loops_arith        697.0   2082.9     0.335     0.333
+mandelbrot        1035.4   2742.7     0.378     0.378
+matmul             519.6   1241.4     0.419     0.424
+metamethods       4380.5   4384.2     0.999     0.999
+nbody             2530.1   2517.7     1.005     1.005
+oop_methods       3399.4   3381.7     1.005     1.016
+pcall_error       2762.0   2838.4     0.973     0.980
+queens            2439.8   2447.9     0.997     0.997
+sieve             2391.6   2373.3     1.008     1.134
+spectral_norm      269.2   2770.4     0.097     0.097
+string_ops        1845.0   1831.4     1.007     1.002
+table_array       2204.4   2200.1     1.002     1.001
+table_hash        1378.2   1385.6     0.995     0.991
+varargs           4069.7   4084.2     0.996     1.007
+geomean tr/t1 over the 25: P9b 0.777  P9 0.782; worst 1.008
+geomean tr/J4 over the 25: P9b 0.944  P9 0.947
+
+Table 3: criterion 5c, set (d), tr column vs tr column of the stable twin (limit 1.05, head Traced)
+  type_entry   2188.3 / type_entry_stable  2007.2 = 1.090   (P9: 2147.6 / 1989.0 = 1.080)
+  type_late    1794.1 / type_late_stable   1791.6 = 1.001   (P9: 2537.7 / 1791.3 = 1.417)
+
+scripts/p9_gate.py output (with the 89963c6 sensitivity baseline and the baseline verification):
+=== baseline = J4 column of the J5 binary (the gate's definition)
+program             base Mcyc   tr Mcyc  tr/base  t1/base
+spectral_norm          2772.3     269.2    0.097    0.999  (a)
+matmul                  652.5     519.6    0.796    1.903  (a)
+licm_expr              2025.1     470.2    0.232    4.465  (b)
+array_rec              4501.4    1818.9    0.404    1.437  (b)
+upval_acc              5428.6    2010.2    0.370    0.988  (b)
+int_rec2               2518.6    1224.2    0.486    2.098  (b)
+inline_leaf            6367.2     663.2    0.104    1.000  (c)
+inline_2               6268.9     409.4    0.065    1.001  (c)
+int_sum                2039.3    1246.5    0.611    1.522  (b')
+float_poly             1815.6    1824.0    1.005    4.181  (b')
+float_loop             2908.3    2867.4    0.986    3.823  (b')
+dot                    2246.4    1763.8    0.785    2.526  (b')
+upval_inv              3835.9    2175.3    0.567    1.984  (b')
+loops_arith             800.3     697.0    0.871    2.603  info
+mandelbrot              573.6    1035.4    1.805    4.782  info
+fannkuch               1216.2    1295.6    1.065    1.395  info
+heapsort               1673.9    1479.8    0.884    1.268  info
+queens                 2547.5    2439.8    0.958    0.961  info
+sieve                  1693.2    2391.6    1.412    1.402  info
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.796 (<= 0.95) PASS
+crit 4 set (b) geomean 0.360 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.234 (<= 0.85) PASS; worst gate program matmul 0.796 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.946 (<= 1.15) PASS; worst mandelbrot 1.805 (<= 1.30) FAIL
+   informational programs above 1.05 x base: mandelbrot 1.805, fannkuch 1.065, sieve 1.412
+
+=== sensitivity: baseline = main@89963c6 binary, T15=on
+program             base Mcyc   tr Mcyc  tr/base  t1/base
+spectral_norm          2769.3     269.2    0.097    1.000  (a)
+matmul                  649.4     519.6    0.800    1.912  (a)
+licm_expr              2071.7     470.2    0.227    4.364  (b)
+array_rec              4499.8    1818.9    0.404    1.438  (b)
+upval_acc              5035.1    2010.2    0.399    1.066  (b)
+int_rec2               2730.9    1224.2    0.448    1.935  (b)
+inline_leaf            6371.3     663.2    0.104    0.999  (c)
+inline_2               6263.7     409.4    0.065    1.002  (c)
+int_sum                2039.4    1246.5    0.611    1.522  (b')
+float_poly             1815.1    1824.0    1.005    4.182  (b')
+float_loop             2921.7    2867.4    0.981    3.805  (b')
+dot                    2296.3    1763.8    0.768    2.471  (b')
+upval_inv              3794.1    2175.3    0.573    2.006  (b')
+loops_arith             800.3     697.0    0.871    2.603  info
+mandelbrot              573.4    1035.4    1.806    4.784  info
+fannkuch               1205.3    1295.6    1.075    1.408  info
+heapsort               1689.8    1479.8    0.876    1.256  info
+queens                 2550.2    2439.8    0.957    0.960  info
+sieve                  1679.8    2391.6    1.424    1.413  info
+crit 2 spectral_norm 0.097 (<= 0.70) PASS
+crit 3 matmul        0.800 (<= 0.95) PASS
+crit 4 set (b) geomean 0.358 (<= 0.90) PASS
+crit 5a gate set a+b+c geomean 0.233 (<= 0.85) PASS; worst gate program matmul 0.800 (<= 1.05) PASS
+crit 6 informational (b' + 6) geomean 0.945 (<= 1.15) PASS; worst mandelbrot 1.806 (<= 1.30) FAIL
+   informational programs above 1.05 x base: mandelbrot 1.806, fannkuch 1.075, sieve 1.424
+
+=== criterion 5b: every program of the 25 (bench/programs), tr / t1 (<= 1.05)
+  binary_trees     2769.8 /    2770.1 = 1.000
+  closures         2242.3 /    3203.1 = 0.700
+  coroutines       1904.2 /    1900.1 = 1.002
+  fannkuch         1295.6 /    1696.9 = 0.763
+  fasta            2172.2 /    2177.1 = 0.998
+  fib              2195.9 /    2196.7 = 1.000
+  gc_churn         3745.8 /    3778.1 = 0.991
+  heapsort         1479.8 /    2122.6 = 0.697
+  json             2477.3 /    2486.7 = 0.996
+  knucleotide      3585.8 /    3685.6 = 0.973
+  load_big          814.2 /     812.7 = 1.002
+  loops_arith       697.0 /    2082.9 = 0.335
+  mandelbrot       1035.4 /    2742.7 = 0.378
+  matmul            519.6 /    1241.4 = 0.419
+  metamethods      4380.5 /    4384.2 = 0.999
+  nbody            2530.1 /    2517.7 = 1.005
+  oop_methods      3399.4 /    3381.7 = 1.005
+  pcall_error      2762.0 /    2838.4 = 0.973
+  queens           2439.8 /    2447.9 = 0.997
+  sieve            2391.6 /    2373.3 = 1.008
+  spectral_norm     269.2 /    2770.4 = 0.097
+  string_ops       1845.0 /    1831.4 = 1.007
+  table_array      2204.4 /    2200.1 = 1.002
+  table_hash       1378.2 /    1385.6 = 0.995
+  varargs          4069.7 /    4084.2 = 0.996
+crit 5b PASS; above: []
+
+=== criterion 5c: set (d), tr column of each program vs the tr column of its stable twin (<= 1.05)
+  type_entry     2188.3 / type_entry_stable    2007.2 = 1.090 FAIL
+  type_late      1794.1 / type_late_stable     1791.6 = 1.001 PASS
+
+=== baseline verification: J5 binary J4 column vs main@89963c6 binary (T15=on), ref89 / j4, band +-5%
+  micro: outside the band: int_rec2 1.084, type_entry 0.833, type_entry_stable 0.821, type_late 1.247, type_late_stable 0.804, upval_acc 0.928
+  programs: outside the band: load_big 1.066
+
+=== all programs, instructions:u identity of ref89 vs j4 (max relative difference)
+  micro: worst float_poly 0.99999
+  programs: worst coroutines 0.99461
+
+scripts/p9_t13.py output (25 programs, T13 comparison):
+program        T13 t1   P9 t1  T13 J4   P9 j4 P9 89963c6 P9 trace  tr/j4  tr/t1 T13 J4/t1 P9 J4/t1
+binary_trees     2755    2770    2742    2786       2774     2770  0.994  1.000     0.995    1.006
+closures         3241    3203    3249    3200       3228     2242  0.701  0.700     1.003    0.999
+coroutines       1880    1900    1864    1896       1879     1904  1.004  1.002     0.992    0.998
+fannkuch         1695    1697    1204    1216       1205     1296  1.065  0.763     0.711    0.717
+fasta            2181    2177    2196    2172       2167     2172  1.000  0.998     1.007    0.998
+fib              2203    2197    2202    2198       2201     2196  0.999  1.000     0.999    1.001
+gc_churn         3738    3778    3745    3749       3767     3746  0.999  0.991     1.002    0.992
+heapsort         2125    2123    1696    1674       1690     1480  0.884  0.697     0.798    0.789
+json             2442    2487    2487    2514       2481     2477  0.985  0.996     1.019    1.011
+knucleotide      3698    3686    3661    3562       3673     3586  1.007  0.973     0.990    0.966
+load_big          820     813     822     814        868      814  1.001  1.002     1.002    1.001
+loops_arith      2082    2083     800     800        800      697  0.871  0.335     0.384    0.384
+mandelbrot       2751    2743     573     574        573     1035  1.805  0.378     0.208    0.209
+matmul           1240    1241     655     652        649      520  0.796  0.419     0.528    0.526
+metamethods      4393    4384    4391    4371       4383     4381  1.002  0.999     1.000    0.997
+nbody            2520    2518    1141    1163       1168     2530  2.175  1.005     0.453    0.462
+oop_methods      3384    3382    3412    3390       3366     3399  1.003  1.005     1.008    1.002
+pcall_error      2790    2838    2723    2724       2717     2762  1.014  0.973     0.976    0.960
+queens           2457    2448    2571    2548       2550     2440  0.958  0.997     1.046    1.041
+sieve            2339    2373    1691    1693       1680     2392  1.412  1.008     0.723    0.713
+spectral_norm    2743    2770    2765    2772       2769      269  0.097  0.097     1.008    1.001
+string_ops       1887    1831    1861    1848       1840     1845  0.999  1.007     0.987    1.009
+table_array      2213    2200    2216    2208       2215     2204  0.998  1.002     1.001    1.004
+table_hash       1408    1386    1423    1393       1411     1378  0.989  0.995     1.011    1.005
+varargs          4139    4084    4134    4088       4127     4070  0.995  0.996     0.999    1.001
+
+geomean over the 25: tr/j4 0.944  tr/t1 0.777  | J4/t1: T13 0.825, P9 0.823 | P9 j4 / T13 J4 (absolute cycles, other day) 0.997
+
+Short scripts (tests/vm, 132 scripts, scripts/p9_short.py):
+n 132 geomean tr/t1 0.9894 max tables_08_growth_and_rehash 1.137 min for_09_nested_and_large 0.703
+geomean tr/j4 0.9551 max tables_08_growth_and_rehash 1.090
+tr/t1 above 1.05: [('tables_08_growth_and_rehash', 1.137, 2.2), ('strings_04_pattern_start_filter', 1.103, 9.4)]
+tr/j4 above 1.05: [('tables_08_growth_and_rehash', 1.09, 2.3), ('strings_04_pattern_start_filter', 1.06, 9.8)]
+
+Criterion 7 record+compile: docs/bench-p9b-recns.txt (build = HEAD + scripts/p9_recns.patch, not in the tree); code bytes: docs/bench-p9b-codebytes.txt (scripts/p9_vsum.py over docs/bench-p9b-verbose.txt).
+Scripts added: scripts/p9_vsum.py (the code-bytes / abort summary used in P9, now kept).

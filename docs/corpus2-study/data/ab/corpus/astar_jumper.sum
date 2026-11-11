@@ -1,0 +1,69 @@
+== astar_jumper (rc 0)
+[trace] recorded 18 installed 9 entered 2779107 flushes 9 rerecord 0 blacklisted 20 refused 128 deferred 0 ineffective 0 probes 157 (fn-short 29 start-refused 128)
+[trace] aborted Depth: 1
+[trace] aborted FnShort: 29
+[trace] aborted Recursion: 4
+[trace] aborted StartRefused: 128
+[trace] aborted TooLong: 2
+[trace] aborted Vararg: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 4 phis 29 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 107 installed 58 failed 99 preludes 0
+[trace] links: nest roots 1 frame links 0 stitches 2
+[trace] exits 6286297 (live traces 0)
+aborts (count reason op depth head):
+     15 SideShort              CALL      d1 side  [policy]
+      8 SideShort              FORLOOP   d0 side  [policy]
+      8 IntMiss                GETTABLE  d1 side
+      4 FnShort                RETURN1   d0 root L117 'function Grid:isWalkableAt(x, y, walkable)'  [policy]
+      4 FnShort                RETURN0   d0 root L158 'local function computeCost(node, neighbour, finder'  [policy]
+      4 FnShort                RETURN0   d0 root L165 'local function updateVertex(finder, openList, node'  [policy]
+      4 FnShort                RETURN0   d0 root L22 'local function percolate_up(heap, index)'  [policy]
+      4 TableHash              SETTABLE  d0 side
+      4 Depth                  LT        d4 side
+      4 FnShort                TAILCALL  d0 root L98 'function Heuristics.DIAGONAL(nodeA, nodeB)'  [policy]
+      4 FnShort                RETURN1   d0 root L88 'function Heuristics.MANHATTAN(nodeA, nodeB)'  [policy]
+      3 LeaveFrame             RETURN1   d0 side
+      3 FnShort                RETURN1   d0 root L52 'function heap:push(item)'  [policy]
+      3 SideShort              RETURN0   d0 side  [policy]
+      2 SideUntraced           FORLOOP   d0 side  [policy]
+      2 Vararg                 TAILCALL  d1 root L109 'function Grid:new(map)'
+      2 Recursion              CALL      d2 root L52 'function heap:push(item)'
+      2 Recursion              CALL      d2 root L60 'function heap:pop()'
+      2 TooLong                GETFIELD  d3 root L176 'local function astar_search(finder, startNode, end'
+      2 FnShort                RETURN1   d0 root L281 'local function rnd(n) seed = (seed * 16807) % 2147'  [policy]
+      2 LeaveFrame             RETURN    d0 side
+      1 Depth                  LT        d4 root L176 'local function astar_search(finder, startNode, end'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  646.8 L21 pc0 Lt 296705 2180
+  293.5 L176 pc29 Eq 181446 1618
+  65.4 L9 pc6 Return1 39475 1657
+  22.4 L0 pc2 Move 98 228506
+  0.5 L176 pc39 Loadi 137 3701
+  0.4 L0 pc0 Move 75 5911
+  0.4 L98 pc0 Getupval 202 2116
+  0.3 L88 pc0 Getupval 202 1716
+  0.2 L0 pc0 Move 53 4630
+  0.2 L32 pc45 Call 15 12737
+  0.2 L176 pc63 Forloop 178 932
+  0.2 L109 pc35 Settable 180 909
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    1373746 Lt         -              black=false gk=32
+    1260260 Call       SideShort      black=true gk=32
+    1220556 Getfield   -              black=false gk=10
+     804345 Getfield   -              black=false gk=14
+     427409 Eq         -              black=false gk=32
+     246740 Return0    -              black=true gk=32
+     208202 Forloop    -              black=false gk=48
+     170792 Setfield   -              black=false gk=42
+     130891 Forloop    MaxSide        black=true gk=48
+     105870 Lt         SideShort      black=true gk=32
+      85263 Getfield   MaxSide        black=true gk=30
+      55282 Lt         MaxSide        black=true gk=32
+      48610 Return1    MaxSide        black=true gk=32
+      44190 Forloop    -              black=false gk=32
+      27174 Getfield   MaxSide        black=true gk=14
+      23946 Gettable   MaxSide        black=true gk=32
+      13794 Forloop    MaxSide        black=true gk=32
+      12348 Gettable   MaxSide        black=true gk=16
+      12052 Gettable   -              black=true gk=32
+       6206 Gettable   -              black=false gk=16

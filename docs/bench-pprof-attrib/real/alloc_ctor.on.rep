@@ -1,0 +1,55 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 367  of event 'cycles:u'
+# Event count (approx.): 336755355
+#
+# Overhead  Shared Object         Symbol                                                                                                                              
+# ........  ....................  ....................................................................................................................................
+#
+    24.71%  rn-cli               [.] rn_jit::tr::asm::jit_tr_alloc
+    14.76%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+    11.22%  rn-cli               [.] <rn_core::table::TableRef>::len
+     8.70%  rn-cli               [.] rn_core::table::resize
+     8.56%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     5.02%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     4.43%  rn-cli               [.] <rn_core::state::State>::gc_step
+     2.66%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     2.37%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     1.85%  rn-cli               [.] rn_core::table::mainposition
+     1.33%  rn-cli               [.] rn_core::jit_helpers::jit_set
+     1.18%  rn-cli               [.] <rn_core::state::State>::finish_set
+     1.18%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     1.15%  rn-cli               [.] rn_core::jit_helpers::jit_newtable
+     0.89%  rn-cli               [.] <rn_core::state::State>::with_roots::<rn_core::gc::StepOutcome, <rn_core::state::State>::gc_step55::{closure#1}>::{closure#0}
+     0.89%  [JIT] tid 2376568     [.] 0x00007f1cb7b01c40
+     0.89%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.88%  [JIT] tid 2376568     [.] 0x00007f1cb7b01b5c
+     0.59%  rn-cli               [.] rn_core::state::shrink_stack
+     0.59%  rn-cli               [.] rn_core::jit_helpers::jit_setlist
+     0.58%  [JIT] tid 2376568     [.] 0x00007f1cb7b01bae
+     0.57%  rn-cli               [.] <rn_core::table::TableRef>::psetshortstr_after
+     0.55%  [JIT] tid 2376568     [.] 0x00007f1cb7b01d3b
+     0.34%  rn-cli               [.] rn_core::table::insertkey
+     0.33%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.30%  [JIT] tid 2376568     [.] 0x00007f1cb7b01b8c
+     0.30%  [JIT] tid 2376568     [.] lua_proto@0x7f1cb7f2f7a0
+     0.30%  [JIT] tid 2376568     [.] 0x00007f1cb7b01bb6
+     0.30%  [JIT] tid 2376568     [.] 0x00007f1cb7b01baa
+     0.30%  [JIT] tid 2376568     [.] 0x00007f1cb7b01b97
+     0.29%  [JIT] tid 2376568     [.] 0x00007f1cb7b01c75
+     0.29%  rn-cli               [.] <rn_core::heap::Heap>::finishgencycle
+     0.29%  [JIT] tid 2376568     [.] 0x00007f1cb7b01a99
+     0.29%  [JIT] tid 2376568     [.] 0x00007f1cb7b01c31
+     0.28%  [JIT] tid 2376568     [.] 0x00007f1cb7b01c29
+     0.23%  [JIT] tid 2376568     [.] 0x00007f1cb7b01c4a
+     0.22%  rn-cli               [.] rn_jit::tr::opt_loop::transform
+     0.10%  rn-cli               [.] rn_jit::x86::emit
+     0.06%  rn-cli               [.] rn_core::vm_unsafe::mm_newindex
+
+
+#
+# (Tip: To show context switches in perf report sample context add --switch-events to perf record.)
+#

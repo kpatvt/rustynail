@@ -1,0 +1,24 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program         base Mcyc(min)      w30 Mcyc    ratio      w60 Mcyc    ratio      w15 Mcyc    ratio
+bounce                    86.8          85.2   0.982~         278.4   3.208          274.7   3.166 
+cd                       283.9         287.3   1.012~         287.1   1.011~         283.0   0.997~
+deltablue                130.9         127.5   0.974~         127.2   0.972~         128.6   0.982~
+havlak                   183.4         182.4   0.995~         181.9   0.992~         183.0   0.998~
+json                     205.9         211.1   1.025~         209.9   1.019~         209.7   1.019~
+list                     146.2         145.5   0.995~         145.0   0.992~         145.1   0.993~
+mandelbrot               278.7         277.1   0.994~         277.1   0.994~         277.0   0.994~
+nbody                    152.3         152.5   1.002~         155.4   1.020~         155.1   1.018~
+permute                   69.5          67.9   0.977~          67.8   0.976~          67.4   0.970~
+queens                   155.2         164.7   1.061          153.6   0.990~         165.2   1.065 
+richards                 113.5          83.3   0.733          146.7   1.292           97.2   0.856 
+sieve                    153.2         151.2   0.987~         151.5   0.989~         150.7   0.984~
+storage                  169.3         168.2   0.994~         194.5   1.149          181.2   1.070 
+towers                   130.5         129.4   0.992~         129.3   0.991~         128.7   0.986~
+geomean w30: all(14) cycles min 0.977 median 0.974 instr 0.979; numeric cycles min 0.994 median 0.996 instr 1.015
+geomean w60: all(14) cycles min 1.114 median 1.109 instr 1.133; numeric cycles min 1.001 median 0.992 instr 1.015
+geomean w15: all(14) cycles min 1.079 median 1.077 instr 1.088; numeric cycles min 0.998 median 0.994 instr 1.015
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline; X = differs from <prog>.expected

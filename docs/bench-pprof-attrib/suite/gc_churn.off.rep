@@ -1,0 +1,67 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cycles:u'
+# Event count (approx.): 3394577239
+#
+# Overhead  Shared Object         Symbol                                                                         
+# ........  ....................  ...............................................................................
+#
+    15.19%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+    14.57%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     9.90%  rn-cli               [.] <rn_core::heap::Heap>::sweepstep
+     5.79%  rn-cli               [.] <rn_core::heap::Heap>::atomic2gen
+     5.50%  rn-cli               [.] <rn_core::heap::Heap>::reallymark
+     4.50%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     4.04%  rn-cli               [.] rn_core::table::resize
+     3.61%  rn-cli               [.] <rn_core::state::State>::gc_step
+     3.39%  rn-cli               [.] rn_core::number::tostring_int
+     3.20%  rn-cli               [.] rn_core::table::newkey
+     3.08%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     2.75%  rn-cli               [.] <rn_core::table::TableRef>::finish_set
+     2.56%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     2.48%  rn-cli               [.] rn_core::vm_unsafe::push_closure
+     1.97%  rn-cli               [.] rn_std::lib_base::base_tostring
+     1.71%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     1.24%  libc.so.6             [.] 0x00000000001b7afc
+     1.23%  rn-cli               [.] <rn_core::heap::Heap>::singlestep
+     1.04%  libc.so.6             [.] 0x00000000001ae4a5
+     1.00%  libc.so.6             [.] 0x00000000001b7af9
+     0.84%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::realloc
+     0.73%  rn-cli               [.] rn_core::table::mainposition
+     0.73%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.69%  rn-cli               [.] <rn_core::state::State>::tolstring
+     0.69%  libc.so.6             [.] 0x00000000001b7ac4
+     0.69%  libc.so.6             [.] 0x00000000001b7ac0
+     0.67%  libc.so.6             [.] 0x00000000001b7b44
+     0.63%  rn-cli               [.] <rn_core::state::State>::finish_set
+     0.54%  rn-cli               [.] <rn_core::state::State>::close
+     0.47%  rn-cli               [.] rn_core::gc::objsize
+     0.42%  rn-cli               [.] rn_core::vm_unsafe::mm_newindex
+     0.41%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.39%  rn-cli               [.] rn_core::table::insertkey
+     0.34%  rn-cli               [.] <rn_core::state::State>::call_meta
+     0.32%  libc.so.6             [.] 0x00000000001b8340
+     0.29%  rn-cli               [.] rn_core::vm_unsafe::finish_set_op
+     0.28%  rn-cli               [.] <rn_core::state::State>::get_metafield
+     0.23%  libc.so.6             [.] 0x00000000001b7b33
+     0.20%  libc.so.6             [.] 0x00000000001ae49e
+     0.18%  libc.so.6             [.] 0x00000000001ae484
+     0.17%  libc.so.6             [.] 0x00000000001ae480
+     0.17%  libc.so.6             [.] 0x00000000001b8344
+     0.15%  libc.so.6             [.] 0x00000000001ae4ab
+     0.12%  libc.so.6             [.] 0x00000000001b7b54
+     0.11%  rn-cli               [.] rn_core::table::getgeneric
+     0.11%  rn-cli               [.] <rn_core::heap::Heap>::traverseephemeron
+     0.09%  libc.so.6             [.] 0x00000000001ae4a9
+     0.08%  libc.so.6             [.] 0x00000000001b7b4e
+     0.06%  libc.so.6             [.] 0x00000000001b831e
+     0.06%  rn-cli               [.] <rn_core::table::TableRef>::pset
+     0.05%  [unknown]             [k] 0000000000000000
+
+
+#
+# (Tip: For hierarchical output, try: perf report --hierarchy)
+#

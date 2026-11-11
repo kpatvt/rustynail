@@ -1,0 +1,67 @@
+== coro_generators (rc 0)
+[trace] recorded 30 installed 10 entered 1420656 flushes 10 rerecord 0 blacklisted 8 refused 18 deferred 0 ineffective 0 probes 33 (fn-short 15 start-refused 18)
+[trace] aborted CFunc: 16
+[trace] aborted FnShort: 15
+[trace] aborted Nyi(Closure): 3
+[trace] aborted Recursion: 1
+[trace] aborted StartRefused: 18
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 1 phis 5 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 70 installed 56 failed 90 preludes 1
+[trace] links: nest roots 0 frame links 0 stitches 9
+[trace] exits 4473232 (live traces 0)
+aborts (count reason op depth head):
+     10 Recursion              CALL      d8 side
+      8 CFunc                  TFORCALL  d0 root L0 main
+      4 FnShort                RETURN0   d0 root L40 'local function walk(n)'  [policy]
+      3 FnShort                CALL      d0 root L79 'return coroutine.wrap(function()'  [policy]
+      3 FnShort                CALL      d0 root L209 'local g = coroutine.wrap(function(a, b)'  [policy]
+      2 FnShort                CALL      d0 root L21 'return function()'  [policy]
+      2 LeaveFrame             TAILCALL  d0 side
+      2 CFunc                  CALL      d0 root L100 'return coroutine.wrap(function()'
+      2 CFunc                  CALL      d0 root L0 main
+      2 Nyi(CLOSURE)           CLOSURE   d0 root L0 main
+      1 Nyi(TFORCALL)          TFORCALL  d0 side
+      1 FnShort                CALL      d0 root L6 'local function permgen(a, n)'  [policy]
+      1 Recursion              CALL      d2 root L0 main
+      1 SideShort              CALL      d8 side  [policy]
+      1 CFunc                  CALL      d0 root L52 'return coroutine.wrap(function()'
+      1 FnShort                CALL      d0 root L141 'return coroutine.wrap(function()'  [policy]
+      1 Nyi(CLOSURE)           CLOSURE   d1 root L88 'return coroutine.wrap(function()'
+      1 FnShort                CALL      d0 root L72 'return coroutine.wrap(function()'  [policy]
+      1 CFunc                  CALL      d0 root L141 'return coroutine.wrap(function()'
+      1 CFunc                  CALL      d0 root L72 'return coroutine.wrap(function()'
+      1 CFunc                  CALL      d0 root L128 'local co = coroutine.create(function(first)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  44.9 L0 pc281 Gettabup 2 22426510
+  15.7 L31 pc26 Return1 2 7833090
+  6.2 L87 pc0 Gettabup 8 775660
+  5.5 L64 pc0 Getfield 5 1107928
+  4.6 L0 pc187 Addi 2 2321210
+  2.9 L100 pc1 Getupval 2 1447730
+  1.1 L31 pc10 Lt 20 56960
+  0.8 L31 pc19 Lt 3 272673
+  0.5 L88 pc12 Move 448 1067
+  0.4 L31 pc24 Call 5 82968
+  0.4 L0 pc106 Addi 2 190170
+  0.3 L40 pc0 Test 4 87370
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    1936431 Lt         -              black=false gk=32
+    1190165 Test       -              black=true gk=16
+     334317 Getfield   -              black=false gk=10
+     215412 Setfield   -              black=true gk=42
+     199868 Setfield   -              black=true gk=32
+     135234 Lt         MaxSide        black=true gk=32
+     114992 Call       Recursion      black=true gk=32
+      96709 Call       MaxSide        black=true gk=32
+      90406 Getfield   -              black=false gk=30
+      79813 Getfield   -              black=false gk=14
+      51022 Getfield   MaxSide        black=true gk=14
+       9861 Tailcall   LeaveFrame     black=true gk=32
+       4974 SelfOp     -              black=false gk=14
+       4825 Call       -              black=false gk=32
+       3117 Getfield   -              black=true gk=10
+       1867 Call       -              black=false gk=33
+       1673 Getfield   -              black=false gk=6
+       1303 SelfOp     -              black=false gk=30
+        750 SelfOp     -              black=false gk=10
+        449 Lei        -              black=false gk=32

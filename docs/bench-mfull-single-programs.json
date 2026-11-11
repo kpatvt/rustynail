@@ -1,0 +1,84 @@
+{
+ "cpu": [
+  4
+ ],
+ "runs": 11,
+ "set": "programs",
+ "mode": "default",
+ "bins": {
+  "ref": "<repo>/ref/55/build-seed0/lua",
+  "lj": "/usr/bin/luajit",
+  "plain": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/a/lua-cli",
+  "pgo": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/b/lua-cli",
+  "pgo2": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/c/lua-cli",
+  "bplain": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/d/lua-cli",
+  "bpgo": "env RUSTYNAIL_SEED=0 <cache>/mf-bin/e/lua-cli"
+ },
+ "programs": {
+  "fib": {
+   "ref": {
+    "variant": false,
+    "cycles_min": 4108726936,
+    "cycles_median": 4139615383,
+    "instructions_min": 18176763142,
+    "instructions_median": 18176763394,
+    "runs": 11,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 471901122,
+    "cycles_median": 477372738,
+    "instructions_min": 2492588782,
+    "instructions_median": 2576478181,
+    "runs": 11,
+    "output": "same"
+   },
+   "plain": {
+    "variant": false,
+    "cycles_min": 1425521296,
+    "cycles_median": 1431770585,
+    "instructions_min": 10399735443,
+    "instructions_median": 10399736196,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo": {
+    "variant": false,
+    "cycles_min": 1425801411,
+    "cycles_median": 1586458936,
+    "instructions_min": 10399598272,
+    "instructions_median": 10399599315,
+    "runs": 11,
+    "output": "same"
+   },
+   "pgo2": {
+    "variant": false,
+    "cycles_min": 1423585873,
+    "cycles_median": 1426574944,
+    "instructions_min": 10399598438,
+    "instructions_median": 10399599195,
+    "runs": 11,
+    "output": "same"
+   },
+   "bplain": {
+    "variant": false,
+    "cycles_min": 1425762529,
+    "cycles_median": 1596098743,
+    "instructions_min": 10399750511,
+    "instructions_median": 10399751112,
+    "runs": 11,
+    "output": "same"
+   },
+   "bpgo": {
+    "variant": false,
+    "cycles_min": 1423805045,
+    "cycles_median": 1434238112,
+    "instructions_min": 10399608192,
+    "instructions_median": 10399608901,
+    "runs": 11,
+    "output": "same"
+   }
+  }
+ }
+}

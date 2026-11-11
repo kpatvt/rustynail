@@ -1,0 +1,32 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cycles:u'
+# Event count (approx.): 3553145045
+#
+# Overhead  Shared Object         Symbol                                                              
+# ........  ....................  ....................................................................
+#
+    95.86%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+     0.81%  rn-cli               [.] rn_core::table::newkey
+     0.79%  rn-cli               [.] rn_core::table::resize
+     0.64%  libc.so.6             [.] 0x00000000001b7f6f
+     0.32%  libc.so.6             [.] 0x00000000001b7f50
+     0.28%  libc.so.6             [.] 0x00000000001b7f61
+     0.16%  libc.so.6             [.] 0x00000000001b7f49
+     0.14%  rn-cli               [.] rn_core::jit_hooks::jit_hot_loop
+     0.12%  libc.so.6             [.] 0x00000000001b7f20
+     0.12%  libc.so.6             [.] 0x00000000001b7d72
+     0.11%  libc.so.6             [.] 0x00000000001b7f42
+     0.10%  libc.so.6             [.] 0x00000000001b7d79
+     0.10%  [unknown]             [k] 0000000000000000
+     0.08%  libc.so.6             [.] 0x00000000001b7f3b
+     0.06%  libc.so.6             [.] 0x00000000001b7d6b
+     0.05%  libc.so.6             [.] 0x00000000001b7d94
+
+
+#
+# (Tip: To only collect call graph on one event use perf record -e cpu/cpu-cycles,callgraph=1/,branches ; perf report --show-ref-call-graph)
+#

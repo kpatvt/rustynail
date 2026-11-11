@@ -1,0 +1,41 @@
+J5 frozen benchmark programs (docs/JIT_TRACE.md 1.6; task P0). Not to be changed by later tasks (P9 measures them);
+new programs may only be informational. Every program takes N = arg[1] (default below), prints one line, and has its
+expected stdout in <name>.expected (produced by the reference PUC 5.5 build ref/55/build-seed0/lua and checked equal
+with rnlua, RUSTYNAIL_JIT unset and =on). Run all of them with
+    PROGDIR=bench/jit-trace scripts/bench-cycles.sh ref=... ours="..."
+(the .expected files and the entries marked "bench/programs" are not run by PROGDIR).
+
+program            set  default N        what N is
+licm_expr          b    150000           reps of a 1000-element loop
+array_rec          b    300000           reps
+upval_acc          b    450000           reps
+int_rec2           b    300000           reps
+int_sum            b'   400000           reps (inner 1000)
+float_poly         b'   200000           reps (inner 1000)
+float_loop         b'   700000           reps (inner 1000)
+dot                b'   400000           reps (inner 1000)
+upval_inv          b'   700000           reps (inner 1000)
+inline_leaf        c    200000           reps (inner 1000)
+inline_2           c    80000            reps (inner 1000)
+type_entry         d    500000           reps (20 outer x 50 inner)
+type_entry_stable  d    500000           reps (twin of type_entry)
+type_late          d    500000           reps of the float phase (+ 600 integer-phase calls)
+type_late_stable   d    500000           reps of the second phase (+ 600 calls, floats throughout)
+short_inner        X3   180000           reps of a 64-pixel row (inner while <= 20 iterations)
+spectral_norm      a    1000             bench/programs/spectral_norm.lua, arg[1] absent; expected 1.274224148
+matmul             a    400              bench/programs/matmul.lua, arg[1] absent; expected 1029.863900
+
+Reference run times (ref/55/build-seed0/lua, one run, unloaded machine): 1.6-2.8 s each for the 16 micro programs.
+
+field_rw          F1   150000           informational (task F1): read-modify-write of 4 fields of one object (inner 1000)
+field_global      F1   150000           informational (task F1): globals via _ENV + an inlined global function (inner 1000)
+field_method      F1   100000           informational (task F1): SELF on a plain table, callee inlined (inner 1000)
+tfor_loops        F3b  20000            informational (task F3b): reps of ipairs over 1000 array elements + pairs over 1000 hash entries
+str_concat        F3b  2000000          informational (task F3b): iterations with two CONCATs of strings and numbers
+rec_loop          F4   6000             informational (task F4): fib(4..6) + ackermann(1, k) called from a 200-iteration loop (recursion unrolled to the limit, the exit beyond it)
+tail_loop         F4   6000             informational (task F4): 12-step tail-recursive loop, mutual tail recursion and a tail-call chain in a 1000-iteration loop
+multret           F4   10000            informational (task F4): swap / divmod, C = 0 feeding B = 0, RETURN B = 0 through two frames, math.max of a call (1000-iteration loop)
+sink_vec         S0   3000000          informational (task S0): temporary {x=, y=} vectors that never escape the loop body (allocation sinking)
+sink_tuple       S0   3000000          informational (task S0): tuple tables returned by inlined functions (allocation sinking)
+oop_inherit       P-A  3000000         informational (task P-A): three-level inheritance, methods and class defaults found through __index chains
+oop_override      P-A  3000000         informational (task P-A): a method overridden after warm-up, a class field changed in the loop, two classes alternating in one loop

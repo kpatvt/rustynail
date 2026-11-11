@@ -1,0 +1,88 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 2776390894
+#
+# Overhead  Shared Object         Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+# ........  ....................  .....................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    16.70%  rn-cli               [.] rn_core::vm_unsafe::run_mode::<false>
+    11.78%  rn-cli               [.] <rn_core::state::State>::get_info_aux
+    10.66%  rn-cli               [.] rn_core::jit_helpers::jit_call
+     4.19%  rn-cli               [.] <rn_core::state::State>::where_
+     3.92%  rn-cli               [.] <rn_core::state::State>::pcall_k
+     3.70%  rn-cli               [.] <rn_core::state::State>::ccall
+     3.67%  rn-cli               [.] <i32 as alloc::string::SpecToString>::spec_to_string
+     2.98%  rn-cli               [.] <rn_core::heap::Heap>::new_str
+     2.95%  libc.so.6             [.] 0x00000000001b7af9
+     2.45%  libc.so.6             [.] cfree
+     2.37%  rn-cli               [.] rn_core::vm::execute
+     2.11%  rn-cli               [.] <rn_core::heap::Heap>::free_obj
+     2.09%  rn-cli               [.] rn_core::number::tostring_int
+     1.98%  [JIT] tid 2362963     [.] lua_proto@0x7f32309c26a0.v1
+     1.80%  rn-cli               [.] <rn_core::state::State>::concat_scan
+     1.73%  libc.so.6             [.] malloc
+     1.54%  rn-cli               [.] rn_std::lib_base::base_error
+     1.46%  rn-cli               [.] rn_core::table::resize
+     1.36%  rn-cli               [.] <rn_core::state::State>::precall_c
+     1.33%  rn-cli               [.] <rn_core::state::State>::gc_step
+     1.32%  rn-cli               [.] rn_std::lib_base::base_pcall
+     1.10%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::alloc_block
+     1.07%  rn-cli               [.] <rn_core::state::State>::pre_call
+     1.01%  libc.so.6             [.] 0x00000000000bcb58
+     0.95%  rn-cli               [.] rn_core::debuginfo::chunk_id
+     0.78%  rn-cli               [.] rn_core::table::mainposition
+     0.75%  [JIT] tid 2362963     [.] lua_proto@0x7f32309c26a0.v3
+     0.72%  rn-cli               [.] rn_std::lib_base::do_error
+     0.58%  libc.so.6             [.] 0x00000000000bcd19
+     0.58%  libc.so.6             [.] 0x00000000001b7ac4
+     0.57%  rn-cli               [.] <rn_core::alloc::PoolAllocator as rn_core::alloc::Allocator>::free_block
+     0.54%  [JIT] tid 2362963     [.] lua_proto@0x7f32309c26a0.v2
+     0.50%  rn-cli               [.] <rn_core::heap::Heap>::free_string
+     0.50%  rn-cli               [.] rn_core::table::insertkey
+     0.47%  libc.so.6             [.] 0x00000000001b7ac0
+     0.39%  rn-cli               [.] <rn_core::state::State>::concat
+     0.39%  libc.so.6             [.] 0x00000000000bc5ad
+     0.36%  libc.so.6             [.] 0x00000000000bc4e3
+     0.36%  rn-cli               [.] rn_core::state::shrink_stack
+     0.36%  rn-cli               [.] <rn_core::state::State>::new_table
+     0.32%  rn-cli               [.] <rn_core::state::State>::error_msg
+     0.29%  libc.so.6             [.] 0x00000000001b7b2c
+     0.29%  rn-cli               [.] rn_std::lib_base::base_xpcall
+     0.25%  rn-cli               [.] <alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>
+     0.25%  libc.so.6             [.] 0x00000000000bc43a
+     0.25%  rn-cli               [.] <alloc::raw_vec::RawVecInner>::finish_grow
+     0.25%  libc.so.6             [.] 0x00000000000bcb4e
+     0.22%  libc.so.6             [.] 0x00000000001b7b7d
+     0.22%  rn-cli               [.] rn_core::jit_helpers::jit_closure
+     0.22%  libc.so.6             [.] 0x00000000000bc54c
+     0.21%  rn-cli               [.] <rn_core::state::State>::concat_result::{closure#0}
+     0.18%  libc.so.6             [.] 0x00000000000bc7f5
+     0.18%  libc.so.6             [.] 0x00000000000bc805
+     0.18%  libc.so.6             [.] 0x00000000000bcb8a
+     0.18%  libc.so.6             [.] 0x00000000000bc794
+     0.14%  libc.so.6             [.] 0x00000000000bcd24
+     0.14%  libc.so.6             [.] 0x00000000000bc523
+     0.14%  rn-cli               [.] rn_core::vm_unsafe::push_closure
+     0.14%  rn-cli               [.] <rn_core::heap::Heap>::propagatemark
+     0.11%  rn-cli               [.] <rn_core::heap::Heap>::atomic
+     0.11%  libc.so.6             [.] 0x00000000000bc47b
+     0.11%  libc.so.6             [.] 0x00000000000bcb7a
+     0.11%  libc.so.6             [.] 0x00000000000bcb5b
+     0.07%  libc.so.6             [.] 0x00000000000bcc0c
+     0.07%  libc.so.6             [.] 0x00000000000bc614
+     0.07%  libc.so.6             [.] 0x00000000000be060
+     0.07%  libc.so.6             [.] 0x00000000001b7b54
+     0.07%  rn-cli               [.] <rn_core::heap::Heap>::clearbyvalues
+     0.07%  libc.so.6             [.] 0x00000000000bcbdf
+     0.07%  rn-cli               [.] <alloc::raw_vec::RawVecInner>::finish_grow
+     0.07%  libc.so.6             [.] 0x00000000000bc808
+     0.07%  libc.so.6             [.] 0x00000000001b7b44
+
+
+#
+# (Tip: Use --symfs <dir>[,layout] if your symbol files are in non-standard locations.)
+#

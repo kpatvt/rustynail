@@ -1,0 +1,44 @@
+# P9 progs: scripts/bench-cycles.sh RUNS=9 CPU=4 PROGDIR=bench/programs (min of 9 cycles:u) PAD=1
+# columns: j4 = J5 binary (bin/luaj5) T15=on TRACE=off (baseline of ratios); t1 = T15=off TRACE=off; tr = T15=off TRACE=on; ref89 = main@89963c6 --features jit binary (bin/luaj4), T15=on (+ ignored TRACE=off)
+# PAD: every column's environment strings and binary path have the same total length (RUSTYNAIL_PAD fills the on/off difference): stack alignment otherwise shifts some programs by up to 25%
+# started Fri Oct 30 03:54:51 PM CDT 2026
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program           j4 Mcyc(min)       t1 Mcyc    ratio       tr Mcyc    ratio    ref89 Mcyc    ratio
+binary_trees            2765.0        2787.6   1.008~        2765.8   1.000~        2771.7   1.002~
+closures                3248.2        3238.4   0.997~        2260.2   0.696         3280.6   1.010~
+coroutines              1912.0        1910.4   0.999~        1928.6   1.009~        1915.3   1.002~
+fannkuch                1213.9        1694.6   1.396         1254.7   1.034~        1208.7   0.996~
+fasta                   2184.8        2172.8   0.995~        2175.2   0.996~        2152.0   0.985~
+fib                     2178.6        2173.8   0.998~        2174.8   0.998~        2174.2   0.998~
+gc_churn                3593.4        3594.3   1.000~        3592.3   1.000~        3566.1   0.992~
+heapsort                1672.5        2121.8   1.269         1470.5   0.879         1688.2   1.009~
+json                    2527.3        2503.5   0.991~        2512.3   0.994~        2488.9   0.985~
+knucleotide             3663.4        3674.6   1.003~        3644.7   0.995~        3637.3   0.993~
+load_big                 831.8         832.8   1.001~         835.2   1.004~         813.6   0.978~
+loops_arith              800.3        2082.8   2.602          694.0   0.867          800.1   1.000~
+mandelbrot               573.4        2742.0   4.782         1035.7   1.806          573.3   1.000~
+matmul                   658.0        1240.0   1.885          526.1   0.800          656.4   0.998~
+metamethods             4370.4        4372.9   1.001~        4370.1   1.000~        4386.4   1.004~
+nbody                   1163.0        2545.2   2.188         2557.1   2.199         1165.8   1.002~
+oop_methods             3392.9        3342.5   0.985~        3394.9   1.001~        3374.5   0.995~
+pcall_error             2690.8        2753.5   1.023~        2699.8   1.003~        2750.0   1.022~
+queens                  2562.6        2450.9   0.956~        2444.0   0.954~        2559.4   0.999~
+sieve                   1679.0        2357.6   1.404         2673.6   1.592         1695.1   1.010~
+spectral_norm           2756.8        2759.8   1.001~         268.6   0.097         2758.8   1.001~
+string_ops              1831.9        1828.1   0.998~        1831.4   1.000~        1836.1   1.002~
+table_array             2261.9        2254.9   0.997~        2256.9   0.998~        2217.1   0.980~
+table_hash              1392.2        1395.4   1.002~        1382.4   0.993~        1407.1   1.011~
+varargs                 4161.4        4168.4   1.002~        4198.7   1.009~        4128.8   0.992~
+geomean t1: all(25) cycles min 1.212 median 1.212 instr 1.225; numeric cycles min 1.933 median 1.933 instr 1.968
+geomean tr: all(25) cycles min 0.947 median 0.946 instr 0.960; numeric cycles min 0.890 median 0.889 instr 0.920
+geomean ref89: all(25) cycles min 0.999 median 0.996 instr 1.000; numeric cycles min 1.001 median 1.000 instr 1.000
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+# finished Fri Oct 30 04:02:49 PM CDT 2026

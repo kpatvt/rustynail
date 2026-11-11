@@ -1,0 +1,68 @@
+== ecs_world (rc 0)
+[trace] recorded 68 installed 18 entered 5849068 flushes 18 rerecord 2 blacklisted 8 refused 70 deferred 17 ineffective 2 probes 75 (fn-short 5 start-refused 70)
+[trace] aborted FnShort: 5
+[trace] aborted Identical: 1
+[trace] aborted Insert: 7
+[trace] aborted IntMiss: 2
+[trace] aborted LeaveLoop: 30
+[trace] aborted MultRet: 10
+[trace] aborted StartRefused: 70
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 7 phis 31 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 108 installed 40 failed 68 preludes 0
+[trace] links: nest roots 7 frame links 0 stitches 0
+[trace] exits 4770565 (live traces 0)
+aborts (count reason op depth head):
+     20 LeaveLoop              FORLOOP   d0 root L61 'function World:query(...)'
+     18 IntMiss                GETTABLE  d0 side
+     17 LeaveFrame             RETURN    d0 side
+     15 SideShort              TFORCALL  d0 side  [policy]
+     13 Insert                 SETTABLE  d1 side
+      6 LeaveLoop              TFORCALL  d0 root L106 'local function collisionSystem(world, stats)'
+      6 Insert                 SETTABLE  d1 root L95 'local function lifetimeSystem(world, dt)'
+      4 MultRet                SETLIST   d2 root L0 main
+      4 LeaveLoop              TFORCALL  d0 root L144 'local function damageSystem(world, hits)'
+      3 FnShort                TAILCALL  d0 root L175 'local function spawnBullet(world)'  [policy]
+      2 IntMiss                GETTABLE  d0 root L106 'local function collisionSystem(world, stats)'
+      2 CFunc                  CALL      d0 side
+      2 FnShort                TAILCALL  d0 root L165 'local function spawnShip(world, kind)'  [policy]
+      2 MultRet                SETLIST   d1 root L95 'local function lifetimeSystem(world, dt)'
+      2 MultRet                SETLIST   d1 root L106 'local function collisionSystem(world, stats)'
+      2 MultRet                SETLIST   d1 root L82 'local function movementSystem(world, dt)'
+      1 Nyi(CALL)              CALL      d0 side
+      1 SideUntraced           FORPREP   d0 side  [policy]
+      1 Insert                 SETTABLE  d1 root L144 'local function damageSystem(world, hits)'
+      1 SideUntraced           FORLOOP   d0 side  [policy]
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  133.9 L0 pc99 Getfield 196 683318
+  109.1 L144 pc19 Lei 8 13632720
+  105.6 L144 pc11 Gettable 11 9597562
+  54.2 L144 pc36 Return 11 4930574
+  42.7 L144 pc33 Tforcall 7 6101583
+  37.6 L95 pc31 SelfOp 6 6274840
+  12.5 L0 pc87 Getfield 191 65558
+  8.4 L61 pc19 Getfield 16 522015
+  8.3 L0 pc92 Add 122 67892
+  7.4 L144 pc30 Tforcall 6 1236033
+  4.1 L106 pc93 Lt 12 337620
+  3.7 L106 pc86 Gettable 14 266806
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+    2054641 Gettable   -              black=false gk=10
+    1746519 Gettable   -              black=true gk=48
+     655882 Forprep    -              black=false gk=32
+     271603 Gettable   -              black=true gk=10
+      10731 Settable   SideShort      black=true gk=40
+       6739 Return     LeaveFrame     black=true gk=32
+       5162 Tforcall   -              black=false gk=4
+       4124 Getfield   -              black=false gk=4
+       3696 Lei        -              black=false gk=32
+       1820 Tforcall   -              black=false gk=16
+       1582 Gettable   -              black=false gk=16
+       1183 Tforcall   -              black=false gk=32
+       1097 Tforcall   CFunc          black=true gk=4
+       1037 Tforcall   -              black=true gk=49
+       1024 Lt         -              black=true gk=32
+        676 Tforcall   -              black=false gk=49
+        573 Tforcall   -              black=false gk=33
+        524 Tforcall   SideShort      black=true gk=40
+        511 Lt         -              black=false gk=32
+        492 Lti        -              black=false gk=32

@@ -1,0 +1,10 @@
+local i, f, s = 5, 5.5, "7"
+print(-i, -f, -s, - -i, -(-f), not i, not nil, not false, #"abc")
+print(-math.mininteger, -(-math.maxinteger), -0, -0.0, - - 0.0)
+print(~i, ~~i, ~5.0, ~-1)
+print(pcall(function() return ~"5" end))
+print(pcall(function() return -{} end))
+print(pcall(function() return ~1.5 end))
+print(pcall(function() local t = nil return -t end))
+print(pcall(function() return ~"x" end))
+print(-"2", -"2.5", -"0x10", - "  3  ")

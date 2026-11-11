@@ -1,0 +1,30 @@
+run 1/5
+run 2/5
+run 3/5
+run 4/5
+run 5/5
+program           j4 Mcyc(min)tr_before Mcyc    ratio tr_after Mcyc    ratio j4_after Mcyc    ratio
+array_rec               4500.1        1818.9   0.404         1819.2   0.404         4500.6   1.000~
+dot                     2284.9        1762.0   0.771         1765.5   0.773         2248.8   0.984~
+field_global           12939.8       12866.7   0.994~         632.6   0.049        12943.1   1.000~
+field_method            9693.3        9749.4   1.006~         851.9   0.088         9510.5   0.981~
+field_rw                6236.9        7722.3   1.238         1227.4   0.197         6238.1   1.000~
+float_loop              2965.3        2871.5   0.968~        2864.2   0.966~        2910.9   0.982~
+float_poly              1815.5        1822.8   1.004~        1824.1   1.005~        1815.6   1.000~
+inline_2                6274.2         409.2   0.065          409.9   0.065         6270.7   0.999~
+inline_leaf             6372.4         663.8   0.104          663.5   0.104         6361.8   0.998~
+int_rec2                2547.9        1225.7   0.481         1226.1   0.481         2535.3   0.995~
+int_sum                 2041.9        1248.3   0.611         1248.4   0.611         2041.8   1.000~
+licm_expr               2012.2         472.1   0.235          474.9   0.236         2025.4   1.007~
+short_inner             1424.1        2330.6   1.637         2331.9   1.637         1424.5   1.000~
+type_entry              8467.2        2179.3   0.257         2190.6   0.259         8392.3   0.991~
+type_entry_stable          2673.5        2009.5   0.752         2025.9   0.758         2672.0   0.999~
+type_late               2036.5        1793.7   0.881         1793.4   0.881         2036.6   1.000~
+type_late_stable          2534.4        1793.3   0.708         1791.8   0.707         2533.9   1.000~
+upval_acc               5428.5        1884.7   0.347         1885.3   0.347         5428.4   1.000~
+upval_inv               3837.7        2197.6   0.573         2197.0   0.572         3832.7   0.999~
+geomean tr_before: all(19) cycles min 0.535 median 0.533 instr 0.624; numeric cycles min nan median nan instr nan
+geomean tr_after: all(19) cycles min 0.365 median 0.363 instr 0.437; numeric cycles min nan median nan instr nan
+geomean j4_after: all(19) cycles min 0.997 median 0.995 instr 1.000; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+BENCHDONE

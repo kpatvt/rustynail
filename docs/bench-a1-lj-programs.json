@@ -1,0 +1,128 @@
+{
+ "cpu": 4,
+ "runs": 7,
+ "set": "programs",
+ "bins": {
+  "base": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=nrinline=1 <tmp>/bb/lua-cli",
+  "ours": "env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT_TRACE_LIMITS=nrinline=1 <tmp>/bn/lua-cli",
+  "lj": "/usr/bin/luajit"
+ },
+ "programs": {
+  "binary_trees": {
+   "base": {
+    "variant": false,
+    "cycles_min": 2123811220,
+    "cycles_median": 2137748456,
+    "instructions_min": 10734484509,
+    "instructions_median": 10734545462,
+    "runs": 7,
+    "output": "same"
+   },
+   "ours": {
+    "variant": false,
+    "cycles_min": 2186846663,
+    "cycles_median": 2211981462,
+    "instructions_min": 10734078598,
+    "instructions_median": 10734597483,
+    "runs": 7,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 2117111792,
+    "cycles_median": 2157735763,
+    "instructions_min": 7174254621,
+    "instructions_median": 7185507845,
+    "runs": 7,
+    "output": "same"
+   }
+  },
+  "closures": {
+   "base": {
+    "variant": false,
+    "cycles_min": 517124468,
+    "cycles_median": 519984844,
+    "instructions_min": 3178706790,
+    "instructions_median": 3178902273,
+    "runs": 7,
+    "output": "same"
+   },
+   "ours": {
+    "variant": false,
+    "cycles_min": 582441103,
+    "cycles_median": 586866975,
+    "instructions_min": 3177684888,
+    "instructions_median": 3177928759,
+    "runs": 7,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 947966117,
+    "cycles_median": 959692508,
+    "instructions_min": 3930694075,
+    "instructions_median": 3931033880,
+    "runs": 7,
+    "output": "same"
+   }
+  },
+  "knucleotide": {
+   "base": {
+    "variant": false,
+    "cycles_min": 1466392285,
+    "cycles_median": 1477828928,
+    "instructions_min": 9188859132,
+    "instructions_median": 9189181824,
+    "runs": 7,
+    "output": "same"
+   },
+   "ours": {
+    "variant": false,
+    "cycles_min": 1477358516,
+    "cycles_median": 1486521061,
+    "instructions_min": 9185796441,
+    "instructions_median": 9189900294,
+    "runs": 7,
+    "output": "same"
+   },
+   "lj": {
+    "variant": false,
+    "cycles_min": 695007959,
+    "cycles_median": 697289346,
+    "instructions_min": 3603342285,
+    "instructions_median": 3620841264,
+    "runs": 7,
+    "output": "same"
+   }
+  },
+  "metamethods": {
+   "base": {
+    "variant": false,
+    "cycles_min": 1500513731,
+    "cycles_median": 1524531319,
+    "instructions_min": 7949265524,
+    "instructions_median": 7949267215,
+    "runs": 7,
+    "output": "same"
+   },
+   "ours": {
+    "variant": false,
+    "cycles_min": 1058126376,
+    "cycles_median": 1071523658,
+    "instructions_min": 5657399972,
+    "instructions_median": 5657403245,
+    "runs": 7,
+    "output": "same"
+   },
+   "lj": {
+    "variant": true,
+    "cycles_min": 531830080,
+    "cycles_median": 541859400,
+    "instructions_min": 2992888584,
+    "instructions_median": 2994092005,
+    "runs": 7,
+    "output": "same"
+   }
+  }
+ }
+}

@@ -1,0 +1,67 @@
+== memo_cache (rc 0)
+[trace] recorded 31 installed 6 entered 90645 flushes 6 rerecord 1 blacklisted 25 refused 150 deferred 4 ineffective 1 probes 172 (fn-short 22 start-refused 150)
+[trace] aborted FnShort: 22
+[trace] aborted Identical: 1
+[trace] aborted IntMiss: 15
+[trace] aborted LeaveLoop: 1
+[trace] aborted MultRet: 2
+[trace] aborted Nyi(Closure): 4
+[trace] aborted StartRefused: 150
+[trace] aborted Vararg: 2
+[trace] sink: tables 0 traces 0; materialised 0; loops peeled 4 phis 28 wb-stores 0 stub-calls 0 stub-frames 0 stub-tables 0
+[trace] side traces: recorded 48 installed 12 failed 36 preludes 1
+[trace] links: nest roots 0 frame links 0 stitches 3
+[trace] exits 194422 (live traces 0)
+aborts (count reason op depth head):
+     13 IntMiss                GETTABLE  d1 side
+      8 IntMiss                GETTABLE  d2 side
+      6 IntMiss                GETTABLE  d0 root L101 'function LRU:put(key, value)'
+      5 IntMiss                GETTABLE  d0 root L89 'function LRU:get(key)'
+      5 InnerLoop              FORLOOP   d1 side
+      4 FnShort                RETURN1   d0 root L139 'partitions, partStats = memoizeN(function(n, k)'  [policy]
+      4 FnShort                RETURN1   d0 root L155 'local function go(i, j)'  [policy]
+      4 Nyi(CLOSURE)           CLOSURE   d1 root L0 main
+      4 IntMiss                GETTABLE  d0 side
+      4 Recursion              CALL      d2 side
+      4 FnShort                TAILCALL  d0 root L190 'local function zipf()'  [policy]
+      4 FnShort                RETURN1   d0 root L89 'function LRU:get(key)'  [policy]
+      3 IntMiss                GETTABLE  d1 root L139 'partitions, partStats = memoizeN(function(n, k)'
+      3 FnShort                RETURN0   d0 root L101 'function LRU:put(key, value)'  [policy]
+      2 Vararg                 VARARG    d0 root L29 'local function wrapper(...)'
+      2 MultRet                SETLIST   d1 root L146 'gridPaths = memoizeKey(function(r, c, blockedMod)'
+      2 FnShort                RETURN1   d0 root L172 'local function collatzLen(n, cache)'  [policy]
+      2 LeaveFrame             RETURN1   d0 side
+      1 FnShort                RETURN1   d0 root L146 'gridPaths = memoizeKey(function(r, c, blockedMod)'  [policy]
+      1 IntMiss                GETTABLE  d0 root L155 'local function go(i, j)'
+      1 LeaveLoop              FORLOOP   d0 root L183 'local function expensiveLookup(key)'
+tier-1 exits by interpreter stay (Mcyc line pc op exits cyc/stay):
+  413.7 L0 pc111 Add 71 5826221
+  138.1 L172 pc0 Eqi 5 27629956
+  127.9 L29 pc43 Return 3 42629373
+  123.0 L29 pc10 Gettabup 10 12303656
+  96.5 L155 pc56 Return1 2 48245540
+  46.1 L0 pc141 Loadi 2 23038770
+  31.9 L55 pc19 Return 119 268465
+  11.1 L0 pc149 Add 448 24821
+  9.5 L172 pc8 Modk 23927 398
+  6.5 L0 pc145 Move 2 3247840
+  3.2 L101 pc0 Getfield 97 33456
+  1.5 L190 pc0 Getupval 4 381420
+trace exits (exitdump; n op last-side-abort blacklisted guardclass):
+      41760 Eqi        -              black=true gk=16
+      40612 Forloop    LeaveFrame     black=true gk=32
+      31006 Gettable   -              black=false gk=16
+      24069 Gettable   -              black=true gk=40
+      20271 Eqi        -              black=false gk=32
+      14494 Call       Recursion      black=true gk=32
+       7869 Addi       -              black=true gk=32
+       7848 Addi       -              black=true gk=16
+       1816 Gettable   -              black=false gk=48
+       1347 Gettable   -              black=true gk=48
+       1236 Lei        -              black=false gk=32
+       1024 Lei        -              black=true gk=32
+        602 Gettable   -              black=true gk=14
+        161 Eqi        -              black=false gk=48
+        145 Eqi        -              black=true gk=32
+        108 Gettable   InnerLoop      black=true gk=16
+         54 Setfield   -              black=false gk=42

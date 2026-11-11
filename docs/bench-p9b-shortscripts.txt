@@ -1,0 +1,151 @@
+# P9b shortscripts: scripts/bench-cycles.sh RUNS=9 CPU=4 PROGDIR=tests/vm (min of 9 cycles:u) PAD=1
+# columns: j4 = J5 binary (bin/luaj5, HEAD 7de3f4a) T15=on TRACE=off (baseline); t1 = T15=off TRACE=off; tr = T15=off TRACE=on; ref89 = main@89963c6 --features jit binary (bin/luaj4), T15=on (+ ignored TRACE=off)
+# PAD: every column's environment strings and binary path have the same total length (as in P9)
+# started Fri Oct 30 06:36:55 PM CDT 2026
+run 1/9
+run 2/9
+run 3/9
+run 4/9
+run 5/9
+run 6/9
+run 7/9
+run 8/9
+run 9/9
+program           j4 Mcyc(min)       t1 Mcyc    ratio       tr Mcyc    ratio    ref89 Mcyc    ratio
+arith_01_int_basic             1.4           1.3   0.951~           1.3   0.956~           1.4   1.061 
+arith_02_float_basic             1.4           1.3   0.960~           1.3   0.946            1.4   1.051 
+arith_03_mixed             1.4           1.3   0.976~           1.3   0.955~           1.5   1.062 
+arith_04_comparison_nan             1.4           1.3   0.954~           1.3   0.948            1.5   1.068 
+arith_05_bitwise             1.4           1.3   0.980~           1.3   0.965~           1.5   1.083 
+arith_06_shift_immediates             1.3           1.3   0.986~           1.2   0.954~           1.4   1.079 
+arith_07_idiv_mod_edges             1.4           1.4   0.960~           1.4   0.977~           1.5   1.063 
+arith_08_pow_div             1.3           1.3   0.958~           1.3   0.958~           1.4   1.077 
+arith_09_unary             1.4           1.4   0.974~           1.3   0.955~           1.5   1.049~
+arith_10_string_coercion             1.5           1.4   0.977~           1.4   0.956~           1.4   0.972~
+arith_11_constants_forms             1.4           1.4   0.974~           1.3   0.931            1.5   1.066 
+arith_12_integer_float_keys             1.4           1.3   0.967~           1.3   0.959~           1.5   1.069 
+arith_13_overflow_wrap             1.4           1.3   0.974~           1.3   0.965~           1.5   1.069 
+arith_14_tostring_numbers             1.4           1.4   0.981~           1.3   0.920            1.5   1.064 
+arith_15_error_messages             1.4           1.4   0.958~           1.4   0.945            1.6   1.076 
+arith_16_compare_errors             1.4           1.4   0.939            1.4   0.944            1.5   1.040~
+arith_17_immediate_compares             1.4           1.4   0.991~           1.4   0.983~           1.5   1.067 
+arith_18_for_in_expr_contexts             1.4           1.4   0.977~           1.4   0.951~           1.5   1.060 
+arith_19_logic             1.4           1.3   0.974~           1.3   0.963~           1.5   1.055 
+arith_20_const_folding             1.4           1.4   0.939            1.4   0.936            1.5   1.051 
+closures_01_counter             1.3           1.2   0.951~           1.2   0.926            1.4   1.065 
+closures_02_loops_fresh             1.4           1.4   1.000~           1.4   0.987~           1.5   1.079 
+closures_03_nested_upvalues             1.4           1.4   0.982~           1.3   0.967~           1.5   1.053 
+closures_04_shared_between_closures             1.3           1.3   0.978~           1.3   0.976~           1.4   1.083 
+closures_05_upvalue_in_loop_break             1.3           1.3   0.993~           1.3   0.977~           1.4   1.071 
+closures_06_recursive_local             2.2           2.1   0.981~           2.1   0.981~           2.3   1.062 
+closures_07_many_upvalues             1.3           1.3   0.978~           1.3   0.967~           1.4   1.066 
+closures_08_upvalue_close_on_return             1.3           1.3   0.983~           1.3   0.971~           1.4   1.062 
+closures_09_gc_of_closures             1.5           1.5   0.985~           1.4   0.969~           1.6   1.067 
+closures_10_vararg_in_closure             1.4           1.3   0.986~           1.3   0.984~           1.5   1.071 
+co_01_generators             1.4           1.4   0.996~           1.4   0.987~           1.6   1.086 
+co_02_status               1.4           1.4   0.975~           1.4   0.969~           1.5   1.068 
+co_03_errors               1.4           1.4   0.982~           1.4   0.967~           1.5   1.068 
+co_04_pcall_yield             1.4           1.4   1.003~           1.3   0.983~           1.5   1.079 
+co_05_close_tbc             1.4           1.4   0.976~           1.4   0.982~           1.5   1.074 
+co_06_metamethods             1.6           1.5   0.983~           1.5   0.978~           1.7   1.063 
+co_07_iterators             1.4           1.4   1.004~           1.4   0.988~           1.5   1.078 
+co_08_nested_resume             2.3           2.2   0.968~           2.2   0.975~           2.4   1.027~
+co_09_stack_and_args           208.3         206.3   0.991~         210.9   1.013~         206.6   0.992~
+co_10_gc                   2.0           1.8   0.926            1.8   0.931            1.9   0.955~
+concat_01_basic             1.4           1.3   0.932            1.3   0.923            1.3   0.949 
+concat_02_errors             1.4           1.3   0.943            1.3   0.931            1.4   1.056 
+concat_03_metamethod             1.4           1.3   0.945            1.3   0.942            1.5   1.061 
+concat_04_long             1.5           1.4   0.969~           1.4   0.966~           1.6   1.076 
+concat_05_numbers_in_chain             1.4           1.3   0.931            1.3   0.912            1.5   1.065 
+concat_06_inplace_boundaries             1.7           1.6   0.941            1.6   0.934            1.8   1.057 
+dbg_01_hook_errors             1.5           1.4   0.955~!           1.4   0.948 !           1.6   1.079 !
+dbg_02_hook_mode_switch             1.7           1.6   0.956~           1.6   0.955~           1.8   1.074 
+err_01_names_local_upvalue_field             1.4           1.4   0.980~           1.4   0.965~           1.5   1.088 
+err_02_call_errors             1.4           1.4   0.970~           1.4   0.959~           1.5   1.073 
+err_03_error_values             1.4           1.4   0.962~!           1.4   0.955~!           1.5   1.079 !
+err_04_nested_pcall             1.4           1.3   0.928            1.3   0.946            1.5   1.051 
+err_05_xpcall              1.8           1.7   0.948            1.7   0.932            1.9   1.050 
+err_06_positions_multiline             1.4           1.3   0.947            1.3   0.957~           1.4   1.023~
+err_07_runtime_error_in_called_function             1.4           1.3   0.962~           1.4   0.977~           1.5   1.067 
+err_08_stack_overflow           382.3         391.2   1.023~         398.0   1.041~         388.0   1.015~
+err_09_error_in_error_handling           927.8         919.5   0.991~         917.3   0.989~         931.4   1.004~
+err_10_tostring_of_errors_non_strings             1.4           1.2   0.880            1.2   0.864            1.3   0.939 
+err_11_load_errors             1.5           1.4   0.925 !           1.4   0.916 !           1.6   1.048~!
+err_12_load_env_and_chunks             1.4           1.3   0.945            1.3   0.929            1.5   1.058 
+err_13_compare_error_types             1.5           1.4   0.950~           1.4   0.941            1.6   1.048~
+err_14_arith_on_field_names             1.4           1.4   0.953~           1.3   0.940            1.5   1.055 
+err_15_select_and_misc_native_errors             2.3           2.3   1.035~           2.4   1.041~           2.4   1.055 
+for_01_numeric_basic             1.5           1.3   0.885            1.3   0.867            1.5   0.973~
+for_02_overflow_edges             1.4           1.4   0.967~           1.3   0.958~           1.5   1.070 
+for_03_errors              1.4           1.4   0.954~           1.3   0.926            1.5   1.068 
+for_04_float_loops             1.4           1.3   0.953~           1.3   0.934            1.5   1.055 
+for_05_generic_basic             1.5           1.4   0.960~           1.4   0.939            1.6   1.043~
+for_06_generic_modify_and_break             1.4           1.3   0.952~           1.4   0.972~           1.5   1.058 
+for_07_generic_closing_value             1.4           1.4   0.956~           1.4   0.950            1.5   1.070 
+for_08_generic_errors             1.4           1.4   0.969~           1.3   0.933            1.5   1.061 
+for_09_nested_and_large             5.2           6.9   1.327            4.9   0.933            5.2   1.007~
+for_10_loop_var_semantics             1.3           1.3   0.951~           1.3   0.948            1.4   1.051 
+for_11_while_repeat             1.3           1.3   0.945            1.2   0.924            1.4   1.056 
+for_12_integer_loop_var_types             1.3           1.3   0.971~           1.3   0.969~           1.4   1.086 
+gc_01_close_finalizers             1.3           1.3   0.975~           1.2   0.942            1.4   1.060 
+gc_16_native_alloc_collected           640.0         632.7   0.988~         638.3   0.997~         655.1   1.024~
+goto_01_basic              1.3           1.2   0.945            1.2   0.892            1.2   0.918 
+goto_02_closures_and_scope             1.3           1.2   0.928            1.2   0.922            1.4   1.051 
+goto_03_nested_loops_break             1.3           1.3   0.959~           1.2   0.938            1.4   1.078 
+goto_04_state_machine             1.3           1.2   0.964~           1.2   0.954~           1.4   1.058 
+goto_05_loops_with_close             1.4           1.3   0.950            1.3   0.943            1.5   1.072 
+heavy_tail_02_million            83.8          84.0   1.002~          83.8   1.000~          88.0   1.050~
+meta_01_index_chain             1.8           1.5   0.843            1.5   0.842            1.5   0.846 
+meta_02_newindex             1.5           1.4   0.956~           1.4   0.946            1.6   1.066 
+meta_03_call               1.4           1.3   0.962~!           1.3   0.958~!           1.5   1.076 !
+meta_04_arith_events             1.4           1.3   0.941            1.3   0.934            1.5   1.063 
+meta_05_comparison_events             1.5           1.4   0.971~           1.4   0.975~           1.6   1.064 
+meta_06_len_and_tostring             1.4           1.3   0.951~           1.3   0.952~           1.5   1.074 
+meta_07_metatable_field             1.3           1.2   0.934            1.3   0.943            1.4   1.058 
+meta_08_inheritance_oop             1.4           1.4   0.975~           1.3   0.946            1.5   1.073 
+meta_09_close_ordering             1.4           1.4   0.967~           1.3   0.959~           1.5   1.091 
+meta_10_close_errors             1.3           1.3   0.944 !           1.3   0.965~!           1.5   1.077 !
+meta_11_close_return_values             1.3           1.3   0.970~           1.3   0.947            1.5   1.088 
+meta_12_close_break_goto             1.4           1.4   0.977~           1.3   0.959~           1.5   1.074 
+meta_13_gc_finalizers             1.5           1.4   0.937            1.4   0.939            1.6   1.051 
+meta_14_index_on_nonindexable             1.4           1.3   0.942 !           1.3   0.942 !           1.5   1.059 !
+meta_15_rawops             1.4           1.4   0.946            1.3   0.923            1.5   1.063 
+meta_16_index_values_types             1.4           1.3   0.952~!           1.3   0.955~!           1.5   1.075 !
+meta_17_mixed_type_metatables             1.4           1.3   0.952~           1.3   0.931            1.5   1.069 
+meta_18_call_through_pcall_and_metamethods             1.4           1.4   0.962~           1.4   0.952~           1.5   1.056 
+meta_19_deep_metamethod_recursion             1.5           1.5   0.964~           1.4   0.948            1.6   1.057 
+meta_20_index_chain_inline             1.8           1.7   0.963~!           1.7   0.935 !           1.9   1.058 !
+meta_21_inplace_metamethods             2.8           2.7   0.973~           2.7   0.973~           2.9   1.043~
+strings_01_methods             1.4           1.3   0.937            1.3   0.913            1.5   1.055 
+strings_02_compare_and_eq             1.3           1.3   0.948            1.3   0.942            1.5   1.084 
+strings_03_tostring_numbers             1.4           1.3   0.931            1.3   0.930            1.4   1.061 
+strings_04_pattern_start_filter             9.8           9.4   0.960~          10.3   1.060            9.7   0.993~
+strings_05_int_tostring_concat_empty             2.0           1.9   0.943            1.8   0.925            2.0   1.021~
+strings_06_format_paths             1.9           1.8   0.955~           1.8   0.925            2.0   1.040~
+tables_01_constructors             1.4           1.3   0.939            1.3   0.931            1.5   1.061 
+tables_02_setlist_large             1.4           1.3   0.950            1.3   0.949            1.5   1.059 
+tables_03_get_set_forms             1.4           1.4   0.981~           1.3   0.947            1.5   1.061 
+tables_04_border_len             1.4           1.3   0.959~           1.3   0.969~           1.5   1.070 
+tables_05_next_and_pairs_order             1.4           1.3   0.970~           1.3   0.948            1.5   1.070 
+tables_06_nil_and_nan_keys             1.4           1.3   0.950~           1.3   0.907            1.5   1.049~
+tables_07_table_of_tables             1.4           1.3   0.953~           1.3   0.942            1.5   1.071 
+tables_08_growth_and_rehash             2.3           2.2   0.959~           2.5   1.090            2.3   1.024~
+tables_09_length_of_string_keys_and_holes             1.3           1.3   1.020~           1.3   1.001~           1.4   1.075 
+tables_10_weak             1.4           1.4   0.989~           1.3   0.982~           1.4   1.057 
+tables_20_next_shortstr_native_results             2.6           2.6   0.982~           2.6   0.989~           2.8   1.038~
+tail_01_basic              7.0           7.0   0.994~           7.0   0.993~           7.4   1.052 
+tail_03_vararg_and_close             1.5           1.5   0.986~           1.4   0.966~           1.6   1.075 
+tail_04_native_tail             1.4           1.3   0.955~           1.3   0.971~           1.4   1.055 
+vararg_01_basic             1.3           1.3   0.977~           1.3   0.979~           1.4   1.080 
+vararg_02_in_tables             1.4           1.4   0.986~           1.4   0.980~           1.5   1.063 
+vararg_03_multret_positions             1.3           1.3   0.985~           1.3   0.966~           1.4   1.077 
+vararg_04_adjust_and_call             1.4           1.4   0.987~           1.4   0.983~           1.5   1.068 
+vararg_05_named             1.4           1.3   0.952~           1.3   0.968~           1.5   1.057 
+vararg_06_named_closure             1.4           1.4   0.975~           1.3   0.961~           1.5   1.061 
+vararg_07_many_args             1.6           1.6   0.984~           1.6   0.987~           1.7   1.068 
+vararg_08_main_chunk_varargs             1.2           1.2   0.989~           1.2   0.968~           1.3   1.075 
+geomean t1: all(132) cycles min 0.965 median 0.972 instr 1.003; numeric cycles min nan median nan instr nan
+geomean tr: all(132) cycles min 0.955 median 0.960 instr 1.001; numeric cycles min nan median nan instr nan
+geomean ref89: all(132) cycles min 1.053 median 1.042 instr 0.991; numeric cycles min nan median nan instr nan
+~ = within +-5% (noise); * = LuaJIT variant program; ! = stdout differs from baseline
+# finished Fri Oct 30 06:37:57 PM CDT 2026
