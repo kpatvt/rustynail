@@ -82,7 +82,12 @@ pub fn dump(ir: &TraceIr) -> String {
                 if b & HREF_DYN != 0 {
                     s.push_str(" dyn");
                 } else {
-                    let _ = write!(s, " lsize={}{}", b & 0xFF, if b & HREF_INT != 0 { " int" } else { "" });
+                    let _ = write!(
+                        s,
+                        " lsize={}{}",
+                        b & 0xFF,
+                        if b & HREF_INT != 0 { " int" } else { "" }
+                    );
                 }
                 if b & HREF_ABS != 0 {
                     s.push_str(" abs");
@@ -198,37 +203,73 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     let _ = writeln!(o, "{}", super::phase::report());
     let _ = writeln!(o, "{}", super::sink::report());
     if s.ci_repaired > 0 {
-        let _ = writeln!(o, "[trace] cispare: entry failures repaired {}", s.ci_repaired);
+        let _ = writeln!(
+            o,
+            "[trace] cispare: entry failures repaired {}",
+            s.ci_repaired
+        );
     }
     if s.dom_flushes > 0 {
         let _ = writeln!(o, "[trace] domtop: roots re-recorded {}", s.dom_flushes);
     }
     if s.chain_flushes > 0 || s.chain_checks > 0 {
-        let _ = writeln!(o, "[trace] chainre: callee chains re-ordered {} (checks {})", s.chain_flushes, s.chain_checks);
+        let _ = writeln!(
+            o,
+            "[trace] chainre: callee chains re-ordered {} (checks {})",
+            s.chain_flushes, s.chain_checks
+        );
     }
     if s.chain_deep > 0 {
-        let _ = writeln!(o, "[trace] chaindepth: callee-guard exits that got no further link {}", s.chain_deep);
+        let _ = writeln!(
+            o,
+            "[trace] chaindepth: callee-guard exits that got no further link {}",
+            s.chain_deep
+        );
     }
     if s.ncallee_heads > 0 {
-        let _ = writeln!(o, "[trace] ncallee: heads re-recorded without entry callee guards {}", s.ncallee_heads);
+        let _ = writeln!(
+            o,
+            "[trace] ncallee: heads re-recorded without entry callee guards {}",
+            s.ncallee_heads
+        );
     }
     if s.c_entered > 0 {
-        let _ = writeln!(o, "[trace] centry: registered {} light {} entries {}", s.c_entered, s.c_light, s.c_enters);
+        let _ = writeln!(
+            o,
+            "[trace] centry: registered {} light {} entries {}",
+            s.c_entered, s.c_light, s.c_enters
+        );
     }
     if s.fn_promoted > 0 {
-        let _ = writeln!(o, "[trace] fnpromo: function heads promoted {}", s.fn_promoted);
+        let _ = writeln!(
+            o,
+            "[trace] fnpromo: function heads promoted {}",
+            s.fn_promoted
+        );
     }
     if s.inner_retried > 0 {
         let _ = writeln!(o, "[trace] innerretry: rounds started {}", s.inner_retried);
     }
     if s.retried > 0 || s.ident_kept > 0 {
-        let _ = writeln!(o, "[trace] second: heads given a second chance {} identical re-records installed {}", s.retried, s.ident_kept);
+        let _ = writeln!(
+            o,
+            "[trace] second: heads given a second chance {} identical re-records installed {}",
+            s.retried, s.ident_kept
+        );
     }
     if s.la_blocked > 0 {
-        let _ = writeln!(o, "[trace] loopany guard: fired {} family flushes {} pruned sides {} (self {})", s.la_blocked, s.la_family, s.la_pruned, s.la_self);
+        let _ = writeln!(
+            o,
+            "[trace] loopany guard: fired {} family flushes {} pruned sides {} (self {})",
+            s.la_blocked, s.la_family, s.la_pruned, s.la_self
+        );
     }
     if s.black_handled > 0 {
-        let _ = writeln!(o, "[trace] exit handler: blacklisted exits reported {}", s.black_handled);
+        let _ = writeln!(
+            o,
+            "[trace] exit handler: blacklisted exits reported {}",
+            s.black_handled
+        );
     }
     if s.side_started > 0 {
         let _ = writeln!(
@@ -248,19 +289,39 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         );
     }
     if s.hk_fused > 0 {
-        let _ = writeln!(o, "[trace] fused HREFK+HLOAD tag checks: {} (two exits: {})", s.hk_fused, s.hk_split);
+        let _ = writeln!(
+            o,
+            "[trace] fused HREFK+HLOAD tag checks: {} (two exits: {})",
+            s.hk_fused, s.hk_split
+        );
     }
     if s.deep_sites > 0 || s.deep_recs > 0 {
-        let _ = writeln!(o, "[trace] deep sites: {} deep recordings: {}", s.deep_sites, s.deep_recs);
+        let _ = writeln!(
+            o,
+            "[trace] deep sites: {} deep recordings: {}",
+            s.deep_sites, s.deep_recs
+        );
     }
     {
-        let (tb, ub) = (super::asm::BARRIER_CALLS[0].load(std::sync::atomic::Ordering::Relaxed), super::asm::BARRIER_CALLS[1].load(std::sync::atomic::Ordering::Relaxed));
+        let (tb, ub) = (
+            super::asm::BARRIER_CALLS[0].load(std::sync::atomic::Ordering::Relaxed),
+            super::asm::BARRIER_CALLS[1].load(std::sync::atomic::Ordering::Relaxed),
+        );
         if tb > 0 || ub > 0 {
             let _ = writeln!(o, "[trace] barrier helper calls: table {tb} upvalue {ub}");
         }
     }
     if s.rearm_arms > 0 || s.rearm_enters > 0 || s.rearm_misses > 0 {
-        let _ = writeln!(o, "[trace] rearm: armed {} entered {} missed {} restored {} unclean {}/{}", s.rearm_arms, s.rearm_enters, s.rearm_misses, s.rearm_restored, s.rearm_unclean[0], s.rearm_unclean[1]);
+        let _ = writeln!(
+            o,
+            "[trace] rearm: armed {} entered {} missed {} restored {} unclean {}/{}",
+            s.rearm_arms,
+            s.rearm_enters,
+            s.rearm_misses,
+            s.rearm_restored,
+            s.rearm_unclean[0],
+            s.rearm_unclean[1]
+        );
     }
     if s.nest_rule > 0 || s.nest_rule_kept > 0 {
         let _ = writeln!(

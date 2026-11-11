@@ -36,20 +36,20 @@ use super::interp::{self, Model, Val};
 use super::ir::*;
 use super::mutants;
 use super::snap::{self, SlotMap, SnapMeta};
+use crate::fx::{HashMap, HashSet};
 use crate::lower::calls::CallEnv;
 use crate::lower::{lower, LabelKind, LowerCfg, Lowered};
 use rn_core::func::{LClosure, Proto};
 use rn_core::instruction::Instruction;
 use rn_core::jit_hooks::{self, Abort, RecStep, RecVTable};
-use rn_core::number::{eq_num, float_to_int, le_num, lt_num, F2I};
 use rn_core::meta::Tm;
+use rn_core::number::{eq_num, float_to_int, le_num, lt_num, F2I};
 use rn_core::state::{Ci, State, StkId, CIST_C, CIST_MMRET, LUA_MINSTACK};
 use rn_core::string::StrRef;
 use rn_core::table::TableRef;
 use rn_core::value::*;
 use rn_core::ver::active::OpCode;
 use std::cell::RefCell;
-use crate::fx::{HashMap, HashSet};
 use std::rc::Rc;
 
 /// A1: the hash part of a table as the recorder tracks it: per node `(key tag, key payload, chain link, value is empty)` and the
@@ -717,7 +717,10 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
         Err(why) => {
             st.heap().unwatch_all();
             if super::cache::verbose_aborts() {
-                eprintln!("[trace] abort {:?} at pc {} (depth {}, op {})", why, rec.cur_pc, rec.cur_depth, rec.cur_op);
+                eprintln!(
+                    "[trace] abort {:?} at pc {} (depth {}, op {})",
+                    why, rec.cur_pc, rec.cur_depth, rec.cur_op
+                );
             }
             finish_with(token, RecOutcome::Aborted(why));
             RecStep::Leave
@@ -844,13 +847,19 @@ impl Vm<'_> {
 pub fn side_frames_supported(st: &mut State, frames: &[super::cache::SideFrame]) -> bool {
     let mut c = st.ci();
     for f in frames.iter().rev() {
-        let Some(cl) = st.ci_lclosure(c) else { return false };
+        let Some(cl) = st.ci_lclosure(c) else {
+            return false;
+        };
         if cl.proto().is_vararg() || (c.r().callstatus & CIST_MMRET != 0) != f.mm {
             return false;
         }
-        let Some(caller) = c.previous() else { return false };
+        let Some(caller) = c.previous() else {
+            return false;
+        };
         if f.mm {
-            let Some(ccl) = st.ci_lclosure(caller) else { return false };
+            let Some(ccl) = st.ci_lclosure(caller) else {
+                return false;
+            };
             if Rec::mm_fin_at(ccl.proto().code(), f.call_pc).is_none() {
                 return false;
             }
@@ -1235,7 +1244,12 @@ impl Rec {
         let proto = p as *const Proto as usize;
         let root_func = ci.r().func.0;
         let known = cfg.side.as_ref().map_or_else(Vec::new, |sd| {
-            let n = sd.known.iter().map(|k| usize::from(k.0) + 1).max().unwrap_or(0);
+            let n = sd
+                .known
+                .iter()
+                .map(|k| usize::from(k.0) + 1)
+                .max()
+                .unwrap_or(0);
             let mut v = vec![None; n];
             for &(slot, t) in &sd.known {
                 v[usize::from(slot)] = Some(t);
@@ -1275,7 +1289,8 @@ impl Rec {
                 pc_shift: 0,
                 pc_wanted: 0,
                 mm: None,
-                ectx: None, tfor: None,
+                ectx: None,
+                tfor: None,
             }],
             cur_depth: 0,
             next_depth: 0,
@@ -1394,10 +1409,18 @@ impl Rec {
                 MmFin::Reg(prev.a() as u16)
             }
             OpCode::Unm | OpCode::Bnot | OpCode::Len | OpCode::Concat => MmFin::Reg(i.a() as u16),
-            OpCode::Eq | OpCode::Lt | OpCode::Le | OpCode::Lti | OpCode::Lei | OpCode::Gti | OpCode::Gei => {
-                MmFin::Cond(i.k() != 0)
-            }
-            OpCode::Geti | OpCode::Gettable | OpCode::Getfield | OpCode::Gettabup | OpCode::SelfOp => MmFin::Reg(i.a() as u16),
+            OpCode::Eq
+            | OpCode::Lt
+            | OpCode::Le
+            | OpCode::Lti
+            | OpCode::Lei
+            | OpCode::Gti
+            | OpCode::Gei => MmFin::Cond(i.k() != 0),
+            OpCode::Geti
+            | OpCode::Gettable
+            | OpCode::Getfield
+            | OpCode::Gettabup
+            | OpCode::SelfOp => MmFin::Reg(i.a() as u16),
             OpCode::Seti | OpCode::Settable | OpCode::Setfield | OpCode::Settabup => MmFin::Drop,
             _ => return None,
         })
@@ -1467,7 +1490,8 @@ impl Rec {
                 pc_shift: 0,
                 pc_wanted: 0,
                 mm,
-                ectx: None, tfor: None,
+                ectx: None,
+                tfor: None,
             });
         }
         let d = fr.len();
@@ -1477,7 +1501,10 @@ impl Rec {
         self.max_ci = d as u8;
         self.start_depth = d;
         self.start_proto = ProtoKey(self.frames[d].proto);
-        self.pend = Some(Pend { next: self.head as usize, depth: d });
+        self.pend = Some(Pend {
+            next: self.head as usize,
+            depth: d,
+        });
         Some(())
     }
 
@@ -1550,7 +1577,13 @@ impl Rec {
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
         if self.cfg.verify {
-            panic!("recorder lockstep (TR17) after pc {} (op {}): {}\n{}", self.cur_pc, self.cur_op, msg(), super::print::dump(&self.b.ir));
+            panic!(
+                "recorder lockstep (TR17) after pc {} (op {}): {}\n{}",
+                self.cur_pc,
+                self.cur_op,
+                msg(),
+                super::print::dump(&self.b.ir)
+            );
         }
         Err(AbortReason::Diverge)
     }
@@ -1596,8 +1629,13 @@ impl Rec {
                     } else if f.pc_shift != 0 {
                         // P-O: the native's `CallInfo` (a C frame) lies between the callee's and the caller's
                         depth > 0
-                            && ci.previous().is_some_and(|m| m.r().callstatus & CIST_C != 0)
-                            && ci.previous().and_then(|m| m.previous()).map(|c| c.as_ptr() as usize)
+                            && ci
+                                .previous()
+                                .is_some_and(|m| m.r().callstatus & CIST_C != 0)
+                            && ci
+                                .previous()
+                                .and_then(|m| m.previous())
+                                .map(|c| c.as_ptr() as usize)
                                 == Some(self.frames[depth - 1].ci)
                     } else {
                         depth > 0
@@ -1622,18 +1660,31 @@ impl Rec {
         }
         // F2a: a side recording ends (links) when it reaches a loop head of the root frame after its first step
         let reached_head = match &self.cfg.side {
-            Some(sd) if depth == 0 && !self.path.is_empty() && self.segs.is_empty() => (sd.head_state.clone())(st, idx as u32),
+            Some(sd) if depth == 0 && !self.path.is_empty() && self.segs.is_empty() => {
+                (sd.head_state.clone())(st, idx as u32)
+            }
             // N3a: after a `RETF` the root is the caller: its loop heads are asked with its own prototype
-            Some(_) if depth == 0 && !self.path.is_empty() => self.cfg.retf_head.clone().and_then(|q| q(st, &p, idx as u32)),
+            Some(_) if depth == 0 && !self.path.is_empty() => self
+                .cfg
+                .retf_head
+                .clone()
+                .and_then(|q| q(st, &p, idx as u32)),
             _ => None,
         };
         // F2b: a nest root ends (links) when it reaches a loop head of the root frame, other than its own, that has a
         // root trace. A backward arrival at any other pc is the inner loop of the prototype: the same abort as before.
         let cont_unroll = self.cont_unroll() && depth == 0;
         let nest_head = match &self.cfg.nest {
-            Some(q) if self.cfg.side.is_none() && depth == 0 && !self.path.is_empty() && idx as u32 != self.head && !cont_unroll => {
+            Some(q)
+                if self.cfg.side.is_none()
+                    && depth == 0
+                    && !self.path.is_empty()
+                    && idx as u32 != self.head
+                    && !cont_unroll =>
+            {
                 let h = (q.clone())(st, idx as u32);
-                let back = self.path_depth.last() == Some(&0) && self.path.last().is_some_and(|&p| idx as u32 <= p);
+                let back = self.path_depth.last() == Some(&0)
+                    && self.path.last().is_some_and(|&p| idx as u32 <= p);
                 if back && h != Some(true) {
                     return Err(if idx as u32 > self.head {
                         AbortReason::InnerLoop
@@ -1648,8 +1699,12 @@ impl Rec {
         // F2b: a linking exit (see `RecCfg::nest_frame`)
         let frame_head = match &self.cfg.nest_frame {
             Some(q)
-                if (if self.cfg.side.is_none() { self.cfg.nest_frame_roots } else { (self.cfg.nest_frame_sides || !self.segs.is_empty()) && !mutants::active("side_frame_link_never") })
-                    && depth > 0
+                if (if self.cfg.side.is_none() {
+                    self.cfg.nest_frame_roots
+                } else {
+                    (self.cfg.nest_frame_sides || !self.segs.is_empty())
+                        && !mutants::active("side_frame_link_never")
+                }) && depth > 0
                     && !self.path.is_empty() =>
             {
                 (q.clone())(st, &p, idx as u32) == Some(true)
@@ -1714,7 +1769,11 @@ impl Rec {
                 None => {}
                 Some(false) if self.side_unroll() => {} // R2: a loop of a recursive function is unrolled (see `target`)
                 // N3a: the caller's loop head has no root trace (yet): the recording ends with the stitching exit before it (tier 1 dispatches the head)
-                Some(false) if !self.segs.is_empty() && !mutants::active("retf_untraced_aborts") => retf_stop = true,
+                Some(false)
+                    if !self.segs.is_empty() && !mutants::active("retf_untraced_aborts") =>
+                {
+                    retf_stop = true
+                }
                 Some(false) => return Err(AbortReason::SideUntraced),
                 Some(true) => {
                     let n: u32 = self.cost.iter().sum();
@@ -1766,7 +1825,9 @@ impl Rec {
         if self.path.len() >= MAX_PATH
             || self.b.ir.ins.len() > MAX_INS - 16
             || (self.cfg.side.is_some() && self.b.ir.ins.len() > MAX_SIDE_INS)
-            || (self.cfg.max_ins != 0 && self.b.ir.ins.len() > self.cfg.max_ins && !mutants::active("deep_ins_unbounded"))
+            || (self.cfg.max_ins != 0
+                && self.b.ir.ins.len() > self.cfg.max_ins
+                && !mutants::active("deep_ins_unbounded"))
         {
             return Err(AbortReason::TooLong);
         }
@@ -1847,7 +1908,11 @@ impl Rec {
             if self.lows[low0].label_kind(self.head) == LabelKind::Dead {
                 return Err(AbortReason::Compile("side start has no tier-1 label"));
             }
-            let lo = if mutants::active("fside_rem_root") { 0 } else { low0 };
+            let lo = if mutants::active("fside_rem_root") {
+                0
+            } else {
+                low0
+            };
             self.start_rem = snap::land_info(&self.lows[lo], self.head).1;
         } else if self.lows[0].label_kind(self.head) != LabelKind::Head {
             return Err(AbortReason::Compile("loop head is not a tier-1 block head"));
@@ -1858,7 +1923,9 @@ impl Rec {
             vm.cl
         } else {
             // SAFETY: `root_ci` is the live root frame of the armed recording (validated by the VM at every step).
-            vm.st.ci_lclosure(unsafe { Ci::from_raw(self.root_ci as *mut _) }).ok_or(AbortReason::Frame)?
+            vm.st
+                .ci_lclosure(unsafe { Ci::from_raw(self.root_ci as *mut _) })
+                .ok_or(AbortReason::Frame)?
         };
         let h = self.closure_handle(root_cl);
         debug_assert_eq!(h, 1);
@@ -1882,7 +1949,11 @@ impl Rec {
         }
         // snapshot 0: the state at H before anything is charged (POLL and BUDGET exits land on pcl[H])
         let sm0 = SlotMap::new(if d0 == 0 { self.nslots } else { self.sm.len() });
-        let frames0 = if mutants::active("fside_frames_dropped") { Vec::new() } else { self.frame_recs() };
+        let frames0 = if mutants::active("fside_frames_dropped") {
+            Vec::new()
+        } else {
+            self.frame_recs()
+        };
         let s0 = snap::take(&mut self.b.ir, &sm0, self.head, Land::Pre, &frames0, 0);
         self.meta.push(SnapMeta {
             step: 0,
@@ -1947,13 +2018,18 @@ impl Rec {
                 Some((s, _)) => s,
                 None if end_side => self.end_snap.expect("end_exit sets end_snap"),
                 None => {
-                    let s = snap::take(&mut self.b.ir, &SlotMap::new(0), link_pc, Land::Pre, &[], 0);
+                    let s =
+                        snap::take(&mut self.b.ir, &SlotMap::new(0), link_pc, Land::Pre, &[], 0);
                     // (N3a: after a `RETF` the link is in the last segment, whose root is the caller)
                     self.meta.push(SnapMeta {
                         step: 0,
                         pc: link_pc,
                         uncharged: true,
-                        low: if self.segs.is_empty() { 0 } else { self.frames[0].low as u32 },
+                        low: if self.segs.is_empty() {
+                            0
+                        } else {
+                            self.frames[0].low as u32
+                        },
                     });
                     s
                 }
@@ -1971,7 +2047,14 @@ impl Rec {
                 start_rem: self.start_rem,
                 link_pc,
                 link_snap,
-                link_proto: self.frame_link.map_or(ProtoKey(if self.segs.is_empty() { self.entry_proto } else { self.proto }), |f| f.1),
+                link_proto: self.frame_link.map_or(
+                    ProtoKey(if self.segs.is_empty() {
+                        self.entry_proto
+                    } else {
+                        self.proto
+                    }),
+                    |f| f.1,
+                ),
                 frame_link: self.frame_link.is_some(),
                 no_link: end_side,
                 start_proto: self.start_proto,
@@ -1997,12 +2080,22 @@ impl Rec {
         ir.counts = vec![n];
         // (N2c: entry-relative extent / spare-CallInfo count over all segments: segment k's coordinates are `shift` slots higher, and the
         // CallInfo node of every popped frame exists already)
-        let (ext_k, room_k) = (self.ext.saturating_sub(self.shift), (self.room as usize).saturating_sub(self.shift));
-        ir.extent = self.ext_entry.max(ext_k).max(self.room_entry as usize).max(room_k) as u16;
+        let (ext_k, room_k) = (
+            self.ext.saturating_sub(self.shift),
+            (self.room as usize).saturating_sub(self.shift),
+        );
+        ir.extent = self
+            .ext_entry
+            .max(ext_k)
+            .max(self.room_entry as usize)
+            .max(room_k) as u16;
         if self.segs.is_empty() {
             ir.extent = self.ext.max(self.room as usize) as u16;
         }
-        ir.depth = self.ci_entry.max(self.max_ci.saturating_sub(self.segs.len().saturating_sub(1) as u8));
+        ir.depth = self.ci_entry.max(
+            self.max_ci
+                .saturating_sub(self.segs.len().saturating_sub(1) as u8),
+        );
         ir.deps = std::iter::once(ProtoKey(self.entry_proto))
             .chain(self.deps.iter().copied())
             .collect();
@@ -2025,7 +2118,11 @@ impl Rec {
         ir.fn_root = self.cfg.fn_root && self.cfg.side.is_none() && ir.rec_call.is_none();
         Recorded {
             writeback: match self.rec_ret {
-                Some((rr, r)) if rr.n == 1 => vec![SnapEntry { slot: FUNC_SLOT, r, flags: 0 }],
+                Some((rr, r)) if rr.n == 1 => vec![SnapEntry {
+                    slot: FUNC_SLOT,
+                    r,
+                    flags: 0,
+                }],
                 Some(_) => Vec::new(),
                 None => self.sm.entries(),
             },
@@ -2175,7 +2272,10 @@ impl Rec {
             cells.push(cell);
             ups.push(v);
             // (relative to the ENTRY base: `Model::shift` moves it to the current root after a `RETF`)
-            rel.push((uv.value_ptr() as usize).wrapping_sub(self.root_ptr.wrapping_add(16 * self.shift)) as u64);
+            rel.push(
+                (uv.value_ptr() as usize).wrapping_sub(self.root_ptr.wrapping_add(16 * self.shift))
+                    as u64,
+            );
         }
         self.model.closures[i] = ups;
         self.model.uv_rel[i] = rel;
@@ -2280,27 +2380,39 @@ impl Rec {
         let t = self.tabs[h as usize - 1];
         let (ktt, kbits) = t.node_key(ix);
         let int = ktt == LUA_VNUMINT;
-        let key = if ktt == ctb(LUA_VSHRSTR) || int { kbits } else { 0 };
+        let key = if ktt == ctb(LUA_VSHRSTR) || int {
+            kbits
+        } else {
+            0
+        };
         let nv = t.node_value(ix);
         let val = if nv.tag() & 0x0F == LUA_TNIL {
             Val::NIL
         } else {
             self.val_of(&nv)
         };
-        self.model.tables[h as usize - 1]
-            .nodes
-            .insert(ix as u32, interp::MNode { key, val, next: t.node_next(ix), int });
+        self.model.tables[h as usize - 1].nodes.insert(
+            ix as u32,
+            interp::MNode {
+                key,
+                val,
+                next: t.node_next(ix),
+                int,
+            },
+        );
     }
 
     /// F3: the model's [`TOp::Tnew`] made table `h`; it is the table the VM left in the instruction's register.
     fn adopt_new_table(&mut self, h: u64, ins: &Ins) -> R<()> {
         let real = self.post_val.take().and_then(|v| v.as_table());
         let Some(real) = real.filter(|_| h as usize == self.tabs.len() + 1) else {
-            return self.diverge(|| format!("TNEW: no table in the VM's register (model handle {h})"));
+            return self
+                .diverge(|| format!("TNEW: no table in the VM's register (model handle {h})"));
         };
         let mlen = self.model.tables[h as usize - 1].array.len();
         if mlen != real.array_size() as usize {
-            return self.diverge(|| format!("TNEW: model array {mlen} VM array {}", real.array_size()));
+            return self
+                .diverge(|| format!("TNEW: model array {mlen} VM array {}", real.array_size()));
         }
         let m = &mut self.model.tables[h as usize - 1];
         m.flags = real.flags();
@@ -2341,7 +2453,9 @@ impl Rec {
                     let h = self.model.tables.len() as u64 + 1;
                     let real = self.post_val.take().and_then(|v| v.as_table());
                     let Some(real) = real.filter(|_| h as usize == self.tabs.len() + 1) else {
-                        return self.diverge(|| format!("TNEW: no table in the VM's register (model handle {h})"));
+                        return self.diverge(|| {
+                            format!("TNEW: no table in the VM's register (model handle {h})")
+                        });
                     };
                     self.model.tables.push(interp::MTable {
                         array: Vec::new(),
@@ -2409,7 +2523,9 @@ impl Rec {
             match exp {
                 Some((tr, img)) => {
                     if t.hash_image() != img {
-                        return self.diverge(|| "NEWREF: the VM's insertion differs from the inline plan".to_string());
+                        return self.diverge(|| {
+                            "NEWREF: the VM's insertion differs from the inline plan".to_string()
+                        });
                     }
                     self.nr_img.insert(tr, Some(img));
                 }
@@ -2509,7 +2625,16 @@ impl Rec {
     fn eval_one(&mut self, i: usize) -> R<(u64, bool)> {
         let ins = self.b.ir.ins[i];
         match ins.op {
-            TOp::Sload if ins.a == FUNC_SLOT => return Ok((if mutants::active("retf_model_func_stale") { 1 } else { self.model_func }, false)), // the root closure is handle 1 (N3a: the current segment's after a `RETF`)
+            TOp::Sload if ins.a == FUNC_SLOT => {
+                return Ok((
+                    if mutants::active("retf_model_func_stale") {
+                        1
+                    } else {
+                        self.model_func
+                    },
+                    false,
+                ))
+            } // the root closure is handle 1 (N3a: the current segment's after a `RETF`)
             TOp::Poll | TOp::Budget => return Ok((0, false)),
             // N2c: the guards of a `RETF` hold by construction (the recorder checked the caller's identity); the model was rebased by `Rec::retf`
             TOp::Retf => {
@@ -2526,7 +2651,11 @@ impl Rec {
             // P-V: the constant string metatable: its model handle (registered by `string_method`)
             TOp::Kptr if ins.t == Ty::Tab => {
                 let p = self.val_bits(ins.a);
-                let h = self.reg.get(&(p as usize)).copied().ok_or(AbortReason::Diverge)?;
+                let h = self
+                    .reg
+                    .get(&(p as usize))
+                    .copied()
+                    .ok_or(AbortReason::Diverge)?;
                 return Ok((h, false));
             }
             _ => {}
@@ -2599,7 +2728,8 @@ impl Rec {
             TOp::Snew | TOp::Concat | TOp::Lib => {
                 self.model.str_result = self.post_strs.pop_front();
                 if self.model.str_result.is_none() {
-                    return self.diverge(|| format!("{:?} without a recorded result at %{i}", ins.op));
+                    return self
+                        .diverge(|| format!("{:?} without a recorded result at %{i}", ins.op));
                 }
             }
             TOp::Tnext => {
@@ -2626,7 +2756,10 @@ impl Rec {
         if let Some(bits) = self.fast_eval(&ins) {
             if self.cfg.verify || cfg!(debug_assertions) {
                 let slow = self.eval_mini(i, ins, ra, rb, bref, taint)?;
-                assert_eq!(slow.0, bits, "fast_eval disagrees with interp::run at %{i} {ins:?}");
+                assert_eq!(
+                    slow.0, bits,
+                    "fast_eval disagrees with interp::run at %{i} {ins:?}"
+                );
             }
             return Ok((bits, taint));
         }
@@ -2654,7 +2787,9 @@ impl Rec {
             TOp::Band => two(self).map(|(a, b)| a & b),
             TOp::Bor => two(self).map(|(a, b)| a | b),
             TOp::Bxor => two(self).map(|(a, b)| a ^ b),
-            TOp::Fadd | TOp::Fsub | TOp::Fmul | TOp::Fdiv => two(self).map(|(a, b)| interp::fbin(ins.op, a, b)),
+            TOp::Fadd | TOp::Fsub | TOp::Fmul | TOp::Fdiv => {
+                two(self).map(|(a, b)| interp::fbin(ins.op, a, b))
+            }
             TOp::Eq | TOp::Ne | TOp::Lt | TOp::Le | TOp::Gt | TOp::Ge | TOp::Ult | TOp::Uge => {
                 let (a, b) = two(self)?;
                 let ok = match ins.op {
@@ -2676,8 +2811,15 @@ impl Rec {
                 }
                 let a = self.val_bits(ins.a);
                 let (h, ix) = (a >> 32, (a & 0xFFFF_FFFF) as usize);
-                let e = *h.checked_sub(1).and_then(|x| self.model.tables.get(x as usize))?.array.get(ix)?;
-                if bits & 1 != 0 && e.t != ins.t && !(ins.flags & F_ANYSTR != 0 && matches!(e.t, Ty::ShrStr | Ty::LngStr)) {
+                let e = *h
+                    .checked_sub(1)
+                    .and_then(|x| self.model.tables.get(x as usize))?
+                    .array
+                    .get(ix)?;
+                if bits & 1 != 0
+                    && e.t != ins.t
+                    && !(ins.flags & F_ANYSTR != 0 && matches!(e.t, Ty::ShrStr | Ty::LngStr))
+                {
                     return None;
                 }
                 Some(e.bits)
@@ -2692,7 +2834,11 @@ impl Rec {
                     t: self.b.ir.ty_of(ins.b),
                     bits: self.val_bits(ins.b),
                 };
-                let e = h.checked_sub(1).and_then(|x| self.model.tables.get_mut(x as usize))?.array.get_mut(ix)?;
+                let e = h
+                    .checked_sub(1)
+                    .and_then(|x| self.model.tables.get_mut(x as usize))?
+                    .array
+                    .get_mut(ix)?;
                 *e = nv;
                 Some(0)
             }
@@ -2702,7 +2848,9 @@ impl Rec {
                     return None;
                 }
                 let h = self.val_bits(ins.a);
-                let t = h.checked_sub(1).and_then(|x| self.model.tables.get(x as usize))?;
+                let t = h
+                    .checked_sub(1)
+                    .and_then(|x| self.model.tables.get(x as usize))?;
                 match ins.b {
                     0 => Some(t.array.len() as u64),
                     1 | 5 => Some(h),
@@ -2714,7 +2862,9 @@ impl Rec {
             }
             TOp::Hrefk => {
                 let (h, key) = two(self)?;
-                let t = h.checked_sub(1).and_then(|x| self.model.tables.get(x as usize))?;
+                let t = h
+                    .checked_sub(1)
+                    .and_then(|x| self.model.tables.get(x as usize))?;
                 match t.nodes.get(&bits) {
                     Some(n) if n.key == key && !n.int => Some(h << 32 | u64::from(bits)),
                     _ => None,
@@ -2723,7 +2873,9 @@ impl Rec {
             TOp::Hmiss => {
                 let (h, key) = two(self)?;
                 let (ix, delta) = hmiss_unpack(bits);
-                let t = h.checked_sub(1).and_then(|x| self.model.tables.get(x as usize))?;
+                let t = h
+                    .checked_sub(1)
+                    .and_then(|x| self.model.tables.get(x as usize))?;
                 match t.nodes.get(&(ix as u32)) {
                     Some(n) if (n.key != key || n.int) && n.next == delta => Some(0),
                     _ => None,
@@ -2738,8 +2890,15 @@ impl Rec {
                     return None;
                 }
                 let (h, ix) = (a >> 32, (a & 0xFFFF_FFFF) as u32);
-                let e = h.checked_sub(1).and_then(|x| self.model.tables.get(x as usize))?.nodes.get(&ix)?;
-                if bits & 1 != 0 && e.val.t != ins.t && !(ins.flags & F_ANYSTR != 0 && matches!(e.val.t, Ty::ShrStr | Ty::LngStr)) {
+                let e = h
+                    .checked_sub(1)
+                    .and_then(|x| self.model.tables.get(x as usize))?
+                    .nodes
+                    .get(&ix)?;
+                if bits & 1 != 0
+                    && e.val.t != ins.t
+                    && !(ins.flags & F_ANYSTR != 0 && matches!(e.val.t, Ty::ShrStr | Ty::LngStr))
+                {
                     return None;
                 }
                 Some(e.val.bits)
@@ -2749,7 +2908,15 @@ impl Rec {
     }
 
     /// The generic evaluation of one instruction: `interp::run` on a one-instruction IR whose operands are the values computed before.
-    fn eval_mini(&mut self, i: usize, ins: Ins, ra: bool, rb: bool, bref: Ref, taint: bool) -> R<(u64, bool)> {
+    fn eval_mini(
+        &mut self,
+        i: usize,
+        ins: Ins,
+        ra: bool,
+        rb: bool,
+        bref: Ref,
+        taint: bool,
+    ) -> R<(u64, bool)> {
         let mut mini = std::mem::take(&mut self.scratch.mini);
         mini.reset();
         mini.snapshot(Default::default(), &[]); // snapshot 0: the instruction's own guard failed
@@ -2881,7 +3048,13 @@ impl Rec {
             // F4: the `thread.top` the producer of a multiple-result sequence left (TR22b relaxed)
             if vm.st.top().0 != vm.root_base + t {
                 let real = vm.st.top().0;
-                return self.diverge(|| format!("top: VM {}, model {}", real as isize - vm.root_base as isize, t));
+                return self.diverge(|| {
+                    format!(
+                        "top: VM {}, model {}",
+                        real as isize - vm.root_base as isize,
+                        t
+                    )
+                });
             }
         }
         if !self.pend_str.is_empty() {
@@ -2960,7 +3133,8 @@ impl Rec {
                 return self.diverge(|| format!("table {h} node {ix}: not in the model"));
             };
             if !self.same(&real, e.val, self.cell_taint.contains(&(2, h, ix as usize))) {
-                return self.diverge(|| format!("table {h} node {ix}: VM {real:?}, IR {:?}", e.val));
+                return self
+                    .diverge(|| format!("table {h} node {ix}: VM {real:?}, IR {:?}", e.val));
             }
         }
         if cfg!(rustynail_lua54) {
@@ -3027,7 +3201,10 @@ impl Rec {
         let d = self.cur_depth;
         if d > 0 && self.pcall.is_none() {
             if let Some(ctx) = self.frames[d].ectx.clone() {
-                let pure = self.b.ir.ins[ctx.ins_at..at].iter().all(|i| pcall_pure(i.op)) || mutants::active("alloc_shallow_impure");
+                let pure = self.b.ir.ins[ctx.ins_at..at]
+                    .iter()
+                    .all(|i| pcall_pure(i.op))
+                    || mutants::active("alloc_shallow_impure");
                 if pure && self.b.ir.snaps.len() < MAX_SNAPS - 2 {
                     let (land, _) = snap::land_info(&self.lows[ctx.low as usize], ctx.pc);
                     let s = snap::take(&mut self.b.ir, &ctx.sm, ctx.pc, land, &ctx.frames, ctx.top);
@@ -3037,7 +3214,8 @@ impl Rec {
                         uncharged: false,
                         low: ctx.low,
                     });
-                    self.b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, a, b, guard_aux(s, 0))?;
+                    self.b
+                        .emit_flags(TOp::Ne, Ty::I64, F_GUARD, a, b, guard_aux(s, 0))?;
                     return Ok(());
                 }
             }
@@ -3082,7 +3260,14 @@ impl Rec {
                 return Err(AbortReason::TooLong);
             }
             // the slice's `S0R`: the state at H (empty map), after the budget charge (`refund = n`, patched at close)
-            let s = snap::take(&mut self.b.ir, &SlotMap::new(0), self.head, Land::Pre, &[], 0);
+            let s = snap::take(
+                &mut self.b.ir,
+                &SlotMap::new(0),
+                self.head,
+                Land::Pre,
+                &[],
+                0,
+            );
             debug_assert_eq!(s, tentative);
             self.meta.push(SnapMeta {
                 step: 0,
@@ -3183,7 +3368,10 @@ impl Rec {
 
     /// P-O: the `CallInfo` index (root frame 0) of the frame at depth `d`: each inlined protected call adds the native's frame.
     fn ci_depth(&self, d: usize) -> usize {
-        d + self.frames[1..=d].iter().filter(|f| f.pc_shift != 0).count()
+        d + self.frames[1..=d]
+            .iter()
+            .filter(|f| f.pc_shift != 0)
+            .count()
     }
 
     fn kint(&mut self, i: i64) -> Ref {
@@ -3406,7 +3594,10 @@ impl Rec {
         let num = |t: Ty| matches!(t, Ty::Int | Ty::Num);
         if !num(ta) || !num(tb) {
             if c != Cmp::Eq {
-                if self.cfg.f2cmp && matches!(ta, Ty::ShrStr | Ty::LngStr) && matches!(tb, Ty::ShrStr | Ty::LngStr) {
+                if self.cfg.f2cmp
+                    && matches!(ta, Ty::ShrStr | Ty::LngStr)
+                    && matches!(tb, Ty::ShrStr | Ty::LngStr)
+                {
                     return self.str_order(c, x, y, vx, vy);
                 }
                 return Err(
@@ -3427,7 +3618,8 @@ impl Rec {
                 Ty::Nil | Ty::True | Ty::False => Ok(true),
                 // P-B: short strings are interned: equal iff the same object (the pointers are the refs' values)
                 Ty::ShrStr => {
-                    let eq = vx.as_strref().map(|s| s.as_ptr()) == vy.as_strref().map(|s| s.as_ptr());
+                    let eq =
+                        vx.as_strref().map(|s| s.as_ptr()) == vy.as_strref().map(|s| s.as_ptr());
                     if !mutants::active("streq_guard_skip") {
                         self.guard(if eq { TOp::Eq } else { TOp::Ne }, Ty::I64, a, b, 0)?;
                     }
@@ -3435,8 +3627,12 @@ impl Rec {
                 }
                 // F2: long strings compare by content, in a helper
                 Ty::LngStr if self.cfg.f2cmp => {
-                    let (sx, sy) = (vx.as_strref().ok_or(AbortReason::Diverge)?, vy.as_strref().ok_or(AbortReason::Diverge)?);
-                    let eq = sx.as_ptr() == sy.as_ptr() || sx.get().as_bytes() == sy.get().as_bytes();
+                    let (sx, sy) = (
+                        vx.as_strref().ok_or(AbortReason::Diverge)?,
+                        vy.as_strref().ok_or(AbortReason::Diverge)?,
+                    );
+                    let eq =
+                        sx.as_ptr() == sy.as_ptr() || sx.get().as_bytes() == sy.get().as_bytes();
                     self.str_cmp_op(lib::STREQ, a, b, eq)?;
                     Ok(eq)
                 }
@@ -3508,7 +3704,10 @@ impl Rec {
 
     /// F2: `<`, `<=`, `>`, `>=` of two strings (bytewise, as `less_than`).
     fn str_order(&mut self, c: Cmp, x: (Ref, Ty), y: (Ref, Ty), vx: &Value, vy: &Value) -> R<bool> {
-        let (sx, sy) = (vx.as_strref().ok_or(AbortReason::Diverge)?, vy.as_strref().ok_or(AbortReason::Diverge)?);
+        let (sx, sy) = (
+            vx.as_strref().ok_or(AbortReason::Diverge)?,
+            vy.as_strref().ok_or(AbortReason::Diverge)?,
+        );
         let (bx, by) = (sx.get().as_bytes(), sy.get().as_bytes());
         let (kind, p, q, observed) = match c {
             Cmp::Lt => (lib::STRLT, x.0, y.0, bx < by),
@@ -3533,7 +3732,14 @@ impl Rec {
     }
 
     /// [`Rec::array_guards`]; `raw` (F2: `rawget` / `rawset`) never looks at the metatable.
-    fn array_guards_raw(&mut self, t: Ref, key: Ref, tbl: TableRef, nonnil_read: bool, raw: bool) -> R<Ref> {
+    fn array_guards_raw(
+        &mut self,
+        t: Ref,
+        key: Ref,
+        tbl: TableRef,
+        nonnil_read: bool,
+        raw: bool,
+    ) -> R<Ref> {
         debug_assert!(
             self.reg
                 .get(&(tbl.as_ptr() as usize))
@@ -3593,9 +3799,17 @@ impl Rec {
         }
         if !(1..=i64::from(t.array_size())).contains(&key) {
             if super::cache::verbose_aborts() {
-                eprintln!("[trace] int key {} outside the array part (size {})", key, t.array_size());
+                eprintln!(
+                    "[trace] int key {} outside the array part (size {})",
+                    key,
+                    t.array_size()
+                );
             }
-            return Err(if self.cfg.rec_any { AbortReason::IntMiss } else { AbortReason::TableHash });
+            return Err(if self.cfg.rec_any {
+                AbortReason::IntMiss
+            } else {
+                AbortReason::TableHash
+            });
         }
         Ok((t, t.get_int_arr(key)))
     }
@@ -3625,12 +3839,24 @@ impl Rec {
             self.guard(TOp::Eq, Ty::I64, ls, kl, 0)?;
         }
         let node = self.fload(t, Field::Node, Ty::P64)?;
-        self.guard(TOp::Hrefv, Ty::P64, node, key, u32::from(tbl.lsizenode()) | HREF_INT)
+        self.guard(
+            TOp::Hrefv,
+            Ty::P64,
+            node,
+            key,
+            u32::from(tbl.lsizenode()) | HREF_INT,
+        )
     }
 
     /// H1: `t[k]` for an integer key held by the hash part of `tbl`. A present non-nil value is a raw hit whatever the metatable (`HREFV` +
     /// typed `HLOAD`); a nil value needs the TR14 guard of `__index` (`None` when a metatable may have one: the caller's other paths apply).
-    fn hash_int_get(&mut self, t: (Ref, Ty), tbl: TableRef, key: Ref, idx: usize) -> R<Option<Ref>> {
+    fn hash_int_get(
+        &mut self,
+        t: (Ref, Ty),
+        tbl: TableRef,
+        key: Ref,
+        idx: usize,
+    ) -> R<Option<Ref>> {
         let nv = tbl.node_value(idx);
         let nil_valued = nv.tag() & 0x0F == LUA_TNIL;
         if nil_valued && !TableRef::no_tm(tbl.metatable(), Tm::Index) {
@@ -3655,7 +3881,14 @@ impl Rec {
     /// H1: `t[k] = val` for an integer key held by the hash part of `tbl`: `HSTORE` into the node (guarded against a nil old value, which
     /// would be an insertion or a `__newindex`), or -- for a node that holds nil -- the TR14 `__newindex` guard and an unconditional store;
     /// the write barrier for a collectable value.
-    fn hash_int_set(&mut self, t: (Ref, Ty), tbl: TableRef, key: Ref, idx: usize, val: (Ref, Ty)) -> R<()> {
+    fn hash_int_set(
+        &mut self,
+        t: (Ref, Ty),
+        tbl: TableRef,
+        key: Ref,
+        idx: usize,
+        val: (Ref, Ty),
+    ) -> R<()> {
         let nil_old = tbl.node_value(idx).tag() & 0x0F == LUA_TNIL;
         if nil_old && !self.cfg.nil_store {
             return Err(AbortReason::Insert);
@@ -3686,7 +3919,15 @@ impl Rec {
 
     /// [`Rec::array_get`]; `orig`: the key as the program holds it (a float with an integer value is converted for the access, but `__index` is
     /// called with the float, as `luaV_finishget` does).
-    fn array_get_k(&mut self, vm: &Vm<'_>, t: (Ref, Ty), tslot: usize, key: Ref, k: i64, orig: Ref) -> R<Ref> {
+    fn array_get_k(
+        &mut self,
+        vm: &Vm<'_>,
+        t: (Ref, Ty),
+        tslot: usize,
+        key: Ref,
+        k: i64,
+        orig: Ref,
+    ) -> R<Ref> {
         let tv = vm.slot(tslot);
         if let Some((tbl, idx)) = self.int_hash_node(&tv, t.1, k) {
             if let Some(r) = self.hash_int_get(t, tbl, key, idx)? {
@@ -3817,7 +4058,10 @@ impl Rec {
         }
         // F3b: a key built by this iteration's `CONCAT` is a different string almost every time: the `EQREF` guard below
         // would fail on nearly every iteration (an exit storm slower than tier 1), so such a loop is not traced
-        if TraceIr::is_ins(r) && matches!(self.b.ir.at(r).op, TOp::Concat) && !mutants::active("concat_key_traced") {
+        if TraceIr::is_ins(r)
+            && matches!(self.b.ir.at(r).op, TOp::Concat)
+            && !mutants::active("concat_key_traced")
+        {
             return Err(AbortReason::TableHash);
         }
         let k = self
@@ -3833,12 +4077,22 @@ impl Rec {
     /// `EQREF` against the address seen, no constant node index; the access becomes `HREFV` (a chain walk at run time), so one trace
     /// serves every key of the loop (`t[k] = (t[k] or 0) + 1`). The marker for such a key is that its ref is not a constant. An absent
     /// key, a constant key and everything else keep the specialised path ([`Rec::reg_key`]).
-    fn reg_key_any(&mut self, vm: &Vm<'_>, slot: usize, r: Ref, tv: &Value, tty: Ty) -> R<(Ref, StrRef)> {
+    fn reg_key_any(
+        &mut self,
+        vm: &Vm<'_>,
+        slot: usize,
+        r: Ref,
+        tv: &Value,
+        tty: Ty,
+    ) -> R<(Ref, StrRef)> {
         if tty == Ty::Tab && TraceIr::is_ins(r) && self.cfg.hrefv && self.cfg.dynmask {
             // DYNMASK: a computed key is the SSA value whether it is present or absent at record time (loads: a nil-miss `HREFV`; stores: the
             // `HREFV` of a present key, the `NEWREF` helper for an absent one)
             let op = self.b.ir.at(r).op;
-            if op != TOp::Kptr && (op != TOp::Concat || self.cfg.libcall_mask & 256 != 0) && tv.as_table().is_some() {
+            if op != TOp::Kptr
+                && (op != TOp::Concat || self.cfg.libcall_mask & 256 != 0)
+                && tv.as_table().is_some()
+            {
                 let key = vm.slot(slot).as_strref().ok_or(AbortReason::Diverge)?;
                 return Ok((r, key));
             }
@@ -3899,7 +4153,14 @@ impl Rec {
 
     /// [`Rec::hash_ref`]; `nilmiss`: (a load of a dynamic key under `dynmask`) a key that is not found resolves to the static nil node instead of
     /// exiting, so the typed `HLOAD` behind it decides (the type check fails on a present value of another type, passes for nil).
-    fn hash_ref_k(&mut self, t: Ref, tbl: TableRef, kref: Ref, idx: usize, nilmiss: bool) -> R<Ref> {
+    fn hash_ref_k(
+        &mut self,
+        t: Ref,
+        tbl: TableRef,
+        kref: Ref,
+        idx: usize,
+        nilmiss: bool,
+    ) -> R<Ref> {
         let h = self.handle(tbl);
         if idx != usize::MAX {
             self.fill_node(h, idx);
@@ -3965,7 +4226,10 @@ impl Rec {
     /// `HREFK` + `HLOAD` (so replacing or rewriting the field exits), and the table it names is walked like any
     /// `__index` chain ([`Rec::hash_get_chain`]): the method is a guarded load, no helper call.
     fn string_method(&mut self, vm: &Vm<'_>, key: (Ref, StrRef)) -> R<Ref> {
-        let m = vm.st.type_metatable(rn_core::value::LuaType::String).ok_or(AbortReason::Metamethod)?;
+        let m = vm
+            .st
+            .type_metatable(rn_core::value::LuaType::String)
+            .ok_or(AbortReason::Metamethod)?;
         let name = vm.st.g().heap.tm_name(rn_core::meta::Tm::Index);
         let ix = m.short_str_node(name).ok_or(AbortReason::Metamethod)?;
         if ix >= 1 << 15 {
@@ -3985,10 +4249,10 @@ impl Rec {
             prev: NOREF,
             aux: 0,
         })?;
-        let kname = self
-            .b
-            .ir
-            .konst(KVal::Ptr(payload_bits(&Value::string(name), Ty::ShrStr), PtrKind::Raw));
+        let kname = self.b.ir.konst(KVal::Ptr(
+            payload_bits(&Value::string(name), Ty::ShrStr),
+            PtrKind::Raw,
+        ));
         let hr = self.hash_ref(mr, m, kname, ix)?;
         let bit = u32::from(!mutants::active("index_tab_typecheck_skip"));
         let cref = self.guard(TOp::Hload, Ty::Tab, hr, NOREF, bit)?;
@@ -4001,7 +4265,13 @@ impl Rec {
     }
 
     /// The `__index` chain walk of [`Rec::hash_get`], starting at the table `cur` (reference `cref`).
-    fn hash_get_chain(&mut self, vm: &Vm<'_>, mut cur: TableRef, mut cref: Ref, key: (Ref, StrRef)) -> R<Ref> {
+    fn hash_get_chain(
+        &mut self,
+        vm: &Vm<'_>,
+        mut cur: TableRef,
+        mut cref: Ref,
+        key: (Ref, StrRef),
+    ) -> R<Ref> {
         let mut depth = 0usize;
         loop {
             let found = cur.short_str_node(key.1);
@@ -4030,13 +4300,16 @@ impl Rec {
                     } else {
                         self.touch(ev.as_ref().unwrap())?;
                     }
-                    let hr = self.hash_ref_k(cref, cur, key.0, found.unwrap_or(usize::MAX), true)?;
+                    let hr =
+                        self.hash_ref_k(cref, cur, key.0, found.unwrap_or(usize::MAX), true)?;
                     return self.guard(TOp::Hload, ety, hr, NOREF, 1);
                 }
             }
             let nil_valued = found.is_some_and(|i| cur.node_value(i).tag() & 0x0F == LUA_TNIL);
             let mt = cur.metatable();
-            if let Some(idx) = found.filter(|_| !nil_valued || TableRef::no_tm(mt, rn_core::meta::Tm::Index)) {
+            if let Some(idx) =
+                found.filter(|_| !nil_valued || TableRef::no_tm(mt, rn_core::meta::Tm::Index))
+            {
                 // a present value, or a nil value that no `__index` can replace (F1)
                 let ev = cur.node_value(idx);
                 let ety = if nil_valued {
@@ -4108,10 +4381,10 @@ impl Rec {
             }
             self.touch(&Value::table(m))?;
             self.touch(&iv)?;
-            let kname = self
-                .b
-                .ir
-                .konst(KVal::Ptr(payload_bits(&Value::string(name), Ty::ShrStr), PtrKind::Raw));
+            let kname = self.b.ir.konst(KVal::Ptr(
+                payload_bits(&Value::string(name), Ty::ShrStr),
+                PtrKind::Raw,
+            ));
             let hr = self.hash_ref(mr, m, kname, ix)?;
             let bit = u32::from(!mutants::active("index_tab_typecheck_skip"));
             cref = self.guard(TOp::Hload, Ty::Tab, hr, NOREF, bit)?;
@@ -4165,7 +4438,14 @@ impl Rec {
     /// `t[key] = val` for an existing short-string key whose value is not nil: `HSTORE` (which exits at run time if the
     /// old value is nil: that would be an insertion or a `__newindex`) and the table write barrier for a collectable
     /// value. An absent or nil-valued key is `Insert`.
-    fn hash_set(&mut self, vm: &Vm<'_>, tv: &Value, t: (Ref, Ty), key: (Ref, StrRef), val: (Ref, Ty)) -> R<()> {
+    fn hash_set(
+        &mut self,
+        vm: &Vm<'_>,
+        tv: &Value,
+        t: (Ref, Ty),
+        key: (Ref, StrRef),
+        val: (Ref, Ty),
+    ) -> R<()> {
         if t.1 == Ty::Tab {
             if let Some(tbl) = tv.as_table() {
                 if self.cfg.mm && self.mm_newindex_fn(vm, tbl, t, key, val)? {
@@ -4205,7 +4485,6 @@ impl Rec {
         Ok(())
     }
 
-
     /// R2: may a store into an existing hash node that holds nil be recorded (`nilstore`)? The key must not be a metamethod name
     /// (`luaV_finishset` invalidates the table's metamethod-absence cache, a store behind a trace does not: a key that could be an event
     /// name keeps the abort).
@@ -4242,7 +4521,9 @@ impl Rec {
         }
         self.first_store.get_or_insert(self.b.ir.ins.len());
         let tpos = self.b.ir.ins.len();
-        let t = self.b.emit_flags(TOp::Tnew, Ty::Tab, 0, b as Ref, NOREF, c)?;
+        let t = self
+            .b
+            .emit_flags(TOp::Tnew, Ty::Tab, 0, b as Ref, NOREF, c)?;
         let z = self.kint(0);
         if !mutants::active("tnew_ne_guard_skip") {
             self.alloc_guard(t, z, tpos)?;
@@ -4279,7 +4560,8 @@ impl Rec {
         }
         let mut next = idx + 1;
         if i.k() != 0 {
-            last += Instruction(*vm.code.get(idx + 1).ok_or(AbortReason::Diverge)?).ax() as usize * cmul;
+            last += Instruction(*vm.code.get(idx + 1).ok_or(AbortReason::Diverge)?).ax() as usize
+                * cmul;
             next += 1;
         }
         let a = i.a() as usize;
@@ -4380,8 +4662,16 @@ impl Rec {
             None => {
                 let n = cur.0.len();
                 n > 0
-                    && cur.0.iter().all(|&(kt, kp, nx, ve)| kt == LUA_TNIL && kp == 0 && nx == 0 && ve)
-                    && cur.1 == if cfg!(rustynail_lua54) || n >= 8 { n } else { 0 }
+                    && cur
+                        .0
+                        .iter()
+                        .all(|&(kt, kp, nx, ve)| kt == LUA_TNIL && kp == 0 && nx == 0 && ve)
+                    && cur.1
+                        == if cfg!(rustynail_lua54) || n >= 8 {
+                            n
+                        } else {
+                            0
+                        }
             }
         };
         if !tracked {
@@ -4422,7 +4712,11 @@ impl Rec {
         self.first_store.get_or_insert(self.b.ir.ins.len());
         self.stale_above_frame();
         // (an inline insertion plan fixes the node the recorded key lands on: not for a dynamic key)
-        let plan = if TraceIr::is_ins(key.0) { None } else { self.nr_plan(t.0, tbl, key.1) };
+        let plan = if TraceIr::is_ins(key.0) {
+            None
+        } else {
+            self.nr_plan(t.0, tbl, key.1)
+        };
         let n = match plan {
             Some((aux, _)) => self.b.emit(TOp::Newref, Ty::P64, t.0, key.0, aux)?,
             None => self.ins(TOp::Newref, Ty::P64, t.0, key.0)?,
@@ -4619,10 +4913,13 @@ impl Rec {
                 // P-E: a loop of an inlined callee is unrolled (each iteration recorded) up to `loop_unroll` backward edges
                 // per recording; beyond that it is the inner loop the prototype always aborted on
                 // (only a counted `for` whose `FORPREP` was recorded with constant bounds: see `forprep`)
-                let gfor_only = self.cfg.gfor_inl && (self.cur_op == OpCode::Tforcall as u8 || self.cur_op == OpCode::Tforprep as u8);
+                let gfor_only = self.cfg.gfor_inl
+                    && (self.cur_op == OpCode::Tforcall as u8
+                        || self.cur_op == OpCode::Tforprep as u8);
                 // M1: any other backward edge (a `while` / `repeat` of the callee: its exit is a guarded branch), within the per-site budget
                 let any_edge = self.cur_op != OpCode::Forloop as u8 && !gfor_only;
-                let gfor_back = gfor_only || (self.cfg.loop_any && (!any_edge || self.loop_any_charge(t)));
+                let gfor_back =
+                    gfor_only || (self.cfg.loop_any && (!any_edge || self.loop_any_charge(t)));
                 if self.cfg.loop_unroll == 0
                     || (self.cur_op != OpCode::Forloop as u8 && !gfor_back)
                     || self.inl_back.get() >= self.cfg.loop_unroll
@@ -4635,7 +4932,9 @@ impl Rec {
             if self.cont_unroll() {
                 // R2: a continuation root crosses the back edge of a loop of the root frame (`for` loops: the next iteration is
                 // recorded) up to `loop_unroll` per recording, like the loop of an inlined callee
-                if self.cur_op != OpCode::Forloop as u8 || self.inl_back.get() >= self.cfg.loop_unroll {
+                if self.cur_op != OpCode::Forloop as u8
+                    || self.inl_back.get() >= self.cfg.loop_unroll
+                {
                     return Err(AbortReason::InnerLoop);
                 }
                 self.inl_back.set(self.inl_back.get() + 1);
@@ -4724,9 +5023,31 @@ impl Rec {
         if self.cfg.mm
             && matches!(
                 op,
-                O::Add | O::Sub | O::Mul | O::Mod | O::Idiv | O::Div | O::Pow | O::Band | O::Bor | O::Bxor | O::Shl | O::Shr
-                    | O::Addk | O::Subk | O::Mulk | O::Modk | O::Idivk | O::Divk | O::Powk | O::Bandk | O::Bork | O::Bxork
-                    | O::Addi | O::Shli | O::Shri
+                O::Add
+                    | O::Sub
+                    | O::Mul
+                    | O::Mod
+                    | O::Idiv
+                    | O::Div
+                    | O::Pow
+                    | O::Band
+                    | O::Bor
+                    | O::Bxor
+                    | O::Shl
+                    | O::Shr
+                    | O::Addk
+                    | O::Subk
+                    | O::Mulk
+                    | O::Modk
+                    | O::Idivk
+                    | O::Divk
+                    | O::Powk
+                    | O::Bandk
+                    | O::Bork
+                    | O::Bxork
+                    | O::Addi
+                    | O::Shli
+                    | O::Shri
             )
             && Self::mm_pair_has_table(vm, idx)
         {
@@ -4799,7 +5120,10 @@ impl Rec {
                     }
                     UvAcc::Cell(u) => {
                         // N3a (R4): an open upvalue below the root frame is a slot of a caller
-                        if self.cfg.retf & 1 != 0 && vm.cl.upval(b).is_open() && (vm.cl.upval(b).value_ptr() as usize) < self.root_ptr {
+                        if self.cfg.retf & 1 != 0
+                            && vm.cl.upval(b).is_open()
+                            && (vm.cl.upval(b).value_ptr() as usize) < self.root_ptr
+                        {
                             let at = vm.cl.upval(b).value_ptr() as usize;
                             // (an open upvalue of another coroutine's stack lies elsewhere: its index is out of range of every caller)
                             if let Some(d) = at.checked_sub(vm.st.slot_ptr(StkId(0)) as usize) {
@@ -5075,7 +5399,18 @@ impl Rec {
                     }
                     if op != O::Eq && (x.1 == Ty::Tab || y.1 == Ty::Tab) {
                         let ev = if op == O::Lt { Tm::Lt } else { Tm::Le };
-                        let (o1, o2) = (MmOpd { r: x.0, t: x.1, v: vm.slot(a) }, MmOpd { r: y.0, t: y.1, v: vm.slot(b) });
+                        let (o1, o2) = (
+                            MmOpd {
+                                r: x.0,
+                                t: x.1,
+                                v: vm.slot(a),
+                            },
+                            MmOpd {
+                                r: y.0,
+                                t: y.1,
+                                v: vm.slot(b),
+                            },
+                        );
                         return self.mm_order(vm, idx, i, ev, o1, o2);
                     }
                 }
@@ -5110,7 +5445,18 @@ impl Rec {
                         O::Gti => (Tm::Lt, true),
                         _ => (Tm::Le, true),
                     };
-                    let (o, k) = (MmOpd { r: x.0, t: x.1, v: vx }, MmOpd { r: ir, t: it, v: iv });
+                    let (o, k) = (
+                        MmOpd {
+                            r: x.0,
+                            t: x.1,
+                            v: vx,
+                        },
+                        MmOpd {
+                            r: ir,
+                            t: it,
+                            v: iv,
+                        },
+                    );
                     let (o1, o2) = if inv { (k, o) } else { (o, k) };
                     return self.mm_order(vm, idx, i, ev, o1, o2);
                 }
@@ -5155,7 +5501,10 @@ impl Rec {
                 let res = match t {
                     Ty::Tab => {
                         let tbl = v.as_table().ok_or(AbortReason::Diverge)?;
-                        if self.cfg.mm && !TableRef::no_tm(tbl.metatable(), Tm::Len) && tbl.metatable().is_some() {
+                        if self.cfg.mm
+                            && !TableRef::no_tm(tbl.metatable(), Tm::Len)
+                            && tbl.metatable().is_some()
+                        {
                             return self.mm_unary(vm, idx, Tm::Len, r, a, b);
                         }
                         if !mutants::active("tlen_meta_skip") {
@@ -5164,10 +5513,14 @@ impl Rec {
                         self.first_store.get_or_insert(self.b.ir.ins.len());
                         self.b.emit_flags(TOp::Tlen, Ty::Int, 0, r, NOREF, 0)?
                     }
-                    Ty::ShrStr | Ty::LngStr => {
-                        self.b
-                            .emit_flags(TOp::Tlen, Ty::Int, 0, r, NOREF, if t == Ty::ShrStr { 1 } else { 2 })?
-                    }
+                    Ty::ShrStr | Ty::LngStr => self.b.emit_flags(
+                        TOp::Tlen,
+                        Ty::Int,
+                        0,
+                        r,
+                        NOREF,
+                        if t == Ty::ShrStr { 1 } else { 2 },
+                    )?,
                     _ => return Err(AbortReason::Metamethod), // `__len` of another type, or an error
                 };
                 self.post_slot = Some(vm.base + a);
@@ -5190,14 +5543,24 @@ impl Rec {
             }
             O::Tforcall => self.tforcall(vm, idx, i, false),
             O::Tforloop if self.cfg.gfor_lua => self.tforloop(vm, idx, i),
-            O::Tforprep if self.cfg.gfor && self.cur_depth == 0 && (self.cfg.side.is_some() || self.cfg.nest.is_some()) => {
+            O::Tforprep
+                if self.cfg.gfor
+                    && self.cur_depth == 0
+                    && (self.cfg.side.is_some() || self.cfg.nest.is_some()) =>
+            {
                 self.tforprep(vm, idx, i)
             }
             // M1: the `ipairs` / `pairs` loop of an inlined callee is unrolled like its numeric loops (`loop_unroll` backward edges
             // per recording; the end of the traversal is a guarded fall-through)
-            O::Tforprep if self.cfg.gfor && self.cfg.gfor_inl && self.unrolling() => self.tforprep(vm, idx, i),
+            O::Tforprep if self.cfg.gfor && self.cfg.gfor_inl && self.unrolling() => {
+                self.tforprep(vm, idx, i)
+            }
             O::Concat => self.concat(vm, idx, i),
-            O::Forprep if (self.cur_depth == 0 && (self.cfg.side.is_some() || self.cfg.nest.is_some())) || self.unrolling() => {
+            O::Forprep
+                if (self.cur_depth == 0
+                    && (self.cfg.side.is_some() || self.cfg.nest.is_some()))
+                    || self.unrolling() =>
+            {
                 self.forprep(vm, idx, i)
             }
             O::Call => self.call(vm, idx, i),
@@ -5216,7 +5579,11 @@ impl Rec {
     fn call(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction) -> R<usize> {
         let (a, b, c) = (i.a() as usize, i.b() as usize, i.c() as usize);
         // F4: `B == 0` reads the `top` an earlier producer left (`top_in`), `C == 0` leaves one (`wanted == -1`)
-        let nargs = if b == 0 { self.values_to_top(a + 1)? } else { b - 1 };
+        let nargs = if b == 0 {
+            self.values_to_top(a + 1)?
+        } else {
+            b - 1
+        };
         let wanted = c as i32 - 1;
         let fv = vm.slot(a);
         if let Some(cl) = fv.as_lclosure() {
@@ -5228,7 +5595,9 @@ impl Rec {
                 Some(k) if k <= jit_hooks::intr::MAX || self.cfg.f1math => {
                     self.intrinsic(vm, idx, a, nargs, wanted, k, addr)
                 }
-                None if addr == rn_std::lib_base::jit_select_addr() => self.select_call(vm, idx, a, nargs, wanted, addr),
+                None if addr == rn_std::lib_base::jit_select_addr() => {
+                    self.select_call(vm, idx, a, nargs, wanted, addr)
+                }
                 None if self.cfg.pcall && addr == rn_std::lib_base::jit_pcall_addr() => {
                     self.pcall_call(vm, idx, a, nargs, wanted, addr, false)
                 }
@@ -5247,20 +5616,45 @@ impl Rec {
                 None if self.cfg.setmt && addr == rn_std::lib_base::jit_setmt_addr() => {
                     self.setmt_call(vm, idx, a, nargs, wanted, addr)
                 }
-                None if self.cfg.libnext && !cfg!(rustynail_lua54) && addr != 0 && addr == jit_hooks::builtin_next() => {
+                None if self.cfg.libnext
+                    && !cfg!(rustynail_lua54)
+                    && addr != 0
+                    && addr == jit_hooks::builtin_next() =>
+                {
                     self.next_call(vm, idx, a, nargs, wanted, addr)
                 }
-                None if self.cfg.libcall && rn_std::lib_string::jit_str_fns().iter().take(if self.cfg.libcall_rep { 4 } else { 3 }).any(|&x| x == addr) => self.lib_strfn(vm, idx, a, nargs, wanted, addr),
-                None if self.cfg.libfind && addr == rn_std::lib_string::jit_find_addr() => self.lib_find(vm, idx, a, nargs, wanted, addr),
-                None if self.cfg.f1strlen && addr == jit_hooks::strlen_addr() => self.lib_str_len(vm, idx, a, nargs, wanted, addr),
-                None if self.cfg.g1fmt && addr == jit_hooks::strformat_addr() && self.fmt_s_shape(vm, a, nargs) => {
+                None if self.cfg.libcall
+                    && rn_std::lib_string::jit_str_fns()
+                        .iter()
+                        .take(if self.cfg.libcall_rep { 4 } else { 3 })
+                        .any(|&x| x == addr) =>
+                {
+                    self.lib_strfn(vm, idx, a, nargs, wanted, addr)
+                }
+                None if self.cfg.libfind && addr == rn_std::lib_string::jit_find_addr() => {
+                    self.lib_find(vm, idx, a, nargs, wanted, addr)
+                }
+                None if self.cfg.f1strlen && addr == jit_hooks::strlen_addr() => {
+                    self.lib_str_len(vm, idx, a, nargs, wanted, addr)
+                }
+                None if self.cfg.g1fmt
+                    && addr == jit_hooks::strformat_addr()
+                    && self.fmt_s_shape(vm, a, nargs) =>
+                {
                     self.lib_fmt_s(vm, idx, a, nargs, wanted, addr)
                 }
-                None if self.cfg.tfmt && addr == jit_hooks::strformat_addr() && self.fmt_gen_ok(vm, a, nargs) => {
+                None if self.cfg.tfmt
+                    && addr == jit_hooks::strformat_addr()
+                    && self.fmt_gen_ok(vm, a, nargs) =>
+                {
                     self.lib_fmt(vm, idx, a, nargs, wanted, addr)
                 }
-                None if self.cfg.f2mt && addr == rn_std::lib_base::jit_getmt_addr() => self.getmt_call(vm, idx, a, nargs, wanted, addr),
-                None if self.cfg.f2asrt && addr == rn_std::lib_base::jit_assert_addr() => self.assert_call(vm, idx, a, nargs, wanted, addr),
+                None if self.cfg.f2mt && addr == rn_std::lib_base::jit_getmt_addr() => {
+                    self.getmt_call(vm, idx, a, nargs, wanted, addr)
+                }
+                None if self.cfg.f2asrt && addr == rn_std::lib_base::jit_assert_addr() => {
+                    self.assert_call(vm, idx, a, nargs, wanted, addr)
+                }
                 None => match self.libfn_enabled(addr) {
                     Some(f) => self.lib_call(vm, idx, a, nargs, wanted, f, addr),
                     _ => self.stitch(idx, AbortReason::CFunc),
@@ -5291,17 +5685,32 @@ impl Rec {
     /// before the `CALL` (tier 1 re-executes it), otherwise `why` (`CFunc`; F4: `Recursion` beyond the unroll limit).
     fn stitch(&mut self, idx: usize, why: AbortReason) -> R<usize> {
         let _ = idx;
-        if self.cfg.stitch0 && self.cfg.side.is_some() && self.path.len() <= 1 && !mutants::active("stitch_side_empty") {
+        if self.cfg.stitch0
+            && self.cfg.side.is_some()
+            && self.path.len() <= 1
+            && !mutants::active("stitch_side_empty")
+        {
             // BUNDLE-F: a side recording that stitches before its first bytecode is an empty trace (an entry, an exit at the same
             // `CALL`, hot again): chains of up to 16 of them. (`fn_end` refuses the same case.)
             return Err(why);
         }
-        if self.cfg.rec_only && (self.cfg.fn_root || (self.cfg.rec_cont && self.cfg.rec_any)) && self.cfg.side.is_none() {
+        if self.cfg.rec_only
+            && (self.cfg.fn_root || (self.cfg.rec_cont && self.cfg.rec_any))
+            && self.cfg.side.is_none()
+        {
             // P-M3: a native-recursion head records nothing but the recursion (R2: nor does a continuation head of `recany`)
-            return Err(if why == AbortReason::Recursion { why } else { AbortReason::FnShort });
+            return Err(if why == AbortReason::Recursion {
+                why
+            } else {
+                AbortReason::FnShort
+            });
         }
         // (a function-entry recording stitches by its own minimum: it has no loop to pay for the extra exit)
-        let min = if self.cfg.fn_root { self.cfg.fn_min } else { self.cfg.stitch_min };
+        let min = if self.cfg.fn_root {
+            self.cfg.fn_min
+        } else {
+            self.cfg.stitch_min
+        };
         if self.cfg.fn_root && self.cfg.side.is_none() && self.path.len() < min as usize {
             return Err(AbortReason::FnShort);
         }
@@ -5331,7 +5740,8 @@ impl Rec {
         if self.cfg.side.is_none() && self.path.len() < self.cfg.fn_min as usize {
             return Err(AbortReason::FnShort);
         }
-        if self.cfg.side.is_some() && self.path.len() <= 1 && !mutants::active("fn_side_at_return") {
+        if self.cfg.side.is_some() && self.path.len() <= 1 && !mutants::active("fn_side_at_return")
+        {
             // a side trace that would start at the `RETURN` itself (the final exit of a function root is hot by
             // construction) is empty: its own final exit would be hot again, and so on
             return Err(AbortReason::LeaveFrame);
@@ -5439,7 +5849,11 @@ impl Rec {
     fn values_to_top(&self, from: usize) -> R<usize> {
         let t = self.top_in.ok_or(AbortReason::MultRet)?;
         let f = self.frames[self.cur_depth].base_off + from;
-        let t = if mutants::active("top_count_off") { t + 1 } else { t };
+        let t = if mutants::active("top_count_off") {
+            t + 1
+        } else {
+            t
+        };
         t.checked_sub(f).ok_or(AbortReason::Diverge)
     }
 
@@ -5455,7 +5869,7 @@ impl Rec {
         let (land, _) = snap::land_info(&self.lows[low as usize], self.cur_pc);
         let frames = self.frame_recs();
         let top = self.top_code();
-            let s = snap::take(&mut self.b.ir, &self.sm, self.cur_pc, land, &frames, top);
+        let s = snap::take(&mut self.b.ir, &self.sm, self.cur_pc, land, &frames, top);
         self.meta.push(SnapMeta {
             step: self.path.len() as u32 - 1,
             pc: self.cur_pc,
@@ -5511,7 +5925,9 @@ impl Rec {
         if uses > 0
             && self.cfg.rec_native
             && (self.cfg.fn_root || self.cfg.rec_cont)
-            && self.cfg.side.as_ref().map_or(true, |sd| self.cfg.rec_any && self.cfg.fn_root && sd.frames.is_empty())
+            && self.cfg.side.as_ref().map_or(true, |sd| {
+                self.cfg.rec_any && self.cfg.fn_root && sd.frames.is_empty()
+            })
             && d == 0
             && !tail
             && !vararg
@@ -5525,12 +5941,17 @@ impl Rec {
             if self.cfg.unroll == 0 {
                 return Err(AbortReason::Recursion);
             }
-            let limit = self.cfg.unroll as usize + usize::from(mutants::active("unroll_off_by_one"));
+            let limit =
+                self.cfg.unroll as usize + usize::from(mutants::active("unroll_off_by_one"));
             if uses >= limit {
                 return self.stitch(idx, AbortReason::Recursion);
             }
         }
-        let max_depth = if self.cfg.max_depth == 0 { MAX_DEPTH } else { (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES) };
+        let max_depth = if self.cfg.max_depth == 0 {
+            MAX_DEPTH
+        } else {
+            (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES)
+        };
         if !tail && d >= max_depth {
             // M1: beyond the inlining depth the recording ends with a stitching exit before the call (as at the recursion unroll
             // limit) when it recorded enough; otherwise `Depth`
@@ -5544,7 +5965,11 @@ impl Rec {
         let top_rel = base_rel + nargs;
         let nslots = usize::from(p.maxstacksize);
         // the frame's slots: a tail call reuses the replaced frame's base
-        let new_base = if tail { self.frames[d].base_off } else { base_rel };
+        let new_base = if tail {
+            self.frames[d].base_off
+        } else {
+            base_rel
+        };
         // P-E: `luaT_adjustvarargs` lays the frame out `totalargs + 1` slots higher
         let totalargs = nargs.max(usize::from(p.numparams));
         let vshift = if vararg { totalargs + 1 } else { 0 };
@@ -5636,7 +6061,8 @@ impl Rec {
             pc_shift: 0,
             pc_wanted: 0,
             mm: None,
-            ectx: None, tfor: None,
+            ectx: None,
+            tfor: None,
         });
         self.next_depth = d + 1;
         Ok(0)
@@ -5657,23 +6083,40 @@ impl Rec {
         }
         // P-E: in a vararg frame `C = numparams + 1`; only a native (intrinsic / `select`) may be tail-called from there
         let vtail = i.c() != 0;
-        if vtail && !(self.frames[self.cur_depth].vdelta != 0 && i.c() as usize == usize::from(vm.cl.proto().numparams) + 1) {
+        if vtail
+            && !(self.frames[self.cur_depth].vdelta != 0
+                && i.c() as usize == usize::from(vm.cl.proto().numparams) + 1)
+        {
             return Err(AbortReason::Vararg);
         }
         if i.k() != 0 && !self.cfg.closeret {
             return Err(self.nyi()); // closes upvalues: no CLOSURE is recorded (M1: an inlined frame has none, see `Rec::ret`)
         }
-        let nargs = if b == 0 { self.values_to_top(a + 1)? } else { b - 1 };
+        let nargs = if b == 0 {
+            self.values_to_top(a + 1)?
+        } else {
+            b - 1
+        };
         let fv = vm.slot(a);
         if vtail && fv.as_lclosure().is_some() {
             return Err(AbortReason::Vararg);
         }
         if let Some(cl) = fv.as_lclosure() {
-            return self.call_lua(vm, idx, a, nargs, self.frames[self.cur_depth].nresults as i32, cl, true);
+            return self.call_lua(
+                vm,
+                idx,
+                a,
+                nargs,
+                self.frames[self.cur_depth].nresults as i32,
+                cl,
+                true,
+            );
         }
         if fv.tag() == LUA_VLCF {
             let addr = fv.as_native().map_or(0, |f| f as usize);
-            if let Some(k) = jit_hooks::intrinsic_of(addr).filter(|&k| k <= jit_hooks::intr::MAX || self.cfg.f1math) {
+            if let Some(k) = jit_hooks::intrinsic_of(addr)
+                .filter(|&k| k <= jit_hooks::intr::MAX || self.cfg.f1math)
+            {
                 // `return math.max(a, b)`: the interpreter runs the native on top of the frame (its results land at the
                 // call register, `top` after them), then `post_call` moves them to the frame's function slot: an
                 // intrinsic with `C = 0` followed by a `RETURN` of its one result from register `A`
@@ -5708,7 +6151,14 @@ impl Rec {
             }
         }
         if self.cfg.mm && self.cfg.tailx & 1 != 0 && !vtail && fv.is_table() {
-            return self.mm_call(vm, idx, a, nargs, self.frames[self.cur_depth].nresults as i32, true);
+            return self.mm_call(
+                vm,
+                idx,
+                a,
+                nargs,
+                self.frames[self.cur_depth].nresults as i32,
+                true,
+            );
         }
         Err(AbortReason::TailCall)
     }
@@ -5729,7 +6179,10 @@ impl Rec {
             }
             // N2c (BUNDLE-N, `retf` bit 0): a side recording that reaches the `RETURN` of its root frame pops it for real and goes on in the
             // caller; anything that makes the pop unsound or unprofitable keeps the old behaviour (`None`)
-            if self.cfg.retf & 1 != 0 && self.cfg.side.is_some() && (!self.cfg.fn_root || self.cfg.retf & 4 != 0) {
+            if self.cfg.retf & 1 != 0
+                && self.cfg.side.is_some()
+                && (!self.cfg.fn_root || self.cfg.retf & 4 != 0)
+            {
                 if let Some(r) = self.retf(vm, i, op)? {
                     return Ok(r);
                 }
@@ -5782,7 +6235,10 @@ impl Rec {
     /// the old behaviour. The recording ends at the first instruction of `C` after the pop (see `on_step`).
     fn retf(&mut self, vm: &Vm<'_>, i: Instruction, op: OpCode) -> R<Option<usize>> {
         const NO: R<Option<usize>> = Ok(None);
-        if cfg!(rustynail_lua54) || self.cfg.retfmax == 0 || self.segs.len() > self.cfg.retfmax as usize {
+        if cfg!(rustynail_lua54)
+            || self.cfg.retfmax == 0
+            || self.segs.len() > self.cfg.retfmax as usize
+        {
             return NO; // (5.4: `nresults` is a field of its own and the CIST bits differ: not wired)
         }
         if self.pcall.is_some() || self.cur_depth != 0 || vm.cl.proto().is_vararg() {
@@ -5790,20 +6246,28 @@ impl Rec {
         }
         // the returning frame F (the root) and its caller C
         let f_ci = vm.st.ci();
-        if f_ci.as_ptr() as usize != self.root_ci || f_ci.r().callstatus & (CIST_C | CIST_MMRET | rn_core::state::CIST_FRESH) != 0 {
+        if f_ci.as_ptr() as usize != self.root_ci
+            || f_ci.r().callstatus & (CIST_C | CIST_MMRET | rn_core::state::CIST_FRESH) != 0
+        {
             return NO;
         }
-        let Some(c_ci) = f_ci.previous() else { return NO };
+        let Some(c_ci) = f_ci.previous() else {
+            return NO;
+        };
         if c_ci.r().callstatus & CIST_C != 0 {
             return NO;
         }
-        let Some(ccl) = vm.st.ci_lclosure(c_ci) else { return NO };
+        let Some(ccl) = vm.st.ci_lclosure(c_ci) else {
+            return NO;
+        };
         let cp = ccl.proto();
         let ccode = cp.code();
         // C is suspended after an `OP_CALL`; F's function slot is its register A
         let sp = c_ci.r().savedpc as usize;
         let cbase = c_ci.r().func.0 + 1;
-        let Some(call_pc) = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1) else { return NO };
+        let Some(call_pc) = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1) else {
+            return NO;
+        };
         if call_pc >= ccode.len() || ccode.as_ptr().wrapping_add(call_pc + 1) as usize != sp {
             return NO;
         }
@@ -5854,7 +6318,11 @@ impl Rec {
         // recording does not model)
         let c_lo = cbase;
         let f_lo = f_ci.r().func.0;
-        if self.uv_below_stores.iter().any(|&x| x >= c_lo && x < f_lo + 1) {
+        if self
+            .uv_below_stores
+            .iter()
+            .any(|&x| x >= c_lo && x < f_lo + 1)
+        {
             return Err(AbortReason::RetfAlias);
         }
         self.uv_below_stores.clear();
@@ -5867,7 +6335,11 @@ impl Rec {
         let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
         let mut vals = Vec::with_capacity(nmove);
         for j in 0..nmove {
-            vals.push(if j < nret { self.rd_slot(vm, a + j)?.0 } else { nil });
+            vals.push(if j < nret {
+                self.rd_slot(vm, a + j)?.0
+            } else {
+                nil
+            });
         }
         if !self.deps.iter().any(|k| k.0 == ckey) {
             self.deps.push(ProtoKey(ckey));
@@ -5880,16 +6352,34 @@ impl Rec {
         // ---- the rebase onto C ----
         let entry_code = vm.code.as_ptr() as u64;
         if self.segs.is_empty() {
-            self.segs.push(Seg { proto: ProtoKey(self.entry_proto), code: entry_code, shift: 0, pops: 0, call_pc: 0, a: 0, retf_ins: NOREF });
+            self.segs.push(Seg {
+                proto: ProtoKey(self.entry_proto),
+                code: entry_code,
+                shift: 0,
+                pops: 0,
+                call_pc: 0,
+                a: 0,
+                retf_ins: NOREF,
+            });
         }
         let (cum_shift, cum_pops) = (self.shift + b, self.segs.len() as u8);
         RETF_USED.with(|c| c.set(true));
-        self.segs.push(Seg { proto: ProtoKey(ckey), code: ccode.as_ptr() as u64, shift: cum_shift as u16, pops: cum_pops, call_pc: call_pc as u32, a: ca as u16, retf_ins });
+        self.segs.push(Seg {
+            proto: ProtoKey(ckey),
+            code: ccode.as_ptr() as u64,
+            shift: cum_shift as u16,
+            pops: cum_pops,
+            call_pc: call_pc as u32,
+            a: ca as u16,
+            retf_ins,
+        });
         self.seg_steps.push(self.path.len() as u32);
         // entry-relative maxima of the segment that ends here (its coordinates are `shift` slots / `segs.len() - 1` pops above the entry's)
         let (sh0, pops0) = (self.shift, self.segs.len().saturating_sub(2) as u8);
         self.ext_entry = self.ext_entry.max(self.ext.saturating_sub(sh0));
-        self.room_entry = self.room_entry.max((self.room as usize).saturating_sub(sh0) as u32);
+        self.room_entry = self
+            .room_entry
+            .max((self.room as usize).saturating_sub(sh0) as u32);
         self.ci_entry = self.ci_entry.max(self.max_ci.saturating_sub(pops0));
         // the model: C's registers 0..=A (the last is F's function slot) go below the old frame
         let mut below = Vec::with_capacity(b);
@@ -5907,7 +6397,11 @@ impl Rec {
         let cn = usize::from(cp.maxstacksize);
         let len = (old.len() + b).max(cn);
         let mut nsm = SlotMap::new(len);
-        let sh = if mutants::active("retf_slot_remap_off") { b + 1 } else { b };
+        let sh = if mutants::active("retf_slot_remap_off") {
+            b + 1
+        } else {
+            b
+        };
         for s in 0..old.len() {
             if s + sh >= len {
                 break;
@@ -5920,20 +6414,35 @@ impl Rec {
         }
         self.sm = nsm;
         let mut nk = vec![None; self.known.len() + b];
-        let kb = if mutants::active("retf_known_unshifted") { 0 } else { b };
+        let kb = if mutants::active("retf_known_unshifted") {
+            0
+        } else {
+            b
+        };
         for (s, t) in self.known.iter().enumerate() {
             nk[s + kb] = *t;
         }
         self.known = nk;
-        self.stale = std::mem::take(&mut self.stale).into_iter().map(|s| s + b).collect();
+        self.stale = std::mem::take(&mut self.stale)
+            .into_iter()
+            .map(|s| s + b)
+            .collect();
         self.ls_memo.clear();
         // the results land in C's registers A.. (over the popped frame's function slot and first registers)
-        let dest = if mutants::active("retf_results_dest_off") { ca + 1 } else { ca };
+        let dest = if mutants::active("retf_results_dest_off") {
+            ca + 1
+        } else {
+            ca
+        };
         for (j, r) in vals.into_iter().enumerate() {
             self.def_abs(dest + j, r);
         }
         if wanted < 0 {
-            let t = if mutants::active("retf_multret_top_unmapped") { nret } else { ca + nret };
+            let t = if mutants::active("retf_multret_top_unmapped") {
+                nret
+            } else {
+                ca + nret
+            };
             self.top_rel = Some(t);
         }
         // the frame stack is [C]; the root fields describe C
@@ -5989,7 +6498,12 @@ impl Rec {
                 return true;
             }
             let uv = th.add(thr::OPENUPVAL).cast::<usize>().read_unaligned();
-            uv != 0 && ((uv as *const u8).add(rn_core::jit_layout::upval::V).cast::<usize>().read_unaligned()) >= bp
+            uv != 0
+                && ((uv as *const u8)
+                    .add(rn_core::jit_layout::upval::V)
+                    .cast::<usize>()
+                    .read_unaligned())
+                    >= bp
         }
     }
 
@@ -6006,7 +6520,11 @@ impl Rec {
         let mm = self.frames[d].mm;
         let tfor = self.frames[d].tfor;
         // P-E: a vararg frame returns its results to the *original* function slot (`ci.func -= delta`)
-        let vdelta = if mutants::active("vararg_ret_dest") { 0 } else { vdelta };
+        let vdelta = if mutants::active("vararg_ret_dest") {
+            0
+        } else {
+            vdelta
+        };
         let dest = fb - 1 - vdelta;
         let nmove = if wanted < 0 { nret } else { wanted as usize };
         if wanted < 0 {
@@ -6016,7 +6534,11 @@ impl Rec {
         let mut vals = Vec::with_capacity(nmove);
         for j in 0..nmove {
             // (P-E: the values of a `RETURN B=0` after a `VARARG C=0` may lie beyond the frame's `maxstacksize`)
-            vals.push(if j < nret { self.rd_slot(vm, fb + a + j)?.0 } else { nil });
+            vals.push(if j < nret {
+                self.rd_slot(vm, fb + a + j)?.0
+            } else {
+                nil
+            });
         }
         self.frames.pop();
         self.next_depth = d - 1;
@@ -6036,7 +6558,12 @@ impl Rec {
             self.top_rel = Some(dest + nret);
         }
         if let Some(tf) = tfor {
-            return self.tfor_after_ret(call_pc as usize, tf, first.ok_or(AbortReason::Diverge)?, d - 1);
+            return self.tfor_after_ret(
+                call_pc as usize,
+                tf,
+                first.ok_or(AbortReason::Diverge)?,
+                d - 1,
+            );
         }
         match mm {
             Some(MmFin::Reg(r)) => {
@@ -6044,7 +6571,10 @@ impl Rec {
                 if !mutants::active("mm_result_skip") {
                     let v = first.ok_or(AbortReason::Diverge)?;
                     let cb = self.frames[d - 1].base_off;
-                    self.def_abs(cb + usize::from(r) + usize::from(mutants::active("mm_result_slot_off")), v);
+                    self.def_abs(
+                        cb + usize::from(r) + usize::from(mutants::active("mm_result_slot_off")),
+                        v,
+                    );
                 }
             }
             Some(MmFin::Cond(k)) => {
@@ -6092,7 +6622,11 @@ impl Rec {
             }
         }
         self.def_abs(nb + np, nil);
-        let shift = if mutants::active("vararg_delta_off") { delta + 1 } else { delta };
+        let shift = if mutants::active("vararg_delta_off") {
+            delta + 1
+        } else {
+            delta
+        };
         let f = &mut self.frames[d];
         f.vpending = None;
         f.vdelta = delta;
@@ -6128,7 +6662,11 @@ impl Rec {
         let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
         let mut vals = Vec::with_capacity(cnt);
         for j in 0..cnt {
-            vals.push(if j < nextra { self.rd_slot(vm, hidden0 + j)?.0 } else { nil });
+            vals.push(if j < nextra {
+                self.rd_slot(vm, hidden0 + j)?.0
+            } else {
+                nil
+            });
         }
         if n < 0 {
             self.need_ext(base + a + nextra + 1)?;
@@ -6138,7 +6676,11 @@ impl Rec {
             }
         }
         for (j, r) in vals.into_iter().enumerate() {
-            let r = if j == 0 && mutants::active("vararg_first_nil") { nil } else { r };
+            let r = if j == 0 && mutants::active("vararg_first_nil") {
+                nil
+            } else {
+                r
+            };
             self.def_abs(base + a + j, r);
         }
         if n < 0 {
@@ -6155,7 +6697,16 @@ impl Rec {
     /// metatable has no `__pairs` to honour: the metatable pointer is guarded to be nil (a table with a metatable stays a `MetaTable` abort,
     /// the absence of `__pairs` in a metatable cannot be guarded); another type is not recorded (`__pairs` of its metatable, the error).
     #[allow(clippy::too_many_arguments)]
-    fn gfor_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize, pairs: bool) -> R<usize> {
+    fn gfor_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+        pairs: bool,
+    ) -> R<usize> {
         if nargs == 0 {
             return Err(self.nyi()); // "bad argument #1 to 'ipairs' (table expected, got no value)"
         }
@@ -6175,7 +6726,8 @@ impl Rec {
                 let z = self.kint(0);
                 self.guard(TOp::Eq, Ty::I64, mt, z, 0)?;
             }
-            let next = jit_hooks::builtin_next() + usize::from(mutants::active("gfor_wrong_iterator"));
+            let next =
+                jit_hooks::builtin_next() + usize::from(mutants::active("gfor_wrong_iterator"));
             let kn = self.b.ir.konst(KVal::Ptr(next as u64, PtrKind::Builtin));
             let mut v = vec![kn, tr, nil];
             if !cfg!(rustynail_lua54) {
@@ -6203,7 +6755,15 @@ impl Rec {
     /// vararg frame or any fixed argument list): the callee-identity guard on the registered `select`, a guard on the
     /// selector, then pure slot moves. `'#'` pushes the count (the native's push above its arguments, then the result
     /// move); an integer selector `i` returns the arguments from `i` on, which are already on the stack.
-    fn select_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn select_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs == 0 {
             return Err(self.nyi()); // "bad argument #1"
         }
@@ -6227,7 +6787,10 @@ impl Rec {
                     return Err(self.nyi());
                 }
                 if !mutants::active("select_guard_skip") {
-                    let kp = self.b.ir.konst(KVal::Ptr(payload_bits(&vsel, sty), PtrKind::Raw));
+                    let kp = self
+                        .b
+                        .ir
+                        .konst(KVal::Ptr(payload_bits(&vsel, sty), PtrKind::Raw));
                     let kr = self.b.emit_raw(Ins {
                         op: TOp::Kptr,
                         t: Ty::ShrStr,
@@ -6276,7 +6839,11 @@ impl Rec {
         if !mutants::active("native_ci_skip") {
             self.max_ci = self.max_ci.max((self.ci_depth(d) + 1) as u8);
         }
-        let nmove = if wanted < 0 { res.len() } else { wanted as usize };
+        let nmove = if wanted < 0 {
+            res.len()
+        } else {
+            wanted as usize
+        };
         self.need_ext(func_rel + nmove + 1)?;
         for j in 0..nmove {
             let r = res.get(j).copied().unwrap_or(nil);
@@ -6298,7 +6865,16 @@ impl Rec {
     /// side effect may precede any exit of the body ([`Rec::pcall_guard_check`]). One more guard keeps the C-stack depth of the
     /// real call in reach ([`lib::CCALLS`]).
     #[allow(clippy::too_many_arguments)]
-    fn pcall_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize, x: bool) -> R<usize> {
+    fn pcall_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+        x: bool,
+    ) -> R<usize> {
         let need = if x { 2 } else { 1 };
         if nargs < need {
             return Err(self.nyi()); // "bad argument"
@@ -6309,7 +6885,11 @@ impl Rec {
         let p = cl.proto();
         let key = &*p as *const Proto as usize;
         let d = self.cur_depth;
-        let max_depth = if self.cfg.max_depth == 0 { MAX_DEPTH } else { (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES) };
+        let max_depth = if self.cfg.max_depth == 0 {
+            MAX_DEPTH
+        } else {
+            (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES)
+        };
         if self.pcall.is_some()
             || p.is_vararg()
             || d >= max_depth
@@ -6321,7 +6901,9 @@ impl Rec {
         if x {
             // `luaL_checktype(L, 2, LUA_TFUNCTION)`: the handler's type is guarded, anything else raises
             let t = vm.slot(a + 2).tag();
-            let is_fn = vm.slot(a + 2).as_lclosure().is_some() || t == LUA_VLCF || vm.slot(a + 2).as_cclosure().is_some();
+            let is_fn = vm.slot(a + 2).as_lclosure().is_some()
+                || t == LUA_VLCF
+                || vm.slot(a + 2).as_cclosure().is_some();
             if !is_fn {
                 return Err(self.nyi());
             }
@@ -6415,7 +6997,8 @@ impl Rec {
             pc_shift: shift,
             pc_wanted: wanted,
             mm: None,
-            ectx: None, tfor: None,
+            ectx: None,
+            tfor: None,
         });
         self.next_depth = d + 1;
         Ok(0)
@@ -6434,7 +7017,11 @@ impl Rec {
         let dest = fslot - shift;
         let mut src = Vec::with_capacity(nret + 1);
         let tr = self.sm.cur[fslot - 1];
-        src.push(if tr == NOREF { self.b.ir.konst(KVal::Pri(Ty::True)) } else { tr });
+        src.push(if tr == NOREF {
+            self.b.ir.konst(KVal::Pri(Ty::True))
+        } else {
+            tr
+        });
         for j in 0..nret {
             src.push(self.rd_slot(vm, fb + a + j)?.0);
         }
@@ -6467,18 +7054,33 @@ impl Rec {
     /// the table above its arguments and the call moves it to the function slot (TR3); the native frame needs
     /// `LUA_MINSTACK` free slots and a spare `CallInfo`. An allocation the interpreter would have to step the collector
     /// for (or that fails) exits before the `CALL` (the guard on `TNEW`), tier 1 then runs the real function.
-    fn pack_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn pack_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         let _ = idx;
         if nargs > MAX_PACK || wanted > 1 {
             return self.stitch(idx, AbortReason::CFunc);
         }
         // the key "n": a short-string constant of the current prototype
         let Some(nk) = vm.k.iter().find_map(|v| {
-            (ty_of_value(v) == Some(Ty::ShrStr)).then(|| v.as_strref()).flatten().filter(|s| s.get().as_bytes() == b"n")
+            (ty_of_value(v) == Some(Ty::ShrStr))
+                .then(|| v.as_strref())
+                .flatten()
+                .filter(|s| s.get().as_bytes() == b"n")
         }) else {
             return self.stitch(idx, AbortReason::CFunc);
         };
-        let nkv = vm.k.iter().find(|v| v.as_strref().is_some_and(|s| s.get().as_bytes() == b"n")).copied().ok_or(AbortReason::Diverge)?;
+        let nkv =
+            vm.k.iter()
+                .find(|v| v.as_strref().is_some_and(|s| s.get().as_bytes() == b"n"))
+                .copied()
+                .ok_or(AbortReason::Diverge)?;
         if self.elems.saturating_add(nargs) > self.cfg.max_model_elems {
             return Err(AbortReason::Charge);
         }
@@ -6498,7 +7100,9 @@ impl Rec {
         self.first_store.get_or_insert(self.b.ir.ins.len());
         // `new_table_sized(n, 1)`: array part `n`, hash part of one node (NEWTABLE's B = log2(1) + 1)
         let asize = nargs as u32 + u32::from(mutants::active("pack_asize_off"));
-        let t = self.b.emit_flags(TOp::Tnew, Ty::Tab, 0, 1 as Ref, NOREF, asize)?;
+        let t = self
+            .b
+            .emit_flags(TOp::Tnew, Ty::Tab, 0, 1 as Ref, NOREF, asize)?;
         let z = self.kint(0);
         if !mutants::active("tnew_ne_guard_skip") {
             self.guard(TOp::Ne, Ty::I64, t, z, 0)?;
@@ -6520,7 +7124,10 @@ impl Rec {
             }
         }
         // `raw_set_str(t, "n", nargs)`: the key is absent from the fresh table, whose one node is free
-        let key = self.b.ir.konst(KVal::Ptr(payload_bits(&nkv, Ty::ShrStr), PtrKind::Raw));
+        let key = self
+            .b
+            .ir
+            .konst(KVal::Ptr(payload_bits(&nkv, Ty::ShrStr), PtrKind::Raw));
         let nr = self.ins(TOp::Newref, Ty::P64, t, key)?;
         if !mutants::active("newref_ne_guard_skip") {
             self.guard(TOp::Ne, Ty::I64, nr, z, 0)?;
@@ -6651,7 +7258,9 @@ impl Rec {
                     if float_to_int(obs, F2I::Eq).is_none() {
                         return Err(self.nyi()); // `pushnumint` would push a float: not recorded
                     }
-                    let fl = if self.cfg.f1floor && (kind == I::FLOOR || mutants::active("f1_ceil_as_floor")) {
+                    let fl = if self.cfg.f1floor
+                        && (kind == I::FLOOR || mutants::active("f1_ceil_as_floor"))
+                    {
                         self.ins(TOp::Ffloor, Ty::Num, x.0, NOREF)?
                     } else if self.cfg.f1floor {
                         // ceil(x) = -floor(-x), exactly
@@ -6686,15 +7295,26 @@ impl Rec {
                         // Lua: min = (b < a) ? b : a, max = (a < b) ? b : a; `Fmin` / `Fmax` return their *second* operand
                         // unless the first is strictly smaller / larger, so the operands are passed as (b, a) (J4 M4)
                         let op = if kind == I::MIN { TOp::Fmin } else { TOp::Fmax };
-                        let r = if mutants::active("f1_minmax_order") { self.ins(op, Ty::Num, acc.0, nx.0)? } else { self.ins(op, Ty::Num, nx.0, acc.0)? };
-                        let (fa, fb) = (acc.2.as_float().unwrap_or(f64::NAN), vnx.as_float().unwrap_or(f64::NAN));
+                        let r = if mutants::active("f1_minmax_order") {
+                            self.ins(op, Ty::Num, acc.0, nx.0)?
+                        } else {
+                            self.ins(op, Ty::Num, nx.0, acc.0)?
+                        };
+                        let (fa, fb) = (
+                            acc.2.as_float().unwrap_or(f64::NAN),
+                            vnx.as_float().unwrap_or(f64::NAN),
+                        );
                         let take_b = if kind == I::MIN { fb < fa } else { fa < fb };
                         acc = (r, Ty::Num, if take_b { vnx } else { acc.2 });
                     } else {
                         let (xi, yi) = (acc.2.as_int().unwrap_or(0), vnx.as_int().unwrap_or(0));
                         // min: take b iff b < a; max: take b iff a < b
                         let take_b = if kind == I::MIN { yi < xi } else { xi < yi };
-                        let (lo, hi) = if kind == I::MIN { (nx.0, acc.0) } else { (acc.0, nx.0) };
+                        let (lo, hi) = if kind == I::MIN {
+                            (nx.0, acc.0)
+                        } else {
+                            (acc.0, nx.0)
+                        };
                         if take_b {
                             self.guard(TOp::Lt, Ty::I64, lo, hi, 0)?;
                             acc = (nx.0, Ty::Int, vnx);
@@ -6753,8 +7373,16 @@ impl Rec {
             let v = vm.slot(a + j);
             let l = match op.1 {
                 Ty::ShrStr | Ty::LngStr => v.as_strref().ok_or(AbortReason::Diverge)?.get().len(),
-                Ty::Int => rn_core::number::tostring(rn_core::number::Number::Int(v.as_int().unwrap_or(0))).as_bytes().len(),
-                Ty::Num => rn_core::number::tostring(rn_core::number::Number::Float(v.as_float().unwrap_or(0.0))).as_bytes().len(),
+                Ty::Int => {
+                    rn_core::number::tostring(rn_core::number::Number::Int(v.as_int().unwrap_or(0)))
+                        .as_bytes()
+                        .len()
+                }
+                Ty::Num => rn_core::number::tostring(rn_core::number::Number::Float(
+                    v.as_float().unwrap_or(0.0),
+                ))
+                .as_bytes()
+                .len(),
                 _ => return Err(AbortReason::Metamethod), // `__concat`, or an error
             };
             if l == 0 || l > (1 << 40) {
@@ -6763,7 +7391,14 @@ impl Rec {
             tl += l;
         }
         // (the model never holds a string's bytes: the lockstep takes the strings' addresses from the VM)
-        let nconv = if self.cfg.cnum { 0 } else { ops[..n].iter().filter(|o| matches!(o.1, Ty::Int | Ty::Num)).count() };
+        let nconv = if self.cfg.cnum {
+            0
+        } else {
+            ops[..n]
+                .iter()
+                .filter(|o| matches!(o.1, Ty::Int | Ty::Num))
+                .count()
+        };
         for _ in 0..=nconv {
             self.storm_check()?;
         }
@@ -6775,7 +7410,9 @@ impl Rec {
         for j in (0..n).rev() {
             // (B3-4 `cnum`: the `CONCAT` helper formats the number operands itself)
             if matches!(ops[j].1, Ty::Int | Ty::Num) && !self.cfg.cnum {
-                let p = self.b.emit_flags(TOp::Snew, Ty::ShrStr, 0, ops[j].0, NOREF, 0)?;
+                let p = self
+                    .b
+                    .emit_flags(TOp::Snew, Ty::ShrStr, 0, ops[j].0, NOREF, 0)?;
                 if !mutants::active("snew_ne_guard_skip") {
                     self.guard(TOp::Ne, Ty::I64, p, z, 0)?;
                 }
@@ -6785,9 +7422,15 @@ impl Rec {
                 hints.push(if j == 0 { usize::MAX } else { vm.base + a + j });
             }
         }
-        let rty = if tl > rn_core::string::MAX_SHORT_LEN { Ty::LngStr } else { Ty::ShrStr };
+        let rty = if tl > rn_core::string::MAX_SHORT_LEN {
+            Ty::LngStr
+        } else {
+            Ty::ShrStr
+        };
         let third = if n == 3 { u32::from(sref[2]) } else { 0 };
-        let c = self.b.emit_flags(TOp::Concat, rty, 0, sref[0], sref[1], third)?;
+        let c = self
+            .b
+            .emit_flags(TOp::Concat, rty, 0, sref[0], sref[1], third)?;
         if !mutants::active("concat_ne_guard_skip") {
             self.guard(TOp::Ne, Ty::I64, c, z, 0)?;
         }
@@ -6824,9 +7467,17 @@ impl Rec {
         }
         // (`prep`, N7: the first call of the loop, chained behind `TFORPREP`, which in 5.5 has not swapped the control and the
         // closing value yet: the control is still in `R[A+2]`)
-        let (fslot, cslot) = if cfg!(rustynail_lua54) { (a + 4, a + 2) } else { (a + 3, if prep { a + 2 } else { a + 3 }) };
+        let (fslot, cslot) = if cfg!(rustynail_lua54) {
+            (a + 4, a + 2)
+        } else {
+            (a + 3, if prep { a + 2 } else { a + 3 })
+        };
         let fv = vm.slot(a);
-        let addr = if fv.tag() == LUA_VLCF { fv.as_native().map_or(0, |f| f as usize) } else { 0 };
+        let addr = if fv.tag() == LUA_VLCF {
+            fv.as_native().map_or(0, |f| f as usize)
+        } else {
+            0
+        };
         let is_ipairs = addr != 0 && addr == jit_hooks::builtin_ipairs_aux();
         let is_next = addr != 0 && addr == jit_hooks::builtin_next();
         if let Some(cl) = fv.as_lclosure() {
@@ -6834,17 +7485,26 @@ impl Rec {
                 return self.tforcall_lua(vm, idx, a, fslot, cslot, nvars, ni.bx(), cl);
             }
         }
-        if self.cfg.gmatch && fv.as_cclosure().is_some_and(|c| c.f as usize == rn_std::lib_string::jit_gmatch_addr()) {
+        if self.cfg.gmatch
+            && fv
+                .as_cclosure()
+                .is_some_and(|c| c.f as usize == rn_std::lib_string::jit_gmatch_addr())
+        {
             return self.tforcall_gmatch(vm, idx, i, fslot, cslot, prep);
         }
         if !is_ipairs && !is_next {
-            return Err(if fv.as_lclosure().is_some() { self.nyi() } else { AbortReason::CFunc });
+            return Err(if fv.as_lclosure().is_some() {
+                self.nyi()
+            } else {
+                AbortReason::CFunc
+            });
         }
         // N7: the end of a traversal is recorded by the side recordings of the root frame (the exit of the loop's trace lands on this
         // `TFORCALL`, the recording continues behind the loop); a root recording keeps `LeaveLoop`. (5.5 only: 5.4's `alimit` touches
         // of the interpreter's `get_int` are not modelled by the helper.)
         let can_end = self.cfg.gfor
-            && ((self.cfg.side.is_some() && self.cur_depth == 0) || (self.cfg.gfor_inl && self.unrolling()))
+            && ((self.cfg.side.is_some() && self.cur_depth == 0)
+                || (self.cfg.gfor_inl && self.unrolling()))
             && !cfg!(rustynail_lua54);
         let d = self.cur_depth;
         let func_rel = self.frames[d].base_off + fslot;
@@ -6902,7 +7562,10 @@ impl Rec {
         } else {
             let cv = vm.slot(cslot);
             let supported = |t: Ty| {
-                matches!(t, Ty::Int | Ty::Num | Ty::ShrStr | Ty::LngStr | Ty::Tab | Ty::True | Ty::False)
+                matches!(
+                    t,
+                    Ty::Int | Ty::Num | Ty::ShrStr | Ty::LngStr | Ty::Tab | Ty::True | Ty::False
+                )
             };
             // (a nil control is the first call, chained behind `TFORPREP`)
             if !supported(ct.1) && !(self.cfg.gfor && ct.1 == Ty::Nil) {
@@ -6917,7 +7580,9 @@ impl Rec {
             };
             ended = k.is_nil();
             let (tk, tv) = match (ty_of_value(&k), ty_of_value(&v)) {
-                (Some(tk), Some(tv)) if (supported(tk) || ended) && (supported(tv) || ended) => (tk, tv),
+                (Some(tk), Some(tv)) if (supported(tk) || ended) && (supported(tv) || ended) => {
+                    (tk, tv)
+                }
                 _ => return Err(self.nyi()),
             };
             self.touch(&k)?;
@@ -6929,7 +7594,11 @@ impl Rec {
                 self.guard(TOp::Ne, Ty::I64, p, z, 0)?;
             }
             self.pending_next = Some(mv);
-            let kbits = if mutants::active("tnext_key_type_skip") { 0 } else { 1 };
+            let kbits = if mutants::active("tnext_key_type_skip") {
+                0
+            } else {
+                1
+            };
             let kr = self.guard(TOp::Hload, tk, p, NOREF, kbits | 2)?;
             if ended {
                 (kr, kr)
@@ -6961,7 +7630,14 @@ impl Rec {
         self.def_abs(top_rel, key);
         self.def_abs(top_rel + 1, val);
         for j in 0..nvars {
-            self.def_abs(func_rel + j, match j { 0 => key, 1 => val, _ => nil });
+            self.def_abs(
+                func_rel + j,
+                match j {
+                    0 => key,
+                    1 => val,
+                    _ => nil,
+                },
+            );
         }
         if cfg!(rustynail_lua54) && !mutants::active("tfor54_no_ctl_copy") {
             self.def(a + 2, key); // TFORLOOP: the control variable
@@ -6974,7 +7650,15 @@ impl Rec {
     /// it: it is a `Lib` op, never hoisted or merged), the call is recorded with its native frame like the `ipairs` one. The end of the
     /// iteration, several or position captures and pattern errors are not recorded (`LeaveLoop` / `Nyi`: the interpreter's step raises or
     /// finishes the loop; at run time the helper answers 0 for them and the trace exits before the call).
-    fn tforcall_gmatch(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction, fslot: usize, cslot: usize, prep: bool) -> R<usize> {
+    fn tforcall_gmatch(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        i: Instruction,
+        fslot: usize,
+        cslot: usize,
+        prep: bool,
+    ) -> R<usize> {
         let _ = prep;
         let a = i.a() as usize;
         let nvars = i.c() as usize;
@@ -6989,7 +7673,11 @@ impl Rec {
             rn_std::lib_string::GmStep::End => return Err(AbortReason::LeaveLoop),
             rn_std::lib_string::GmStep::Other => return Err(self.nyi()),
         }
-        let rty = if len.unwrap_or(0) > rn_core::string::MAX_SHORT_LEN { Ty::LngStr } else { Ty::ShrStr };
+        let rty = if len.unwrap_or(0) > rn_core::string::MAX_SHORT_LEN {
+            Ty::LngStr
+        } else {
+            Ty::ShrStr
+        };
         let d = self.cur_depth;
         let func_rel = self.frames[d].base_off + fslot;
         let top_rel = func_rel + 3; // the native's frame: function, state, control
@@ -7022,7 +7710,13 @@ impl Rec {
     /// `R[A+2] := R[A+4]`), else falls through. `depth` is the caller's depth (the frame is already popped). The nil test is a
     /// recorded fact: the type of `first` is known (an iterator's result is a typed load, a constant, or the result of a guarded
     /// operation), so no guard is emitted here.
-    fn tfor_after_ret(&mut self, call_pc: usize, tf: TforRet, first: Ref, depth: usize) -> R<usize> {
+    fn tfor_after_ret(
+        &mut self,
+        call_pc: usize,
+        tf: TforRet,
+        first: Ref,
+        depth: usize,
+    ) -> R<usize> {
         if !mutants::active("tfor_lua_ret_cost_skip") {
             if let Some(c) = self.cost.last_mut() {
                 *c += 1; // the unfetched `TFORLOOP`
@@ -7034,7 +7728,8 @@ impl Rec {
         self.cur_op = OpCode::Tforcall as u8;
         let r = if ended {
             let can_end = self.cfg.gfor
-                && ((self.cfg.side.is_some() && depth == 0) || (self.cfg.gfor_inl && self.unrolling()))
+                && ((self.cfg.side.is_some() && depth == 0)
+                    || (self.cfg.gfor_inl && self.unrolling()))
                 && !cfg!(rustynail_lua54);
             if can_end {
                 Ok(call_pc + 2)
@@ -7065,9 +7760,14 @@ impl Rec {
         let (r, ty) = self.rd(vm, slot)?;
         if ty == Ty::Nil {
             let can_end = self.cfg.gfor
-                && ((self.cfg.side.is_some() && self.cur_depth == 0) || (self.cfg.gfor_inl && self.unrolling()))
+                && ((self.cfg.side.is_some() && self.cur_depth == 0)
+                    || (self.cfg.gfor_inl && self.unrolling()))
                 && !cfg!(rustynail_lua54);
-            return if can_end { Ok(idx + 1) } else { Err(AbortReason::LeaveLoop) };
+            return if can_end {
+                Ok(idx + 1)
+            } else {
+                Err(AbortReason::LeaveLoop)
+            };
         }
         if cfg!(rustynail_lua54) && !mutants::active("tfor54_no_ctl_copy") {
             self.def(a + 2, r);
@@ -7169,7 +7869,9 @@ impl Rec {
                 return Err(self.nyi());
             }
             if vm.slot(sl_lim).as_int().unwrap_or(0) as u64 == 0 {
-                if (self.cfg.side.is_some() || self.cur_depth > 0 || self.cont_unroll()) && !mutants::active("side_forloop_end_abort") {
+                if (self.cfg.side.is_some() || self.cur_depth > 0 || self.cont_unroll())
+                    && !mutants::active("side_forloop_end_abort")
+                {
                     // F2b: a side trace continues behind a loop that ends (P-E: so does a loop of an inlined callee): guard `count == 0`, nothing is written
                     let z = self.kint(0);
                     if !(self.cont_unroll() && mutants::active("rec_loop_end_guard_skip")) {
@@ -7189,9 +7891,14 @@ impl Rec {
             // never completed an iteration (Q2: `Ineffective`, then blacklisted) and its side traces ping-ponged; the
             // index then advances by the invariant `SLOAD`ed step (an integer `FORLOOP` needs no sign: the count is exact).
             let ks = vm.slot(sl_step).as_int().unwrap_or(0);
-            let literal = (Self::forloop_literal_step(vm, target as usize, a + 2) && !mutants::active("forloop_step_always_var"))
+            let literal = (Self::forloop_literal_step(vm, target as usize, a + 2)
+                && !mutants::active("forloop_step_always_var"))
                 || mutants::active("forloop_step_always_lit");
-            let kstep = if literal || mutants::active("forloop_step_guard_skip") { self.kint(ks) } else { step };
+            let kstep = if literal || mutants::active("forloop_step_guard_skip") {
+                self.kint(ks)
+            } else {
+                step
+            };
             let z = self.kint(0);
             self.guard(TOp::Ne, Ty::I64, cnt, z, 0)?;
             if literal && !mutants::active("forloop_step_guard_skip") {
@@ -7219,7 +7926,10 @@ impl Rec {
             let up = 0.0 < vs;
             let idx1 = vi + vs;
             let continues = if up { idx1 <= vl } else { vl <= idx1 };
-            if !continues && !((self.cfg.side.is_some() || self.cur_depth > 0 || self.cont_unroll()) && !mutants::active("side_forloop_end_abort")) {
+            if !continues
+                && !((self.cfg.side.is_some() || self.cur_depth > 0 || self.cont_unroll())
+                    && !mutants::active("side_forloop_end_abort"))
+            {
                 return Err(AbortReason::LeaveLoop);
             }
             let i1 = self.ins(TOp::Fadd, Ty::Num, ix, step)?;
@@ -7268,8 +7978,14 @@ impl Rec {
             let Some(n) = rn_core::arith::to_integer(&limv, mode) else {
                 return Err(self.nyi()); // not a numeral, or out of the integer range: the interpreter raises / clamps
             };
-            let want = if mutants::active("strto_mode_swap") { !ceil } else { ceil };
-            let p = self.b.emit_flags(TOp::Strto, Ty::P64, 0, lim, NOREF, u32::from(want))?;
+            let want = if mutants::active("strto_mode_swap") {
+                !ceil
+            } else {
+                ceil
+            };
+            let p = self
+                .b
+                .emit_flags(TOp::Strto, Ty::P64, 0, lim, NOREF, u32::from(want))?;
             let z = self.kint(0);
             if !mutants::active("strto_ne_guard_skip") {
                 self.guard(TOp::Ne, Ty::I64, p, z, 0)?;
@@ -7310,7 +8026,9 @@ impl Rec {
             }
         } else {
             let z0 = self.kint(0);
-            if !mutants::active("forprep_var_sign_skip") && !mutants::active("forprep_step_guard_skip") {
+            if !mutants::active("forprep_var_sign_skip")
+                && !mutants::active("forprep_step_guard_skip")
+            {
                 self.guard(if vs > 0 { TOp::Gt } else { TOp::Lt }, Ty::I64, step, z0, 0)?;
             }
             mag_ref = Some(if vs > 0 {
@@ -7334,7 +8052,11 @@ impl Rec {
         }
         // P-F: a difference that does not fit a signed integer (`-5 .. maxinteger`) would make the `count >= 0` guard below fail
         // at record time (the interpreter runs the loop with an unsigned count): not recorded
-        let diff = if vs > 0 { vl.wrapping_sub(vi) } else { vi.wrapping_sub(vl) };
+        let diff = if vs > 0 {
+            vl.wrapping_sub(vi)
+        } else {
+            vi.wrapping_sub(vl)
+        };
         if diff < 0 && !mutants::active("forprep_huge_diff_record") {
             return Err(self.nyi());
         }
@@ -7371,8 +8093,12 @@ impl Rec {
     fn forloop_literal_step(vm: &Vm<'_>, body: usize, step_reg: usize) -> bool {
         // `FORPREP` sits right before the loop body; the step expression is the last one evaluated, so its code is the
         // instruction before the `FORPREP`
-        let Some(fp) = body.checked_sub(1) else { return false };
-        let Some(prev) = fp.checked_sub(1) else { return false };
+        let Some(fp) = body.checked_sub(1) else {
+            return false;
+        };
+        let Some(prev) = fp.checked_sub(1) else {
+            return false;
+        };
         let (Some(&w_prep), Some(&w_prev)) = (vm.code.get(fp), vm.code.get(prev)) else {
             return false;
         };
@@ -7483,7 +8209,9 @@ impl Rec {
         self.need_ext(top_rel + 1)?;
         let (cr, _) = self.rd(vm, a)?;
         let kb = self.b.ir.konst(KVal::Ptr(addr as u64, PtrKind::Builtin));
-        if !mutants::active("callee_guard_skip") && !(mutants::active("next_callee_guard_skip") && addr == jit_hooks::builtin_next()) {
+        if !mutants::active("callee_guard_skip")
+            && !(mutants::active("next_callee_guard_skip") && addr == jit_hooks::builtin_next())
+        {
             self.entry_guard(TOp::Eqref, Ty::I64, cr, kb, 0)?;
         }
         Ok((func_rel, top_rel))
@@ -7492,7 +8220,15 @@ impl Rec {
     /// The tail of a recorded library call (the native's effects after every guard): TR6c / TR6b for the native frame, the push
     /// of the first result above the arguments (`push`: the native pushes its result there, as `lua_push*` does), the results moved
     /// to the function slot and nil-filled up to `wanted`; `top` for `wanted < 0`.
-    fn lib_tail(&mut self, idx: usize, func_rel: usize, top_rel: usize, res: &[Ref], push: bool, wanted: i32) -> R<usize> {
+    fn lib_tail(
+        &mut self,
+        idx: usize,
+        func_rel: usize,
+        top_rel: usize,
+        res: &[Ref],
+        push: bool,
+        wanted: i32,
+    ) -> R<usize> {
         let d = self.cur_depth;
         if !mutants::active("native_room_skip") {
             self.room = self.room.max((top_rel + LUA_MINSTACK) as u32);
@@ -7506,7 +8242,11 @@ impl Rec {
                 self.def_abs(top_rel, r);
             }
         }
-        let nmove = if wanted < 0 { res.len() } else { wanted as usize };
+        let nmove = if wanted < 0 {
+            res.len()
+        } else {
+            wanted as usize
+        };
         self.need_ext(func_rel + nmove + 1)?;
         for j in 0..nmove {
             let r = res.get(j).copied().unwrap_or(nil);
@@ -7527,8 +8267,31 @@ impl Rec {
 
     /// Emits `Lib(kind, a, b, third)` of type `t` followed by the guard `NE %lib, 0` on the snapshot of the call. `hint` is the VM slot the
     /// lockstep reads the helper's result from after the call.
-    fn lib_op(&mut self, kind: u32, t: Ty, a: Ref, b: Ref, third: Option<Ref>, hint: usize) -> R<Ref> {
-        if matches!(kind, lib::SUB | lib::CHAR | lib::TYPENAME | lib::TOSTR | lib::GMATCH | lib::CHAR2 | lib::CHAR3 | lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS) || lib::is_fmt(kind) {
+    fn lib_op(
+        &mut self,
+        kind: u32,
+        t: Ty,
+        a: Ref,
+        b: Ref,
+        third: Option<Ref>,
+        hint: usize,
+    ) -> R<Ref> {
+        if matches!(
+            kind,
+            lib::SUB
+                | lib::CHAR
+                | lib::TYPENAME
+                | lib::TOSTR
+                | lib::GMATCH
+                | lib::CHAR2
+                | lib::CHAR3
+                | lib::LOWER
+                | lib::UPPER
+                | lib::REVERSE
+                | lib::REP
+                | lib::REPS
+        ) || lib::is_fmt(kind)
+        {
             self.storm_check()?;
         }
         self.first_store.get_or_insert(self.b.ir.ins.len());
@@ -7547,7 +8310,10 @@ impl Rec {
     fn storm_check(&mut self) -> R<()> {
         self.str_allocs += 1;
         let step = self.cfg.storm_step;
-        if step != 0 && step < STORM_FACTOR * STORM_BYTES * self.str_allocs && !mutants::active("storm_guard_skip") {
+        if step != 0
+            && step < STORM_FACTOR * STORM_BYTES * self.str_allocs
+            && !mutants::active("storm_guard_skip")
+        {
             return Err(AbortReason::AllocStorm);
         }
         Ok(())
@@ -7571,7 +8337,15 @@ impl Rec {
     /// does nothing and returns 0, the guard exits and the interpreter runs the call, with its error or its finalizer registration);
     /// the recording refuses what already fails or finalizes now (`MetaTable`) and every other argument type (`Nyi`: the interpreter's
     /// message).
-    fn setmt_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn setmt_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 2 {
             return Err(self.nyi());
         }
@@ -7607,7 +8381,11 @@ impl Rec {
         let hint = usize::MAX;
         self.lib_op(lib::SETMT, Ty::Int, t.0, mr, None, hint)?;
         // MUTANT `setmt_result_mt`: the call returns the metatable
-        let res = if mutants::active("setmt_result_mt") && m.1 == Ty::Tab { m.0 } else { t.0 };
+        let res = if mutants::active("setmt_result_mt") && m.1 == Ty::Tab {
+            m.0
+        } else {
+            t.0
+        };
         self.lib_tail(idx, func_rel, top_rel, &[res], true, wanted)
     }
 
@@ -7622,7 +8400,16 @@ impl Rec {
     }
 
     /// `CALL` of a registered library function ([`jit_hooks::libfn_of`]).
-    pub(super) fn lib_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, f: u8, addr: usize) -> R<usize> {
+    pub(super) fn lib_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        f: u8,
+        addr: usize,
+    ) -> R<usize> {
         use jit_hooks::libfn as L;
         match f {
             L::STR_SUB => self.lib_str_sub(vm, idx, a, nargs, wanted, addr),
@@ -7633,12 +8420,22 @@ impl Rec {
             L::RAWLEN => self.lib_rawlen(vm, idx, a, nargs, wanted, addr),
             L::TBL_INSERT => self.lib_tinsert(vm, idx, a, nargs, wanted, addr),
             L::TBL_REMOVE => self.lib_tremove(vm, idx, a, nargs, wanted, addr),
-            L::TONUMBER | L::MATH_TOINTEGER => self.lib_num_identity(vm, idx, a, nargs, wanted, addr, f),
+            L::TONUMBER | L::MATH_TOINTEGER => {
+                self.lib_num_identity(vm, idx, a, nargs, wanted, addr, f)
+            }
             L::MATH_FMOD => self.lib_fmod(vm, idx, a, nargs, wanted, addr),
-            L::RAWGET if self.cfg.f2raw && !cfg!(rustynail_lua54) => self.lib_rawget(vm, idx, a, nargs, wanted, addr),
-            L::RAWSET if self.cfg.f2raw && !cfg!(rustynail_lua54) => self.lib_rawset(vm, idx, a, nargs, wanted, addr),
-            L::TBL_MOVE if self.cfg.libcall_mask & 64 != 0 && !cfg!(rustynail_lua54) => self.lib_tmove(vm, idx, a, nargs, wanted, addr),
-            L::TBL_UNPACK if self.cfg.libcall_mask & 32 != 0 && !cfg!(rustynail_lua54) => self.lib_tunpack(vm, idx, a, nargs, wanted, addr),
+            L::RAWGET if self.cfg.f2raw && !cfg!(rustynail_lua54) => {
+                self.lib_rawget(vm, idx, a, nargs, wanted, addr)
+            }
+            L::RAWSET if self.cfg.f2raw && !cfg!(rustynail_lua54) => {
+                self.lib_rawset(vm, idx, a, nargs, wanted, addr)
+            }
+            L::TBL_MOVE if self.cfg.libcall_mask & 64 != 0 && !cfg!(rustynail_lua54) => {
+                self.lib_tmove(vm, idx, a, nargs, wanted, addr)
+            }
+            L::TBL_UNPACK if self.cfg.libcall_mask & 32 != 0 && !cfg!(rustynail_lua54) => {
+                self.lib_tunpack(vm, idx, a, nargs, wanted, addr)
+            }
             _ => Err(AbortReason::CFunc),
         }
     }
@@ -7651,7 +8448,10 @@ impl Rec {
         }
         let (f, s) = (vm.slot(a + 1), vm.slot(a + 2));
         match (f.as_strref(), s.as_strref()) {
-            (Some(f), Some(_)) if f.get().as_bytes() == b"%s" && ty_of_value(&vm.slot(a + 1)) == Some(Ty::ShrStr) => {
+            (Some(f), Some(_))
+                if f.get().as_bytes() == b"%s"
+                    && ty_of_value(&vm.slot(a + 1)) == Some(Ty::ShrStr) =>
+            {
                 ty_of_value(&s) == Some(Ty::ShrStr)
             }
             _ => false,
@@ -7662,7 +8462,15 @@ impl Rec {
     /// string, `luaL_addvalue` copies it into the buffer, `luaL_pushresult` interns the bytes again: the same short string). Guards: the
     /// callee is the builtin, the format register is the recorded `"%s"` string (a proto constant needs none), the argument is a short
     /// string (the type guard of its load). Any failure exits and the interpreter runs the real call.
-    fn lib_fmt_s(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_fmt_s(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
         let (f, ft) = self.rd(vm, a + 1)?;
         let (s, st) = self.rd(vm, a + 2)?;
@@ -7673,7 +8481,11 @@ impl Rec {
             self.reg_key(vm, a + 1, f)?;
         }
         // MUTANT `g1fmt_result_fmt`: the result is the format string
-        let r = if mutants::active("g1fmt_result_fmt") { f } else { s };
+        let r = if mutants::active("g1fmt_result_fmt") {
+            f
+        } else {
+            s
+        };
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
     }
 
@@ -7711,7 +8523,15 @@ impl Rec {
     /// arguments (a constant nil fills the absent operands), guarded against the result kind seen (the helper's own check) and the format
     /// register being the recorded string (a proto constant needs none). The helper answers 0 (the guard exits, the interpreter runs the
     /// real call) for what the reference engine would reject or what depends on a metatable now.
-    fn lib_fmt(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_fmt(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
         let (f, ft) = self.rd(vm, a + 1)?;
         let fv = vm.slot(a + 1);
@@ -7729,7 +8549,10 @@ impl Rec {
         let kinds = rn_std::lib_string::jit_fmt_shape(fb).ok_or(AbortReason::Diverge)?;
         for (j, &k) in kinds.iter().enumerate() {
             let (r, t) = self.rd(vm, a + 2 + j)?;
-            let ok = matches!((k, t), (0, Ty::Int) | (1, Ty::ShrStr | Ty::LngStr | Ty::Int));
+            let ok = matches!(
+                (k, t),
+                (0, Ty::Int) | (1, Ty::ShrStr | Ty::LngStr | Ty::Int)
+            );
             if !ok {
                 return Err(self.nyi());
             }
@@ -7745,28 +8568,66 @@ impl Rec {
         if !mutants::active("tfmt_fmt_guard_skip") {
             self.reg_key(vm, a + 1, f)?;
         }
-        let rty = if out.len() > rn_core::string::MAX_SHORT_LEN { Ty::LngStr } else { Ty::ShrStr };
+        let rty = if out.len() > rn_core::string::MAX_SHORT_LEN {
+            Ty::LngStr
+        } else {
+            Ty::ShrStr
+        };
         let hint = self.lib_hint(vm, a, nargs, wanted);
         let r = if kinds.len() <= 3 {
-            self.lib_op(lib::FMT_BASE + id as u32, rty, ops[0], ops[1], Some(ops[2]), hint)?
+            self.lib_op(
+                lib::FMT_BASE + id as u32,
+                rty,
+                ops[0],
+                ops[1],
+                Some(ops[2]),
+                hint,
+            )?
         } else {
             // four or five arguments: the stash op carries the last ones (consecutive ops: nothing is allocated in between)
             let link = self.lib_op(lib::FMTX, Ty::Int, ops[2], ops[3], Some(ops[4]), hint)?;
-            self.lib_op(lib::FMT_BASE + 64 + id as u32, rty, ops[0], ops[1], Some(link), hint)?
+            self.lib_op(
+                lib::FMT_BASE + 64 + id as u32,
+                rty,
+                ops[0],
+                ops[1],
+                Some(link),
+                hint,
+            )?
         };
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
     }
 
     /// F1: `string.len(s)` / `s:len()` of a string: its length, a load of the header (`TLEN` of a string).
-    fn lib_str_len(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_str_len(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
         let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
         let (s, t, _) = self.lib_str_arg(vm, a + 1)?;
-        let r = self.b.emit_flags(TOp::Tlen, Ty::Int, 0, s, NOREF, if t == Ty::ShrStr { 1 } else { 2 })?;
+        let r = self.b.emit_flags(
+            TOp::Tlen,
+            Ty::Int,
+            0,
+            s,
+            NOREF,
+            if t == Ty::ShrStr { 1 } else { 2 },
+        )?;
         // MUTANT `f1_strlen_off`: the length is one too large
-        let r = if mutants::active("f1_strlen_off") { let one = self.kint(1); self.ins(TOp::Add, Ty::Int, r, one)? } else { r };
+        let r = if mutants::active("f1_strlen_off") {
+            let one = self.kint(1);
+            self.ins(TOp::Add, Ty::Int, r, one)?
+        } else {
+            r
+        };
         // the lockstep reads the length from the VM (the pushed result)
         self.post_slot = Some(vm.base + a + 1 + nargs);
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
@@ -7774,7 +8635,14 @@ impl Rec {
 
     /// F2: `math.random(m)` / `math.random(m, n)` of integers: the `RANDOM` helper draws from the generator in the closure's upvalues. The interval
     /// is the run-time one (an empty interval, or a draw of -1, makes the helper answer 0: the interpreter runs the call and raises or draws).
-    fn lib_random(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32) -> R<usize> {
+    fn lib_random(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+    ) -> R<usize> {
         if !(1..=2).contains(&nargs) && !(nargs == 0 && self.cfg.libcall) {
             return Err(self.nyi()); // the float form, `random(0)`'s raw word, "wrong number of arguments"
         }
@@ -7795,7 +8663,11 @@ impl Rec {
             let m = self.ins(TOp::Add, Ty::Int, raw, km1)?;
             let f = self.ins(TOp::ConvNumInt, Ty::Num, m, NOREF)?;
             // MUTANT `randf_scale_off`: the scale is 2^-52
-            let scale = self.b.ir.knum(if mutants::active("randf_scale_off") { 0.5 / (1u64 << 51) as f64 } else { 0.5 / (1u64 << 52) as f64 });
+            let scale = self.b.ir.knum(if mutants::active("randf_scale_off") {
+                0.5 / (1u64 << 51) as f64
+            } else {
+                0.5 / (1u64 << 52) as f64
+            });
             let r = self.ins(TOp::Fmul, Ty::Num, f, scale)?;
             return self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted);
         }
@@ -7814,7 +8686,14 @@ impl Rec {
             (l, u)
         };
         // (the draw the interpreter makes right after this step: a -1 cannot be carried by the helper's result convention)
-        let (vl, vu) = if nargs == 1 { (1, vm.slot(a + 1).as_int().unwrap_or(0)) } else { (vm.slot(a + 1).as_int().unwrap_or(0), vm.slot(a + 2).as_int().unwrap_or(0)) };
+        let (vl, vu) = if nargs == 1 {
+            (1, vm.slot(a + 1).as_int().unwrap_or(0))
+        } else {
+            (
+                vm.slot(a + 1).as_int().unwrap_or(0),
+                vm.slot(a + 2).as_int().unwrap_or(0),
+            )
+        };
         if rn_std::lib_math::jit_random_peek(&vm.slot(a), vl, vu).is_none() {
             return Err(self.nyi());
         }
@@ -7827,7 +8706,15 @@ impl Rec {
 
     /// F2: `getmetatable(t)` of a table whose metatable (if any) has no `__metatable` field: the metatable word of the table (`FLOAD`), nil
     /// for none. The absence of the field in the metatable is proven like a missing metamethod (`HMISS` walk of the recorded layout).
-    fn getmt_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn getmt_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
@@ -7856,7 +8743,10 @@ impl Rec {
                 }
                 self.touch(&Value::table(m))?;
                 if !mutants::active("getmt_protected_skip") {
-                    let kname = self.b.ir.konst(KVal::Ptr(payload_bits(&Value::string(name), Ty::ShrStr), PtrKind::Raw));
+                    let kname = self.b.ir.konst(KVal::Ptr(
+                        payload_bits(&Value::string(name), Ty::ShrStr),
+                        PtrKind::Raw,
+                    ));
                     self.hash_absent(mp, m, (kname, name))?;
                 }
                 self.fload(tr, Field::Metatable, Ty::Tab)?
@@ -7866,7 +8756,15 @@ impl Rec {
     }
 
     /// F2: `assert(v, ...)` with a truthy `v`: returns its arguments (the type of `v` is a guard of its load; a falsy one raises).
-    fn assert_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn assert_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs == 0 {
             return Err(self.nyi());
         }
@@ -7875,7 +8773,11 @@ impl Rec {
         if matches!(vt, Ty::Nil | Ty::False) {
             return Err(self.nyi()); // the error: the interpreter raises it
         }
-        let nres = if wanted < 0 { nargs } else { (wanted as usize).min(nargs) };
+        let nres = if wanted < 0 {
+            nargs
+        } else {
+            (wanted as usize).min(nargs)
+        };
         let mut res = vec![vr];
         for j in 1..nres {
             res.push(self.rd(vm, a + 1 + j)?.0);
@@ -7888,7 +8790,15 @@ impl Rec {
     }
 
     /// F2: `rawget(t, k)` of an integer key inside the array part: the element, whatever the metatable.
-    fn lib_rawget(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_rawget(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 2 {
             return Err(self.nyi());
         }
@@ -7919,7 +8829,15 @@ impl Rec {
 
     /// BUNDLE-N: `rawget(t, k)` of a short-string key: the present value (a guarded `HREFK` / `HREFV` + `HLOAD`) or `nil` (the absence proof, or a
     /// present nil node), whatever the metatable: it is never looked at.
-    fn lib_rawget_str(&mut self, vm: &Vm<'_>, idx: usize, a: usize, func_rel: usize, top_rel: usize, wanted: i32) -> R<usize> {
+    fn lib_rawget_str(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        func_rel: usize,
+        top_rel: usize,
+        wanted: i32,
+    ) -> R<usize> {
         let (tr, _) = self.rd(vm, a + 1)?;
         let tv = vm.slot(a + 1);
         let tbl = tv.as_table().ok_or(AbortReason::Diverge)?;
@@ -7934,7 +8852,11 @@ impl Rec {
         let r = match found {
             Some(ix) => {
                 let ev = tbl.node_value(ix);
-                let ety = if ev.tag() & 0x0F == LUA_TNIL { Ty::Nil } else { ty_of_value(&ev).ok_or_else(|| self.nyi())? };
+                let ety = if ev.tag() & 0x0F == LUA_TNIL {
+                    Ty::Nil
+                } else {
+                    ty_of_value(&ev).ok_or_else(|| self.nyi())?
+                };
                 self.touch(&ev)?;
                 let hr = self.hash_ref(tr, tbl, key.0, ix)?;
                 self.guard(TOp::Hload, ety, hr, NOREF, 1)?
@@ -7953,7 +8875,15 @@ impl Rec {
 
     /// F2: `rawset(t, k, v)` of an integer key inside the array part: the plain store, whatever the metatable (`__newindex` is not
     /// looked at); returns `t`.
-    fn lib_rawset(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_rawset(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 3 {
             return Err(self.nyi());
         }
@@ -7977,7 +8907,11 @@ impl Rec {
             self.ins(TOp::Tbar, Ty::I64, tr, val.0)?;
         }
         let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
-        let res = if mutants::active("rawset_result_nil") { nil } else { tr };
+        let res = if mutants::active("rawset_result_nil") {
+            nil
+        } else {
+            tr
+        };
         self.lib_tail(idx, func_rel, top_rel, &[res], true, wanted)
     }
 
@@ -7987,7 +8921,12 @@ impl Rec {
         if !matches!(t, Ty::ShrStr | Ty::LngStr) {
             return Err(self.nyi());
         }
-        let l = vm.slot(local).as_strref().ok_or(AbortReason::Diverge)?.get().len();
+        let l = vm
+            .slot(local)
+            .as_strref()
+            .ok_or(AbortReason::Diverge)?
+            .get()
+            .len();
         Ok((r, t, l))
     }
 
@@ -8001,7 +8940,15 @@ impl Rec {
     }
 
     /// `string.sub(s, i [, j])` with integer `i`, `j`.
-    fn lib_str_sub(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_str_sub(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if !(2..=3).contains(&nargs) {
             return Err(self.nyi());
         }
@@ -8016,14 +8963,26 @@ impl Rec {
         let start = lib_posrelat_i(vi, l);
         let end = lib_getendpos(vj, l);
         let rl = if start <= end { end - start + 1 } else { 0 };
-        let rty = if rl > rn_core::string::MAX_SHORT_LEN { Ty::LngStr } else { Ty::ShrStr };
+        let rty = if rl > rn_core::string::MAX_SHORT_LEN {
+            Ty::LngStr
+        } else {
+            Ty::ShrStr
+        };
         let hint = self.lib_hint(vm, a, nargs, wanted);
         let r = self.lib_op(lib::SUB, rty, s, i, Some(j), hint)?;
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
     }
 
     /// `string.byte(s [, i])` with one result.
-    fn lib_str_byte(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_str_byte(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs == 3 && self.cfg.f2byte {
             return self.lib_str_byte_range(vm, idx, a, wanted, addr);
         }
@@ -8050,7 +9009,14 @@ impl Rec {
     /// F2: `string.byte(s, i, j)` with `1 <= i <= j <= #s` and at most `MAX_BYTE_RANGE` results that the call site wants all of (`wanted` is
     /// at least the count): the guards say that `i >= 1` and `j == i + n - 1` (the same count at run time; the last `BYTE` guards `j <= #s`), then one `BYTE` per
     /// result. Other shapes (negative or clamped positions, an open result list) abort `Nyi` as before.
-    fn lib_str_byte_range(&mut self, vm: &Vm<'_>, idx: usize, a: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_str_byte_range(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         const MAX_BYTE_RANGE: i64 = 8;
         let nargs = 3;
         let (s_v, i_v, j_v) = (vm.slot(a + 1), vm.slot(a + 2), vm.slot(a + 3));
@@ -8100,7 +9066,15 @@ impl Rec {
     }
 
     /// `string.char(n)` with one argument.
-    fn lib_str_char(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_str_char(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         // BUNDLE-H (`libcall`): two or three arguments are one `LIB` op of kind `CHAR2` / `CHAR3`
         if nargs != 1 && !(self.cfg.libcall && (2..=3).contains(&nargs)) {
             return Err(self.nyi());
@@ -8129,8 +9103,19 @@ impl Rec {
     /// BUNDLE-H (`libcall`): `string.lower(s)` / `upper(s)` / `reverse(s)` (one string argument, the result has its length) and
     /// `string.rep(s, n [, sep])` (a string, an integer and, for three arguments, a string: the result is built by the helper, which
     /// answers 0 above [`lib::REP_MAX`] bytes so the interpreter allocates it or raises).
-    fn lib_strfn(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
-        let which = rn_std::lib_string::jit_str_fns().iter().position(|&x| x == addr).ok_or(AbortReason::Diverge)?;
+    fn lib_strfn(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
+        let which = rn_std::lib_string::jit_str_fns()
+            .iter()
+            .position(|&x| x == addr)
+            .ok_or(AbortReason::Diverge)?;
         if which < 3 {
             if nargs != 1 {
                 return Err(self.nyi());
@@ -8156,11 +9141,22 @@ impl Rec {
             (None, 0)
         };
         // the length of the result as the library computes it
-        let total = if vn <= 0 || l + lsep == 0 { 0 } else { (l + lsep).checked_mul(vn as usize).map(|x| x - lsep).ok_or_else(|| self.nyi())? };
+        let total = if vn <= 0 || l + lsep == 0 {
+            0
+        } else {
+            (l + lsep)
+                .checked_mul(vn as usize)
+                .map(|x| x - lsep)
+                .ok_or_else(|| self.nyi())?
+        };
         if total > lib::REP_MAX {
             return Err(self.nyi());
         }
-        let rty = if total > rn_core::string::MAX_SHORT_LEN { Ty::LngStr } else { Ty::ShrStr };
+        let rty = if total > rn_core::string::MAX_SHORT_LEN {
+            Ty::LngStr
+        } else {
+            Ty::ShrStr
+        };
         if self.cfg.libcall_repcls && !mutants::active("repcls_guard_skip") {
             // BUNDLE-R (`libcall` bit 4): the class of the result as an ordinary guard on the computed length, `(len(s) + len(sep)) * n - len(sep)`
             // against the short-string limit (`n` is first guarded into `0..=REP_MAX`, so the product cannot wrap for any string that fits
@@ -8177,7 +9173,9 @@ impl Rec {
                 let flag = |t: Ty| if t == Ty::ShrStr { 1 } else { 2 };
                 let ts = self.rd(vm, a + 1)?.1;
                 let n0 = self.b.ir.ins.len();
-                let ls = self.b.emit_flags(TOp::Tlen, Ty::Int, 0, s, NOREF, flag(ts))?;
+                let ls = self
+                    .b
+                    .emit_flags(TOp::Tlen, Ty::Int, 0, s, NOREF, flag(ts))?;
                 if self.b.ir.ins.len() > n0 {
                     self.pend_lens.push_back(l as i64);
                 }
@@ -8185,7 +9183,9 @@ impl Rec {
                     Some(p) => {
                         let tp = self.rd(vm, a + 3)?.1;
                         let n1 = self.b.ir.ins.len();
-                        let lp = self.b.emit_flags(TOp::Tlen, Ty::Int, 0, p, NOREF, flag(tp))?;
+                        let lp = self
+                            .b
+                            .emit_flags(TOp::Tlen, Ty::Int, 0, p, NOREF, flag(tp))?;
                         if self.b.ir.ins.len() > n1 {
                             self.pend_lens.push_back(lsep as i64);
                         }
@@ -8199,7 +9199,13 @@ impl Rec {
                     None => prod,
                 };
                 let kl = self.kint(rn_core::string::MAX_SHORT_LEN as i64);
-                self.guard(if rty == Ty::LngStr { TOp::Gt } else { TOp::Le }, Ty::I64, tot, kl, 0)?;
+                self.guard(
+                    if rty == Ty::LngStr { TOp::Gt } else { TOp::Le },
+                    Ty::I64,
+                    tot,
+                    kl,
+                    0,
+                )?;
             }
         }
         let hint = self.lib_hint(vm, a, nargs, wanted);
@@ -8211,7 +9217,15 @@ impl Rec {
     }
 
     /// `math.type(x)`: the name of the number kind (the string is interned by the helper), `nil` for anything else.
-    fn lib_math_type(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_math_type(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
@@ -8231,7 +9245,14 @@ impl Rec {
 
     /// `type(v)`: the callee is the C closure whose upvalues are the type names; the helper checks the closure's function at run time and
     /// returns the name (an upvalue of the closure: no allocation).
-    pub(super) fn lib_type(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32) -> R<usize> {
+    pub(super) fn lib_type(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+    ) -> R<usize> {
         if nargs == 0 {
             return Err(self.nyi());
         }
@@ -8252,7 +9273,15 @@ impl Rec {
     }
 
     /// `tostring(n)` of a number.
-    fn lib_tostring(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_tostring(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
@@ -8268,7 +9297,15 @@ impl Rec {
     }
 
     /// `rawlen(t)` / `rawlen(s)`: the length, no `__len`.
-    fn lib_rawlen(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_rawlen(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
@@ -8279,9 +9316,14 @@ impl Rec {
                 self.first_store.get_or_insert(self.b.ir.ins.len());
                 self.b.emit_flags(TOp::Tlen, Ty::Int, 0, x, NOREF, 0)?
             }
-            Ty::ShrStr | Ty::LngStr => {
-                self.b.emit_flags(TOp::Tlen, Ty::Int, 0, x, NOREF, if t == Ty::ShrStr { 1 } else { 2 })?
-            }
+            Ty::ShrStr | Ty::LngStr => self.b.emit_flags(
+                TOp::Tlen,
+                Ty::Int,
+                0,
+                x,
+                NOREF,
+                if t == Ty::ShrStr { 1 } else { 2 },
+            )?,
             _ => return Err(self.nyi()),
         };
         // the lockstep reads the border from the VM (the pushed result)
@@ -8317,7 +9359,15 @@ impl Rec {
 
     /// BUNDLE-R (`libcall` bit 5): `table.unpack(t)` of a table without a metatable whose `#t` is at most 16: one `TLEN` guarded to the
     /// length seen, then the elements `t[1] .. t[n]` as array loads (no helper). The results are pushed above the arguments as the native does.
-    fn lib_tunpack(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_tunpack(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         const MAX_UNPACK: i64 = 16;
         if nargs != 1 {
             return self.lib_unrecorded(idx);
@@ -8370,13 +9420,24 @@ impl Rec {
     /// guarded to the values seen (they fold when constants), the two tables to be the same / different objects as seen, and the copy is
     /// unrolled in the library's order (`fwd`: first to last, else last to first) as an array load and store per element (the stores keep the
     /// write barrier and the growth path of `table.insert`). The result is the destination table.
-    fn lib_tmove(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_tmove(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         const MAX_MOVE: i64 = 16;
         if !(4..=5).contains(&nargs) {
             return self.lib_unrecorded(idx);
         }
         // (a shape this does not record is a plain C call, as with the bit off: it stitches or aborts `CFunc`)
-        let Some(ints) = (2..=4).map(|j| vm.slot(a + j).as_int()).collect::<Option<Vec<_>>>() else {
+        let Some(ints) = (2..=4)
+            .map(|j| vm.slot(a + j).as_int())
+            .collect::<Option<Vec<_>>>()
+        else {
             return self.lib_unrecorded(idx);
         };
         let (f, e, t) = (ints[0], ints[1], ints[2]);
@@ -8424,7 +9485,13 @@ impl Rec {
         }
         let same = stbl.as_ptr() == dtbl.as_ptr();
         if !mutants::active("tmove_same_guard_skip") && src.0 != dst.0 {
-            self.guard(if same { TOp::Eqref } else { TOp::Ne }, Ty::I64, src.0, dst.0, 0)?;
+            self.guard(
+                if same { TOp::Eqref } else { TOp::Ne },
+                Ty::I64,
+                src.0,
+                dst.0,
+                0,
+            )?;
         }
         // (the library: `t > e || t <= f || (a2 given and different from a1)`)
         let fwd = t > e || t <= f || (dslot != a + 1 && !same);
@@ -8450,7 +9517,11 @@ impl Rec {
                 self.array_get(vm, src, a + 1, ks, f + i)?;
             }
         }
-        let order: Vec<i64> = if fwd != mutants::active("tmove_order_flip") { (0..n).collect() } else { (0..n).rev().collect() };
+        let order: Vec<i64> = if fwd != mutants::active("tmove_order_flip") {
+            (0..n).collect()
+        } else {
+            (0..n).rev().collect()
+        };
         for i in order {
             let ks = self.kint(f + i);
             let v = self.array_get(vm, src, a + 1, ks, f + i)?;
@@ -8462,7 +9533,15 @@ impl Rec {
     }
 
     /// `table.insert(t, v)`: `t[#t + 1] = v` for a table without metatable.
-    fn lib_tinsert(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_tinsert(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 2 {
             return Err(self.nyi()); // the positional form shifts elements
         }
@@ -8495,7 +9574,15 @@ impl Rec {
     }
 
     /// `table.remove(t)`: the last element of a table without metatable, removed.
-    fn lib_tremove(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_tremove(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
@@ -8532,7 +9619,16 @@ impl Rec {
     }
 
     /// `tonumber(x)` / `math.tointeger(x)` of a number: the number itself (an integral float for `tointeger`).
-    fn lib_num_identity(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize, f: u8) -> R<usize> {
+    fn lib_num_identity(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+        f: u8,
+    ) -> R<usize> {
         if nargs != 1 {
             return Err(self.nyi());
         }
@@ -8543,13 +9639,20 @@ impl Rec {
             // pins the observed result type (integer or float)
             (Ty::ShrStr | Ty::LngStr, false) if self.cfg.libnum => {
                 let sv = vm.slot(a + 1);
-                let Some(n) = sv.as_strref().and_then(|s| rn_core::number::str2num(s.get().as_bytes())) else {
+                let Some(n) = sv
+                    .as_strref()
+                    .and_then(|s| rn_core::number::str2num(s.get().as_bytes()))
+                else {
                     if self.cfg.libcall_mask & 128 == 0 {
                         return Err(self.nyi()); // not a numeral: the result is nil, no guard expresses it
                     }
                     // BUNDLE-R (`libcall` bit 7): `tonumber(s)` of a string that is no numeral: `STRTO` in tonumber mode answers 0 (it parses, allocates
                     // nothing), `EQ 0` pins the failure (a numeral exits), the result is `nil`. MUTANT `tonum_fail_guard_skip`: no guard
-                    let flags = if mutants::active("tonum_mode_ignored") { 0 } else { 2 };
+                    let flags = if mutants::active("tonum_mode_ignored") {
+                        0
+                    } else {
+                        2
+                    };
                     let p = self.b.emit_flags(TOp::Strto, Ty::P64, 0, x, NOREF, flags)?;
                     let z = self.kint(0);
                     if !mutants::active("tonum_fail_guard_skip") {
@@ -8563,7 +9666,11 @@ impl Rec {
                     rn_core::number::Number::Int(i) => (super::interp::Val::int(i), Ty::Int),
                     rn_core::number::Number::Float(f) => (super::interp::Val::num(f), Ty::Num),
                 };
-                let flags = if mutants::active("tonum_mode_ignored") { 0 } else { 2 };
+                let flags = if mutants::active("tonum_mode_ignored") {
+                    0
+                } else {
+                    2
+                };
                 let p = self.b.emit_flags(TOp::Strto, Ty::P64, 0, x, NOREF, flags)?;
                 let z = self.kint(0);
                 self.guard(TOp::Ne, Ty::I64, p, z, 0)?;
@@ -8589,7 +9696,15 @@ impl Rec {
     /// `plain` argument is truthy (its type is guarded), or the pattern had no specials (the helper checks at run time and exits when it has
     /// some, kind `FINDS`). The helper's result is guarded against the outcome seen (found / not found); start is `r - 1`, end `start + #p - 1`.
     /// Number arguments that need a string conversion and real patterns are `Nyi`.
-    fn lib_find(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_find(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if !(2..=4).contains(&nargs) {
             return Err(self.nyi());
         }
@@ -8628,7 +9743,13 @@ impl Rec {
         let r = self.lib_op(kind, Ty::Int, s, p, Some(init), hint)?;
         let one = self.kint(1);
         if !mutants::active("find_outcome_guard_skip") {
-            self.guard(if pos.is_some() { TOp::Ne } else { TOp::Eq }, Ty::I64, r, one, 0)?;
+            self.guard(
+                if pos.is_some() { TOp::Ne } else { TOp::Eq },
+                Ty::I64,
+                r,
+                one,
+                0,
+            )?;
         }
         if pos.is_none() {
             let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
@@ -8638,9 +9759,20 @@ impl Rec {
         let start = self.ins(TOp::Sub, Ty::Int, r, one)?;
         // the length of the pattern (the model's value is the recorded one)
         self.post_val = Some(Value::int(plen as i64));
-        let len = self.b.emit_flags(TOp::Tlen, Ty::Int, 0, p, NOREF, if tp == Ty::ShrStr { 1 } else { 2 })?;
+        let len = self.b.emit_flags(
+            TOp::Tlen,
+            Ty::Int,
+            0,
+            p,
+            NOREF,
+            if tp == Ty::ShrStr { 1 } else { 2 },
+        )?;
         // MUTANT `find_end_off`: the end is one too large
-        let two = self.kint(if mutants::active("find_end_off") { 1 } else { 2 });
+        let two = self.kint(if mutants::active("find_end_off") {
+            1
+        } else {
+            2
+        });
         let t1 = self.ins(TOp::Sub, Ty::Int, r, two)?;
         let end = self.ins(TOp::Add, Ty::Int, t1, len)?;
         self.def_abs(top_rel, start);
@@ -8652,7 +9784,15 @@ impl Rec {
     /// `TNEXT` path of the generic `for` (docs/JIT_TRACE_REF.md "BUNDLE-A"). The snapshot is the call's: a failed guard (the key is gone,
     /// another type, the traversal ended / did not end) re-runs the call in the interpreter, which raises its own errors. The helper updates
     /// `heap.next_hint` exactly like `base_next`. Results: key, value (two values), or the single `nil` of the end.
-    fn next_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn next_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs == 0 || nargs > 2 {
             return Err(self.nyi());
         }
@@ -8663,8 +9803,24 @@ impl Rec {
             return Err(self.nyi()); // `next` raises
         }
         let nil_k = self.b.ir.konst(KVal::Pri(Ty::Nil));
-        let (cv, ct) = if nargs == 2 { (vm.slot(a + 2), self.rd(vm, a + 2)?) } else { (Value::NIL, (nil_k, Ty::Nil)) };
-        let supported = |t: Ty| matches!(t, Ty::Int | Ty::Num | Ty::ShrStr | Ty::LngStr | Ty::Tab | Ty::True | Ty::False | Ty::Nil);
+        let (cv, ct) = if nargs == 2 {
+            (vm.slot(a + 2), self.rd(vm, a + 2)?)
+        } else {
+            (Value::NIL, (nil_k, Ty::Nil))
+        };
+        let supported = |t: Ty| {
+            matches!(
+                t,
+                Ty::Int
+                    | Ty::Num
+                    | Ty::ShrStr
+                    | Ty::LngStr
+                    | Ty::Tab
+                    | Ty::True
+                    | Ty::False
+                    | Ty::Nil
+            )
+        };
         if !supported(ct.1) {
             return Err(self.nyi());
         }
@@ -8676,7 +9832,9 @@ impl Rec {
         };
         let ended = k.is_nil();
         let (tk, tv) = match (ty_of_value(&k), ty_of_value(&v)) {
-            (Some(tk), Some(tv)) if (supported(tk) || ended) && (supported(tv) || ended) => (tk, tv),
+            (Some(tk), Some(tv)) if (supported(tk) || ended) && (supported(tv) || ended) => {
+                (tk, tv)
+            }
             _ => return Err(self.nyi()),
         };
         self.touch(&k)?;
@@ -8684,13 +9842,21 @@ impl Rec {
         let mv = (self.val_of(&k), self.val_of(&v));
         let z = self.kint(0);
         // MUTANT `next_ctl_nil`: the traversal always restarts (the control is passed as nil)
-        let ctl = if mutants::active("next_ctl_nil") { nil_k } else { ct.0 };
+        let ctl = if mutants::active("next_ctl_nil") {
+            nil_k
+        } else {
+            ct.0
+        };
         let p = self.ins(TOp::Tnext, Ty::P64, st.0, ctl)?;
         if !mutants::active("tnext_ne_guard_skip") {
             self.guard(TOp::Ne, Ty::I64, p, z, 0)?;
         }
         self.pending_next = Some(mv);
-        let kbits = if mutants::active("tnext_key_type_skip") { 0 } else { 1 };
+        let kbits = if mutants::active("tnext_key_type_skip") {
+            0
+        } else {
+            1
+        };
         let kr = self.guard(TOp::Hload, tk, p, NOREF, kbits | 2)?;
         if ended {
             self.def_abs(top_rel, kr);
@@ -8703,7 +9869,15 @@ impl Rec {
     }
 
     /// `math.fmod(x, y)` of two floats (C `fmod`); integers and mixed arguments are not recorded.
-    fn lib_fmod(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, addr: usize) -> R<usize> {
+    fn lib_fmod(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
         if nargs != 2 {
             return Err(self.nyi());
         }
@@ -8713,7 +9887,9 @@ impl Rec {
         if tx != Ty::Num || ty != Ty::Num {
             return Err(self.nyi());
         }
-        let r = self.b.emit(TOp::Calln, Ty::Num, x, y, interp::CALLN_CFMOD)?;
+        let r = self
+            .b
+            .emit(TOp::Calln, Ty::Num, x, y, interp::CALLN_CFMOD)?;
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
     }
 }
@@ -8729,7 +9905,9 @@ impl Rec {
         };
         let m = Instruction(w);
         match m.opcode() {
-            Some(OpCode::Mmbin) => vm.slot(m.a() as usize).is_table() || vm.slot(m.b() as usize).is_table(),
+            Some(OpCode::Mmbin) => {
+                vm.slot(m.a() as usize).is_table() || vm.slot(m.b() as usize).is_table()
+            }
             Some(OpCode::Mmbini | OpCode::Mmbink) => vm.slot(m.a() as usize).is_table(),
             _ => false,
         }
@@ -8739,7 +9917,12 @@ impl Rec {
     /// metatable is not nil, the metatable's node for the event name is the recorded one (`HREFK`), holds a Lua closure (`HLOAD`
     /// typecheck) of the recorded prototype (`EQREF`). Returns the closure and its ref. A metamethod that is not a Lua closure is
     /// called by the interpreter through `ccall` (no frame to inline): `Metamethod`.
-    fn mm_provider(&mut self, vm: &Vm<'_>, o: MmOpd, ev: Tm) -> R<(rn_core::value::Gc<LClosure>, Ref)> {
+    fn mm_provider(
+        &mut self,
+        vm: &Vm<'_>,
+        o: MmOpd,
+        ev: Tm,
+    ) -> R<(rn_core::value::Gc<LClosure>, Ref)> {
         if o.t != Ty::Tab {
             return Err(AbortReason::Metamethod);
         }
@@ -8759,7 +9942,10 @@ impl Rec {
         }
         self.touch(&Value::table(m))?;
         self.touch(&tmv)?;
-        let kname = self.b.ir.konst(KVal::Ptr(payload_bits(&Value::string(name), Ty::ShrStr), PtrKind::Raw));
+        let kname = self.b.ir.konst(KVal::Ptr(
+            payload_bits(&Value::string(name), Ty::ShrStr),
+            PtrKind::Raw,
+        ));
         let hr = self.hash_ref(mr, m, kname, ix)?;
         let bit = u32::from(!mutants::active("mm_tm_typecheck_skip"));
         let cref = self.guard(TOp::Hload, Ty::Lcf, hr, NOREF, bit)?;
@@ -8778,7 +9964,12 @@ impl Rec {
     fn mm_absent(&mut self, vm: &Vm<'_>, o: MmOpd, ev: Tm) -> R<()> {
         match o.t {
             Ty::Int | Ty::Num => {
-                if vm.st.type_metatable(rn_core::value::LuaType::Number).is_some() && !mutants::active("mm_num_mt_skip") {
+                if vm
+                    .st
+                    .type_metatable(rn_core::value::LuaType::Number)
+                    .is_some()
+                    && !mutants::active("mm_num_mt_skip")
+                {
                     return Err(AbortReason::Metamethod);
                 }
                 Ok(())
@@ -8797,7 +9988,10 @@ impl Rec {
                     self.guard(TOp::Ne, Ty::I64, mr, z, 0)?;
                 }
                 let name = vm.st.g().heap.tm_name(ev);
-                let kname = self.b.ir.konst(KVal::Ptr(payload_bits(&Value::string(name), Ty::ShrStr), PtrKind::Raw));
+                let kname = self.b.ir.konst(KVal::Ptr(
+                    payload_bits(&Value::string(name), Ty::ShrStr),
+                    PtrKind::Raw,
+                ));
                 match m.short_str_node(name) {
                     Some(ix) => {
                         if !m.node_value(ix).is_nil() || ix >= 1 << 15 {
@@ -8822,7 +10016,13 @@ impl Rec {
 
     /// `mm_bin`: the event `ev` of the first operand, else of the second (`get_tm_by_obj` order). Guards the provider
     /// ([`Rec::mm_provider`]) and, when it is the second operand, the absence in the first ([`Rec::mm_absent`]).
-    fn mm_binary(&mut self, vm: &Vm<'_>, ev: Tm, o1: MmOpd, o2: MmOpd) -> R<(rn_core::value::Gc<LClosure>, Ref)> {
+    fn mm_binary(
+        &mut self,
+        vm: &Vm<'_>,
+        ev: Tm,
+        o1: MmOpd,
+        o2: MmOpd,
+    ) -> R<(rn_core::value::Gc<LClosure>, Ref)> {
         if !vm.st.get_tm_by_obj(&o1.v, ev).is_nil() {
             return self.mm_provider(vm, o1, ev);
         }
@@ -8839,7 +10039,11 @@ impl Rec {
         if mutants::active("mm_ccalls_skip") {
             return Ok(());
         }
-        let n = 1 + self.frames.iter().filter(|f| f.mm.is_some() || f.pc_shift != 0).count();
+        let n = 1 + self
+            .frames
+            .iter()
+            .filter(|f| f.mm.is_some() || f.pc_shift != 0)
+            .count();
         // N3b: `nCcalls` is the same at every point of the trace that is not inside a deeper in-place frame, and a check for `n`
         // levels implies the checks for fewer: one helper call per depth is enough
         if n as u32 <= self.ccalls_done {
@@ -8860,7 +10064,11 @@ impl Rec {
         let ev = Tm::from_u8(m.c() as u8);
         let reg = |s: &mut Rec, n: usize| -> R<MmOpd> {
             let (r, t) = s.rd(vm, n)?;
-            Ok(MmOpd { r, t, v: vm.slot(n) })
+            Ok(MmOpd {
+                r,
+                t,
+                v: vm.slot(n),
+            })
         };
         let (o1, o2) = match m.opcode() {
             Some(OpCode::Mmbin) => (reg(self, m.a() as usize)?, reg(self, m.b() as usize)?),
@@ -8868,29 +10076,61 @@ impl Rec {
                 let x = reg(self, m.a() as usize)?;
                 let (r, t, v) = self.imm(i64::from(m.sb()));
                 let k = MmOpd { r, t, v };
-                if m.k() != 0 { (k, x) } else { (x, k) }
+                if m.k() != 0 {
+                    (k, x)
+                } else {
+                    (x, k)
+                }
             }
             Some(OpCode::Mmbink) => {
                 let x = reg(self, m.a() as usize)?;
                 let (r, t, v) = self.kconst(vm, m.b() as usize)?;
                 let k = MmOpd { r, t, v };
-                if m.k() != 0 { (k, x) } else { (x, k) }
+                if m.k() != 0 {
+                    (k, x)
+                } else {
+                    (x, k)
+                }
             }
             _ => return Err(self.nyi()),
         };
         self.mm_ccalls()?;
         let (cl, cref) = self.mm_binary(vm, ev, o1, o2)?;
-        self.mm_bridge = Some(MmCall { cl, cref, args: [o1.r, o2.r, NOREF], nargs: 2, fin: MmFin::Reg(prev.a() as u16) });
+        self.mm_bridge = Some(MmCall {
+            cl,
+            cref,
+            args: [o1.r, o2.r, NOREF],
+            nargs: 2,
+            fin: MmFin::Reg(prev.a() as u16),
+        });
         Ok(idx + 1)
     }
 
     /// `UNM` / `BNOT` / `LEN` of a table: the metamethod gets the operand twice (`mm_bin(.., rb, rb, ev)`); its first result goes to `R[a]`.
-    fn mm_unary(&mut self, vm: &Vm<'_>, idx: usize, ev: Tm, x: Ref, a: usize, b: usize) -> R<usize> {
-        let o = MmOpd { r: x, t: Ty::Tab, v: vm.slot(b) };
+    fn mm_unary(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        ev: Tm,
+        x: Ref,
+        a: usize,
+        b: usize,
+    ) -> R<usize> {
+        let o = MmOpd {
+            r: x,
+            t: Ty::Tab,
+            v: vm.slot(b),
+        };
         self.mm_ccalls()?;
         let (cl, cref) = self.mm_binary(vm, ev, o, o)?;
         let func_local = self.frames[self.cur_depth].nslots;
-        let c = MmCall { cl, cref, args: [x, x, NOREF], nargs: 2, fin: MmFin::Reg(a as u16) };
+        let c = MmCall {
+            cl,
+            cref,
+            args: [x, x, NOREF],
+            nargs: 2,
+            fin: MmFin::Reg(a as u16),
+        };
         self.mm_push(vm, idx, func_local, c, 1)
     }
 
@@ -8899,18 +10139,39 @@ impl Rec {
     fn mm_concat(&mut self, vm: &Vm<'_>, idx: usize, a: usize) -> R<usize> {
         let (r1, t1) = self.rd(vm, a)?;
         let (r2, t2) = self.rd(vm, a + 1)?;
-        let o1 = MmOpd { r: r1, t: t1, v: vm.slot(a) };
-        let o2 = MmOpd { r: r2, t: t2, v: vm.slot(a + 1) };
+        let o1 = MmOpd {
+            r: r1,
+            t: t1,
+            v: vm.slot(a),
+        };
+        let o2 = MmOpd {
+            r: r2,
+            t: t2,
+            v: vm.slot(a + 1),
+        };
         self.mm_ccalls()?;
         let (cl, cref) = self.mm_binary(vm, Tm::Concat, o1, o2)?;
-        let c = MmCall { cl, cref, args: [r1, r2, NOREF], nargs: 2, fin: MmFin::Reg(a as u16) };
+        let c = MmCall {
+            cl,
+            cref,
+            args: [r1, r2, NOREF],
+            nargs: 2,
+            fin: MmFin::Reg(a as u16),
+        };
         self.mm_push(vm, idx, a + 2, c, 1)
     }
 
     /// Pushes the frame of the metamethod `c.cl` as `mm_frame` + `pre_call_lua_fast` build it: the function slot `func_local`
     /// registers above the caller's base holds the closure, the arguments follow, missing parameters are nil. The caller resumes
     /// at `call_pc + 1`; the result goes where `c.fin` says (see [`Rec::ret_from`]).
-    fn mm_push(&mut self, vm: &Vm<'_>, call_pc: usize, func_local: usize, c: MmCall, wanted: i32) -> R<usize> {
+    fn mm_push(
+        &mut self,
+        vm: &Vm<'_>,
+        call_pc: usize,
+        func_local: usize,
+        c: MmCall,
+        wanted: i32,
+    ) -> R<usize> {
         let p = c.cl.proto();
         if p.is_vararg() {
             return Err(AbortReason::Vararg);
@@ -8921,10 +10182,18 @@ impl Rec {
         // BUNDLE-N: the same prototype on the frame stack again (middleclass's `__index` function of a subclass calls `super.static[k]`,
         // the parent's closure of the same prototype) is unrolled up to the recursion limit like a `CALL` (the closures may differ: the
         // callee guard compares the prototype, its upvalues are read through the closure ref)
-        if uses > 0 && (self.cfg.idxdeep & 4 == 0 || self.cfg.unroll == 0 || uses >= (self.cfg.unroll as usize).max(3)) {
+        if uses > 0
+            && (self.cfg.idxdeep & 4 == 0
+                || self.cfg.unroll == 0
+                || uses >= (self.cfg.unroll as usize).max(3))
+        {
             return Err(AbortReason::Recursion);
         }
-        let max_depth = if self.cfg.max_depth == 0 { MAX_DEPTH } else { (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES) };
+        let max_depth = if self.cfg.max_depth == 0 {
+            MAX_DEPTH
+        } else {
+            (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES)
+        };
         if d >= max_depth {
             return Err(AbortReason::Depth);
         }
@@ -8990,10 +10259,20 @@ impl Rec {
     /// `EQ` of two tables (N3; the plain path refuses table equality): raw equality is a pointer guard; two different tables call
     /// the `__eq` of the first operand's metatable, else of the second's (`mm_eq`), converted to a condition; without one the answer is
     /// false and both tables are proven to have none.
-    fn mm_eq(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction, x: (Ref, Ty), y: (Ref, Ty)) -> R<usize> {
+    fn mm_eq(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        i: Instruction,
+        x: (Ref, Ty),
+        y: (Ref, Ty),
+    ) -> R<usize> {
         let (a, b) = (i.a() as usize, i.b() as usize);
         let (vx, vy) = (vm.slot(a), vm.slot(b));
-        let (tx, ty) = (vx.as_table().ok_or(AbortReason::Diverge)?, vy.as_table().ok_or(AbortReason::Diverge)?);
+        let (tx, ty) = (
+            vx.as_table().ok_or(AbortReason::Diverge)?,
+            vy.as_table().ok_or(AbortReason::Diverge)?,
+        );
         if tx.as_ptr() == ty.as_ptr() {
             if !mutants::active("mm_eq_raw_skip") {
                 self.guard(TOp::Eq, Ty::I64, x.0, y.0, 0)?;
@@ -9003,7 +10282,18 @@ impl Rec {
         if !mutants::active("mm_eq_raw_skip") {
             self.guard(TOp::Ne, Ty::I64, x.0, y.0, 0)?;
         }
-        let (o1, o2) = (MmOpd { r: x.0, t: x.1, v: vx }, MmOpd { r: y.0, t: y.1, v: vy });
+        let (o1, o2) = (
+            MmOpd {
+                r: x.0,
+                t: x.1,
+                v: vx,
+            },
+            MmOpd {
+                r: y.0,
+                t: y.1,
+                v: vy,
+            },
+        );
         if vm.st.get_tm_by_obj(&vx, Tm::Eq).is_nil() && vm.st.get_tm_by_obj(&vy, Tm::Eq).is_nil() {
             if !mutants::active("mm_eq_absent_skip") {
                 self.mm_absent(vm, o1, Tm::Eq)?;
@@ -9016,11 +10306,25 @@ impl Rec {
 
     /// A comparison (`EQ`, `LT`, `LE`, `LTI` ...) that calls a metamethod with the operands `o1`, `o2` (in the order `mm_bin` gets
     /// them); its result decides the condition ([`MmFin::Cond`]).
-    fn mm_order(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction, ev: Tm, o1: MmOpd, o2: MmOpd) -> R<usize> {
+    fn mm_order(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        i: Instruction,
+        ev: Tm,
+        o1: MmOpd,
+        o2: MmOpd,
+    ) -> R<usize> {
         self.mm_ccalls()?;
         let (cl, cref) = self.mm_binary(vm, ev, o1, o2)?;
         let func_local = self.frames[self.cur_depth].nslots;
-        let c = MmCall { cl, cref, args: [o1.r, o2.r, NOREF], nargs: 2, fin: MmFin::Cond(i.k() != 0) };
+        let c = MmCall {
+            cl,
+            cref,
+            args: [o1.r, o2.r, NOREF],
+            nargs: 2,
+            fin: MmFin::Cond(i.k() != 0),
+        };
         self.mm_push(vm, idx, func_local, c, 1)
     }
 }
@@ -9028,7 +10332,15 @@ impl Rec {
 impl Rec {
     /// The guards of the closure `cl` stored under `ev` in the metatable `m` of the table `tr` (node `ix`): `mt != 0`, `HREFK`, the
     /// typechecked `HLOAD` of a Lua closure, the `EQREF` of its prototype. Returns the closure's ref.
-    fn mm_field_closure(&mut self, vm: &Vm<'_>, tr: Ref, m: TableRef, ix: usize, ev: Tm, cl: rn_core::value::Gc<LClosure>) -> R<Ref> {
+    fn mm_field_closure(
+        &mut self,
+        vm: &Vm<'_>,
+        tr: Ref,
+        m: TableRef,
+        ix: usize,
+        ev: Tm,
+        cl: rn_core::value::Gc<LClosure>,
+    ) -> R<Ref> {
         if ix >= 1 << 15 {
             return Err(AbortReason::TableHash);
         }
@@ -9041,12 +10353,18 @@ impl Rec {
         self.touch(&Value::table(m))?;
         self.touch(&tmv)?;
         let name = vm.st.g().heap.tm_name(ev);
-        let kname = self.b.ir.konst(KVal::Ptr(payload_bits(&Value::string(name), Ty::ShrStr), PtrKind::Raw));
+        let kname = self.b.ir.konst(KVal::Ptr(
+            payload_bits(&Value::string(name), Ty::ShrStr),
+            PtrKind::Raw,
+        ));
         let hr = self.hash_ref(mr, m, kname, ix)?;
         let bit = u32::from(!mutants::active("mm_tm_typecheck_skip"));
         let cref = self.guard(TOp::Hload, Ty::Lcf, hr, NOREF, bit)?;
         let p = cl.proto();
-        let kp = self.b.ir.konst(KVal::Ptr(&*p as *const Proto as u64, PtrKind::Proto));
+        let kp = self
+            .b
+            .ir
+            .konst(KVal::Ptr(&*p as *const Proto as u64, PtrKind::Proto));
         if !mutants::active("mm_callee_guard_skip") {
             self.guard(TOp::Eqref, Ty::I64, cref, kp, 0)?;
         }
@@ -9062,17 +10380,39 @@ impl Rec {
         if let Some(&r) = self.kstr.get(&id) {
             return Ok(r);
         }
-        let r = self.b.emit_raw(Ins { op: TOp::Kptr, t: Ty::ShrStr, flags: 0, a: key.0, b: NOREF, prev: NOREF, aux: 0 })?;
+        let r = self.b.emit_raw(Ins {
+            op: TOp::Kptr,
+            t: Ty::ShrStr,
+            flags: 0,
+            a: key.0,
+            b: NOREF,
+            prev: NOREF,
+            aux: 0,
+        })?;
         self.kstr.insert(id, r);
         Ok(r)
     }
 
     /// `__index` function of the metatable `m` (node `ix`) of the table `tr`, found by a lookup of `key` that missed: the call
     /// `__index(t, key)` (`mm_index`) is left in [`Rec::mm_pending`].
-    fn mm_index_fn(&mut self, vm: &Vm<'_>, tr: Ref, m: TableRef, ix: usize, cl: rn_core::value::Gc<LClosure>, key: Ref) -> R<()> {
+    fn mm_index_fn(
+        &mut self,
+        vm: &Vm<'_>,
+        tr: Ref,
+        m: TableRef,
+        ix: usize,
+        cl: rn_core::value::Gc<LClosure>,
+        key: Ref,
+    ) -> R<()> {
         self.mm_ccalls()?;
         let cref = self.mm_field_closure(vm, tr, m, ix, Tm::Index, cl)?;
-        self.mm_pending = Some(MmCall { cl, cref, args: [tr, key, NOREF], nargs: 2, fin: MmFin::Reg(0) });
+        self.mm_pending = Some(MmCall {
+            cl,
+            cref,
+            args: [tr, key, NOREF],
+            nargs: 2,
+            fin: MmFin::Reg(0),
+        });
         Ok(())
     }
 
@@ -9082,7 +10422,10 @@ impl Rec {
         let m = tbl.metatable().ok_or(AbortReason::Diverge)?;
         let name = vm.st.g().heap.tm_name(Tm::Index);
         let ix = m.short_str_node(name).ok_or(AbortReason::MetaTable)?;
-        let cl = m.node_value(ix).as_lclosure().ok_or(AbortReason::MetaTable)?;
+        let cl = m
+            .node_value(ix)
+            .as_lclosure()
+            .ok_or(AbortReason::MetaTable)?;
         if tbl.flags() & rn_core::table::BITDUMMY == 0 {
             return Err(AbortReason::TableHash);
         }
@@ -9107,7 +10450,14 @@ impl Rec {
     /// `t[key] = val` for a short-string key that has no non-nil value in the table whose metatable has a Lua closure `__newindex`: the
     /// call `__newindex(t, key, val)` (`mm_newindex`, results discarded) is left in [`Rec::mm_pending`]; the key is proven absent (or
     /// nil-valued) first. `false`: not this case (the plain store paths apply).
-    fn mm_newindex_fn(&mut self, vm: &Vm<'_>, tbl: TableRef, t: (Ref, Ty), key: (Ref, StrRef), val: (Ref, Ty)) -> R<bool> {
+    fn mm_newindex_fn(
+        &mut self,
+        vm: &Vm<'_>,
+        tbl: TableRef,
+        t: (Ref, Ty),
+        key: (Ref, StrRef),
+        val: (Ref, Ty),
+    ) -> R<bool> {
         let Some(m) = tbl.metatable() else {
             return Ok(false);
         };
@@ -9139,12 +10489,24 @@ impl Rec {
         }
         let cref = self.mm_field_closure(vm, t.0, m, ix, Tm::NewIndex, cl)?;
         let kr = self.mm_str_key(key)?;
-        self.mm_pending = Some(MmCall { cl, cref, args: [t.0, kr, val.0], nargs: 3, fin: MmFin::Drop });
+        self.mm_pending = Some(MmCall {
+            cl,
+            cref,
+            args: [t.0, kr, val.0],
+            nargs: 3,
+            fin: MmFin::Drop,
+        });
         Ok(true)
     }
 
     /// Pushes the call [`Rec::mm_pending`] left, for the instruction at `idx`; `wanted_result`: the result goes to register `a`.
-    fn mm_push_pending(&mut self, vm: &Vm<'_>, idx: usize, a: usize, wanted_result: bool) -> R<usize> {
+    fn mm_push_pending(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        wanted_result: bool,
+    ) -> R<usize> {
         let mut c = self.mm_pending.take().ok_or(AbortReason::Diverge)?;
         if wanted_result {
             c.fin = MmFin::Reg(a as u16);
@@ -9155,9 +10517,21 @@ impl Rec {
 
     /// `CALL` of a table with a Lua closure `__call` (`luaD_tryfuncTM`): the object moves to the first argument, the arguments one slot
     /// up, the closure into the function slot; then an ordinary call of the closure.
-    fn mm_call(&mut self, vm: &Vm<'_>, idx: usize, a: usize, nargs: usize, wanted: i32, tail: bool) -> R<usize> {
+    fn mm_call(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        tail: bool,
+    ) -> R<usize> {
         let (r0, t0) = self.rd(vm, a)?;
-        let o = MmOpd { r: r0, t: t0, v: vm.slot(a) };
+        let o = MmOpd {
+            r: r0,
+            t: t0,
+            v: vm.slot(a),
+        };
         let mut refs = Vec::with_capacity(nargs + 1);
         refs.push(r0);
         for j in 1..=nargs {

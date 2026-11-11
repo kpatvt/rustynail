@@ -37,9 +37,20 @@ fn resume_before(src: &str, armm: bool) -> Vec<(u32, Option<OpCode>)> {
     assert_eq!(st.load_buffer(src.as_bytes(), b"=c", None), Status::Ok);
     let cl = st.get(st.top() - 1).as_lclosure().expect("closure");
     let p = cl.proto();
-    let cfg = LowerCfg { code_addr: p.code_ptr() as usize, interrupt_addr: 0, consts: p.k(), t15_warmup: None, calls: Some(env(armm)) };
+    let cfg = LowerCfg {
+        code_addr: p.code_ptr() as usize,
+        interrupt_addr: 0,
+        consts: p.k(),
+        t15_warmup: None,
+        calls: Some(env(armm)),
+    };
     let low = lower(p.code(), cfg).expect("lowered");
-    let mut v: Vec<(u32, Option<OpCode>)> = low.resume.iter().filter(|&&(pc, _)| pc > 0).map(|&(pc, _)| (pc, Instruction(p.code()[pc as usize - 1]).opcode())).collect();
+    let mut v: Vec<(u32, Option<OpCode>)> = low
+        .resume
+        .iter()
+        .filter(|&&(pc, _)| pc > 0)
+        .map(|&(pc, _)| (pc, Instruction(p.code()[pc as usize - 1]).opcode()))
+        .collect();
     v.sort_by_key(|x| x.0);
     v
 }
@@ -52,12 +63,20 @@ const SRC: &str = "local a, b = ... local t = a + b local u = -a local w = a - 2
 fn bd_armm_lowering() {
     let on = resume_before(SRC, true);
     let off = resume_before(SRC, false);
-    let is_mm = |o: Option<OpCode>| matches!(o, Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink | OpCode::Unm | OpCode::Bnot));
+    let is_mm = |o: Option<OpCode>| {
+        matches!(
+            o,
+            Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink | OpCode::Unm | OpCode::Bnot)
+        )
+    };
     let n_on = on.iter().filter(|(_, o)| is_mm(*o)).count();
     let n_off = off.iter().filter(|(_, o)| is_mm(*o)).count();
     assert_eq!(n_off, 0, "no continuation without the limit: {off:?}");
     // add, unm, subtract-constant, mul, add, add, add: the first six instructions that can call a metamethod each have one
-    assert!(n_on >= 6, "continuations after the arithmetic instructions: {on:?}");
+    assert!(
+        n_on >= 6,
+        "continuations after the arithmetic instructions: {on:?}"
+    );
 }
 
 /// BUNDLE-D `sbump2`: the extra unroll grows with the failed attempts of the exit, is bounded by the knob, applies only inside inlined frames and to the
@@ -70,11 +89,26 @@ fn bd_sbump2_rule() {
     assert_eq!(sbump2_extra(2, Some("Depth"), 0, true), 0, "first attempt");
     assert_eq!(sbump2_extra(2, Some("Depth"), 1, true), 1);
     assert_eq!(sbump2_extra(2, Some("Recursion"), 2, true), 2);
-    assert_eq!(sbump2_extra(2, Some("SideShort"), 4, true), 2, "bounded by the knob");
-    assert_eq!(sbump2_extra(2, Some("Depth"), 3, false), 0, "not inside inlined frames");
-    assert_eq!(sbump2_extra(2, Some("Nyi(Loadk)"), 3, true), 0, "other aborts");
+    assert_eq!(
+        sbump2_extra(2, Some("SideShort"), 4, true),
+        2,
+        "bounded by the knob"
+    );
+    assert_eq!(
+        sbump2_extra(2, Some("Depth"), 3, false),
+        0,
+        "not inside inlined frames"
+    );
+    assert_eq!(
+        sbump2_extra(2, Some("Nyi(Loadk)"), 3, true),
+        0,
+        "other aborts"
+    );
     assert_eq!(sbump2_extra(2, None, 3, true), 0);
     assert!(sbump2_pending(2, "Depth", 1) && sbump2_pending(2, "Recursion", 2));
-    assert!(!sbump2_pending(2, "Depth", 3), "out of attempts: a repeat blacklists");
+    assert!(
+        !sbump2_pending(2, "Depth", 3),
+        "out of attempts: a repeat blacklists"
+    );
     assert!(!sbump2_pending(0, "Depth", 1) && !sbump2_pending(2, "FnShort", 1));
 }

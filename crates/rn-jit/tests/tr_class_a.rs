@@ -28,7 +28,18 @@ fn interpreter_bytes(st: &mut State, b: u32, c: u32) -> usize {
     st.heap().total_bytes() - before
 }
 
-const SHAPES: &[(u32, u32)] = &[(0, 0), (0, 1), (0, 3), (0, 100), (1, 0), (2, 5), (3, 0), (4, 17), (7, 1000), (12, 4096)];
+const SHAPES: &[(u32, u32)] = &[
+    (0, 0),
+    (0, 1),
+    (0, 3),
+    (0, 100),
+    (1, 0),
+    (2, 5),
+    (3, 0),
+    (4, 17),
+    (7, 1000),
+    (12, 4096),
+];
 
 /// `new_table_bytes` is exactly what `Heap::new_table` + `resize` count.
 #[test]
@@ -59,19 +70,34 @@ fn tnew_exits_exactly_when_a_step_would_be_due() {
         // due after the allocation (the interpreter would step): nothing done
         for thr in [total + bytes - 1, total + bytes, total, 0] {
             st.heap().gc_set_threshold(thr);
-            assert_eq!(tnew_core(&mut st, b, c), 0, "B={b} C={c} threshold {thr}: must exit");
-            assert_eq!(st.heap().total_bytes(), total, "B={b} C={c}: the exit allocated");
+            assert_eq!(
+                tnew_core(&mut st, b, c),
+                0,
+                "B={b} C={c} threshold {thr}: must exit"
+            );
+            assert_eq!(
+                st.heap().total_bytes(),
+                total,
+                "B={b} C={c}: the exit allocated"
+            );
         }
         // idle after the allocation (threshold one byte beyond): allocated, with the interpreter's accounting
         st.heap().gc_set_threshold(total + bytes + 1);
         let t = tnew_core(&mut st, b, c);
         assert_ne!(t, 0, "B={b} C={c}: must allocate");
-        assert_eq!(st.heap().total_bytes(), total + bytes, "B={b} C={c}: accounting");
+        assert_eq!(
+            st.heap().total_bytes(),
+            total + bytes,
+            "B={b} C={c}: accounting"
+        );
         // the table has the interpreter's shape
         // SAFETY: the helper returned a live table of this state.
         let t = unsafe { rn_core::table::TableRef::from_raw(t as *mut rn_core::table::Table) };
         assert_eq!(t.array_size(), c);
-        assert!(!st.heap().gc_due(), "B={b} C={c}: the collector must stay idle");
+        assert!(
+            !st.heap().gc_due(),
+            "B={b} C={c}: the collector must stay idle"
+        );
         st.heap().gc_set_threshold(usize::MAX);
     }
 }
@@ -118,11 +144,16 @@ fn fresh_table_resize_failure_is_atomic() {
     let heap = st.heap();
     let t = heap.new_table().expect("table");
     assert!(t.resize(heap, c, hsize).is_err());
-    assert_eq!(st.heap().total_bytes(), total + empty, "the node vector was not given back");
+    assert_eq!(
+        st.heap().total_bytes(),
+        total + empty,
+        "the node vector was not given back"
+    );
     assert_eq!(t.array_size(), 0);
     st.heap().mem_mut().set_limit(total + all);
     let heap = st.heap();
-    t.resize(heap, c, hsize).expect("room for exactly this shape");
+    t.resize(heap, c, hsize)
+        .expect("room for exactly this shape");
     assert_eq!(st.heap().total_bytes(), total + all);
     assert_eq!((t.array_size(), t.hash_size()), (c, hsize as usize));
     st.heap().mem_mut().set_limit(usize::MAX);
@@ -153,7 +184,11 @@ fn newref_inserts_absent_keys_only() {
         // a second insertion of the same key does nothing
         let before = (t.hash_size(), t.array_size());
         // SAFETY: as above.
-        assert_eq!(unsafe { newref_core(&mut st, tp, kp) }, 0, "key{i}: present key");
+        assert_eq!(
+            unsafe { newref_core(&mut st, tp, kp) },
+            0,
+            "key{i}: present key"
+        );
         assert_eq!((t.hash_size(), t.array_size()), before);
     }
     for (k, _) in &keys {
@@ -168,8 +203,10 @@ fn newref_leaves_nil_valued_keys_to_the_interpreter() {
     st.heap().gc_set_threshold(usize::MAX);
     let t = st.heap().new_table().unwrap();
     let (k, kp) = key(&mut st, "x");
-    t.set_str(st.heap(), k, &rn_core::value::Value::int(1)).unwrap();
-    t.set_str(st.heap(), k, &rn_core::value::Value::NIL).unwrap();
+    t.set_str(st.heap(), k, &rn_core::value::Value::int(1))
+        .unwrap();
+    t.set_str(st.heap(), k, &rn_core::value::Value::NIL)
+        .unwrap();
     // SAFETY: a live table and a live interned short string.
     assert_eq!(unsafe { newref_core(&mut st, t.as_ptr() as u64, kp) }, 0);
 }
@@ -197,8 +234,16 @@ fn newref_failure_leaves_the_table_intact() {
     let hs = t.hash_size().max(hs);
     st.heap().mem_mut().set_limit(total + 8);
     // SAFETY: as above.
-    assert_eq!(unsafe { newref_core(&mut st, t.as_ptr() as u64, kp) }, 0, "no memory for the rehash");
-    assert_eq!(st.heap().total_bytes(), total, "the failed insertion left bytes behind");
+    assert_eq!(
+        unsafe { newref_core(&mut st, t.as_ptr() as u64, kp) },
+        0,
+        "no memory for the rehash"
+    );
+    assert_eq!(
+        st.heap().total_bytes(),
+        total,
+        "the failed insertion left bytes behind"
+    );
     assert_eq!(t.hash_size(), hs);
     assert!(t.short_str_node(k).is_none());
     assert!(t.short_str_node(k4).is_some());

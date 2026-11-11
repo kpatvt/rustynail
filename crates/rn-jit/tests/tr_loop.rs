@@ -250,7 +250,11 @@ impl Rb {
         let cl = self.b.ir.konst(KVal::Ptr(1, PtrKind::LClosure));
         let jk = self.kint(j);
         // P2 bundle 2 (`uvsep`): the recorder names the real `UpVal` in `aux`; here every index claims to be its own upvalue
-        let id = if UVSEP.with(|u| u.get()) & 1 != 0 { j as u32 + 1 } else { 0 };
+        let id = if UVSEP.with(|u| u.get()) & 1 != 0 {
+            j as u32 + 1
+        } else {
+            0
+        };
         self.b.emit(TOp::Uref, Ty::P64, cl, jk, id).unwrap()
     }
 
@@ -635,7 +639,15 @@ fn model_sized(
                 ival(rng)
             };
             let key = if rng.chance(1, 70) { 0 } else { key }; // another layout: HREFK exits
-            nodes.insert(j as u32, rn_jit::tr::interp::MNode { key, val, next: 0, int: false });
+            nodes.insert(
+                j as u32,
+                rn_jit::tr::interp::MNode {
+                    key,
+                    val,
+                    next: 0,
+                    int: false,
+                },
+            );
         }
         m.tables.push(rn_jit::tr::interp::MTable {
             array,
@@ -882,7 +894,14 @@ fn compare_case(seed: u64, st: &mut Counts, configs: &[(bool, bool, bool)], deep
                     .ir
                     .ins
                     .iter()
-                    .filter(|i| i.op == TOp::Ne && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && TraceIr::is_ins(i.b) && rec.ir.at(i.a).op == TOp::Uref && rec.ir.at(i.b).op == TOp::Uref)
+                    .filter(|i| {
+                        i.op == TOp::Ne
+                            && i.flags & F_GUARD != 0
+                            && TraceIr::is_ins(i.a)
+                            && TraceIr::is_ins(i.b)
+                            && rec.ir.at(i.a).op == TOp::Uref
+                            && rec.ir.at(i.b).op == TOp::Uref
+                    })
                     .map(|i| rec.ir.snaps[aux_snap(i.aux) as usize].pc)
                     .collect();
                 if let End::Exit { pc, .. } = &got.end {
@@ -1148,7 +1167,12 @@ fn uvsep_forwards_over_distinct_upvalue_stores() {
         rb.finish()
     };
     for two in [false, true] {
-        for (uv, ids, want_loads, want_ne) in [(1u32, 1u32, 1usize, 1usize), (0, 1, 2, 0), (1, 0, 2, 0), (1, 1, 1, 1)] {
+        for (uv, ids, want_loads, want_ne) in [
+            (1u32, 1u32, 1usize, 1usize),
+            (0, 1, 2, 0),
+            (1, 0, 2, 0),
+            (1, 1, 1, 1),
+        ] {
             UVSEP.with(|u| u.set(ids));
             let rec = build(two);
             let mut r = rec.clone();
@@ -1156,15 +1180,64 @@ fn uvsep_forwards_over_distinct_upvalue_stores() {
             o.uvsep = uv;
             opt_loop::run(&mut r, &o).unwrap();
             opt_loop::check(&r.ir).unwrap();
-            let loads = r.ir.ins.iter().filter(|i| i.op == TOp::Uload && i.t == Ty::Int && r.ir.as_int(r.ir.at(i.a).b) == Some(0)).count();
-            let nes = r.ir.ins.iter().filter(|i| i.op == TOp::Ne && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && r.ir.at(i.a).op == TOp::Uref).count();
-            assert_eq!((loads, nes), (want_loads, want_ne * if two && want_ne > 0 { 2 } else { 1 }), "two={two} uvsep={uv} ids={ids}\n{}", dump(&r.ir));
+            let loads = r
+                .ir
+                .ins
+                .iter()
+                .filter(|i| {
+                    i.op == TOp::Uload && i.t == Ty::Int && r.ir.as_int(r.ir.at(i.a).b) == Some(0)
+                })
+                .count();
+            let nes =
+                r.ir.ins
+                    .iter()
+                    .filter(|i| {
+                        i.op == TOp::Ne
+                            && i.flags & F_GUARD != 0
+                            && TraceIr::is_ins(i.a)
+                            && r.ir.at(i.a).op == TOp::Uref
+                    })
+                    .count();
+            assert_eq!(
+                (loads, nes),
+                (want_loads, want_ne * if two && want_ne > 0 { 2 } else { 1 }),
+                "two={two} uvsep={uv} ids={ids}\n{}",
+                dump(&r.ir)
+            );
             // run on models where upvalue 0 and 1 (2) are, or are not, one cell: the optimised trace ends as the recorded one
             for join in [0u32, 1, 2] {
                 let mut m = Model::new();
-                m.slots = vec![Val::int(2), Val::int(6), Val::int(1), Val::int(0), Val::int(0), Val::num(0.5), Val::num(1.5), Val { t: Ty::Tab, bits: 1 }, Val { t: Ty::Tab, bits: 1 }, Val { t: Ty::Tab, bits: 1 }, Val::int(0)];
+                m.slots = vec![
+                    Val::int(2),
+                    Val::int(6),
+                    Val::int(1),
+                    Val::int(0),
+                    Val::int(0),
+                    Val::num(0.5),
+                    Val::num(1.5),
+                    Val {
+                        t: Ty::Tab,
+                        bits: 1,
+                    },
+                    Val {
+                        t: Ty::Tab,
+                        bits: 1,
+                    },
+                    Val {
+                        t: Ty::Tab,
+                        bits: 1,
+                    },
+                    Val::int(0),
+                ];
                 m.closures = vec![vec![Val::int(10), Val::int(20), Val::int(30), Val::int(40)]];
-                m.tables = vec![rn_jit::tr::interp::MTable { array: vec![Val::int(1); ASIZE], metatable: 0, flags: 0, lsizenode: 2, lenhint: 0, nodes: Default::default() }];
+                m.tables = vec![rn_jit::tr::interp::MTable {
+                    array: vec![Val::int(1); ASIZE],
+                    metatable: 0,
+                    flags: 0,
+                    lsizenode: 2,
+                    lenhint: 0,
+                    nodes: Default::default(),
+                }];
                 if join == 1 {
                     m.uv_cell = vec![vec![1, 1, 0, 0]];
                     m.cells = vec![Val::int(7)];
@@ -1177,10 +1250,19 @@ fn uvsep_forwards_over_distinct_upvalue_stores() {
                 // the load was forwarded over a store to a cell it shares at run time (`join`): the guard exits, at the load, instead of the wrong value
                 let aliased = uv & 1 != 0 && ids == 1 && (join == 1 || (join == 2 && two));
                 if aliased {
-                    assert!(matches!(got.end, End::Exit { .. }), "two={two} uvsep={uv} join={join}: the guard must fire\n{}", dump(&r.ir));
+                    assert!(
+                        matches!(got.end, End::Exit { .. }),
+                        "two={two} uvsep={uv} join={join}: the guard must fire\n{}",
+                        dump(&r.ir)
+                    );
                     assert_ne!(base, got);
                 } else {
-                    assert_eq!(base, got, "two={two} uvsep={uv} ids={ids} join={join}\n{}", dump(&r.ir));
+                    assert_eq!(
+                        base,
+                        got,
+                        "two={two} uvsep={uv} ids={ids} join={join}\n{}",
+                        dump(&r.ir)
+                    );
                 }
             }
         }
@@ -1206,7 +1288,16 @@ fn cleanup_renumbers_third_operands() {
             1 => (TOp::Tset, Ty::Nil, j as u32),
             _ => (TOp::Concat, Ty::ShrStr, j as u32),
         };
-        rb.b.emit_raw(Ins { op, t: ty, flags: 0, a: t, b: a, prev: NOREF, aux }).unwrap();
+        rb.b.emit_raw(Ins {
+            op,
+            t: ty,
+            flags: 0,
+            a: t,
+            b: a,
+            prev: NOREF,
+            aux,
+        })
+        .unwrap();
         rb.forloop(1);
         let rec = rb.finish();
         let mut r = rec.clone();
@@ -1215,10 +1306,23 @@ fn cleanup_renumbers_third_operands() {
         o.hdrlib = 2;
         opt_loop::run(&mut r, &o).unwrap();
         opt_loop::check(&r.ir).unwrap();
-        let ins = r.ir.ins.iter().find(|i| i.op == op).copied().expect("the op survives");
-        assert!(r.ir.ins.len() < rec.ir.ins.len(), "{op:?}: dead instructions were dropped\n{}", dump(&r.ir));
+        let ins =
+            r.ir.ins
+                .iter()
+                .find(|i| i.op == op)
+                .copied()
+                .expect("the op survives");
+        assert!(
+            r.ir.ins.len() < rec.ir.ins.len(),
+            "{op:?}: dead instructions were dropped\n{}",
+            dump(&r.ir)
+        );
         let third = ins.third().expect("third operand");
-        assert!(TraceIr::is_ins(third) && r.ir.at(third).op == TOp::Sub, "{op:?}: the third operand names its producer\n{}", dump(&r.ir));
+        assert!(
+            TraceIr::is_ins(third) && r.ir.at(third).op == TOp::Sub,
+            "{op:?}: the third operand names its producer\n{}",
+            dump(&r.ir)
+        );
     }
 }
 
@@ -1234,8 +1338,18 @@ fn rolled_iterations_with_uvsep_equal_the_recorded_loop() {
         for seed in 1..=CASES * 2 {
             compare_case(seed, &mut st, &configs, false);
         }
-        assert!(st.cases > 100 && st.done > 100 && st.exits > 100, "uvsep={bits}: {} {} {}", st.cases, st.done, st.exits);
-        assert!(st.guarded > 3, "uvsep={bits}: the separation guards fire on models with shared cells: {}", st.guarded);
+        assert!(
+            st.cases > 100 && st.done > 100 && st.exits > 100,
+            "uvsep={bits}: {} {} {}",
+            st.cases,
+            st.done,
+            st.exits
+        );
+        assert!(
+            st.guarded > 3,
+            "uvsep={bits}: the separation guards fire on models with shared cells: {}",
+            st.guarded
+        );
     }
     UVSEP.with(|u| u.set(0));
 }
@@ -1448,7 +1562,14 @@ fn header_mutating_ops_stop_the_optimiser() {
     assert!(ok.ir.loop_at.is_some(), "{}", dump(&ok.ir));
     assert_eq!(count(&ok.ir, TOp::Fload, true), 0, "{}", dump(&ok.ir));
     assert_eq!(count(&ok.ir, TOp::Ult, true), 1, "{}", dump(&ok.ir));
-    for op in [TOp::Newref, TOp::Tnew, TOp::Snew, TOp::Concat, TOp::Tlen, TOp::Tset] {
+    for op in [
+        TOp::Newref,
+        TOp::Tnew,
+        TOp::Snew,
+        TOp::Concat,
+        TOp::Tlen,
+        TOp::Tset,
+    ] {
         let rec = build(Some(op));
         for (l, f) in [(true, true), (false, true), (true, false)] {
             let mut r = rec.clone();
@@ -1472,7 +1593,16 @@ fn hdrlib_classifies_lib_ops() {
         let mut rb = Rb::new(true, true);
         let (t, i) = (rb.cur[7], rb.cur[0]);
         let x = rb.aload(t, i, Ty::Num);
-        rb.b.emit_raw(Ins { op, t: ty, flags: 0, a: t, b: NOREF, prev: NOREF, aux }).unwrap();
+        rb.b.emit_raw(Ins {
+            op,
+            t: ty,
+            flags: 0,
+            a: t,
+            b: NOREF,
+            prev: NOREF,
+            aux,
+        })
+        .unwrap();
         let y = rb.aload(t, i, Ty::Num);
         let z = rb.ins(TOp::Fadd, Ty::Num, x, y);
         rb.def(5, z);
@@ -1487,14 +1617,32 @@ fn hdrlib_classifies_lib_ops() {
         r
     };
     // peeled with the knob (the header load is not repeated in the body), rolled without it
-    let cases_ok = [(TOp::Tlen, 1, Ty::Int), (TOp::Tlen, 2, Ty::Int), (TOp::Lib, lib::BYTE, Ty::Int), (TOp::Lib, lib::STREQ, Ty::Int), (TOp::Lib, lib::TYPENAME, Ty::ShrStr)];
+    let cases_ok = [
+        (TOp::Tlen, 1, Ty::Int),
+        (TOp::Tlen, 2, Ty::Int),
+        (TOp::Lib, lib::BYTE, Ty::Int),
+        (TOp::Lib, lib::STREQ, Ty::Int),
+        (TOp::Lib, lib::TYPENAME, Ty::ShrStr),
+    ];
     for (op, aux, ty) in cases_ok {
         let rec = build(op, aux, ty);
         let on = run(&rec, 1);
-        assert!(on.ir.loop_at.is_some(), "{op:?} {aux}: not peeled with hdrlib=1\n{}", dump(&on.ir));
-        assert_eq!(count(&on.ir, TOp::Fload, true), 0, "{op:?} {aux}\n{}", dump(&on.ir));
+        assert!(
+            on.ir.loop_at.is_some(),
+            "{op:?} {aux}: not peeled with hdrlib=1\n{}",
+            dump(&on.ir)
+        );
+        assert_eq!(
+            count(&on.ir, TOp::Fload, true),
+            0,
+            "{op:?} {aux}\n{}",
+            dump(&on.ir)
+        );
         let off = run(&rec, 0);
-        assert!(off.ir.loop_at.is_none(), "{op:?} {aux}: peeled without hdrlib");
+        assert!(
+            off.ir.loop_at.is_none(),
+            "{op:?} {aux}: peeled without hdrlib"
+        );
     }
     // still barriers
     let cases_bad = [
@@ -1511,8 +1659,14 @@ fn hdrlib_classifies_lib_ops() {
     for (op, aux, ty) in cases_bad {
         let rec = build(op, aux, ty);
         let on = run(&rec, 1);
-        assert!(on.ir.loop_at.is_none(), "{op:?} {aux}: peeled with hdrlib=1");
-        assert_eq!(on.ir.ins, rec.ir.ins, "{op:?} {aux}: the trace is unchanged");
+        assert!(
+            on.ir.loop_at.is_none(),
+            "{op:?} {aux}: peeled with hdrlib=1"
+        );
+        assert_eq!(
+            on.ir.ins, rec.ir.ins,
+            "{op:?} {aux}: the trace is unchanged"
+        );
     }
     // HDRSUB: the string makers are header-safe from their level on (`sub` 2, `char` 3, `tostring` 4), barriers below it
     for (aux, level) in [(lib::SUB, 2), (lib::CHAR, 3), (lib::TOSTR, 4)] {
@@ -1520,11 +1674,26 @@ fn hdrlib_classifies_lib_ops() {
         for lv in 1..=4 {
             let on = run(&rec, lv);
             if lv >= level {
-                assert!(on.ir.loop_at.is_some(), "lib {aux}: not peeled with hdrlib={lv}\n{}", dump(&on.ir));
-                assert_eq!(count(&on.ir, TOp::Fload, true), 0, "lib {aux} hdrlib={lv}\n{}", dump(&on.ir));
+                assert!(
+                    on.ir.loop_at.is_some(),
+                    "lib {aux}: not peeled with hdrlib={lv}\n{}",
+                    dump(&on.ir)
+                );
+                assert_eq!(
+                    count(&on.ir, TOp::Fload, true),
+                    0,
+                    "lib {aux} hdrlib={lv}\n{}",
+                    dump(&on.ir)
+                );
             } else {
-                assert!(on.ir.loop_at.is_none(), "lib {aux}: peeled with hdrlib={lv}");
-                assert_eq!(on.ir.ins, rec.ir.ins, "lib {aux} hdrlib={lv}: the trace is unchanged");
+                assert!(
+                    on.ir.loop_at.is_none(),
+                    "lib {aux}: peeled with hdrlib={lv}"
+                );
+                assert_eq!(
+                    on.ir.ins, rec.ir.ins,
+                    "lib {aux} hdrlib={lv}: the trace is unchanged"
+                );
             }
         }
     }
@@ -1532,7 +1701,17 @@ fn hdrlib_classifies_lib_ops() {
     let mut rb = Rb::new(true, true);
     let (t, i) = (rb.cur[7], rb.cur[0]);
     let x = rb.aload(t, i, Ty::Num);
-    let r = rb.b.emit_raw(Ins { op: TOp::Lib, t: Ty::Int, flags: 0, a: i, b: i, prev: NOREF, aux: lib::RANDOM | u32::from(i) << 8 }).unwrap();
+    let r =
+        rb.b.emit_raw(Ins {
+            op: TOp::Lib,
+            t: Ty::Int,
+            flags: 0,
+            a: i,
+            b: i,
+            prev: NOREF,
+            aux: lib::RANDOM | u32::from(i) << 8,
+        })
+        .unwrap();
     let z = rb.ins(TOp::Fadd, Ty::Num, x, x);
     rb.def(5, z);
     rb.def(4, r);
@@ -1543,7 +1722,12 @@ fn hdrlib_classifies_lib_ops() {
     let libs: Vec<_> = on.ir.ins.iter().filter(|n| n.op == TOp::Lib).collect();
     assert_eq!(libs.len(), 2, "{}", dump(&on.ir));
     for l in libs {
-        assert_eq!(l.b, (l.aux >> 8) as Ref, "third operand differs from b\n{}", dump(&on.ir));
+        assert_eq!(
+            l.b,
+            (l.aux >> 8) as Ref,
+            "third operand differs from b\n{}",
+            dump(&on.ir)
+        );
     }
 }
 
@@ -1584,7 +1768,15 @@ fn bounds_checks_of_different_tables_are_kept() {
 
 fn peel_bl(rec: &Recorded, aidx: u32, bhoist: u32) -> Recorded {
     let mut r = rec.clone();
-    opt_loop::run(&mut r, &TraceOpts { aidx, bhoist, ..TraceOpts::default() }).unwrap();
+    opt_loop::run(
+        &mut r,
+        &TraceOpts {
+            aidx,
+            bhoist,
+            ..TraceOpts::default()
+        },
+    )
+    .unwrap();
     opt_loop::check(&r.ir).unwrap();
     r
 }
@@ -1594,7 +1786,11 @@ fn rec_bl(c: i64, kstep: i64, replace_table: bool) -> Recorded {
     let mut rb = Rb::new(true, true);
     let (t1, t2, i) = (rb.cur[7], rb.cur[8], rb.cur[0]);
     let kc = rb.kint(c);
-    let idx = if c == 0 { i } else { rb.ins(TOp::Add, Ty::Int, i, kc) };
+    let idx = if c == 0 {
+        i
+    } else {
+        rb.ins(TOp::Add, Ty::Int, i, kc)
+    };
     let x = rb.aload(t1, idx, Ty::Num);
     let y = rb.aload(t2, idx, Ty::Num);
     let z = rb.ins(TOp::Fadd, Ty::Num, x, y);
@@ -1620,20 +1816,43 @@ fn bhoist_replaces_the_body_bounds_checks_by_pre_roll_guards() {
         let on = peel_bl(&rec, 0, 1);
         assert!(on.ir.hoisted);
         // pre-roll: the two bounds checks of the first iteration + (count, first, last) for each of the two tables; body: none
-        assert_eq!(count(&on.ir, TOp::Ult, false), 2 + 6, "c={c}\n{}", dump(&on.ir));
+        assert_eq!(
+            count(&on.ir, TOp::Ult, false),
+            2 + 6,
+            "c={c}\n{}",
+            dump(&on.ir)
+        );
         assert_eq!(count(&on.ir, TOp::Ult, true), 0, "c={c}\n{}", dump(&on.ir));
         // the last index is `(k0 + count0) + c`
         let l = usize::from(on.ir.loop_at.unwrap() - REF_BIAS);
         let adds_c = on.ir.ins[..l]
             .iter()
-            .filter(|i| i.op == TOp::Add && on.ir.as_int(i.b) == Some(c) && TraceIr::is_ins(i.a) && on.ir.at(i.a).op == TOp::Add)
+            .filter(|i| {
+                i.op == TOp::Add
+                    && on.ir.as_int(i.b) == Some(c)
+                    && TraceIr::is_ins(i.a)
+                    && on.ir.at(i.a).op == TOp::Add
+            })
             .count();
         if c != 0 {
-            assert!(adds_c >= 1, "c={c}: no `(k0 + count0) + c` in\n{}", dump(&on.ir));
+            assert!(
+                adds_c >= 1,
+                "c={c}: no `(k0 + count0) + c` in\n{}",
+                dump(&on.ir)
+            );
         }
         // the six guards leave through one snapshot that is used before the loop only
-        let hs: Vec<u32> = on.ir.ins[..l].iter().rev().filter(|i| i.op == TOp::Ult).take(6).map(|i| aux_snap(i.aux)).collect();
-        assert!(hs.len() == 6 && hs.windows(2).all(|w| w[0] == w[1]), "{hs:?}");
+        let hs: Vec<u32> = on.ir.ins[..l]
+            .iter()
+            .rev()
+            .filter(|i| i.op == TOp::Ult)
+            .take(6)
+            .map(|i| aux_snap(i.aux))
+            .collect();
+        assert!(
+            hs.len() == 6 && hs.windows(2).all(|w| w[0] == w[1]),
+            "{hs:?}"
+        );
     }
 }
 
@@ -1657,7 +1876,9 @@ fn aidx_makes_the_complemented_index_an_ir_value() {
     let arefs: Vec<&Ins> = on.ir.ins.iter().filter(|i| i.op == TOp::Aref).collect();
     assert_eq!(arefs.len(), 4, "{}", dump(&on.ir));
     for a in &arefs {
-        let n = a.third().unwrap_or_else(|| panic!("an AREF without a complemented index\n{}", dump(&on.ir)));
+        let n = a
+            .third()
+            .unwrap_or_else(|| panic!("an AREF without a complemented index\n{}", dump(&on.ir)));
         let ni = on.ir.at(n);
         // `~(k - 1) == -k + 0`
         assert_eq!((ni.op, aref_disp(a.aux)), (TOp::Neg, 0), "{}", dump(&on.ir));
@@ -1667,9 +1888,16 @@ fn aidx_makes_the_complemented_index_an_ir_value() {
     assert_eq!(body[0].third(), body[1].third(), "{}", dump(&on.ir));
     // `+2`: `~(k + 2) == -k - 3`
     let on2 = peel_bl(&rec_bl(2, 1, false), 1, 0);
-    assert!(on2.ir.ins.iter().filter(|i| i.op == TOp::Aref).all(|a| aref_disp(a.aux) == -3), "{}", dump(&on2.ir));
+    assert!(
+        on2.ir
+            .ins
+            .iter()
+            .filter(|i| i.op == TOp::Aref)
+            .all(|a| aref_disp(a.aux) == -3),
+        "{}",
+        dump(&on2.ir)
+    );
 }
-
 
 // ---- mutants --------------------------------------------------------------------------------------------------------------------
 
@@ -2445,11 +2673,22 @@ mod recorded {
             .ins
             .iter()
             .any(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0 && ir.as_int(i.b) == Some(3));
-        assert!(!guarded, "a constant step guard on a run-time step\n{}", dump(ir));
+        assert!(
+            !guarded,
+            "a constant step guard on a run-time step\n{}",
+            dump(ir)
+        );
         let adv = ir.ins.iter().any(|i| {
-            i.op == TOp::Add && ir.as_int(i.b).is_none() && i.b >= REF_BIAS && ir.ins[usize::from(i.b - REF_BIAS)].op == TOp::Sload
+            i.op == TOp::Add
+                && ir.as_int(i.b).is_none()
+                && i.b >= REF_BIAS
+                && ir.ins[usize::from(i.b - REF_BIAS)].op == TOp::Sload
         });
-        assert!(adv, "the index does not advance by the step slot\n{}", dump(ir));
+        assert!(
+            adv,
+            "the index does not advance by the step slot\n{}",
+            dump(ir)
+        );
     }
 
     /// P-F: `FORPREP` in a nest root (the recorder reaches an inner loop that has a root trace and links into it): a literal
@@ -2482,7 +2721,8 @@ mod recorded {
                     }
                 }
             }
-            let rec = found.unwrap_or_else(|| panic!("step {step_src}: no nest recording with a FORPREP"));
+            let rec = found
+                .unwrap_or_else(|| panic!("step {step_src}: no nest recording with a FORPREP"));
             let ir = &rec.ir;
             let eq2 = ir
                 .ins
@@ -2492,11 +2732,21 @@ mod recorded {
                 .ins
                 .iter()
                 .any(|i| i.op == TOp::Gt && i.flags & F_GUARD != 0 && ir.as_int(i.b) == Some(0));
-            let vdiv = ir.ins.iter().any(|i| i.op == TOp::Idiv && ir.as_int(i.b).is_none());
-            let cdiv = ir.ins.iter().any(|i| i.op == TOp::Idiv && ir.as_int(i.b) == Some(2));
+            let vdiv = ir
+                .ins
+                .iter()
+                .any(|i| i.op == TOp::Idiv && ir.as_int(i.b).is_none());
+            let cdiv = ir
+                .ins
+                .iter()
+                .any(|i| i.op == TOp::Idiv && ir.as_int(i.b) == Some(2));
             if literal {
                 // (the literal step is a trace constant here: `LOADI` is in the trace, so its `EQ` guard folds away)
-                assert!(!sign && cdiv && !vdiv, "literal step: constant divisor, no sign guard expected\n{}", dump(ir));
+                assert!(
+                    !sign && cdiv && !vdiv,
+                    "literal step: constant divisor, no sign guard expected\n{}",
+                    dump(ir)
+                );
             } else {
                 assert!(
                     !eq2 && sign && vdiv && !cdiv,
@@ -2571,8 +2821,17 @@ fn h1_forwarding_runs_on_a_stitched_trace() {
     assert_eq!(n(&rec.ir, TOp::Aload), 1, "{}", dump(&rec.ir));
     opt_loop::run_fwd(&mut rec, &TraceOpts::default()).unwrap();
     let ir = &rec.ir;
-    assert_eq!(n(ir, TOp::Aload), 0, "the load is the stored value\n{}", dump(ir));
+    assert_eq!(
+        n(ir, TOp::Aload),
+        0,
+        "the load is the stored value\n{}",
+        dump(ir)
+    );
     assert_eq!(n(ir, TOp::Astore), 1, "{}", dump(ir));
     let last = ir.ins.last().unwrap();
-    assert!(last.op == TOp::Eq && last.flags & F_GUARD != 0, "the ending exit stays last\n{}", dump(ir));
+    assert!(
+        last.op == TOp::Eq && last.flags & F_GUARD != 0,
+        "the ending exit stays last\n{}",
+        dump(ir)
+    );
 }

@@ -33,7 +33,11 @@ fn state(seed: u32) -> LuaState {
 
 fn run(st: &mut LuaState, src: &str) -> String {
     let base = st.top();
-    assert_eq!(st.load_buffer(src.as_bytes(), b"=hashd", None), Status::Ok, "load");
+    assert_eq!(
+        st.load_buffer(src.as_bytes(), b"=hashd", None),
+        Status::Ok,
+        "load"
+    );
     let func = st.top() - 1;
     let status = st.pcall(func, LUA_MULTRET, 0);
     let v = st.get(func);
@@ -63,7 +67,12 @@ fn hashd_promoted_hash_is_the_puc_hash() {
         for len in 0..=40usize {
             for variant in 0..3u8 {
                 let bytes: Vec<u8> = (0..len)
-                    .map(|i| (i as u8).wrapping_mul(37).wrapping_add(variant).wrapping_add(len as u8))
+                    .map(|i| {
+                        (i as u8)
+                            .wrapping_mul(37)
+                            .wrapping_add(variant)
+                            .wrapping_add(len as u8)
+                    })
                     .collect();
                 let s = st.new_str(&bytes).expect("string");
                 assert_eq!(
@@ -171,7 +180,11 @@ fn hashd_recorder_mainpos_uses_the_puc_hash() {
         let mut st = state(seed);
         let base = st.top();
         assert_eq!(
-            st.load_buffer(b"return {a = 1, b = 2, c = 3, d = 4, e = 5, f = 6}", b"=t", None),
+            st.load_buffer(
+                b"return {a = 1, b = 2, c = 3, d = 4, e = 5, f = 6}",
+                b"=t",
+                None
+            ),
             Status::Ok
         );
         let func = st.top() - 1;
@@ -250,8 +263,16 @@ fn bp_fast_hash_equals_reference() {
             for n in 0..=64usize {
                 let s = &buf[off..off + n];
                 let want = reference(s);
-                assert_eq!(rn_core::string::fast_hash(s), want, "len {n} off {off} round {round}");
-                assert_eq!(rn_core::string::fast_hash_fresh(s), want, "fresh: len {n} off {off} round {round}");
+                assert_eq!(
+                    rn_core::string::fast_hash(s),
+                    want,
+                    "len {n} off {off} round {round}"
+                );
+                assert_eq!(
+                    rn_core::string::fast_hash_fresh(s),
+                    want,
+                    "fresh: len {n} off {off} round {round}"
+                );
                 for seed in [0u32, 1, 0x9E37_79B9, 0xFFFF_FFFF, rnd() as u32] {
                     assert_eq!(rn_core::string::short_key_hash(s, seed), want ^ seed);
                     assert_eq!(rn_core::string::short_key_hash_fresh(s, seed), want ^ seed);

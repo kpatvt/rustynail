@@ -721,10 +721,16 @@ fn bundle_a_nursery_scale_follows_the_minormul_parameter() {
     h.gc_params().set(GCP_MINORMUL, 20);
     let explicit = h.minor_debt_bytes();
     assert!(explicit > 0);
-    assert!(dflt >= 5 * explicit && dflt <= 20 * explicit, "default {dflt} vs explicit {explicit}");
+    assert!(
+        dflt >= 5 * explicit && dflt <= 20 * explicit,
+        "default {dflt} vs explicit {explicit}"
+    );
     h.gc_params().set(GCP_MINORMUL, 100);
     // (the parameter is stored in a floating-point byte: 100% of x is only about 5 * (20% of x))
     let hundred = h.minor_debt_bytes();
-    assert!(hundred.abs_diff(5 * explicit) * 20 <= 5 * explicit, "an explicit value is used as given: {hundred} vs {explicit}");
+    assert!(
+        hundred.abs_diff(5 * explicit) * 20 <= 5 * explicit,
+        "an explicit value is used as given: {hundred} vs {explicit}"
+    );
     drop(keep);
 }

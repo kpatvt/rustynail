@@ -622,7 +622,8 @@ fn dummy_ci() -> usize {
     // (kept as a `Box` in the static, not leaked and stored as an integer: Miri reports a block that only an integer in a static knows about as a
     // memory leak, and the boxed slice does not move)
     static D: std::sync::OnceLock<Box<[u64]>> = std::sync::OnceLock::new();
-    D.get_or_init(|| vec![0u64; ci::SIZE.div_ceil(8) + 8].into_boxed_slice()).as_ptr() as usize
+    D.get_or_init(|| vec![0u64; ci::SIZE.div_ceil(8) + 8].into_boxed_slice())
+        .as_ptr() as usize
 }
 
 fn calls_cfg(f: &Func, irq: *const u8) -> LowerCfg<'_> {

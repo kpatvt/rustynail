@@ -3518,7 +3518,12 @@ const V54_ONLY: &[&str] = &[
 
 /// Mutants whose injection site is compiled out of the 5.4 build (N7: the end of a traversal is recorded on 5.5 only; the 5.4 run skips them).
 #[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
-const V55_ONLY: &[&str] = &["gfor_end_meta_skip", "gfor_end_guard_skip", "gfor_end_always", "tnext_key_site_type"];
+const V55_ONLY: &[&str] = &[
+    "gfor_end_meta_skip",
+    "gfor_end_guard_skip",
+    "gfor_end_always",
+    "tnext_key_site_type",
+];
 
 // ---- consistency of the table with the registry (pure) ---------------------------------------------------------------------------
 
@@ -3554,8 +3559,8 @@ fn table_covers_the_registry_exactly_once() {
 mod runner {
     use super::*;
     use std::collections::BTreeMap;
-    use std::path::{Path, PathBuf};
     use std::os::unix::process::CommandExt;
+    use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -3601,7 +3606,12 @@ mod runner {
         );
         if !found {
             // the recompile accounting mutants go through the wrapper `rt::vbytes_mutant("name")` (`active` itself needs the `trace` feature)
-            scan(&src, &format!("vbytes_mutant(\"{name}\")"), "mutants.rs", &mut found);
+            scan(
+                &src,
+                &format!("vbytes_mutant(\"{name}\")"),
+                "mutants.rs",
+                &mut found,
+            );
         }
         if !found {
             // rn-core mutants: `apply_vm_mutants` forwards `active("name")` (inside mutants.rs)
@@ -3637,7 +3647,10 @@ mod runner {
                 bin,
             ])
             .args(["--no-run", "--message-format=json"])
-            .env("CARGO_BUILD_JOBS", env_num("TR_MUT_BUILD_JOBS", 4).to_string())
+            .env(
+                "CARGO_BUILD_JOBS",
+                env_num("TR_MUT_BUILD_JOBS", 4).to_string(),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -3679,7 +3692,10 @@ mod runner {
     }
 
     fn env_num(k: &str, default: u64) -> u64 {
-        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
 
     /// Caps the address space of the child about to be spawned (`RLIMIT_AS`, `mb` MiB; 0: no cap).
@@ -3704,7 +3720,10 @@ mod runner {
         // the test binary itself is small; its job children (tr_core) get their own cap, TR_CORE_MEM_MB, from the
         // environment below (a mutated trace can allocate without bound)
         cap_memory(&mut cmd, env_num("TR_MUT_MEM_MB", 4096));
-        cmd.env("TR_CORE_MEM_MB", env_num("TR_CORE_MEM_MB", 2048).to_string());
+        cmd.env(
+            "TR_CORE_MEM_MB",
+            env_num("TR_CORE_MEM_MB", 2048).to_string(),
+        );
         if d.test == "*" {
             cmd.args(["--skip", "mutants_are_caught", "--test-threads=1"]);
         } else {
@@ -3808,7 +3827,12 @@ mod runner {
         let verbose = std::env::var("TR_MUT_V").is_ok();
         // TR_MUT_SKIP=a,b: leaves out the mutants whose name contains one of the substrings
         let skip: Vec<String> = std::env::var("TR_MUT_SKIP")
-            .map(|v| v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect())
+            .map(|v| {
+                v.split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         // TR_MUT_SHARD=i/n: only the rows whose TABLE index is i modulo n (all n shards together run every mutant)
         let shard: Option<(usize, usize)> = std::env::var("TR_MUT_SHARD").ok().and_then(|v| {
@@ -3837,7 +3861,10 @@ mod runner {
             .filter(|(i, _)| shard.is_none_or(|(k, n)| i % n == k))
             .map(|(_, r)| r)
             .filter(|r| !done.contains(r.name))
-            .filter(|r| only.as_ref().is_none_or(|o| o.split(',').any(|w| r.name.contains(w))))
+            .filter(|r| {
+                only.as_ref()
+                    .is_none_or(|o| o.split(',').any(|w| r.name.contains(w)))
+            })
             .filter(|r| !skip.iter().any(|s| r.name.contains(s.as_str())))
             .collect();
 
@@ -3955,7 +3982,12 @@ mod runner {
         let ures = pool(units.clone(), |(r, dets)| {
             let rs: Vec<(String, Res)> = dets
                 .iter()
-                .map(|d| (format!("{}::{}", d.bin, d.test), run_one(&exes[d.bin], d, r.name)))
+                .map(|d| {
+                    (
+                        format!("{}::{}", d.bin, d.test),
+                        run_one(&exes[d.bin], d, r.name),
+                    )
+                })
                 .collect();
             let by: Vec<&str> = rs
                 .iter()
@@ -3963,7 +3995,13 @@ mod runner {
                 .map(|(t, _)| t.as_str())
                 .collect();
             let (state, detail) = if by.is_empty() {
-                ("SURVIVED", rs.iter().map(|x| x.0.as_str()).collect::<Vec<_>>().join(","))
+                (
+                    "SURVIVED",
+                    rs.iter()
+                        .map(|x| x.0.as_str())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
             } else {
                 ("caught", by.join(","))
             };
@@ -3971,7 +4009,11 @@ mod runner {
             eprintln!("[tr_mutants] done {:<26} {state} {detail}", r.name);
             if let Some(f) = &results_path {
                 use std::io::Write;
-                if let Ok(mut fh) = std::fs::OpenOptions::new().create(true).append(true).open(f) {
+                if let Ok(mut fh) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(f)
+                {
                     let _ = writeln!(fh, "{}\t{state}\t{detail}", r.name);
                 }
             }

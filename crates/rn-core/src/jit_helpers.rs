@@ -178,7 +178,11 @@ pub unsafe extern "C" fn jit_tailcall(
         st.post_call(ci, n as usize)?;
         if was_mm {
             // BUNDLE-V (`t1q` bit 5): the metamethod frame returned the native callee's results: finish the caller's instruction (`x` = the flags of `jit_mm_ret`)
-            let v = if n >= 1 && x & 0x400 == 0 { st.get(ci.r().func) } else { Value::NIL }; // (mutant `bv_tail_nil`: x bit 10)
+            let v = if n >= 1 && x & 0x400 == 0 {
+                st.get(ci.r().func)
+            } else {
+                Value::NIL
+            }; // (mutant `bv_tail_nil`: x bit 10)
             if crate::vm_unsafe::jit_mm_pop(&mut st, ci, v, x as u32) {
                 return Ok(H_MMPOP);
             }
@@ -253,7 +257,6 @@ pub fn set_mut_c2_barrier_skip(on: bool) {
     }
 }
 
-
 /// Test-only mutants of `jit_mm_pop` (feature `jit_trace_mut`): bit 0 `mmret_nc_skip`, bit 1 `mmret_flag_false`.
 #[cfg(feature = "jit_trace_mut")]
 static MUT_MM_RET: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
@@ -314,14 +317,22 @@ fn mut_c2(bit: u8) -> bool {
 ///
 /// # Safety
 /// Called only from compiled code with the running thread and its current `CallInfo`; `i.b() < nupvalues` (VM4).
-pub unsafe extern "C" fn jit_setupval(th: *mut Thread, ci: *mut CallInfo, instr: u64, _x: u64) -> u32 {
+pub unsafe extern "C" fn jit_setupval(
+    th: *mut Thread,
+    ci: *mut CallInfo,
+    instr: u64,
+    _x: u64,
+) -> u32 {
     // SAFETY: `th` is the live thread pinned in `r12`; `ci` its current frame (`r13`).
     let (mut st, ci) = unsafe { (State::from_th_ptr(th), Ci::from_raw(ci)) };
     let i = Instruction(instr as u32);
     let v = reg(&st, ci, i.a());
     // SAFETY: caller contract; `base - 1` holds the running Lua closure (VM2/VM4).
     unsafe {
-        let cl = st.get(StkId(ci.r().func.0)).as_lclosure().unwrap_unchecked();
+        let cl = st
+            .get(StkId(ci.r().func.0))
+            .as_lclosure()
+            .unwrap_unchecked();
         let uv = *cl.upvals_ptr().add(i.b() as usize);
         Value::store((*uv).v, v);
         if !mut_c2(1) {
@@ -467,7 +478,11 @@ pub unsafe extern "C" fn jit_mm_ret(th: *mut Thread, ci: *mut CallInfo, instr: u
             if st.jit_tbc_at_or_above(StkId(base)) {
                 return H_EXIT;
             }
-            if i.b() == 2 { reg(&st, ci, i.a()) } else { Value::NIL }
+            if i.b() == 2 {
+                reg(&st, ci, i.a())
+            } else {
+                Value::NIL
+            }
         }
         // BUNDLE-V (`x` bit 3, `t1q` bit 6): any `RETURN` of a handler frame (several or open results: the first result is the metamethod's value; a vararg frame, e.g. the vararg `__call` constructor of the classic OOP libraries, returns to `func - (nextraargs + C)`)
         Some(OpCode::Return) if x & 8 != 0 => {
@@ -476,14 +491,29 @@ pub unsafe extern "C" fn jit_mm_ret(th: *mut Thread, ci: *mut CallInfo, instr: u
                 return H_EXIT;
             }
             let ra = StkId(base + i.a() as usize);
-            let n = if i.b() == 0 { st.top().0.saturating_sub(ra.0) } else { i.b() as usize - 1 };
-            if n >= 1 && !(n >= 2 && x & 0x800 != 0) { st.get(ra) } else { Value::NIL } // (mutant `bv_ret_first_nil`: x bit 11)
+            let n = if i.b() == 0 {
+                st.top().0.saturating_sub(ra.0)
+            } else {
+                i.b() as usize - 1
+            };
+            if n >= 1 && !(n >= 2 && x & 0x800 != 0) {
+                st.get(ra)
+            } else {
+                Value::NIL
+            } // (mutant `bv_ret_first_nil`: x bit 11)
         }
         _ => return H_EXIT,
     };
-    let (func, closes) = (ci.r().func, i.opcode() == Some(OpCode::Return) && i.k() != 0 && x & 0x200 == 0);
+    let (func, closes) = (
+        ci.r().func,
+        i.opcode() == Some(OpCode::Return) && i.k() != 0 && x & 0x200 == 0,
+    );
     // (a vararg frame: the function slot of the results is `func - (nextraargs + C)`, as in `OP_RETURN`; restored below when the frame is not popped)
-    let delta = if i.opcode() == Some(OpCode::Return) && i.c() != 0 { ci.r().nextraargs as usize + i.c() as usize } else { 0 };
+    let delta = if i.opcode() == Some(OpCode::Return) && i.c() != 0 {
+        ci.r().nextraargs as usize + i.c() as usize
+    } else {
+        0
+    };
     ci.w().func -= delta;
 
     // (`x` bit 0: the code was lowered with the `armm` limit, arithmetic callers are finished here too; bit 1 / 2: BUNDLE-S, the callers
@@ -507,7 +537,12 @@ pub unsafe extern "C" fn jit_mm_ret(th: *mut Thread, ci: *mut CallInfo, instr: u
 ///
 /// # Safety
 /// Called only from compiled code with the running thread and its current `CallInfo` (a Lua frame).
-pub unsafe extern "C" fn jit_arith_mm(th: *mut Thread, ci: *mut CallInfo, instr: u64, _x: u64) -> u32 {
+pub unsafe extern "C" fn jit_arith_mm(
+    th: *mut Thread,
+    ci: *mut CallInfo,
+    instr: u64,
+    _x: u64,
+) -> u32 {
     // SAFETY: `th` is the live thread pinned in `r12`; `ci` its current frame (`r13`).
     let (mut st, ci) = unsafe { (State::from_th_ptr(th), Ci::from_raw(ci)) };
     if crate::vm_unsafe::jit_mm_arith(&mut st, ci, Instruction(instr as u32)) {
@@ -522,7 +557,12 @@ pub unsafe extern "C" fn jit_arith_mm(th: *mut Thread, ci: *mut CallInfo, instr:
 ///
 /// # Safety
 /// Called only from compiled code after a successful [`jit_mm_ret`].
-pub unsafe extern "C" fn jit_mm_fin(th: *mut Thread, _ci: *mut CallInfo, _instr: u64, _x: u64) -> u32 {
+pub unsafe extern "C" fn jit_mm_fin(
+    th: *mut Thread,
+    _ci: *mut CallInfo,
+    _instr: u64,
+    _x: u64,
+) -> u32 {
     // SAFETY: `th` is the live thread pinned in `r12`.
     let mut st = unsafe { State::from_th_ptr(th) };
     crate::vm_unsafe::jit_mm_finish(&mut st);
@@ -619,7 +659,11 @@ pub unsafe extern "C" fn jit_get(th: *mut Thread, ci: *mut CallInfo, instr: u64,
                 }
                 // (mutant `s1_obj_orig`: the first argument is the indexed value, not the level of the chain that holds the function)
                 let arg = if x & 0x200 != 0 { t } else { obj };
-                return if crate::vm_unsafe::jit_mm_index(&mut st, ci, tm, arg, key) { H_LUA } else { H_EXIT };
+                return if crate::vm_unsafe::jit_mm_index(&mut st, ci, tm, arg, key) {
+                    H_LUA
+                } else {
+                    H_EXIT
+                };
             }
             return H_EXIT;
         }
@@ -745,7 +789,10 @@ pub unsafe extern "C" fn jit_set(th: *mut Thread, ci: *mut CallInfo, instr: u64,
         if let Some(tm) = st.fast_tm(h.metatable(), Tm::NewIndex) {
             // BUNDLE-S S1 (`t1q` bit 3; `x` bit 1): a Lua `__newindex` function runs as an in-place frame (`savedpc` = the instruction after this one, saved by the
             // caller); anything else (a table, a C function, a hook, the C-stack limit) is the interpreter's
-            if x & 2 != 0 && tm.is_lclosure() && crate::vm_unsafe::jit_mm_newindex(&mut st, ci, i, tv) {
+            if x & 2 != 0
+                && tm.is_lclosure()
+                && crate::vm_unsafe::jit_mm_newindex(&mut st, ci, i, tv)
+            {
                 return Ok(H_LUA);
             }
             return Ok(H_EXIT); // `__newindex`: the interpreter

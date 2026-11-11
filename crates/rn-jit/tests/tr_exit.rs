@@ -30,7 +30,9 @@ use std::cell::RefCell;
 /// LeakSanitizer (scripts/asan-jit.sh) does not report it.
 static KEPT: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 fn keep<T: ?Sized>(r: &'static T) -> &'static T {
-    KEPT.lock().unwrap_or_else(|e| e.into_inner()).push((r as *const T).cast::<u8>() as usize);
+    KEPT.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((r as *const T).cast::<u8>() as usize);
     r
 }
 
@@ -243,7 +245,11 @@ fn scenario(w: &mut World, d: usize, rng: &mut Rng, area: &mut ExitArea) -> Scn 
         let call_pc = rng.below(40) as u32;
         let ms = 4 + rng.below(8) as u16;
         // P-E: about half of the frames are vararg frames (`nextraargs` is written, the node's other fields as before)
-        let nx = if rng.chance(1, 2) { 1 + rng.below(6) as i32 } else { -1 };
+        let nx = if rng.chance(1, 2) {
+            1 + rng.below(6) as i32
+        } else {
+            -1
+        };
         fs.push((slot, nres, call_pc, ms, nx));
         frames.push(FrameRestore {
             func_slot: slot,
@@ -335,7 +341,11 @@ fn scenario(w: &mut World, d: usize, rng: &mut Rng, area: &mut ExitArea) -> Scn 
         // F4: a consumer of a multiple-result sequence re-executes with the interpreter's `top` (`thread.top = base + slot`); the shipped
         // programs only reach such an exit through the generic handler, so the restore is checked here directly (mutants `exit_top_ignored`,
         // `exit_top_off_by_one_slot`: no program of tr_core exits at a snapshot with a top any more)
-        top: if rng.chance(1, 3) { Some(rng.below(30) as u16) } else { None },
+        top: if rng.chance(1, 3) {
+            Some(rng.below(30) as u16)
+        } else {
+            None
+        },
     };
     Scn {
         snap,
@@ -394,7 +404,11 @@ fn check_scenario(
             "frame {k} trap = (hookmask != 0)"
         );
         assert_eq!(c.kcache.cast::<u64>(), w.ks[k].as_ptr(), "frame {k} kcache");
-        assert_eq!(c.nextraargs, nx.max(0), "frame {k} nextraargs (written for a vararg frame, left alone otherwise)");
+        assert_eq!(
+            c.nextraargs,
+            nx.max(0),
+            "frame {k} nextraargs (written for a vararg frame, left alone otherwise)"
+        );
         // the caller resumes after its CALL
         let caller = &w.cis[k - 1];
         assert_eq!(
@@ -509,8 +523,8 @@ fn vb_validity_is_one_rule() {
                 root_code: std::ptr::null(),
                 seg_shift: 0,
                 seg_pops: 0,
-        sunk: Vec::new(),
-        top: None,
+                sunk: Vec::new(),
+                top: None,
             };
             inline_stub_ops(&s, bad)
         });
@@ -616,19 +630,54 @@ fn n2a_segment_snapshots_use_the_segments_prototype_and_code() {
     let mut ir = TraceIr::default();
     ir.head = (ProtoKey(0), 3);
     let g = F_GUARD;
-    let s0 = ir.snapshot(Snap { pc: 3, ..Snap::default() }, &[]);
+    let s0 = ir.snapshot(
+        Snap {
+            pc: 3,
+            ..Snap::default()
+        },
+        &[],
+    );
     ir.emit(ins(TOp::Sload, Ty::Int, g, 0, NOREF, guard_aux(s0, 1)));
     let r = |n: u16| REF_BIAS + n;
     ir.segs = vec![
-        Seg { proto: ProtoKey(0), code: 0, shift: 0, pops: 0, call_pc: 0, a: 0, retf_ins: NOREF },
-        Seg { proto: ProtoKey(1), code: 0xABC0, shift: 5, pops: 1, call_pc: 4, a: 4, retf_ins: NOREF },
+        Seg {
+            proto: ProtoKey(0),
+            code: 0,
+            shift: 0,
+            pops: 0,
+            call_pc: 0,
+            a: 0,
+            retf_ins: NOREF,
+        },
+        Seg {
+            proto: ProtoKey(1),
+            code: 0xABC0,
+            shift: 5,
+            pops: 1,
+            call_pc: 4,
+            a: 4,
+            retf_ins: NOREF,
+        },
     ];
     let ent = |slot, r| SnapEntry { slot, r, flags: 0 };
     // seg 1, frameless, pc 6 of proto 1
-    let s1 = ir.snapshot(Snap { pc: 6, seg: 1, ..Snap::default() }, &[ent(2, r(0))]);
+    let s1 = ir.snapshot(
+        Snap {
+            pc: 6,
+            seg: 1,
+            ..Snap::default()
+        },
+        &[ent(2, r(0))],
+    );
     // seg 1 with one inlined frame of proto 2
     let s2 = ir.snapshot(
-        Snap { pc: 1, seg: 1, frame: 1, nframes: 1, ..Snap::default() },
+        Snap {
+            pc: 1,
+            seg: 1,
+            frame: 1,
+            nframes: 1,
+            ..Snap::default()
+        },
         &[ent(7, r(0))],
     );
     ir.frames = vec![FrameLink {
@@ -652,13 +701,25 @@ fn n2a_segment_snapshots_use_the_segments_prototype_and_code() {
     assert_eq!((snaps[0].seg_shift, snaps[0].seg_pops), (0, 0));
     assert_eq!(snaps[1].root_code as usize, 0xABC0, "segment root code");
     assert_eq!((snaps[1].seg_shift, snaps[1].seg_pops), (5, 1));
-    assert_eq!(snaps[1].land_addr, 0x1000_0000 + 0x10000 + 6 * 4, "landing in the segment's prototype");
-    assert_eq!(snaps[2].land_addr, 0x1000_0000 + 2 * 0x10000 + 4, "landing in the inlined frame's prototype");
+    assert_eq!(
+        snaps[1].land_addr,
+        0x1000_0000 + 0x10000 + 6 * 4,
+        "landing in the segment's prototype"
+    );
+    assert_eq!(
+        snaps[2].land_addr,
+        0x1000_0000 + 2 * 0x10000 + 4,
+        "landing in the inlined frame's prototype"
+    );
     assert_eq!(snaps[2].root_code as usize, 0xABC0);
     // the meta-wide code is used only for segment 0
     let meta_root = 0x7700usize as *const u32;
     assert_eq!(snaps[0].code_or(meta_root), meta_root);
-    assert_eq!(snaps[1].code_or(meta_root) as usize, 0xABC0, "segment code wins over the trace-wide one");
+    assert_eq!(
+        snaps[1].code_or(meta_root) as usize,
+        0xABC0,
+        "segment code wins over the trace-wide one"
+    );
     // a snapshot of a segment that does not exist is refused
     let mut bad = ir.clone();
     bad.snaps[1].seg = 3;
@@ -1879,8 +1940,16 @@ fn n3b_link_stub_inputs_equal_the_handlers() {
             sc.snap.link_cell = 0x1000 + seed * 8;
             sc.snap.land_addr = 0x2000 + seed * 16;
             let code = w.codes[0].as_ptr() as u64;
-            assert_eq!(frame_link_innermost_pc(&sc.snap, code), frame_mat_innermost_pc(&sc.snap, code), "seed {seed} depth {d}");
-            assert_eq!(frame_link_target(&sc.snap), (sc.snap.link_cell, true), "the stub jumps through the cell");
+            assert_eq!(
+                frame_link_innermost_pc(&sc.snap, code),
+                frame_mat_innermost_pc(&sc.snap, code),
+                "seed {seed} depth {d}"
+            );
+            assert_eq!(
+                frame_link_target(&sc.snap),
+                (sc.snap.link_cell, true),
+                "the stub jumps through the cell"
+            );
         }
     }
 }
@@ -1888,7 +1957,10 @@ fn n3b_link_stub_inputs_equal_the_handlers() {
 /// BUNDLE-H2: the machine-code frame rebuild of the inline stub (`frame_mat_ops`, run in the emulator) and `restore` (a hook-free thread) leave
 /// every `CallInfo` field, `thread.ci` and `thread.top` the same, for 1..4 plain / tail frames. Detector of the `fmat_*` field mutants.
 #[test]
-#[cfg_attr(miri, ignore = "the emulator stores through addresses taken from the pieces of two worlds as integers; Miri reports a pointer without provenance (emu.rs store)")]
+#[cfg_attr(
+    miri,
+    ignore = "the emulator stores through addresses taken from the pieces of two worlds as integers; Miri reports a pointer without provenance (emu.rs store)"
+)]
 fn fmat_ops_equal_restore() {
     use rn_jit::emu::{Emu, Env, Stop, Until};
     use rn_jit::ir::{Op, Program};
@@ -1897,7 +1969,14 @@ fn fmat_ops_equal_restore() {
         fn supported(&self) -> bool {
             false
         }
-        unsafe fn call(&mut self, _: u64, _: u32, _: u32, _: &Env, _: *mut u8) -> rn_jit::emu::HelperOut {
+        unsafe fn call(
+            &mut self,
+            _: u64,
+            _: u32,
+            _: u32,
+            _: &Env,
+            _: *mut u8,
+        ) -> rn_jit::emu::HelperOut {
             unreachable!()
         }
     }
@@ -1949,9 +2028,23 @@ fn fmat_ops_equal_restore() {
             assert!(matches!(u, Until::Stop(Stop::Unsupported)), "{u:?}");
             assert_eq!(emu.jmp_target(), Some(sc.snap.land_addr));
             // SAFETY: inside the thread buffer.
-            let th_ci_b = unsafe { thread.as_ptr().cast::<u8>().add(rn_core::jit_hooks::thread::CI).cast::<usize>().read_unaligned() };
+            let th_ci_b = unsafe {
+                thread
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(rn_core::jit_hooks::thread::CI)
+                    .cast::<usize>()
+                    .read_unaligned()
+            };
             // SAFETY: inside the thread buffer.
-            let th_top_b = unsafe { thread.as_ptr().cast::<u8>().add(rn_core::jit_hooks::thread::TOP).cast::<usize>().read_unaligned() };
+            let th_top_b = unsafe {
+                thread
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(rn_core::jit_hooks::thread::TOP)
+                    .cast::<usize>()
+                    .read_unaligned()
+            };
             let tag = format!("seed {seed} d {d}");
             for i in 0..=d {
                 let (a, b) = (&wa.cis[i], &wb.cis[i]);
@@ -1962,10 +2055,22 @@ fn fmat_ops_equal_restore() {
                 );
             }
             for i in d + 1..7 {
-                assert_eq!((wb.cis[i].func.0, wb.cis[i].callstatus, wb.cis[i].trap), (0x5555, 0xDEAD, 77), "{tag}: spare node {i} touched");
+                assert_eq!(
+                    (wb.cis[i].func.0, wb.cis[i].callstatus, wb.cis[i].trap),
+                    (0x5555, 0xDEAD, 77),
+                    "{tag}: spare node {i} touched"
+                );
             }
-            assert_eq!(th_ci_b, wb.cis.as_mut_ptr().wrapping_add(d) as usize, "{tag}: thread.ci");
-            assert_eq!(wa.th_ci, wa.cis.as_mut_ptr().wrapping_add(d), "{tag}: restore's thread.ci");
+            assert_eq!(
+                th_ci_b,
+                wb.cis.as_mut_ptr().wrapping_add(d) as usize,
+                "{tag}: thread.ci"
+            );
+            assert_eq!(
+                wa.th_ci,
+                wa.cis.as_mut_ptr().wrapping_add(d),
+                "{tag}: restore's thread.ci"
+            );
             assert_eq!(th_top_b, wa.th_top, "{tag}: thread.top");
         }
     }
@@ -2863,8 +2968,8 @@ mod handler {
                 root_code: std::ptr::null(),
                 seg_shift: 0,
                 seg_pops: 0,
-        sunk: Vec::new(),
-        top: None,
+                sunk: Vec::new(),
+                top: None,
             }],
             exits: vec![ExitDesc {
                 snap: 0,
@@ -3097,8 +3202,8 @@ mod handler {
                     root_code: std::ptr::null(),
                     seg_shift: 0,
                     seg_pops: 0,
-        sunk: Vec::new(),
-        top: None,
+                    sunk: Vec::new(),
+                    top: None,
                 })
                 .collect(),
             exits: (0..n as u32)
@@ -3171,8 +3276,16 @@ mod handler {
         assert_eq!(exec(&mut st, "return f(10)"), "55");
         set_probe(None);
         let seen = CELLS_SEEN.with(|c| c.borrow_mut().take()).unwrap().2;
-        assert_eq!(seen, vec![land, land], "the cells were reset when the family was flushed");
-        assert_eq!(c::counts(&mut st), (0, 2), "parked until the next safe point");
+        assert_eq!(
+            seen,
+            vec![land, land],
+            "the cells were reset when the family was flushed"
+        );
+        assert_eq!(
+            c::counts(&mut st),
+            (0, 2),
+            "parked until the next safe point"
+        );
         assert_eq!(exec(&mut st, "return f(3)"), "6");
         assert_eq!(c::counts(&mut st), (0, 0));
     }
@@ -3190,7 +3303,10 @@ mod handler {
         assert!(c::pre_exit_flush_due_n(600, 1000, true, false, 0));
         assert!(c::pre_exit_flush_due_n(600, 1000, true, false, 100));
         assert!(!c::pre_exit_flush_due_n(600, 1000, true, false, 600));
-        assert!(c::pre_exit_flush_due_n(900, 1000, true, false, 900), "90% always flushes");
+        assert!(
+            c::pre_exit_flush_due_n(900, 1000, true, false, 900),
+            "90% always flushes"
+        );
     }
 
     /// F2a (TR8, TR18): a side trace is reached through its parent's exit cell only; flushing the side trace alone puts
@@ -3214,7 +3330,11 @@ mod handler {
         // a side trace on exit 1
         let s1 = install_side(&mut st, root, 1, 2, land, &n);
         let (entry1, _) = c::trace_block(&mut st, s1).unwrap();
-        assert_eq!((cell(0), cell(1)), (land, entry1), "exit 1 continues in the side trace");
+        assert_eq!(
+            (cell(0), cell(1)),
+            (land, entry1),
+            "exit 1 continues in the side trace"
+        );
         assert_eq!(
             c::begin_side_recording(&mut st, root, 1).err(),
             Some(c::Begin::NotNow),
@@ -3225,7 +3345,11 @@ mod handler {
         c::request_flush(&mut st, s1, c::FlushWhy::Dep);
         assert!(c::trace_live(&mut st, root));
         assert!(!c::trace_live(&mut st, s1));
-        assert_eq!((cell(0), cell(1)), (land, land), "the cell is back at the tier-1 address");
+        assert_eq!(
+            (cell(0), cell(1)),
+            (land, land),
+            "the cell is back at the tier-1 address"
+        );
         assert_eq!(c::counts(&mut st), (1, 0));
         // a new one, and a side trace of the side trace
         let s2 = install_side(&mut st, root, 1, 2, land, &n);
@@ -3236,7 +3360,11 @@ mod handler {
         // the root goes: so does the family
         c::request_flush(&mut st, root, c::FlushWhy::Dep);
         assert!(!c::trace_live(&mut st, s2) && !c::trace_live(&mut st, s3));
-        assert_eq!(c::counts(&mut st), (0, 0), "no side trace outlives its root");
+        assert_eq!(
+            c::counts(&mut st),
+            (0, 0),
+            "no side trace outlives its root"
+        );
     }
 
     /// F2b: a linking exit continues at the value of the dispatch cell its snapshot names, not at the tier-1 landing
@@ -3283,7 +3411,10 @@ mod handler {
         let (got, want) = run(false);
         assert_eq!(got, want, "the cell holds the landing address");
         let (got, want) = run(true);
-        assert_eq!(got, want, "the exit continues where the cell says, not at the tier-1 label");
+        assert_eq!(
+            got, want,
+            "the exit continues where the cell says, not at the tier-1 label"
+        );
     }
 
     /// `jit_tr_exit` runs natively from a fake trace on the real `JitData` area (no test-owned `Bud`): the stub's
@@ -3470,7 +3601,15 @@ fn pb_allocation_guards_are_alloc_sites() {
     let s1 = ir.snapshot(Default::default(), &[]);
     let k = ir.kint(5);
     let z = ir.kint(0);
-    let mk = |op, t, flags, a, b, aux| Ins { op, t, flags, a, b, prev: NOREF, aux };
+    let mk = |op, t, flags, a, b, aux| Ins {
+        op,
+        t,
+        flags,
+        a,
+        b,
+        prev: NOREF,
+        aux,
+    };
     let c = ir.emit(mk(TOp::Snew, Ty::ShrStr, 0, k, NOREF, 0));
     ir.emit(mk(TOp::Ne, Ty::I64, F_GUARD, c, z, guard_aux(s0, 0)));
     let d = ir.emit(mk(TOp::Snew, Ty::ShrStr, 0, k, NOREF, 0));
@@ -3501,7 +3640,14 @@ fn n_lzleave(st: &mut State) -> LuaResult<usize> {
         let mut saved = Vec::new();
         let mut c = inner;
         while c != root {
-            saved.push((c, (*c).top.0, (*c).kcache, (*c).trap, (*c).callstatus, (*c).savedpc));
+            saved.push((
+                c,
+                (*c).top.0,
+                (*c).kcache,
+                (*c).trap,
+                (*c).callstatus,
+                (*c).savedpc,
+            ));
             c = (*c).previous;
         }
         let (th_ci, th_top) = (st.ci(), st.top());
@@ -3545,7 +3691,11 @@ fn n_lzleave(st: &mut State) -> LuaResult<usize> {
                 bad.push("a new frame's savedpc is not the start of its code".into());
             }
             if st.top().0 != f.0 + 1 + usize::from(p.numparams) {
-                bad.push(format!("thread.top {} want end of the arguments {}", st.top().0, f.0 + 1 + usize::from(p.numparams)));
+                bad.push(format!(
+                    "thread.top {} want end of the arguments {}",
+                    st.top().0,
+                    f.0 + 1 + usize::from(p.numparams)
+                ));
             }
         } else if st.top().0 != (*inner).top.0 {
             bad.push(format!("thread.top {} want {}", st.top().0, (*inner).top.0));
@@ -3554,7 +3704,10 @@ fn n_lzleave(st: &mut State) -> LuaResult<usize> {
             bad.push("thread.ci is not the innermost frame".into());
         }
         if area.lazy_root != inner as u64 {
-            bad.push(format!("the root word is {:#x}, want the running frame", area.lazy_root));
+            bad.push(format!(
+                "the root word is {:#x}, want the running frame",
+                area.lazy_root
+            ));
         }
         // put the thread back for the C frame to return
         st.set_ci(th_ci);
@@ -3565,13 +3718,17 @@ fn n_lzleave(st: &mut State) -> LuaResult<usize> {
 }
 
 #[test]
-#[cfg_attr(miri, ignore = "opens the io library (extern static `stdin`), which Miri does not support")]
+#[cfg_attr(
+    miri,
+    ignore = "opens the io library (extern static `stdin`), which Miri does not support"
+)]
 fn lazy_leave_completes_the_chain_like_the_interpreter() {
     init();
     let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
     rn_jit::set_mode(&mut st, Mode::Off);
     let g = st.globals();
-    st.raw_set_str(g, b"lzleave", Value::native(n_lzleave)).unwrap();
+    st.raw_set_str(g, b"lzleave", Value::native(n_lzleave))
+        .unwrap();
     for (depth, new) in [(1, 0), (3, 0), (5, 0), (2, 1), (4, 1)] {
         NOTES.with(|n| n.borrow_mut().clear());
         let src = format!("local function f(n) if n == 0 then lzleave({depth}, {new}) return 0 end return 1 + f(n - 1) end return tostring(f(8))");

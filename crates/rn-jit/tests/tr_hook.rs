@@ -232,7 +232,9 @@ fn n_poke(st: &mut State) -> LuaResult<usize> {
 fn init() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        assert!(rn_jit::register_with_trace_pinned_off(Config::for_mode(Mode::On)));
+        assert!(rn_jit::register_with_trace_pinned_off(Config::for_mode(
+            Mode::On
+        )));
         assert!(jit_hooks::install_rec(RecVTable { step, abort }));
         #[cfg(feature = "t15_oracle")]
         rn_core::oracle::set_hook(Some(oracle_hook));
@@ -913,7 +915,10 @@ fn hook_installed_during_recording_fires_the_same_events() {
 fn n2a_reroot_continues_the_recording_in_the_caller() {
     let _serial = serial();
     let mut st = new_state(Mode::Off);
-    reset(Policy { limit: 100_000, leave_on_native: true });
+    reset(Policy {
+        limit: 100_000,
+        leave_on_native: true,
+    });
     REROOT.set(Some(0));
     let r = run(
         &mut st,
@@ -925,17 +930,37 @@ fn n2a_reroot_continues_the_recording_in_the_caller() {
     assert_eq!(r, "Ok:16");
     assert_eq!(REROOT.get(), Some(1), "the RETURN of the root was met once");
     let log = LOG.with(|l| l.borrow().clone());
-    assert!(ABORTS.with(|a| a.borrow().is_empty()), "no abort: {:?}", ABORTS.with(|a| a.borrow().clone()));
+    assert!(
+        ABORTS.with(|a| a.borrow().is_empty()),
+        "no abort: {:?}",
+        ABORTS.with(|a| a.borrow().clone())
+    );
     // f: [ADDK/ADD..., RETURN1] then g continues after its CALL (depth one lower)
     let d0 = log[0].2;
     let depths: Vec<usize> = log.iter().map(|e| e.2).collect();
-    assert!(depths.iter().any(|&d| d + 1 == d0), "the recording continued in the caller: {log:?}");
+    assert!(
+        depths.iter().any(|&d| d + 1 == d0),
+        "the recording continued in the caller: {log:?}"
+    );
     let first_caller = log.iter().position(|e| e.2 + 1 == d0).unwrap();
-    assert!(log[..first_caller].iter().all(|e| e.2 == d0 && e.0 == log[0].0), "root part: {log:?}");
-    assert!(log[first_caller..].iter().all(|e| e.2 + 1 == d0 && e.0 != log[0].0), "caller part: {log:?}");
+    assert!(
+        log[..first_caller]
+            .iter()
+            .all(|e| e.2 == d0 && e.0 == log[0].0),
+        "root part: {log:?}"
+    );
+    assert!(
+        log[first_caller..]
+            .iter()
+            .all(|e| e.2 + 1 == d0 && e.0 != log[0].0),
+        "caller part: {log:?}"
+    );
     // g's pc after the CALL
     assert!(log[first_caller].1 >= 1, "{log:?}");
     let traps = TRAPS.with(|t| t.borrow().clone());
-    assert!(traps.iter().all(|t| t.iter().all(|&x| x == 0)), "trap kept after Leave: {traps:?}");
+    assert!(
+        traps.iter().all(|t| t.iter().all(|&x| x == 0)),
+        "trap kept after Leave: {traps:?}"
+    );
     // nothing is left armed (checked by `Serial`)
 }

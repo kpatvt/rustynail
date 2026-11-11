@@ -650,20 +650,26 @@ fn class_a_ops_in_the_model() {
         let s0 = b.ir.snapshot(Snap::default(), &[]);
         let z = b.ir.kint(0);
         let t = b.emit_flags(TOp::Tnew, Ty::Tab, 0, 2, NOREF, 3).unwrap();
-        b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, t, z, guard_aux(s0, 0)).unwrap();
+        b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, t, z, guard_aux(s0, 0))
+            .unwrap();
         let k = b.ir.konst(KVal::Ptr(0x1000, PtrKind::Raw));
         let n = b.emit_flags(TOp::Newref, Ty::P64, 0, t, k, 0).unwrap();
-        b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, n, z, guard_aux(s0, 0)).unwrap();
+        b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, n, z, guard_aux(s0, 0))
+            .unwrap();
         let v = b.ir.kint(5);
         b.emit_flags(TOp::Hstore, Ty::I64, 0, n, v, 0).unwrap();
         if dup_key {
             // the key is there now: the helper does nothing and the guard exits
             let n2 = b.emit_flags(TOp::Newref, Ty::P64, 0, t, k, 0).unwrap();
-            b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, n2, z, guard_aux(s0, 0)).unwrap();
+            b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, n2, z, guard_aux(s0, 0))
+                .unwrap();
         }
         let key = b.ir.kint(9);
-        let r = b.emit_flags(TOp::Tset, Ty::I64, 0, t, key, u32::from(v)).unwrap();
-        b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, r, z, guard_aux(s0, 0)).unwrap();
+        let r = b
+            .emit_flags(TOp::Tset, Ty::I64, 0, t, key, u32::from(v))
+            .unwrap();
+        b.emit_flags(TOp::Ne, Ty::I64, F_GUARD, r, z, guard_aux(s0, 0))
+            .unwrap();
         b.emit_flags(TOp::Tlen, Ty::Int, 0, t, NOREF, 0).unwrap();
         b.finish()
     };
@@ -679,7 +685,10 @@ fn class_a_ops_in_the_model() {
     assert_eq!(m.tables[0].nodes[&0].val, Val::int(5));
     // a duplicate key
     let mut m = Model::new();
-    assert!(matches!(run(&build(true), &mut m).unwrap(), Outcome::Exit { .. }));
+    assert!(matches!(
+        run(&build(true), &mut m).unwrap(),
+        Outcome::Exit { .. }
+    ));
     // allocation that "does nothing"
     for failing in [true, false] {
         let mut m = Model::new();
@@ -690,7 +699,13 @@ fn class_a_ops_in_the_model() {
     }
     // the dump names the third operand of TSET
     let txt = dump(&ir);
-    assert!(txt.contains("TSET") && txt.contains("TNEW") && txt.contains("NEWREF") && txt.contains("TLEN"), "{txt}");
+    assert!(
+        txt.contains("TSET")
+            && txt.contains("TNEW")
+            && txt.contains("NEWREF")
+            && txt.contains("TLEN"),
+        "{txt}"
+    );
 }
 
 /// BUNDLE-2: constants are interned by value also beyond the size where `konst` switches from the linear scan to the hash index; the refs are
@@ -746,7 +761,15 @@ fn bc_reset_equals_default_and_run_buf_matches_run() {
         t.konst(KVal::Int(i));
     }
     let s0 = t.snapshot(Snap::default(), &[]);
-    t.emit(Ins { op: TOp::Sload, t: Ty::Int, flags: F_GUARD, a: 0, b: NOREF, prev: NOREF, aux: guard_aux(s0, 1) });
+    t.emit(Ins {
+        op: TOp::Sload,
+        t: Ty::Int,
+        flags: F_GUARD,
+        a: 0,
+        b: NOREF,
+        prev: NOREF,
+        aux: guard_aux(s0, 1),
+    });
     t.deps.push(ProtoKey(5));
     t.counts.push(3);
     t.extent = 9;
@@ -762,14 +785,33 @@ fn bc_reset_equals_default_and_run_buf_matches_run() {
     for n in [3usize, 1, 5] {
         let mut ir = TraceIr::default();
         let s = ir.snapshot(Snap::default(), &[]);
-        let mut last = ir.emit(Ins { op: TOp::Sload, t: Ty::Int, flags: F_GUARD, a: 0, b: NOREF, prev: NOREF, aux: guard_aux(s, 1) });
+        let mut last = ir.emit(Ins {
+            op: TOp::Sload,
+            t: Ty::Int,
+            flags: F_GUARD,
+            a: 0,
+            b: NOREF,
+            prev: NOREF,
+            aux: guard_aux(s, 1),
+        });
         for k in 1..n {
             let c = ir.kint(k as i64);
-            last = ir.emit(Ins { op: TOp::Add, t: Ty::Int, flags: 0, a: last, b: c, prev: NOREF, aux: 0 });
+            last = ir.emit(Ins {
+                op: TOp::Add,
+                t: Ty::Int,
+                flags: 0,
+                a: last,
+                b: c,
+                prev: NOREF,
+                aux: 0,
+            });
         }
         let _ = last;
         let mut m1 = Model::new();
-        m1.slots = vec![Val { t: Ty::Int, bits: 40 }];
+        m1.slots = vec![Val {
+            t: Ty::Int,
+            bits: 40,
+        }];
         let mut m2 = Model::new();
         m2.slots = m1.slots.clone();
         let a = run(&ir, &mut m1);
@@ -797,7 +839,10 @@ fn retf_cuts_the_uvrel_cse_chain() {
     let f2 = b.emit_retf(site, 2, guard_aux(s0, 2)).unwrap();
     assert_ne!(f1, f2, "RETF is never merged");
     let r3 = b.emit(TOp::Uvrel, Ty::I64, u, NOREF, 0).unwrap();
-    assert_ne!(r3, r1, "UVREL after the RETF is a new value (retf_uvrel_cse)");
+    assert_ne!(
+        r3, r1,
+        "UVREL after the RETF is a new value (retf_uvrel_cse)"
+    );
     let r4 = b.emit(TOp::Uvrel, Ty::I64, u, NOREF, 0).unwrap();
     assert_eq!(r3, r4, "and merges with later ones");
     assert!(b.ir.at(f1).flags & F_GUARD != 0);
@@ -818,12 +863,22 @@ fn retf_in_the_model_rebases_slots_and_uvrel() {
         let before = b.emit(TOp::Uvrel, Ty::I64, u, NOREF, 0).unwrap();
         let site = b.ir.konst(KVal::Ptr(0x1000, PtrKind::Raw));
         b.emit_retf(site, 2, guard_aux(s0, 2)).unwrap();
-        let s1 = b.ir.snapshot(Snap { seg: 1, ..Snap::default() }, &[]);
+        let s1 = b.ir.snapshot(
+            Snap {
+                seg: 1,
+                ..Snap::default()
+            },
+            &[],
+        );
         let after = b.emit(TOp::Uvrel, Ty::I64, u, NOREF, 0).unwrap();
         // slot 0 after the pop is the caller's register 0
-        let c0 = b.emit_flags(TOp::Sload, Ty::Int, F_GUARD, 0, NOREF, guard_aux(s1, 1)).unwrap();
+        let c0 = b
+            .emit_flags(TOp::Sload, Ty::Int, F_GUARD, 0, NOREF, guard_aux(s1, 1))
+            .unwrap();
         // slot 2 after the pop is the old slot 0 (the popped frame keeps its registers)
-        let c2 = b.emit_flags(TOp::Sload, Ty::Int, F_GUARD, 2, NOREF, guard_aux(s1, 1)).unwrap();
+        let c2 = b
+            .emit_flags(TOp::Sload, Ty::Int, F_GUARD, 2, NOREF, guard_aux(s1, 1))
+            .unwrap();
         // store the three values into upvalue cells 0..2 to read them back
         for (i, r) in [(0u32, before), (1, after), (2, c0), (3, c2)] {
             let ix = b.ir.kint(i64::from(i));
@@ -845,10 +900,21 @@ fn retf_in_the_model_rebases_slots_and_uvrel() {
     let out = run(&ir, &mut m).expect("valid IR");
     assert!(matches!(out, Outcome::Done { .. }), "{out:?}");
     assert_eq!(m.shift, 2);
-    assert_eq!(m.slots, vec![Val::int(70), Val::int(71), Val::int(5), Val::int(6)]);
+    assert_eq!(
+        m.slots,
+        vec![Val::int(70), Val::int(71), Val::int(5), Val::int(6)]
+    );
     let c = &m.closures[0];
-    assert_eq!((c[0].bits, c[1].bits), (64, 64 + 32), "UVREL after = before + 16 * (A + 1) (retf_model_uvrel_unshifted)");
-    assert_eq!((c[2].bits, c[3].bits), (70, 5), "slots are caller-relative after the pop");
+    assert_eq!(
+        (c[0].bits, c[1].bits),
+        (64, 64 + 32),
+        "UVREL after = before + 16 * (A + 1) (retf_model_uvrel_unshifted)"
+    );
+    assert_eq!(
+        (c[2].bits, c[3].bits),
+        (70, 5),
+        "slots are caller-relative after the pop"
+    );
     // the guards fail: exit through the snapshot of the RETURN, nothing popped
     let mut m = mk();
     m.retf_fail = true;

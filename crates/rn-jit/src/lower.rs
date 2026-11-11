@@ -1071,7 +1071,9 @@ pub(crate) fn lower_ex(
             }
             match ops[pc] {
                 Some(OpCode::Unm | OpCode::Bnot) => armm_next[pc + 1] = true,
-                Some(o) if ta::follower(o) == ta::Follower::Mmbin && pc + 2 < n && cold[pc + 1] => armm_next[pc + 2] = true,
+                Some(o) if ta::follower(o) == ta::Follower::Mmbin && pc + 2 < n && cold[pc + 1] => {
+                    armm_next[pc + 2] = true
+                }
                 _ => {}
             }
         }
@@ -1084,7 +1086,17 @@ pub(crate) fn lower_ex(
             }
             if matches!(
                 ops[pc],
-                Some(OpCode::Gettabup | OpCode::Gettable | OpCode::Geti | OpCode::Getfield | OpCode::SelfOp | OpCode::Settabup | OpCode::Settable | OpCode::Seti | OpCode::Setfield)
+                Some(
+                    OpCode::Gettabup
+                        | OpCode::Gettable
+                        | OpCode::Geti
+                        | OpCode::Getfield
+                        | OpCode::SelfOp
+                        | OpCode::Settabup
+                        | OpCode::Settable
+                        | OpCode::Seti
+                        | OpCode::Setfield
+                )
             ) {
                 armm_next[pc + 1] = true;
             }
@@ -1444,8 +1456,18 @@ pub(crate) fn lower_ex(
     // arithmetic instruction: the first continuation wins, so that the entry list, which is part of the block signature
     // that every code version must reproduce (`BlockSig::resume_pcs`), has one entry per pc)
     let mut have: std::collections::HashSet<u32> = resume.iter().map(|&(pc, _)| pc).collect();
-    resume.extend(cx.mm_resume.iter().copied().filter(|&(pc, _)| have.insert(pc)));
-    let resume_mm: Vec<(u32, L)> = cx.s1_resume.iter().copied().filter(|&(pc, _)| have.insert(pc)).collect();
+    resume.extend(
+        cx.mm_resume
+            .iter()
+            .copied()
+            .filter(|&(pc, _)| have.insert(pc)),
+    );
+    let resume_mm: Vec<(u32, L)> = cx
+        .s1_resume
+        .iter()
+        .copied()
+        .filter(|&(pc, _)| have.insert(pc))
+        .collect();
     let pc_labels: Vec<Option<L>> = (0..n)
         .map(|pc| (!cold[pc] && !dead[pc]).then(|| ovr(pc, cx.pcl[pc])))
         .collect();

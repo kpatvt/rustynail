@@ -198,7 +198,10 @@ impl Model {
     /// The identity of the upvalue named by a `UREF` value (`handle << 32 | index`): its shared cell (bit 63 set) or the pair itself.
     pub fn uv_identity(&self, uref: u64) -> u64 {
         let (h, ix) = (uref >> 32, (uref & 0xFFFF_FFFF) as usize);
-        match h.checked_sub(1).and_then(|hx| self.cell_of(hx as usize, ix)) {
+        match h
+            .checked_sub(1)
+            .and_then(|hx| self.cell_of(hx as usize, ix))
+        {
             Some(c) => 1 << 63 | c as u64,
             None => uref,
         }
@@ -602,7 +605,11 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                     .and_then(|c| c.get(ix))
                     .copied()
                     .unwrap_or(UV_REL_CLOSED)
-                    .wrapping_add(if mutants::active("retf_model_uvrel_unshifted") { 0 } else { 16 * u64::from(m.shift) })
+                    .wrapping_add(if mutants::active("retf_model_uvrel_unshifted") {
+                        0
+                    } else {
+                        16 * u64::from(m.shift)
+                    })
             }
             TOp::Retf => {
                 // N2b: the caller identity guards (not modelled: `retf_fail` makes them fail), then the pop: the root becomes the caller,
@@ -612,7 +619,10 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                 }
                 let n = usize::from(i.b);
                 if m.retf_below.len() != n {
-                    return bad(format!("RETF b = {n} but {} caller registers given", m.retf_below.len()));
+                    return bad(format!(
+                        "RETF b = {n} but {} caller registers given",
+                        m.retf_below.len()
+                    ));
                 }
                 let mut s = std::mem::take(&mut m.retf_below);
                 s.append(&mut m.slots);
@@ -640,15 +650,17 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                     return bad(format!("bad table handle {h}"));
                 };
                 let int = bits & HREF_INT != 0;
-                let found = t.nodes.iter().find(|(_, n)| n.key == key && (n.int == int) && (int || key != 0));
+                let found = t
+                    .nodes
+                    .iter()
+                    .find(|(_, n)| n.key == key && (n.int == int) && (int || key != 0));
                 if bits & HREF_DYN != 0 && bits & HREF_NIL != 0 {
                     // DYNMASK: no exit; a walk that finds nothing yields the nil node
                     match found {
                         Some((ix, _)) => h << 32 | u64::from(*ix),
                         None => NIL_CELL,
                     }
-                } else
-                if bits & HREF_ABS != 0 {
+                } else if bits & HREF_ABS != 0 {
                     // BUNDLE-L D1b: the absence proof of a dynamic key: exits when a known node holds the key (the model has no chain:
                     // an unknown node is taken as absent, the recorder only emits it for a key it saw absent)
                     if found.is_some() {
@@ -696,7 +708,14 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                 }
             }
             TOp::Snew | TOp::Concat | TOp::Lib => {
-                let (va, vb) = (val!(i.a), if matches!(i.op, TOp::Concat | TOp::Lib) { val!(i.b) } else { 0 });
+                let (va, vb) = (
+                    val!(i.a),
+                    if matches!(i.op, TOp::Concat | TOp::Lib) {
+                        val!(i.b)
+                    } else {
+                        0
+                    },
+                );
                 if let Some(v) = i.third() {
                     let _ = val!(v);
                 }
@@ -727,16 +746,29 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                     let r = match m.next_result.take() {
                         Some(r) => r,
                         None => {
-                            let Some(t) = h.checked_sub(1).and_then(|x| m.tables.get(x as usize)) else {
+                            let Some(t) = h.checked_sub(1).and_then(|x| m.tables.get(x as usize))
+                            else {
                                 return bad(format!("bad table handle {h}"));
                             };
                             if ir.ty_of(i.b) != Ty::Int {
-                                return bad("TNEXT needs Model::next_result for a non-integer control key");
+                                return bad(
+                                    "TNEXT needs Model::next_result for a non-integer control key",
+                                );
                             }
                             let from = (c as i64).max(0) as usize;
-                            match t.array.iter().enumerate().skip(from).find(|(_, v)| v.t != Ty::Nil) {
+                            match t
+                                .array
+                                .iter()
+                                .enumerate()
+                                .skip(from)
+                                .find(|(_, v)| v.t != Ty::Nil)
+                            {
                                 Some((j, v)) => (Val::int(j as i64 + 1), *v),
-                                None => return bad("TNEXT leaves the model array: needs Model::next_result"),
+                                None => {
+                                    return bad(
+                                        "TNEXT leaves the model array: needs Model::next_result",
+                                    )
+                                }
                             }
                         }
                     };
@@ -755,7 +787,10 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                 let Some(e) = node(m, h, ix) else {
                     return bad("hash load of an unknown node");
                 };
-                if bits & 1 != 0 && e.val.t != i.t && !(i.flags & F_ANYSTR != 0 && is_str_ty(e.val.t)) {
+                if bits & 1 != 0
+                    && e.val.t != i.t
+                    && !(i.flags & F_ANYSTR != 0 && is_str_ty(e.val.t))
+                {
                     exit!(snap);
                 }
                 e.val.bits
@@ -815,7 +850,15 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                     for n in t.nodes.values_mut() {
                         n.next = NEXT_UNKNOWN; // an insertion may relocate a colliding node and relink the chain
                     }
-                    t.nodes.insert(ix, MNode { key, val: Val::NIL, next: NEXT_UNKNOWN, int: false });
+                    t.nodes.insert(
+                        ix,
+                        MNode {
+                            key,
+                            val: Val::NIL,
+                            next: NEXT_UNKNOWN,
+                            int: false,
+                        },
+                    );
                     h << 32 | u64::from(ix)
                 }
             }
@@ -833,7 +876,8 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                         if i.aux != 0 {
                             return bad("TLEN of a string needs Model::len_result");
                         }
-                        let Some(t) = h.checked_sub(1).and_then(|x| m.tables.get(x as usize)) else {
+                        let Some(t) = h.checked_sub(1).and_then(|x| m.tables.get(x as usize))
+                        else {
                             return bad(format!("bad table handle {h}"));
                         };
                         t.array.iter().take_while(|v| v.t != Ty::Nil).count() as u64
@@ -1043,7 +1087,15 @@ pub mod gen {
             let mut nodes = std::collections::BTreeMap::new();
             for (j, &key) in HKEYS.iter().enumerate() {
                 let val = if j % 2 == 0 { num(rng) } else { int(rng) };
-                nodes.insert(j as u32, MNode { key, val, next: i32::from(j + 1 < HKEYS.len()), int: false });
+                nodes.insert(
+                    j as u32,
+                    MNode {
+                        key,
+                        val,
+                        next: i32::from(j + 1 < HKEYS.len()),
+                        int: false,
+                    },
+                );
             }
             m.tables.push(MTable {
                 array,
@@ -1311,7 +1363,29 @@ pub mod gen {
                     let a = self.int();
                     // B4-4: half of the divisors are constants of the magic-number division (and the ones that are not)
                     let b = if self.rng.chance(1, 2) {
-                        let v = self.rng.pick(&[3i64, 5, 6, 7, 9, 10, 11, 12, 100, 255, 1000, 65537, 1_000_003, 4_294_967_297, (1 << 62) - 1, 1 << 62, i64::MAX, -3, -10, 2, 1 << 20]);
+                        let v = self.rng.pick(&[
+                            3i64,
+                            5,
+                            6,
+                            7,
+                            9,
+                            10,
+                            11,
+                            12,
+                            100,
+                            255,
+                            1000,
+                            65537,
+                            1_000_003,
+                            4_294_967_297,
+                            (1 << 62) - 1,
+                            1 << 62,
+                            i64::MAX,
+                            -3,
+                            -10,
+                            2,
+                            1 << 20,
+                        ]);
                         self.b.ir.kint(v)
                     } else {
                         self.int()
@@ -1451,12 +1525,23 @@ pub mod gen {
                     _ => 0x2000,
                 };
                 let right = i32::from(j < 3);
-                let delta = if self.rng.chance(1, 8) { 1 - right } else { right };
+                let delta = if self.rng.chance(1, 8) {
+                    1 - right
+                } else {
+                    right
+                };
                 let kc = self.b.ir.konst(KVal::Ptr(key, PtrKind::Raw));
                 let snap = self.snap();
                 let mark = self.b.ir.ins.len();
                 let bits = hmiss_bits(j, delta).expect("small index");
-                self.ins(TOp::Hmiss, Ty::I64, F_GUARD, node, kc, guard_aux(snap, bits));
+                self.ins(
+                    TOp::Hmiss,
+                    Ty::I64,
+                    F_GUARD,
+                    node,
+                    kc,
+                    guard_aux(snap, bits),
+                );
                 if self.base_exit() == Some(snap) {
                     self.b.ir.ins.truncate(mark);
                 }
@@ -1470,12 +1555,23 @@ pub mod gen {
             let kc = self.b.ir.konst(KVal::Ptr(key, PtrKind::Raw));
             let snap = self.snap();
             let mark = self.b.ir.ins.len();
-            let hr = self.ins(TOp::Hrefk, Ty::P64, F_GUARD, node, kc, guard_aux(snap, j as u32));
+            let hr = self.ins(
+                TOp::Hrefk,
+                Ty::P64,
+                F_GUARD,
+                node,
+                kc,
+                guard_aux(snap, j as u32),
+            );
             if self.base_exit() == Some(snap) {
                 self.b.ir.ins.truncate(mark);
                 return;
             }
-            let et = if j.is_multiple_of(2) { Ty::Num } else { Ty::Int };
+            let et = if j.is_multiple_of(2) {
+                Ty::Num
+            } else {
+                Ty::Int
+            };
             if self.rng.chance(1, 2) {
                 let lt = if self.rng.chance(1, 10) { Ty::Nil } else { et };
                 let snap = self.snap();
@@ -1489,7 +1585,11 @@ pub mod gen {
                     self.ints.push(r);
                 }
             } else {
-                let v = if et == Ty::Num { self.num() } else { self.int() };
+                let v = if et == Ty::Num {
+                    self.num()
+                } else {
+                    self.int()
+                };
                 let (flags, aux, snap) = if self.rng.chance(2, 3) {
                     let snap = self.snap();
                     (F_GUARD, guard_aux(snap, 1), Some(snap))

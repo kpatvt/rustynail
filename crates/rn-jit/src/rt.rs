@@ -136,9 +136,13 @@ pub fn register_with(cfg: Config) -> bool {
             let [sub, byte, chr] = rn_std::lib_string::jit_libfns();
             let [ins, rem] = rn_std::lib_table::jit_libfns();
             let [mty, fmod, toint] = rn_std::lib_math::jit_libfns();
-            let ([tostr, rawlen, rawequal, rawget, rawset, tonum], typefn) = rn_std::lib_base::jit_libfns();
+            let ([tostr, rawlen, rawequal, rawget, rawset, tonum], typefn) =
+                rn_std::lib_base::jit_libfns();
             jit_hooks::set_libfns(
-                [sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod, toint, tonum],
+                [
+                    sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod,
+                    toint, tonum,
+                ],
                 typefn,
             );
             jit_hooks::set_libfns_ext(rn_std::lib_table::jit_libfns_ext());
@@ -590,7 +594,11 @@ fn alloc_data(d: JitData) -> *mut JitData {
         let reach = (1usize << 31) - (1usize << 24) - size;
         for k in 1..=96usize {
             let step = (k / 2) * (1 << 23);
-            let hint = if k % 2 == 0 { target.wrapping_add(step + (1 << 22)) } else { target.wrapping_sub(step + size + (1 << 22)) };
+            let hint = if k % 2 == 0 {
+                target.wrapping_add(step + (1 << 22))
+            } else {
+                target.wrapping_sub(step + size + (1 << 22))
+            };
             // SAFETY: an anonymous private mapping; the kernel treats a nonzero address as a hint.
             let p = unsafe {
                 libc::mmap(
@@ -836,7 +844,11 @@ fn ctl_status(st: &mut State) -> Option<(bool, Vec<&'static str>)> {
     if d.tr.cfg.mode != crate::tr::cache::TrMode::Off {
         f.push("trace");
     }
-    f.push(if cfg!(target_arch = "x86_64") { "x64" } else { "native" });
+    f.push(if cfg!(target_arch = "x86_64") {
+        "x64"
+    } else {
+        "native"
+    });
     Some((d.enabled, f))
 }
 
@@ -961,10 +973,7 @@ pub fn stats(st: &mut State) -> Stats {
     }
 }
 
-pub(crate) fn proto_of(
-    st: &State,
-    ci: Ci,
-) -> Option<rn_core::value::Gc<rn_core::func::LClosure>> {
+pub(crate) fn proto_of(st: &State, ci: Ci) -> Option<rn_core::value::Gc<rn_core::func::LClosure>> {
     st.get(ci.r().func).as_lclosure()
 }
 
@@ -1051,7 +1060,22 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
     d.env = Some(e);
     let (idx_name, idx_hash, idx_levels) = idx_name(st, d);
     let (inl, inl_mut) = t1inline_bits(d);
-    CallEnv { tail_fast: tail_fast(d), armm: armm(d), tail_mut: tail_mut(), idx_name, idx_hash, idx_levels, tset: tset_bits(d), str_mt: str_mt_addr(st, d), inl, inl_mut, t1q: t1q_bits(d), hints: &d.t1i_hints, ccall_helper: ccall_helper(d), ..e }
+    CallEnv {
+        tail_fast: tail_fast(d),
+        armm: armm(d),
+        tail_mut: tail_mut(),
+        idx_name,
+        idx_hash,
+        idx_levels,
+        tset: tset_bits(d),
+        str_mt: str_mt_addr(st, d),
+        inl,
+        inl_mut,
+        t1q: t1q_bits(d),
+        hints: &d.t1i_hints,
+        ccall_helper: ccall_helper(d),
+        ..e
+    }
 }
 
 /// R1: the mutants of the inline tail call (`calls::TM_*`).
@@ -1074,7 +1098,11 @@ fn idx_name(st: &State, d: &JitData) -> (u64, u32, u8) {
     {
         if d.tr.cfg.mode != crate::tr::cache::TrMode::Off && d.tr.cfg.limits.t3idx != 0 {
             let s = st.g().heap.tm_name(rn_core::meta::Tm::Index);
-            return (s.as_ptr() as usize as u64, s.get().hash(), d.tr.cfg.limits.t3idx as u8);
+            return (
+                s.as_ptr() as usize as u64,
+                s.get().hash(),
+                d.tr.cfg.limits.t3idx as u8,
+            );
         }
     }
     let _ = (st, d);
@@ -1113,7 +1141,10 @@ fn t1inline_bits(d: &JitData) -> (u16, u16) {
     #[cfg(feature = "trace")]
     {
         if d.tr.cfg.mode != crate::tr::cache::TrMode::Off {
-            return (d.tr.cfg.limits.t1inline as u16 & crate::lower::t1inline::available(), crate::tr::t1inline_mut());
+            return (
+                d.tr.cfg.limits.t1inline as u16 & crate::lower::t1inline::available(),
+                crate::tr::t1inline_mut(),
+            );
         }
     }
     let _ = d;
@@ -1151,7 +1182,9 @@ fn armm(d: &JitData) -> bool {
     {
         let l = &d.tr.cfg.limits;
         // (BUNDLE-V: `t1q` bit 4 also applies with traces off when the limit was named, as `t1q_bits`)
-        (d.tr.cfg.mode != crate::tr::cache::TrMode::Off && l.armm != 0) || (l.t1q & 16 != 0 && (d.tr.cfg.mode != crate::tr::cache::TrMode::Off || l.t1q & 0x80 != 0))
+        (d.tr.cfg.mode != crate::tr::cache::TrMode::Off && l.armm != 0)
+            || (l.t1q & 16 != 0
+                && (d.tr.cfg.mode != crate::tr::cache::TrMode::Off || l.t1q & 0x80 != 0))
     }
     #[cfg(not(feature = "trace"))]
     {
@@ -1377,7 +1410,9 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
     }
     let env = call_env(st, d);
     if env.inl != 0 {
-        d.t1i_hints.entry(p.code_ptr() as usize).or_insert_with(|| crate::lower::t1inline::site_hints(p));
+        d.t1i_hints
+            .entry(p.code_ptr() as usize)
+            .or_insert_with(|| crate::lower::t1inline::site_hints(p));
     }
     // tier 1.5 data (address-stable: the warm-up code embeds the addresses of its counters and profile bytes);
     // dropped again if the compile fails (nothing refers to it then)
@@ -1411,12 +1446,13 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
                 tracemove: d.tr.cfg.opts.tracemove,
                 seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                 line: p.linedefined,
-                fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0) && !p.is_vararg(),
-                    recnat: d.tr.cfg.limits.recnat != 0,
-                    lazy: d.tr.cfg.limits.lazyci != 0,
-                    fn_loops: d.tr.cfg.limits.recany != 0,
-                    rec_any: d.tr.cfg.limits.recany != 0,
-                    c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
+                fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)
+                    && !p.is_vararg(),
+                recnat: d.tr.cfg.limits.recnat != 0,
+                lazy: d.tr.cfg.limits.lazyci != 0,
+                fn_loops: d.tr.cfg.limits.recany != 0,
+                rec_any: d.tr.cfg.limits.recany != 0,
+                c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
             },
             None,
         )
@@ -1529,9 +1565,17 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
         if let Some(fresh) = crate::tr::record::lower_for_landing(p) {
             assert_eq!(low.total, fresh.total, "landing cache: instruction count");
             for pc in 0..low.total as u32 {
-                assert_eq!(low.label_kind(pc), fresh.label_kind(pc), "landing cache: label kind at pc {pc}");
+                assert_eq!(
+                    low.label_kind(pc),
+                    fresh.label_kind(pc),
+                    "landing cache: label kind at pc {pc}"
+                );
                 assert_eq!(low.rem(pc), fresh.rem(pc), "landing cache: rem at pc {pc}");
-                assert_eq!(low.cnt_at(pc), fresh.cnt_at(pc), "landing cache: cnt_at at pc {pc}");
+                assert_eq!(
+                    low.cnt_at(pc),
+                    fresh.cnt_at(pc),
+                    "landing cache: cnt_at at pc {pc}"
+                );
             }
         }
         tp.set_landing(low);
@@ -1629,12 +1673,13 @@ fn recompile_inner(
                         tracemove: d.tr.cfg.opts.tracemove,
                         seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                         line: p.linedefined,
-                        fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0) && !p.is_vararg(),
-                    recnat: d.tr.cfg.limits.recnat != 0,
-                    lazy: d.tr.cfg.limits.lazyci != 0,
-                    fn_loops: d.tr.cfg.limits.recany != 0,
-                    rec_any: d.tr.cfg.limits.recany != 0,
-                    c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
+                        fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)
+                            && !p.is_vararg(),
+                        recnat: d.tr.cfg.limits.recnat != 0,
+                        lazy: d.tr.cfg.limits.lazyci != 0,
+                        fn_loops: d.tr.cfg.limits.recany != 0,
+                        rec_any: d.tr.cfg.limits.recany != 0,
+                        c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
                     },
                     Some(tp),
                 )
@@ -1812,7 +1857,11 @@ fn hot_call(st: &mut State, ci: Ci, p: &Proto) -> HotCall {
     if ci.r().callstatus & rn_core::state::CIST_TAIL != 0 {
         // SAFETY: the per-state data is live (see `set_mode`); read-only.
         let th = unsafe { &*data_ptr(st) }.tr.cfg.limits.tailhook;
-        let th = if crate::tr::cache::mutant_tailhook_ignored() { 0 } else { th };
+        let th = if crate::tr::cache::mutant_tailhook_ignored() {
+            0
+        } else {
+            th
+        };
         if th == 0 {
             p.hot.set(jit_hooks::initial_hot().saturating_mul(32));
             return HotCall::Skip;
@@ -1847,7 +1896,11 @@ fn hot_call(st: &mut State, ci: Ci, p: &Proto) -> HotCall {
     let fresh = {
         // SAFETY: the per-state data is live (see `set_mode`); read-only.
         let dd = unsafe { &*data_ptr(st) };
-        let centry = if dd.tr.cfg.mode == crate::tr::cache::TrMode::Off { 0 } else { dd.tr.cfg.limits.centry };
+        let centry = if dd.tr.cfg.mode == crate::tr::cache::TrMode::Off {
+            0
+        } else {
+            dd.tr.cfg.limits.centry
+        };
         if centry != 0 && {
             let prev = ci.r().previous;
             // SAFETY: `previous` of a live frame is a live frame (the base frame has no previous: it is native).
@@ -1878,7 +1931,8 @@ fn hot_call(st: &mut State, ci: Ci, p: &Proto) -> HotCall {
         let d = unsafe { &mut *data_ptr(st) };
         if matches!(r, HotCall::Enter) && d.tr.centry.contains(&(p.code_ptr() as usize)) {
             let n = d.tr.centry_seen.entry(p.code_ptr() as usize).or_insert(0);
-            if *n < d.tr.cfg.limits.centrywait && !crate::tr::mutants::active("centry_wait_ignored") {
+            if *n < d.tr.cfg.limits.centrywait && !crate::tr::mutants::active("centry_wait_ignored")
+            {
                 *n += 1;
                 return HotCall::Retry;
             }
@@ -1900,7 +1954,10 @@ fn hot_call_plain(st: &mut State, p: &Proto, fresh: u32) -> HotCall {
             // compiled for its loops only, or too small to pay for the round trip from the interpreter
             // (compiled callers still flat-call it)
             HotCall::NoJit
-        } else if fresh < 2 && monitoring(st) && jp.mon().blocked(jit_hooks::DEFAULT_ENTRY_CALLS as u32) {
+        } else if fresh < 2
+            && monitoring(st)
+            && jp.mon().blocked(jit_hooks::DEFAULT_ENTRY_CALLS as u32)
+        {
             HotCall::Retry // short stays: the interpreter runs it for now (back-off)
         } else {
             #[cfg(feature = "trace")]
@@ -1937,7 +1994,13 @@ fn rearm_entry_ok(d: &mut JitData, entry_ok: u32, trace: Option<crate::tr::cache
     }
     let (nside, faults, la) = trace.map_or((0, true, true), |id| d.tr.family_clean(id));
     let l = &d.tr.cfg.limits;
-    let ok = crate::tr::cache::rearm_young_ok(entry_ok, nside, !faults && !la, l.rearmside, l.rearmclean);
+    let ok = crate::tr::cache::rearm_young_ok(
+        entry_ok,
+        nside,
+        !faults && !la,
+        l.rearmside,
+        l.rearmclean,
+    );
     if !ok && l.rearmclean != 0 && l.rearmside != 0 && nside >= l.rearmside {
         // refused by the clean test alone
         d.tr.stats.rearm_unclean[0] += u64::from(faults);
@@ -1958,7 +2021,10 @@ fn rearm_loop(st: &mut State, ci: Ci, pc: *const u32, span: u32) -> bool {
     if jit_hooks::tick_left(st) < jit_hooks::tick_period() {
         d.tr.stats.rearm_restored += 1;
     }
-    if d.tr.cfg.limits.rearm == 0 || d.tr.cfg.mode == crate::tr::cache::TrMode::Off || crate::tr::mutants::active("rearm_never") {
+    if d.tr.cfg.limits.rearm == 0
+        || d.tr.cfg.mode == crate::tr::cache::TrMode::Off
+        || crate::tr::mutants::active("rearm_never")
+    {
         return false;
     }
     let key = proto_of(st, ci).map_or(0, |cl| cl.proto().code_ptr() as usize);
@@ -2008,7 +2074,11 @@ fn rearm_loop(st: &mut State, ci: Ci, pc: *const u32, span: u32) -> bool {
     }
     d.tr.stats.rearm_misses += 1;
     // a back-edge of another prototype's loop (a callee of the frame the arming was made for) costs a unit, one of the target's own loops [`REARM_UNIT`]
-    let cost = if key == jit_hooks::rearm_key(st) { REARM_UNIT } else { 1 };
+    let cost = if key == jit_hooks::rearm_key(st) {
+        REARM_UNIT
+    } else {
+        1
+    };
     if span > cost {
         jit_hooks::rearm_tick(st, span - cost, jit_hooks::rearm_key(st));
     }
@@ -2022,7 +2092,10 @@ fn rearm_after_exit(st: &mut State, code: u32, ret_ci: usize, entry: (usize, usi
     // SAFETY: the per-state data is live (see `set_mode`); read-only.
     let (span, on) = {
         let d = unsafe { &*data_ptr(st) };
-        (d.tr.cfg.limits.rearm, d.tr.cfg.mode != crate::tr::cache::TrMode::Off)
+        (
+            d.tr.cfg.limits.rearm,
+            d.tr.cfg.mode != crate::tr::cache::TrMode::Off,
+        )
     };
     if span == 0 || !on || st.hook_mask() != 0 || crate::tr::mutants::active("rearm_never") {
         return;
@@ -2085,7 +2158,10 @@ fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
     {
         // SAFETY: the per-state data is live (see `set_mode`).
         let len = proto_of(st, ci).map_or(8, |cl| {
-            crate::tr::cache::loop_len(cl.proto().code(), ((pc as usize).wrapping_sub(cl.proto().code_ptr() as usize)) / 4)
+            crate::tr::cache::loop_len(
+                cl.proto().code(),
+                ((pc as usize).wrapping_sub(cl.proto().code_ptr() as usize)) / 4,
+            )
         });
         unsafe { &mut *data_ptr(st) }.tr.warm_touch(len);
     }
@@ -2125,7 +2201,8 @@ fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
             let calls = loop_calls(p.code(), idx);
             let warm = jp.tr.as_ref().filter(|_| calls).and_then(|tp| {
                 let h = tp.head(tp.head_index(idx as u32)?);
-                (h.state.get() == crate::tr::cache::HeadState::Warm).then_some((h, tp.tick_credit()))
+                (h.state.get() == crate::tr::cache::HeadState::Warm)
+                    .then_some((h, tp.tick_credit()))
             });
             if let Some((h, credit)) = warm {
                 // (once per head: a head that never failed a recording. The tick is phase-locked to loops whose trip count is a
@@ -2153,7 +2230,9 @@ fn loop_calls(code: &[u32], head: usize) -> bool {
         match i.opcode() {
             Some(O::Call | O::Tailcall) => call = true,
             Some(O::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => return call,
-            Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => return call,
+            Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => {
+                return call
+            }
             _ => {}
         }
     }

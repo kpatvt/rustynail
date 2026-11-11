@@ -23,7 +23,9 @@ use rn_core::gc::{BLACKBIT, WHITEBITS};
 use rn_core::instruction::Instruction;
 use rn_core::jit_layout::{node, string, table};
 use rn_core::meta::{Tm, MASKFLAGS};
-use rn_core::value::{ctb, Value, BIT_ISCOLLECTABLE, LUA_VNIL, LUA_VNUMINT, LUA_VSHRSTR, LUA_VTABLE};
+use rn_core::value::{
+    ctb, Value, BIT_ISCOLLECTABLE, LUA_VNIL, LUA_VNUMINT, LUA_VSHRSTR, LUA_VTABLE,
+};
 use rn_core::ver::active::OpCode;
 
 const TAG_INT: i32 = LUA_VNUMINT as i32;
@@ -146,10 +148,18 @@ impl Cx<'_> {
             }
             O::SelfOp => {
                 // BUNDLE-K item B: a string receiver is probed out of line
-                let sdone = (self.calls_on() && self.env().str_mt != 0).then(|| (self.p.label(), self.p.label()));
+                let sdone = (self.calls_on() && self.env().str_mt != 0)
+                    .then(|| (self.p.label(), self.p.label()));
                 let sx = match sdone {
                     Some((l, done)) => {
-                        self.cold.push(Cold::StrSelf { l, x, done, kidx: c, a, b });
+                        self.cold.push(Cold::StrSelf {
+                            l,
+                            x,
+                            done,
+                            kidx: c,
+                            a,
+                            b,
+                        });
                         l
                     }
                     None => x,
@@ -553,7 +563,15 @@ impl Cx<'_> {
             return (x, None, None);
         }
         let (l, back, fin) = (self.p.label(), self.p.label(), self.p.label());
-        self.cold.push(Cold::Chain { l, back, x, fin, kidx, a, selfb });
+        self.cold.push(Cold::Chain {
+            l,
+            back,
+            x,
+            fin,
+            kidx,
+            a,
+            selfb,
+        });
         (l, Some(back), Some(fin))
     }
 
@@ -573,7 +591,12 @@ impl Cx<'_> {
         self.ld(0, W::B1, fr(b, 0));
         self.op(Op::And(0, Src::Imm(0x0F)));
         if !skip_tag {
-            self.br(Cc::Ne, 0, Src::Imm(i32::from(rn_core::value::LUA_TSTRING)), x);
+            self.br(
+                Cc::Ne,
+                0,
+                Src::Imm(i32::from(rn_core::value::LUA_TSTRING)),
+                x,
+            );
         }
         // the metatable of strings, read now (the slot is the live `g.mt[LUA_TSTRING]`)
         self.op(Op::Mov(0, env.str_mt));
@@ -588,7 +611,14 @@ impl Cx<'_> {
         self.ld(4, W::B1, rm(2, node::VAL_TT as i32));
         self.br(Cc::Ne, 4, Src::Imm(TAG_TABLE), x);
         self.ld(0, W::B8, rm(2, node::VAL as i32));
-        self.ld(1, W::B8, M { base: Base::K, off: kidx as i32 * 16 + 8 });
+        self.ld(
+            1,
+            W::B8,
+            M {
+                base: Base::K,
+                off: kidx as i32 * 16 + 8,
+            },
+        );
         self.op(Op::Mov(3, u64::from(hash)));
         self.node_lookup(x);
         self.ld(4, W::B1, rm(2, node::VAL_TT as i32));
@@ -609,7 +639,16 @@ impl Cx<'_> {
     }
 
     /// The out-of-line `__index` levels (see [`Cold::Chain`], `CallEnv::idx_levels` of them). `V0` = the receiver table. Clobbers V1..V6.
-    pub(crate) fn emit_chain(&mut self, l: L, back: L, x: L, fin: L, kidx: u32, a: u32, selfb: u32) {
+    pub(crate) fn emit_chain(
+        &mut self,
+        l: L,
+        back: L,
+        x: L,
+        fin: L,
+        kidx: u32,
+        a: u32,
+        selfb: u32,
+    ) {
         let env = self.env();
         #[cfg(feature = "trace")]
         let (nil_hit, use_mt) = crate::tr::t3idx_mut();
@@ -645,7 +684,11 @@ impl Cx<'_> {
             );
             self.op(Op::Mov(3, u64::from(hash)));
             // absent or nil there: the next level (after the last one: nil if that table has no metatable, else the helper)
-            let next = if lvl + 1 == env.idx_levels { tail } else { self.p.label() };
+            let next = if lvl + 1 == env.idx_levels {
+                tail
+            } else {
+                self.p.label()
+            };
             self.node_lookup(next);
             self.ld(4, W::B1, rm(2, node::VAL_TT as i32));
             if !nil_hit {
@@ -778,7 +821,12 @@ impl Cx<'_> {
         self.ld(2, W::B1, fr(c, 0));
         // (mutant `tget_tag_skip`: a key of any type goes to the integer probe)
         let tagskip = geth && self.nilset_mut(NS_GET_TAG_SKIP);
-        self.br(Cc::Ne, 2, Src::Imm(TAG_INT), if tagskip { lhash } else { lstr });
+        self.br(
+            Cc::Ne,
+            2,
+            Src::Imm(TAG_INT),
+            if tagskip { lhash } else { lstr },
+        );
         self.ld(2, W::B8, fr(c, 8));
         self.arr_slot_reg2(if geth { lhash } else { x });
         self.get_arr_result(a, x);

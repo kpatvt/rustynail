@@ -282,12 +282,7 @@ fn log_step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
                         continue;
                     }
                     // SAFETY: a live short-string key of a live table, rebuilt as a value to read its bytes
-                    let kv = unsafe {
-                        Value::from_gc(
-                            rn_core::value::LUA_VSHRSTR,
-                            kptr,
-                        )
-                    };
+                    let kv = unsafe { Value::from_gc(rn_core::value::LUA_VSHRSTR, kptr) };
                     if let Some(ks) = kv.as_string() {
                         kbits = canon_str(ks.as_bytes(), kbits);
                     }
@@ -297,7 +292,15 @@ fn log_step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
                     } else {
                         vval(&mut l, &nv)
                     };
-                    m.insert(j as u32, interp::MNode { key: kbits, val, next: t.node_next(j), int: false });
+                    m.insert(
+                        j as u32,
+                        interp::MNode {
+                            key: kbits,
+                            val,
+                            next: t.node_next(j),
+                            int: false,
+                        },
+                    );
                 }
             }
             nodes.push(m);
@@ -848,14 +851,21 @@ fn golden_text(rc: &Rec) -> String {
 /// chain (no metatable) takes `metatable == 0`; a key present with a nil value is a typechecked nil `HLOAD`.
 #[test]
 fn index_chain_records_its_guards() {
-    let ir = closed(&record_prog(prog("index_chain"), 1, strict())).ir.clone();
-    let hmiss: Vec<usize> = (0..ir.ins.len()).filter(|&x| ir.ins[x].op == TOp::Hmiss).collect();
+    let ir = closed(&record_prog(prog("index_chain"), 1, strict()))
+        .ir
+        .clone();
+    let hmiss: Vec<usize> = (0..ir.ins.len())
+        .filter(|&x| ir.ins[x].op == TOp::Hmiss)
+        .collect();
     assert!(hmiss.len() >= 3, "too few HMISS steps\n{}", dump(&ir));
     for &x in &hmiss {
         let i = ir.ins[x];
         assert!(i.flags & F_GUARD != 0, "unguarded HMISS");
         let node = ir.at(i.a);
-        assert!(node.op == TOp::Fload && node.b == Field::Node as Ref, "HMISS of a non-node");
+        assert!(
+            node.op == TOp::Fload && node.b == Field::Node as Ref,
+            "HMISS of a non-node"
+        );
         assert!(
             ir.ins[..x].iter().any(|g| g.op == TOp::Eq
                 && TraceIr::is_ins(g.a)
@@ -868,7 +878,13 @@ fn index_chain_records_its_guards() {
         );
     }
     // the last step of a walk has no link (`delta == 0`)
-    assert!(hmiss.iter().any(|&x| hmiss_unpack(aux_bits(ir.ins[x].aux)).1 == 0), "no chain end\n{}", dump(&ir));
+    assert!(
+        hmiss
+            .iter()
+            .any(|&x| hmiss_unpack(aux_bits(ir.ins[x].aux)).1 == 0),
+        "no chain end\n{}",
+        dump(&ir)
+    );
     // `__index` of a metatable: non-null guard, then a typechecked HLOAD of a table through an HREFK
     let tab_loads: Vec<usize> = (0..ir.ins.len())
         .filter(|&x| ir.ins[x].op == TOp::Hload && ir.ins[x].t == Ty::Tab)
@@ -876,14 +892,24 @@ fn index_chain_records_its_guards() {
     assert!(tab_loads.len() >= 2, "no `__index` loads\n{}", dump(&ir));
     for &x in &tab_loads {
         let i = ir.ins[x];
-        assert!(i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0, "unchecked `__index` load\n{}", dump(&ir));
+        assert!(
+            i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0,
+            "unchecked `__index` load\n{}",
+            dump(&ir)
+        );
         let hr = ir.at(i.a);
         assert_eq!(hr.op, TOp::Hrefk);
         let node = ir.at(hr.a);
         let mt = ir.at(node.a);
-        assert!(mt.op == TOp::Fload && mt.b == Field::Metatable as Ref, "`__index` HREFK not on a metatable\n{}", dump(&ir));
         assert!(
-            ir.ins[..x].iter().any(|g| g.op == TOp::Ne && g.a == node.a && ir.as_int(g.b) == Some(0)),
+            mt.op == TOp::Fload && mt.b == Field::Metatable as Ref,
+            "`__index` HREFK not on a metatable\n{}",
+            dump(&ir)
+        );
+        assert!(
+            ir.ins[..x]
+                .iter()
+                .any(|g| g.op == TOp::Ne && g.a == node.a && ir.as_int(g.b) == Some(0)),
             "`__index` load without `mt != 0`\n{}",
             dump(&ir)
         );
@@ -900,9 +926,19 @@ fn index_chain_records_its_guards() {
         dump(&ir)
     );
     // a key that is present with a nil value: a typechecked nil load, then the chain
-    let ir = closed(&record_prog(prog("index_nilnode"), 1, strict())).ir.clone();
-    let nil = ir.ins.iter().find(|i| i.op == TOp::Hload && i.t == Ty::Nil).expect("a nil HLOAD");
-    assert!(nil.flags & F_GUARD != 0 && aux_bits(nil.aux) & 1 != 0, "unchecked nil load\n{}", dump(&ir));
+    let ir = closed(&record_prog(prog("index_nilnode"), 1, strict()))
+        .ir
+        .clone();
+    let nil = ir
+        .ins
+        .iter()
+        .find(|i| i.op == TOp::Hload && i.t == Ty::Nil)
+        .expect("a nil HLOAD");
+    assert!(
+        nil.flags & F_GUARD != 0 && aux_bits(nil.aux) & 1 != 0,
+        "unchecked nil load\n{}",
+        dump(&ir)
+    );
 }
 
 /// The golden dumps of the 5.5 build; the 5.4 build has its own (`_54`): the `FORLOOP` layout and the `ATOUCH` after
@@ -964,8 +1000,15 @@ fn golden_ir_dumps() {
 #[test]
 fn m_lockstep_off_records_the_same_ir() {
     // (the inline `NEWREF` plan, which reads the tracked hash image, is a production setting: `nrinline`)
-    let on = |c: RecCfg| RecCfg { nrinline: true, ..c };
-    let off = |c: RecCfg| RecCfg { lockstep: false, nrinline: true, ..c };
+    let on = |c: RecCfg| RecCfg {
+        nrinline: true,
+        ..c
+    };
+    let off = |c: RecCfg| RecCfg {
+        lockstep: false,
+        nrinline: true,
+        ..c
+    };
     let text = |r: &Rec| match &r.out {
         RecOutcome::Closed(_) => golden_text(r),
         RecOutcome::Aborted(a) => format!("aborted {a:?}"),
@@ -973,7 +1016,12 @@ fn m_lockstep_off_records_the_same_ir() {
     for p in PROGS {
         let a = record_prog(p, 1, on(strict()));
         let b = record_prog(p, 1, off(strict()));
-        assert_eq!(text(&a), text(&b), "{}: lockstep off records differently", p.name);
+        assert_eq!(
+            text(&a),
+            text(&b),
+            "{}: lockstep off records differently",
+            p.name
+        );
     }
     let alloc: &[&str] = &[
         "local function f(n) local s = 0 arm() for i = 1, n do local t = {} t.x = i t.y = i + 1 s = s + t.x + t.y end return s end return f(5)",
@@ -989,10 +1037,17 @@ fn m_lockstep_off_records_the_same_ir() {
     for (k, src) in alloc.iter().enumerate() {
         let a = record_src(src, on(strict()));
         let b = record_src(src, off(strict()));
-        assert_eq!(text(&a), text(&b), "allocation program {k}: lockstep off records differently");
+        assert_eq!(
+            text(&a),
+            text(&b),
+            "allocation program {k}: lockstep off records differently"
+        );
         closed_n += usize::from(matches!(a.out, RecOutcome::Closed(_)));
     }
-    assert!(closed_n >= 4, "the allocation programs must record ({closed_n} did)");
+    assert!(
+        closed_n >= 4,
+        "the allocation programs must record ({closed_n} did)"
+    );
 }
 
 /// BUNDLE-M C1: `Charge` (the element budget of the model) is bookkeeping the lockstep used to drive for tables made or resized inside the
@@ -1005,7 +1060,11 @@ fn m_charge_with_lockstep_off() {
     let fresh = "local function f(n) local s = 0 arm() for i = 1, n do local t = {1, 2, 3, 4, 5, 6, 7, 8} s = s + #t end return s end return f(5)";
     for src in [grow, fresh] {
         for cap in [3usize, 6, 12, 40, 50, 70, 120] {
-            let mk = |ls: bool| RecCfg { lockstep: ls, max_model_elems: cap, ..RecCfg::default() };
+            let mk = |ls: bool| RecCfg {
+                lockstep: ls,
+                max_model_elems: cap,
+                ..RecCfg::default()
+            };
             let a = record_src(src, mk(true));
             let b = record_src(src, mk(false));
             let kind = |r: &Rec| match &r.out {
@@ -1016,9 +1075,20 @@ fn m_charge_with_lockstep_off() {
         }
     }
     // (the caps above straddle the sizes: the growth must charge in the resync, i.e. abort at 50 but not at 120)
-    let at = |cap: usize| RecCfg { lockstep: false, max_model_elems: cap, ..RecCfg::default() };
-    assert_eq!(aborted_cfg(grow, at(50)), AbortReason::Charge, "the resync after the growing store does not charge");
-    assert!(matches!(record_src(grow, at(120)).out, RecOutcome::Closed(_)));
+    let at = |cap: usize| RecCfg {
+        lockstep: false,
+        max_model_elems: cap,
+        ..RecCfg::default()
+    };
+    assert_eq!(
+        aborted_cfg(grow, at(50)),
+        AbortReason::Charge,
+        "the resync after the growing store does not charge"
+    );
+    assert!(matches!(
+        record_src(grow, at(120)).out,
+        RecOutcome::Closed(_)
+    ));
     assert_eq!(aborted_cfg(fresh, at(6)), AbortReason::Charge);
 }
 
@@ -1169,9 +1239,10 @@ fn check_state(
     // F1: every hash node (key and value)
     for (h, (t, rn)) in m.tables.iter().zip(&real.nodes).enumerate() {
         if t.nodes.len() != rn.len()
-            || t.nodes.iter().zip(rn).any(|((i, a), (j, b))| {
-                i != j || a.key != b.key || !val_eq(a.val, b.val)
-            })
+            || t.nodes
+                .iter()
+                .zip(rn)
+                .any(|((i, a), (j, b))| i != j || a.key != b.key || !val_eq(a.val, b.val))
         {
             return Err(format!(
                 "{what}: hash nodes of table {} differ: model {:?}, VM {:?}",
@@ -1675,18 +1746,34 @@ fn hash_ops_record_their_guards() {
         let rc = record_prog(prog(name), 1, strict());
         closed(&rc).ir.clone()
     };
-    for name in ["fields_rw", "fields_globals", "fields_nil", "fields_meta_flag", "fields_strkey", "fields_nested"] {
+    for name in [
+        "fields_rw",
+        "fields_globals",
+        "fields_nil",
+        "fields_meta_flag",
+        "fields_strkey",
+        "fields_nested",
+    ] {
         let ir = ops(name);
         let n = |op: TOp| ir.ins.iter().filter(|i| i.op == op).count();
         let dynamic = name == "fields_strkey"; // N6: a key that is not a proto constant is an `HREFV`
         if dynamic {
-            assert!(n(TOp::Hrefv) > 0 && n(TOp::Eqref) == 0, "{name}: no HREFV\n{}", dump(&ir));
+            assert!(
+                n(TOp::Hrefv) > 0 && n(TOp::Eqref) == 0,
+                "{name}: no HREFV\n{}",
+                dump(&ir)
+            );
         } else {
             assert!(n(TOp::Hrefk) > 0, "{name}: no HREFK\n{}", dump(&ir));
         }
         // every HREFK names a node vector (`FLOAD node`) of a table whose `FLOAD lsizenode` is compared with a constant
         // by a guard before it
-        for (x, i) in ir.ins.iter().enumerate().filter(|(_, i)| matches!(i.op, TOp::Hrefk | TOp::Hrefv)) {
+        for (x, i) in ir
+            .ins
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| matches!(i.op, TOp::Hrefk | TOp::Hrefv))
+        {
             assert!(i.flags & F_GUARD != 0, "{name}: unguarded HREFK");
             if i.op == TOp::Hrefv {
                 assert!(!TraceIr::is_const(i.b), "{name}: HREFV of a constant key");
@@ -1704,17 +1791,33 @@ fn hash_ops_record_their_guards() {
                     && ir.at(g.a).a == node.a
                     && TraceIr::is_const(g.b)
             });
-            assert!(has_size_guard, "{name}: HREFK without the lsizenode guard\n{}", dump(&ir));
+            assert!(
+                has_size_guard,
+                "{name}: HREFK without the lsizenode guard\n{}",
+                dump(&ir)
+            );
         }
         // every HLOAD / HSTORE is on an HREFK; loads are typechecked
-        for i in ir.ins.iter().filter(|i| matches!(i.op, TOp::Hload | TOp::Hstore)) {
+        for i in ir
+            .ins
+            .iter()
+            .filter(|i| matches!(i.op, TOp::Hload | TOp::Hstore))
+        {
             assert!(matches!(ir.at(i.a).op, TOp::Hrefk | TOp::Hrefv), "{name}");
-            assert!(i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0, "{name}: unchecked {:?}", i.op);
+            assert!(
+                i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0,
+                "{name}: unchecked {:?}",
+                i.op
+            );
         }
     }
     // a nil read of a table without a metatable: `metatable == 0`
     let ir = ops("fields_nil");
-    let nil_load = ir.ins.iter().position(|i| i.op == TOp::Hload && i.t == Ty::Nil).expect("a nil HLOAD");
+    let nil_load = ir
+        .ins
+        .iter()
+        .position(|i| i.op == TOp::Hload && i.t == Ty::Nil)
+        .expect("a nil HLOAD");
     assert!(
         ir.ins[..nil_load].iter().any(|g| g.op == TOp::Eq
             && TraceIr::is_ins(g.a)
@@ -1726,7 +1829,11 @@ fn hash_ops_record_their_guards() {
     );
     // ... with a metatable: non-null and the `__index` bit of its flags
     let ir = ops("fields_meta_flag");
-    let nil_load = ir.ins.iter().position(|i| i.op == TOp::Hload && i.t == Ty::Nil).expect("a nil HLOAD");
+    let nil_load = ir
+        .ins
+        .iter()
+        .position(|i| i.op == TOp::Hload && i.t == Ty::Nil)
+        .expect("a nil HLOAD");
     let flag_guard = ir.ins[..nil_load].iter().any(|g| {
         g.op == TOp::Ne
             && TraceIr::is_ins(g.a)
@@ -1736,19 +1843,47 @@ fn hash_ops_record_their_guards() {
             && ir.at(ir.at(g.a).a).op == TOp::Fload
             && ir.at(ir.at(g.a).a).b == Field::Flags as Ref
     });
-    assert!(flag_guard, "nil read with a metatable but without the flag guard\n{}", dump(&ir));
+    assert!(
+        flag_guard,
+        "nil read with a metatable but without the flag guard\n{}",
+        dump(&ir)
+    );
     // a collectable value stored into a field: HSTORE then TBAR of the same table and value
     let ir = ops("fields_strkey");
-    let st = ir.ins.iter().enumerate().filter(|(_, i)| i.op == TOp::Hstore && collectable_ty(ir.ty_of(i.b))).count();
+    let st = ir
+        .ins
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.op == TOp::Hstore && collectable_ty(ir.ty_of(i.b)))
+        .count();
     assert!(st > 0, "no HSTORE of a string\n{}", dump(&ir));
-    for (x, i) in ir.ins.iter().enumerate().filter(|(_, i)| i.op == TOp::Hstore && collectable_ty(ir.ty_of(i.b))) {
+    for (x, i) in ir
+        .ins
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.op == TOp::Hstore && collectable_ty(ir.ty_of(i.b)))
+    {
         let next = &ir.ins[x + 1];
-        assert!(next.op == TOp::Tbar && next.b == i.b, "HSTORE of a collectable value without TBAR\n{}", dump(&ir));
+        assert!(
+            next.op == TOp::Tbar && next.b == i.b,
+            "HSTORE of a collectable value without TBAR\n{}",
+            dump(&ir)
+        );
     }
     // a string key that is not a constant of the proto (`local k = 'a'` outside the loop): EQREF on the key (the F1 path, N6 off)
-    let ir = closed(&record_prog(prog("fields_strkey"), 1, RecCfg { hrefv: false, ..strict() })).ir.clone();
+    let ir = closed(&record_prog(
+        prog("fields_strkey"),
+        1,
+        RecCfg {
+            hrefv: false,
+            ..strict()
+        },
+    ))
+    .ir
+    .clone();
     assert!(
-        ir.ins.iter().any(|i| i.op == TOp::Eqref && TraceIr::is_const(i.b)
+        ir.ins.iter().any(|i| i.op == TOp::Eqref
+            && TraceIr::is_const(i.b)
             && matches!(ir.kval(i.b), KVal::Ptr(_, PtrKind::Raw))),
         "no EQREF on a string key\n{}",
         dump(&ir)
@@ -2063,9 +2198,16 @@ fn upvalue_into_the_frame_records_as_a_slot() {
                return f(5)";
     let rc = record_src(src, strict());
     let r = closed(&rc);
-    assert!(r.ir.ins.iter().all(|i| i.op != TOp::Uload && i.op != TOp::Ustore), "the access is the register's");
     assert!(
-        r.ir.ins.iter().any(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0 && r.ir.ins.iter().any(|u| u.op == TOp::Uvrel)),
+        r.ir.ins
+            .iter()
+            .all(|i| i.op != TOp::Uload && i.op != TOp::Ustore),
+        "the access is the register's"
+    );
+    assert!(
+        r.ir.ins.iter().any(|i| i.op == TOp::Eq
+            && i.flags & F_GUARD != 0
+            && r.ir.ins.iter().any(|u| u.op == TOp::Uvrel)),
         "the identity guard EQ UVREL, 16 * slot"
     );
 }
@@ -2090,27 +2232,56 @@ fn mm_calls_record_their_guards() {
                  return s
                end
                return f(5)";
-    let rc = record_src(src, RecCfg { mm: true, ..strict() });
+    let rc = record_src(
+        src,
+        RecCfg {
+            mm: true,
+            ..strict()
+        },
+    );
     let ir = closed(&rc).ir.clone();
-    let ccalls = ir.ins.iter().filter(|i| i.op == TOp::Lib && i.aux & 0xff == lib::CCALLS).count();
+    let ccalls = ir
+        .ins
+        .iter()
+        .filter(|i| i.op == TOp::Lib && i.aux & 0xff == lib::CCALLS)
+        .count();
     // (N3b: one check per depth: the three calls of the loop body share the first)
     assert_eq!(ccalls, 1, "one C-stack guard per depth\n{}", dump(&ir));
-    let loads: Vec<usize> = (0..ir.ins.len()).filter(|&x| ir.ins[x].op == TOp::Hload && ir.ins[x].t == Ty::Lcf).collect();
-    assert_eq!(loads.len(), 3, "one closure load per metamethod call\n{}", dump(&ir));
+    let loads: Vec<usize> = (0..ir.ins.len())
+        .filter(|&x| ir.ins[x].op == TOp::Hload && ir.ins[x].t == Ty::Lcf)
+        .collect();
+    assert_eq!(
+        loads.len(),
+        3,
+        "one closure load per metamethod call\n{}",
+        dump(&ir)
+    );
     for &x in &loads {
         let i = ir.ins[x];
-        assert!(i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0, "unchecked metamethod load\n{}", dump(&ir));
+        assert!(
+            i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0,
+            "unchecked metamethod load\n{}",
+            dump(&ir)
+        );
         assert_eq!(ir.at(i.a).op, TOp::Hrefk);
         let node = ir.at(ir.at(i.a).a);
         let mt = ir.at(node.a);
-        assert!(mt.op == TOp::Fload && mt.b == Field::Metatable as Ref, "the event's HREFK is not on a metatable\n{}", dump(&ir));
         assert!(
-            ir.ins[..x].iter().any(|g| g.op == TOp::Ne && g.a == node.a && ir.as_int(g.b) == Some(0)),
+            mt.op == TOp::Fload && mt.b == Field::Metatable as Ref,
+            "the event's HREFK is not on a metatable\n{}",
+            dump(&ir)
+        );
+        assert!(
+            ir.ins[..x]
+                .iter()
+                .any(|g| g.op == TOp::Ne && g.a == node.a && ir.as_int(g.b) == Some(0)),
             "metamethod load without `mt != 0`\n{}",
             dump(&ir)
         );
         assert!(
-            ir.ins[x..].iter().any(|g| g.op == TOp::Eqref && g.a == x as Ref + REF_BIAS && g.flags & F_GUARD != 0),
+            ir.ins[x..].iter().any(|g| g.op == TOp::Eqref
+                && g.a == x as Ref + REF_BIAS
+                && g.flags & F_GUARD != 0),
             "metamethod closure without the prototype guard\n{}",
             dump(&ir)
         );
@@ -2136,15 +2307,33 @@ fn setmt_in_a_metamethod_records_with_a_shallow_allocation_exit() {
                  return acc.x
                end
                return f(5)";
-    let cfg = || RecCfg { mm: true, setmt: true, tailnat: true, ..strict() };
+    let cfg = || RecCfg {
+        mm: true,
+        setmt: true,
+        tailnat: true,
+        ..strict()
+    };
     let rc = record_src(pure, cfg());
     let ir = closed(&rc).ir.clone();
-    let setmts: Vec<usize> = (0..ir.ins.len()).filter(|&x| ir.ins[x].op == TOp::Lib && ir.ins[x].aux & 0xff == lib::SETMT).collect();
+    let setmts: Vec<usize> = (0..ir.ins.len())
+        .filter(|&x| ir.ins[x].op == TOp::Lib && ir.ins[x].aux & 0xff == lib::SETMT)
+        .collect();
     assert_eq!(setmts.len(), 1, "one SETMT\n{}", dump(&ir));
-    let tnew = (0..ir.ins.len()).find(|&x| ir.ins[x].op == TOp::Tnew).expect("TNEW");
+    let tnew = (0..ir.ins.len())
+        .find(|&x| ir.ins[x].op == TOp::Tnew)
+        .expect("TNEW");
     let g = ir.ins[tnew + 1];
-    assert!(g.op == TOp::Ne && g.flags & F_GUARD != 0 && g.a == tnew as Ref + REF_BIAS, "the allocation guard follows\n{}", dump(&ir));
-    assert_eq!(ir.snaps[aux_snap(g.aux) as usize].nframes, 0, "a pure body's allocation exit restarts the caller's instruction\n{}", dump(&ir));
+    assert!(
+        g.op == TOp::Ne && g.flags & F_GUARD != 0 && g.a == tnew as Ref + REF_BIAS,
+        "the allocation guard follows\n{}",
+        dump(&ir)
+    );
+    assert_eq!(
+        ir.snaps[aux_snap(g.aux) as usize].nframes,
+        0,
+        "a pure body's allocation exit restarts the caller's instruction\n{}",
+        dump(&ir)
+    );
     // a store before the allocation: the exit keeps the metamethod's frame
     let impure = "local V = {}
                V.__index = V
@@ -2160,9 +2349,16 @@ fn setmt_in_a_metamethod_records_with_a_shallow_allocation_exit() {
                return f(5)";
     let rc = record_src(impure, cfg());
     let ir = closed(&rc).ir.clone();
-    let tnew = (0..ir.ins.len()).find(|&x| ir.ins[x].op == TOp::Tnew).expect("TNEW");
+    let tnew = (0..ir.ins.len())
+        .find(|&x| ir.ins[x].op == TOp::Tnew)
+        .expect("TNEW");
     let g = ir.ins[tnew + 1];
-    assert_eq!(ir.snaps[aux_snap(g.aux) as usize].nframes, 1, "an impure body keeps its frame in the exit\n{}", dump(&ir));
+    assert_eq!(
+        ir.snaps[aux_snap(g.aux) as usize].nframes,
+        1,
+        "an impure body keeps its frame in the exit\n{}",
+        dump(&ir)
+    );
 }
 
 /// A1: which `NEWREF`s of a constructor are lowered to inline stores: the keys of a small constructor (any number of them, with the
@@ -2171,10 +2367,19 @@ fn setmt_in_a_metamethod_records_with_a_shallow_allocation_exit() {
 #[test]
 fn constructor_keys_are_inserted_inline() {
     let inline = |src: &str, nrinline: bool| -> (usize, usize) {
-        let rc = record_src(src, RecCfg { nrinline, ..strict() });
+        let rc = record_src(
+            src,
+            RecCfg {
+                nrinline,
+                ..strict()
+            },
+        );
         let ir = closed(&rc).ir.clone();
         let all: Vec<_> = ir.ins.iter().filter(|i| i.op == TOp::Newref).collect();
-        let n = all.iter().filter(|i| i.aux & rn_jit::tr::ir::nrplan::INLINE != 0).count();
+        let n = all
+            .iter()
+            .filter(|i| i.aux & rn_jit::tr::ir::nrplan::INLINE != 0)
+            .count();
         (n, all.len())
     };
     let small = "local arm = arm local function f(n) local s = 0 arm() for i = 1, n do local t = {a = i, b = 2, c = 3, d = 4, e = 5} s = s + t.a + t.e end return s end return f(5)";
@@ -2183,7 +2388,11 @@ fn constructor_keys_are_inserted_inline() {
     let big = "local arm = arm local function f(n) local s = 0 arm() for i = 1, n do local t = {a = i, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8, i = 9} s = s + t.a + t.i end return s end return f(5)";
     assert_eq!(inline(big, true).0, 0, "16 nodes: the helper");
     let tset = "local arm = arm local function f(n) local s = 0 arm() for i = 1, n do local t = {a = 1, b = 2, c = 3, d = 4, e = 5} t[i * 3 + 1] = i t.f = 6 s = s + t.a + t.f end return s end return f(5)";
-    assert_eq!(inline(tset, true), (5, 6), "the insertion after the integer key is the helper's");
+    assert_eq!(
+        inline(tset, true),
+        (5, 6),
+        "the insertion after the integer key is the helper's"
+    );
 }
 
 // ---- 5.4 ----------------------------------------------------------------------------------------------------------------
@@ -2223,7 +2432,10 @@ fn mutants_are_caught() {
         ("hmiss_skip", &["index_chain_records_its_guards"]),
         ("hmiss_lsize_skip", &["index_chain_records_its_guards"]),
         ("index_mt_null_skip", &["index_chain_records_its_guards"]),
-        ("index_tab_typecheck_skip", &["index_chain_records_its_guards"]),
+        (
+            "index_tab_typecheck_skip",
+            &["index_chain_records_its_guards"],
+        ),
         ("index_nilnode_skip", &["index_chain_records_its_guards"]),
         ("chain_end_skip", &["index_chain_records_its_guards"]),
         (
@@ -2331,7 +2543,12 @@ fn string_addresses_are_matched_by_content_under_threads() {
         .map(|_| {
             std::thread::spawn(|| {
                 for _ in 0..40 {
-                    for name in ["fields_meta_flag", "fields_rw", "fields_strkey", "fields_nested"] {
+                    for name in [
+                        "fields_meta_flag",
+                        "fields_rw",
+                        "fields_strkey",
+                        "fields_nested",
+                    ] {
                         let p = prog(name);
                         let rc = record_prog(p, 1, strict());
                         let r = closed(&rc);
@@ -2355,16 +2572,35 @@ fn string_addresses_are_matched_by_content_under_threads() {
 #[test]
 fn bv_upvalue_store_records_the_barrier() {
     let src = "local u local function f(n) ARM() for i = 1, n do u = {} end end f(5) return 1";
-    let on = || RecCfg { verify: true, upbar: 1, ..RecCfg::default() };
+    let on = || RecCfg {
+        verify: true,
+        upbar: 1,
+        ..RecCfg::default()
+    };
     let rc = record_src(&src.replace("ARM()", "arm()"), on());
     let ir = closed(&rc).ir.clone();
-    let at = ir.ins.iter().position(|i| i.op == TOp::Ustore).unwrap_or_else(|| panic!("no USTORE\n{}", dump(&ir)));
+    let at = ir
+        .ins
+        .iter()
+        .position(|i| i.op == TOp::Ustore)
+        .unwrap_or_else(|| panic!("no USTORE\n{}", dump(&ir)));
     let bar = ir.ins[at + 1];
-    assert!(bar.op == TOp::Tbar && bar.aux & 1 == 1 && bar.a == ir.ins[at].a && bar.b == ir.ins[at].b, "no upvalue barrier after the USTORE\n{}", dump(&ir));
+    assert!(
+        bar.op == TOp::Tbar && bar.aux & 1 == 1 && bar.a == ir.ins[at].a && bar.b == ir.ins[at].b,
+        "no upvalue barrier after the USTORE\n{}",
+        dump(&ir)
+    );
     // a number needs no barrier
-    let rc = record_src("local u local function f(n) arm() for i = 1, n do u = i * 2 end end f(5) return 1", on());
+    let rc = record_src(
+        "local u local function f(n) arm() for i = 1, n do u = i * 2 end end f(5) return 1",
+        on(),
+    );
     let ir = closed(&rc).ir.clone();
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Ustore) && !ir.ins.iter().any(|i| i.op == TOp::Tbar), "barrier for a number\n{}", dump(&ir));
+    assert!(
+        ir.ins.iter().any(|i| i.op == TOp::Ustore) && !ir.ins.iter().any(|i| i.op == TOp::Tbar),
+        "barrier for a number\n{}",
+        dump(&ir)
+    );
 }
 
 /// F3b: the generic-`for` calls and the string helpers record their guards: `NE` after every class-A helper (the "nothing
@@ -2379,7 +2615,11 @@ fn f3b_ops_record_their_guards() {
         closed(&rc).ir.clone()
     };
     let followed_by_ne = |ir: &TraceIr, op: TOp| {
-        let at = ir.ins.iter().position(|i| i.op == op).unwrap_or_else(|| panic!("no {op:?}\n{}", dump(ir)));
+        let at = ir
+            .ins
+            .iter()
+            .position(|i| i.op == op)
+            .unwrap_or_else(|| panic!("no {op:?}\n{}", dump(ir)));
         let mut j = at + 1;
         // the helper's own guard is the next guard: `NE %helper, 0`
         while j < ir.ins.len() && ir.ins[j].flags & F_GUARD == 0 {
@@ -2401,13 +2641,35 @@ fn f3b_ops_record_their_guards() {
         .filter(|i| i.op == TOp::Hload && TraceIr::is_ins(i.a) && ir.at(i.a).op == TOp::Tnext)
         .collect();
     assert_eq!(loads.len(), 2, "key and value\n{}", dump(&ir));
-    assert!(loads.iter().all(|l| l.flags & F_GUARD != 0 && aux_bits(l.aux) & 1 != 0), "unchecked pseudo-node load\n{}", dump(&ir));
-    assert!(loads.iter().any(|l| aux_bits(l.aux) & 2 != 0), "no key load\n{}", dump(&ir));
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Eqref), "no iterator identity guard\n{}", dump(&ir));
+    assert!(
+        loads
+            .iter()
+            .all(|l| l.flags & F_GUARD != 0 && aux_bits(l.aux) & 1 != 0),
+        "unchecked pseudo-node load\n{}",
+        dump(&ir)
+    );
+    assert!(
+        loads.iter().any(|l| aux_bits(l.aux) & 2 != 0),
+        "no key load\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins.iter().any(|i| i.op == TOp::Eqref),
+        "no iterator identity guard\n{}",
+        dump(&ir)
+    );
     // ipairs: no helper, the iterator guard and the array access
     let ir = ir_of("local t = {} for i = 1, 40 do t[i] = i end local function f() local s = 0 ARM() for i, v in ipairs(t) do s = s + v end return s end return f()");
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Eqref), "no iterator identity guard\n{}", dump(&ir));
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Aload), "no array load\n{}", dump(&ir));
+    assert!(
+        ir.ins.iter().any(|i| i.op == TOp::Eqref),
+        "no iterator identity guard\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins.iter().any(|i| i.op == TOp::Aload),
+        "no array load\n{}",
+        dump(&ir)
+    );
     // a table key built by CONCAT is a new string almost every iteration: the EQREF guard would fail every time, the loop is not traced
     assert_eq!(
         aborted("local t = {} local function f(n) ARM() for i = 1, n do t['k' .. i] = i end end f(5) return 1".replace("ARM()", "arm()").as_str()),
@@ -2424,7 +2686,11 @@ fn f3b_ops_record_their_guards() {
         strict(),
     );
     let c = closed(&rc);
-    let sn = c.ir.ins.iter().position(|i| i.op == TOp::Snew).expect("SNEW");
+    let sn =
+        c.ir.ins
+            .iter()
+            .position(|i| i.op == TOp::Snew)
+            .expect("SNEW");
     assert!(
         c.writeback.iter().any(|e| e.r == REF_BIAS + sn as Ref),
         "the converted operand is not written back\n{}",
@@ -2442,12 +2708,23 @@ fn f2_ops_record_their_guards() {
             let [sub, byte, chr] = rn_std::lib_string::jit_libfns();
             let [ins, rem] = rn_std::lib_table::jit_libfns();
             let [mty, fmod, toint] = rn_std::lib_math::jit_libfns();
-            let ([tostr, rawlen, rawequal, rawget, rawset, tonum], _) = rn_std::lib_base::jit_libfns();
-            [sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod, toint, tonum]
+            let ([tostr, rawlen, rawequal, rawget, rawset, tonum], _) =
+                rn_std::lib_base::jit_libfns();
+            [
+                sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod,
+                toint, tonum,
+            ]
         },
         rn_std::lib_base::jit_libfns().1,
     );
-    let cfg = || RecCfg { f2cmp: true, f2mt: true, f2raw: true, f2asrt: true, mm: true, ..strict() };
+    let cfg = || RecCfg {
+        f2cmp: true,
+        f2mt: true,
+        f2raw: true,
+        f2asrt: true,
+        mm: true,
+        ..strict()
+    };
     let ir_of = |src: &str| -> TraceIr {
         let rc = record_src(&src.replace("ARM()", "arm()"), cfg());
         closed(&rc).ir.clone()
@@ -2455,34 +2732,82 @@ fn f2_ops_record_their_guards() {
     // string comparisons
     let ir = ir_of("local A, B = {}, {} for i = 1, 8 do A[i] = string.rep('a', 50) .. i; B[i] = string.rep('a', 50) .. (i + 1) end local arm = arm local function f(n) local c = 0 ARM() for i = 1, n do local k = i % 8 + 1 if A[k] < B[k] then c = c + 1 end if A[k] == B[k] then c = c + 1 end end return c end return f(30)");
     for k in [lib::STRLT, lib::STREQ] {
-        let at = ir.ins.iter().position(|i| i.op == TOp::Lib && i.aux & 0xFF == k).unwrap_or_else(|| panic!("no LIB {k}\n{}", dump(&ir)));
+        let at = ir
+            .ins
+            .iter()
+            .position(|i| i.op == TOp::Lib && i.aux & 0xFF == k)
+            .unwrap_or_else(|| panic!("no LIB {k}\n{}", dump(&ir)));
         let mut j = at + 1;
         while ir.ins[j].flags & F_GUARD == 0 {
             j += 1;
         }
-        assert!(ir.ins[j].op == TOp::Ne && ir.ins[j].a == REF_BIAS + at as Ref, "LIB {k} not followed by NE %h, 0\n{}", dump(&ir));
+        assert!(
+            ir.ins[j].op == TOp::Ne && ir.ins[j].a == REF_BIAS + at as Ref,
+            "LIB {k} not followed by NE %h, 0\n{}",
+            dump(&ir)
+        );
         j += 1;
         while ir.ins[j].flags & F_GUARD == 0 {
             j += 1;
         }
         let g = ir.ins[j];
-        assert!(g.op == TOp::Eq && g.a == REF_BIAS + at as Ref && ir.as_int(g.b).is_some_and(|v| v == 1 || v == 2), "LIB {k} outcome not guarded\n{}", dump(&ir));
+        assert!(
+            g.op == TOp::Eq
+                && g.a == REF_BIAS + at as Ref
+                && ir.as_int(g.b).is_some_and(|v| v == 1 || v == 2),
+            "LIB {k} outcome not guarded\n{}",
+            dump(&ir)
+        );
     }
     // getmetatable
     let ir = ir_of("local mt = {} local objs = {} for i = 1, 8 do objs[i] = setmetatable({}, mt) end local getmetatable = getmetatable local arm = arm local function f(n) local c = 0 ARM() for i = 1, n do if getmetatable(objs[i % 8 + 1]) == mt then c = c + 1 end end return c end return f(30)");
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Hmiss && i.flags & F_GUARD != 0), "no HMISS proof of the absent `__metatable`\n{}", dump(&ir));
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Ne && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && ir.at(i.a).op == TOp::Fload && ir.at(i.a).b == Field::Metatable as Ref), "no metatable-word guard\n{}", dump(&ir));
+    assert!(
+        ir.ins
+            .iter()
+            .any(|i| i.op == TOp::Hmiss && i.flags & F_GUARD != 0),
+        "no HMISS proof of the absent `__metatable`\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins.iter().any(|i| i.op == TOp::Ne
+            && i.flags & F_GUARD != 0
+            && TraceIr::is_ins(i.a)
+            && ir.at(i.a).op == TOp::Fload
+            && ir.at(i.a).b == Field::Metatable as Ref),
+        "no metatable-word guard\n{}",
+        dump(&ir)
+    );
     // rawget / rawset: no metatable guard (the table has one), the barrier of a collectable value
     #[cfg(not(rustynail_lua54))]
     {
         let ir = ir_of("local t = setmetatable({}, {__index = function() return 0 end, __newindex = function() end}) for i = 1, 8 do rawset(t, i, i) end local rawset, rawget = rawset, rawget local arm = arm local function f(n) local c = 0 ARM() for i = 1, n do rawset(t, i % 8 + 1, {}) if rawget(t, i % 8 + 1) then c = c + 1 end end return c end return f(30)");
-        assert!(ir.ins.iter().any(|i| i.op == TOp::Astore), "no array store\n{}", dump(&ir));
-        assert!(ir.ins.iter().any(|i| i.op == TOp::Tbar), "no write barrier after the store of a table\n{}", dump(&ir));
-        assert!(!ir.ins.iter().any(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && ir.at(i.a).op == TOp::Fload && ir.at(i.a).b == Field::Metatable as Ref), "metatable guard in a raw access\n{}", dump(&ir));
+        assert!(
+            ir.ins.iter().any(|i| i.op == TOp::Astore),
+            "no array store\n{}",
+            dump(&ir)
+        );
+        assert!(
+            ir.ins.iter().any(|i| i.op == TOp::Tbar),
+            "no write barrier after the store of a table\n{}",
+            dump(&ir)
+        );
+        assert!(
+            !ir.ins.iter().any(|i| i.op == TOp::Eq
+                && i.flags & F_GUARD != 0
+                && TraceIr::is_ins(i.a)
+                && ir.at(i.a).op == TOp::Fload
+                && ir.at(i.a).b == Field::Metatable as Ref),
+            "metatable guard in a raw access\n{}",
+            dump(&ir)
+        );
     }
     // assert of a truthy value records no helper and no extra guard
     let ir = ir_of("local assert = assert local arm = arm local function f(n) local c = 0 ARM() for i = 1, n do c = c + assert(i, 'msg') end return c end return f(30)");
-    assert!(!ir.ins.iter().any(|i| i.op == TOp::Lib), "assert recorded a helper\n{}", dump(&ir));
+    assert!(
+        !ir.ins.iter().any(|i| i.op == TOp::Lib),
+        "assert recorded a helper\n{}",
+        dump(&ir)
+    );
 }
 
 /// P-B: the library-call intrinsics record their guards: the `NE %lib, 0` behind every `LIB`, the `__len` / metatable guard of
@@ -2495,8 +2820,12 @@ fn pb_ops_record_their_guards() {
             let [sub, byte, chr] = rn_std::lib_string::jit_libfns();
             let [ins, rem] = rn_std::lib_table::jit_libfns();
             let [mty, fmod, toint] = rn_std::lib_math::jit_libfns();
-            let ([tostr, rawlen, rawequal, rawget, rawset, tonum], _) = rn_std::lib_base::jit_libfns();
-            [sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod, toint, tonum]
+            let ([tostr, rawlen, rawequal, rawget, rawset, tonum], _) =
+                rn_std::lib_base::jit_libfns();
+            [
+                sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod,
+                toint, tonum,
+            ]
         },
         rn_std::lib_base::jit_libfns().1,
     );
@@ -2522,37 +2851,79 @@ fn pb_ops_record_their_guards() {
         );
     };
     let ir = ir_of("local s = 'hello world' local function f(n) local a = 0 ARM() for i = 1, n do local x = s:sub(2, 4) a = a + #x + s:byte(3) + #string.char(65 + i % 26) + #tostring(i) + #type(a) + #math.type(a) end return a end return f(30)");
-    for k in [lib::SUB, lib::BYTE, lib::CHAR, lib::TOSTR, lib::TYPE, lib::TYPENAME] {
+    for k in [
+        lib::SUB,
+        lib::BYTE,
+        lib::CHAR,
+        lib::TOSTR,
+        lib::TYPE,
+        lib::TYPENAME,
+    ] {
         lib_followed_by_ne(&ir, k);
     }
     // P-V: `s:method` is no helper call any more: the string metatable is a constant (`KPTR` of type table) behind guarded `HREFK` loads
-    assert!(!ir.ins.iter().any(|i| i.op == TOp::Lib && i.aux & 0xFF == lib::STRMETH), "STRMETH still recorded\n{}", dump(&ir));
-    assert!(ir.ins.iter().any(|i| i.op == TOp::Kptr && i.t == Ty::Tab), "no constant string metatable\n{}", dump(&ir));
-    assert!(ir.ins.iter().filter(|i| i.op == TOp::Hrefk).count() >= 2, "no HREFK chain for the string method\n{}", dump(&ir));
+    assert!(
+        !ir.ins
+            .iter()
+            .any(|i| i.op == TOp::Lib && i.aux & 0xFF == lib::STRMETH),
+        "STRMETH still recorded\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins.iter().any(|i| i.op == TOp::Kptr && i.t == Ty::Tab),
+        "no constant string metatable\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins.iter().filter(|i| i.op == TOp::Hrefk).count() >= 2,
+        "no HREFK chain for the string method\n{}",
+        dump(&ir)
+    );
     // table.insert / table.remove: the metatable guard before the length, then the stores (5.4: a store into an empty slot inside the array
     // part is an `Insert` abort, F3, so the append of a table with spare capacity is not recorded there)
     #[cfg(not(rustynail_lua54))]
     {
-    let ir = ir_of("local t = {} for i = 1, 50 do t[i] = i end local function f(n) local a = 0 ARM() for i = 1, n do table.insert(t, i) a = a + table.remove(t) end return a end return f(30)");
-    let tl = ir.ins.iter().position(|i| i.op == TOp::Tlen).unwrap_or_else(|| panic!("no TLEN\n{}", dump(&ir)));
-    assert!(
-        ir.ins[..tl].iter().any(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && ir.at(i.a).op == TOp::Fload && ir.at(i.a).b == Field::Metatable as Ref && ir.at(i.a).a == ir.ins[tl].a),
-        "no metatable guard before the length\n{}",
-        dump(&ir)
-    );
+        let ir = ir_of("local t = {} for i = 1, 50 do t[i] = i end local function f(n) local a = 0 ARM() for i = 1, n do table.insert(t, i) a = a + table.remove(t) end return a end return f(30)");
+        let tl = ir
+            .ins
+            .iter()
+            .position(|i| i.op == TOp::Tlen)
+            .unwrap_or_else(|| panic!("no TLEN\n{}", dump(&ir)));
+        assert!(
+            ir.ins[..tl].iter().any(|i| i.op == TOp::Eq
+                && i.flags & F_GUARD != 0
+                && TraceIr::is_ins(i.a)
+                && ir.at(i.a).op == TOp::Fload
+                && ir.at(i.a).b == Field::Metatable as Ref
+                && ir.at(i.a).a == ir.ins[tl].a),
+            "no metatable guard before the length\n{}",
+            dump(&ir)
+        );
     }
     // table.remove alone (all versions): the same guard before the length
     let ir = ir_of("local t = {} for i = 1, 500 do t[i] = i end local function f(n) local a = 0 ARM() for i = 1, n do a = a + table.remove(t) end return a end return f(30)");
-    let tl = ir.ins.iter().position(|i| i.op == TOp::Tlen).unwrap_or_else(|| panic!("no TLEN\n{}", dump(&ir)));
+    let tl = ir
+        .ins
+        .iter()
+        .position(|i| i.op == TOp::Tlen)
+        .unwrap_or_else(|| panic!("no TLEN\n{}", dump(&ir)));
     assert!(
-        ir.ins[..tl].iter().any(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && ir.at(i.a).op == TOp::Fload && ir.at(i.a).b == Field::Metatable as Ref && ir.at(i.a).a == ir.ins[tl].a),
+        ir.ins[..tl].iter().any(|i| i.op == TOp::Eq
+            && i.flags & F_GUARD != 0
+            && TraceIr::is_ins(i.a)
+            && ir.at(i.a).op == TOp::Fload
+            && ir.at(i.a).b == Field::Metatable as Ref
+            && ir.at(i.a).a == ir.ins[tl].a),
         "no metatable guard before the length (remove)\n{}",
         dump(&ir)
     );
     // short-string equality is a pointer compare guard
     let ir = ir_of("local function f(n) local a = 0 ARM() for i = 1, n do if type(i) == 'number' then a = a + 1 end end return a end return f(30)");
     assert!(
-        ir.ins.iter().any(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0 && TraceIr::is_ins(i.a) && ir.at(i.a).op == TOp::Lib),
+        ir.ins.iter().any(|i| i.op == TOp::Eq
+            && i.flags & F_GUARD != 0
+            && TraceIr::is_ins(i.a)
+            && ir.at(i.a).op == TOp::Lib),
         "no string equality guard\n{}",
         dump(&ir)
     );
@@ -2562,10 +2933,19 @@ fn pb_ops_record_their_guards() {
 #[test]
 fn pb_storm_guard_aborts_allocating_loops() {
     let src = "local function f(n) local s = 0 arm() for i = 1, n do local z = 'k' .. i .. 'x' s = s + #z end return s end return f(30)";
-    let cfg = RecCfg { storm_step: 64, ..strict() };
+    let cfg = RecCfg {
+        storm_step: 64,
+        ..strict()
+    };
     assert_eq!(aborted_cfg(src, cfg), AbortReason::AllocStorm);
     // a collector that steps every megabyte: recorded
-    let rc = record_src(src, RecCfg { storm_step: 1 << 20, ..strict() });
+    let rc = record_src(
+        src,
+        RecCfg {
+            storm_step: 1 << 20,
+            ..strict()
+        },
+    );
     let _ = closed(&rc);
 }
 
@@ -2580,10 +2960,22 @@ fn ba_ops_record_their_guards() {
         let [sub, byte, chr] = rn_std::lib_string::jit_libfns();
         let [ins, rem] = rn_std::lib_table::jit_libfns();
         let [mty, fmod, toint] = rn_std::lib_math::jit_libfns();
-        let ([tostr, rawlen, rawequal, rawget, rawset, tonum], typefn) = rn_std::lib_base::jit_libfns();
-        jit_hooks::set_libfns([sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod, toint, tonum], typefn);
+        let ([tostr, rawlen, rawequal, rawget, rawset, tonum], typefn) =
+            rn_std::lib_base::jit_libfns();
+        jit_hooks::set_libfns(
+            [
+                sub, byte, chr, mty, tostr, rawlen, rawequal, rawget, rawset, ins, rem, fmod,
+                toint, tonum,
+            ],
+            typefn,
+        );
     }
-    let cfg = || RecCfg { libnum: true, libnext: true, libfind: true, ..strict() };
+    let cfg = || RecCfg {
+        libnum: true,
+        libnext: true,
+        libfind: true,
+        ..strict()
+    };
     let ir_of = |src: &str| -> TraceIr {
         eprintln!("recording: {src}");
         let rc = record_src(&src.replace("ARM()", "arm()"), cfg());
@@ -2592,17 +2984,57 @@ fn ba_ops_record_their_guards() {
     // next: identity guard, TNEXT, NE, typed HLOADs (5.5 only: the 5.4 recorder does not record `next` as a library call, the `CFunc` abort is by design)
     if !cfg!(rustynail_lua54) {
         let ir = ir_of("local t = { 5 } local function f(n) local a = 0 ARM() for i = 1, n do local k, v = next(t) a = a + k + v end return a end return f(30)");
-        let builtin_eq = ir.ins.iter().filter(|i| i.op == TOp::Eqref && matches!(ir.k[usize::from(i.b) - 1], KVal::Ptr(_, PtrKind::Builtin))).count();
+        let builtin_eq = ir
+            .ins
+            .iter()
+            .filter(|i| {
+                i.op == TOp::Eqref
+                    && matches!(ir.k[usize::from(i.b) - 1], KVal::Ptr(_, PtrKind::Builtin))
+            })
+            .count();
 
-        assert!(builtin_eq >= 1, "no callee identity guard for next\n{}", dump(&ir));
-        assert!(ir.ins.iter().any(|i| i.op == TOp::Tnext), "no TNEXT\n{}", dump(&ir));
-        assert!(ir.ins.iter().filter(|i| i.op == TOp::Hload && i.flags & F_GUARD != 0).count() >= 2, "key / value HLOAD guards missing\n{}", dump(&ir));
+        assert!(
+            builtin_eq >= 1,
+            "no callee identity guard for next\n{}",
+            dump(&ir)
+        );
+        assert!(
+            ir.ins.iter().any(|i| i.op == TOp::Tnext),
+            "no TNEXT\n{}",
+            dump(&ir)
+        );
+        assert!(
+            ir.ins
+                .iter()
+                .filter(|i| i.op == TOp::Hload && i.flags & F_GUARD != 0)
+                .count()
+                >= 2,
+            "key / value HLOAD guards missing\n{}",
+            dump(&ir)
+        );
     }
     // tonumber(string): STRTO in tonumber mode, NE, typed HLOAD
     let ir = ir_of("local s = '2.5' local function f(n) local a = 0.0 ARM() for i = 1, n do a = a + tonumber(s) end return a end return f(30)");
-    let at = ir.ins.iter().position(|i| i.op == TOp::Strto && i.aux & 2 != 0).unwrap_or_else(|| panic!("no STRTO in tonumber mode\n{}", dump(&ir)));
-    assert!(ir.ins[at..].iter().any(|i| i.op == TOp::Ne && i.a == REF_BIAS + at as Ref && i.flags & F_GUARD != 0), "no NE guard behind STRTO\n{}", dump(&ir));
-    assert!(ir.ins[at..].iter().any(|i| i.op == TOp::Hload && i.t == Ty::Num && i.flags & F_GUARD != 0 && i.aux & 1 != 0), "no typed HLOAD of the float result\n{}", dump(&ir));
+    let at = ir
+        .ins
+        .iter()
+        .position(|i| i.op == TOp::Strto && i.aux & 2 != 0)
+        .unwrap_or_else(|| panic!("no STRTO in tonumber mode\n{}", dump(&ir)));
+    assert!(
+        ir.ins[at..]
+            .iter()
+            .any(|i| i.op == TOp::Ne && i.a == REF_BIAS + at as Ref && i.flags & F_GUARD != 0),
+        "no NE guard behind STRTO\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins[at..].iter().any(|i| i.op == TOp::Hload
+            && i.t == Ty::Num
+            && i.flags & F_GUARD != 0
+            && i.aux & 1 != 0),
+        "no typed HLOAD of the float result\n{}",
+        dump(&ir)
+    );
     // plain find: LIB FIND (FINDS without the plain argument), NE %lib, 0, then the outcome guard against 1
     for (src, kind) in [
         ("local s, p = 'hello world', 'wor' local function f(n) local a = 0 ARM() for i = 1, n do local x, y = s:find(p, 1, true) a = a + x + y end return a end return f(30)", lib::FIND),

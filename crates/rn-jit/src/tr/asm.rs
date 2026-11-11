@@ -47,7 +47,10 @@
 
 use super::cache::head_off;
 use super::exit::{self, tag_of, ExitSnap, SharedExitEnv, ValSrc};
-use super::interp::{kbits, CALLN_CFMOD, CALLN_COS, CALLN_EXP, CALLN_FLOOR, CALLN_FMOD, CALLN_LOG, CALLN_POW, CALLN_SIN};
+use super::interp::{
+    kbits, CALLN_CFMOD, CALLN_COS, CALLN_EXP, CALLN_FLOOR, CALLN_FMOD, CALLN_LOG, CALLN_POW,
+    CALLN_SIN,
+};
 use super::ir::*;
 
 /// N5: clears the short / long variant bit of a string tag byte (`ctb(LUA_VSHRSTR)` = 0x44, `ctb(LUA_VLNGSTR)` = 0x54).
@@ -389,7 +392,13 @@ pub fn calln_core(which: u32, x: u64, y: u64) -> u64 {
         CALLN_FMOD => fmod_lua(x, y),
         CALLN_FLOOR => x.floor(),
         CALLN_CFMOD => x % y,
-        CALLN_SIN => if mutants::active("f1_sin_cos_swap") { x.cos() } else { x.sin() },
+        CALLN_SIN => {
+            if mutants::active("f1_sin_cos_swap") {
+                x.cos()
+            } else {
+                x.sin()
+            }
+        }
         CALLN_COS => x.cos(),
         CALLN_EXP => x.exp(),
         CALLN_LOG => x.ln(),
@@ -426,7 +435,10 @@ pub unsafe extern "C" fn jit_tr_calln(
 /// Calls of the barrier helper by kind (Y5 coverage counters: `[0]` the back barrier of a table store, `[1]` the forward barrier of an upvalue
 /// store (`b` = 1): the inline test of the trace calls the helper only when the container is black and the value white, so a nonzero count proves
 /// that a real run reached the slow path). Process-wide; printed by the `[trace]` summary.
-pub static BARRIER_CALLS: [std::sync::atomic::AtomicU64; 2] = [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+pub static BARRIER_CALLS: [std::sync::atomic::AtomicU64; 2] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
 
 /// `jit_tr_barrier(thread, ci, tag, 0)`: `barrier_back(table = args[0], value = (tag, args[1]))` (the inline test of
 /// the trace has already established "table black and value white", the call is the slow path of 7.5). Class S, no
@@ -455,7 +467,9 @@ pub unsafe extern "C" fn jit_tr_barrier(
     if b & 1 != 0 {
         // BUNDLE-V V2: the barrier of an upvalue (`args[0]` = the `UpVal`): `luaC_barrier(uv, v)`, the forward barrier of `OP_SETUPVAL`
         // SAFETY: as below.
-        let v: rn_core::value::Value = unsafe { std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(tag & 0xff), payload]) };
+        let v: rn_core::value::Value = unsafe {
+            std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(tag & 0xff), payload])
+        };
         st.heap().barrier(t as *mut rn_core::gc::GcHeader, &v);
         return 0;
     }
@@ -467,7 +481,6 @@ pub unsafe extern "C" fn jit_tr_barrier(
     st.heap().barrier_back(t as *mut rn_core::gc::GcHeader, &v);
     0
 }
-
 
 /// `jit_tr_alloc` operations (the low byte of the first immediate; the rest of it and the second immediate are
 /// per-operation arguments).
@@ -529,7 +542,10 @@ unsafe fn tnext_entry(th: *mut rn_core::state::Thread, x: u32) {
     let (t, ctl) = unsafe {
         (
             rn_core::table::TableRef::from_raw(arg(area, 0) as *mut rn_core::table::Table),
-            std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(x as u8), arg(area, 1)]),
+            std::mem::transmute::<[u64; 2], rn_core::value::Value>([
+                u64::from(x as u8),
+                arg(area, 1),
+            ]),
         )
     };
     let mut hint = st.heap().next_hint;
@@ -586,9 +602,15 @@ pub unsafe extern "C" fn jit_tr_tlen(
     let mut st = unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) };
     let budget = crate::rt::cnt_ptr(&mut st);
     // SAFETY: as in `jit_tr_calln`.
-    let area = unsafe { &mut *budget.cast::<u8>().add(exit_area::FROM_R15 as usize).cast::<super::ExitArea>() };
+    let area = unsafe {
+        &mut *budget
+            .cast::<u8>()
+            .add(exit_area::FROM_R15 as usize)
+            .cast::<super::ExitArea>()
+    };
     // SAFETY: the contract above.
-    let t = unsafe { rn_core::table::TableRef::from_raw(area.args[0] as *mut rn_core::table::Table) };
+    let t =
+        unsafe { rn_core::table::TableRef::from_raw(area.args[0] as *mut rn_core::table::Table) };
     area.args[0] = t.len(st.heap());
     0
 }
@@ -608,13 +630,28 @@ pub unsafe extern "C" fn jit_tr_lib_sub(
     let mut st = unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) };
     let budget = crate::rt::cnt_ptr(&mut st);
     // SAFETY: as in `jit_tr_calln`.
-    let area = unsafe { &mut *budget.cast::<u8>().add(exit_area::FROM_R15 as usize).cast::<super::ExitArea>() };
+    let area = unsafe {
+        &mut *budget
+            .cast::<u8>()
+            .add(exit_area::FROM_R15 as usize)
+            .cast::<super::ExitArea>()
+    };
     let fl = (a >> 8) >> 8;
-    let tag = if fl & 1 != 0 { rn_core::value::ctb(rn_core::value::LUA_VLNGSTR) } else { rn_core::value::ctb(rn_core::value::LUA_VSHRSTR) };
+    let tag = if fl & 1 != 0 {
+        rn_core::value::ctb(rn_core::value::LUA_VLNGSTR)
+    } else {
+        rn_core::value::ctb(rn_core::value::LUA_VSHRSTR)
+    };
     // SAFETY: the contract above; `Value` is `repr(C)` `{ tag word, payload }`.
-    let v: rn_core::value::Value = unsafe { std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(tag), area.args[0]]) };
+    let v: rn_core::value::Value = unsafe {
+        std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(tag), area.args[0]])
+    };
     // MUTANT `libsub_lean_args_swapped`: the bounds are passed the wrong way round
-    let args = if mutants::active("libsub_lean_args_swapped") { [area.args[0], area.args[2], area.args[1]] } else { [area.args[0], area.args[1], area.args[2]] };
+    let args = if mutants::active("libsub_lean_args_swapped") {
+        [area.args[0], area.args[2], area.args[1]]
+    } else {
+        [area.args[0], area.args[1], area.args[2]]
+    };
     area.args[0] = match v.as_strref() {
         Some(s) => sub_piece(&mut st, s.get().as_bytes(), fl, args),
         None => 0,
@@ -634,12 +671,20 @@ pub unsafe extern "C" fn jit_tr_tset(
     let mut st = unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) };
     let budget = crate::rt::cnt_ptr(&mut st);
     // SAFETY: as in `jit_tr_calln`.
-    let area = unsafe { &mut *budget.cast::<u8>().add(exit_area::FROM_R15 as usize).cast::<super::ExitArea>() };
+    let area = unsafe {
+        &mut *budget
+            .cast::<u8>()
+            .add(exit_area::FROM_R15 as usize)
+            .cast::<super::ExitArea>()
+    };
     // SAFETY: as the `ALLOC_TSET` arm of `jit_tr_alloc`.
     let (t, v) = unsafe {
         (
             rn_core::table::TableRef::from_raw(area.args[0] as *mut rn_core::table::Table),
-            std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from((a >> 8) as u8), area.args[2]]),
+            std::mem::transmute::<[u64; 2], rn_core::value::Value>([
+                u64::from((a >> 8) as u8),
+                area.args[2],
+            ]),
         )
     };
     area.args[0] = u64::from(t.set_int(st.heap(), area.args[1] as i64, &v).is_ok());
@@ -658,7 +703,12 @@ pub unsafe extern "C" fn jit_tr_newref(
     let mut st = unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) };
     let budget = crate::rt::cnt_ptr(&mut st);
     // SAFETY: as in `jit_tr_calln`.
-    let area = unsafe { &mut *budget.cast::<u8>().add(exit_area::FROM_R15 as usize).cast::<super::ExitArea>() };
+    let area = unsafe {
+        &mut *budget
+            .cast::<u8>()
+            .add(exit_area::FROM_R15 as usize)
+            .cast::<super::ExitArea>()
+    };
     // SAFETY: the contract above: live table, live interned short string.
     area.args[0] = unsafe { newref_core(&mut st, arg(area, 0), arg(area, 1)) };
     0
@@ -718,7 +768,10 @@ pub unsafe extern "C" fn jit_tr_alloc(
             let (t, v) = unsafe {
                 (
                     rn_core::table::TableRef::from_raw(area.args[0] as *mut rn_core::table::Table),
-                    std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(x as u8), area.args[2]]),
+                    std::mem::transmute::<[u64; 2], rn_core::value::Value>([
+                        u64::from(x as u8),
+                        area.args[2],
+                    ]),
                 )
             };
             u64::from(t.set_int(st.heap(), area.args[1] as i64, &v).is_ok())
@@ -736,9 +789,17 @@ pub unsafe extern "C" fn jit_tr_alloc(
                 rn_core::value::ctb(rn_core::value::LUA_VSHRSTR)
             };
             // SAFETY: the contract above: a live string of the kind `x` says; `Value` is `repr(C)` `{ tag word, payload }`.
-            let v: rn_core::value::Value =
-                unsafe { std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(tag), area.args[0]]) };
-            let mode = if x & 2 != 0 { rn_core::number::F2I::Ceil } else { rn_core::number::F2I::Floor };
+            let v: rn_core::value::Value = unsafe {
+                std::mem::transmute::<[u64; 2], rn_core::value::Value>([
+                    u64::from(tag),
+                    area.args[0],
+                ])
+            };
+            let mode = if x & 2 != 0 {
+                rn_core::number::F2I::Ceil
+            } else {
+                rn_core::number::F2I::Floor
+            };
             if x & 4 != 0 && !mutants::active("tonum_mode_ignored") {
                 // BUNDLE-A: tonumber mode (`base_tonumber` of a string argument)
                 match strto_tonumber(&v) {
@@ -751,15 +812,15 @@ pub unsafe extern "C" fn jit_tr_alloc(
                     None => 0,
                 }
             } else {
-            match rn_core::arith::to_integer(&v, mode) {
-                Some(i) => {
-                    area.args[1] = i as u64;
-                    area.args[2] = u64::from(rn_core::value::LUA_VNUMINT);
-                    area.args[3] = 0;
-                    std::ptr::addr_of!(area.args[1]) as u64
+                match rn_core::arith::to_integer(&v, mode) {
+                    Some(i) => {
+                        area.args[1] = i as u64;
+                        area.args[2] = u64::from(rn_core::value::LUA_VNUMINT);
+                        area.args[3] = 0;
+                        std::ptr::addr_of!(area.args[1]) as u64
+                    }
+                    None => 0,
                 }
-                None => 0,
-            }
             }
         }
         ALLOC_LIB => {
@@ -785,7 +846,9 @@ pub unsafe extern "C" fn jit_tr_alloc(
         ALLOC_TLEN => {
             if y == 0 {
                 // SAFETY: the contract above.
-                let t = unsafe { rn_core::table::TableRef::from_raw(area.args[0] as *mut rn_core::table::Table) };
+                let t = unsafe {
+                    rn_core::table::TableRef::from_raw(area.args[0] as *mut rn_core::table::Table)
+                };
                 t.len(st.heap())
             } else {
                 // SAFETY: the contract above: a live string object; `Value` is `repr(C)` `{ tag word, payload }`.
@@ -804,7 +867,12 @@ pub unsafe extern "C" fn jit_tr_alloc(
         }
         _ => 0,
     };
-    if area.args[0] == 0 && matches!(a & 0xFF, ALLOC_TNEW | ALLOC_SNEW | ALLOC_CONCAT | ALLOC_CONCATN | ALLOC_LIB) {
+    if area.args[0] == 0
+        && matches!(
+            a & 0xFF,
+            ALLOC_TNEW | ALLOC_SNEW | ALLOC_CONCAT | ALLOC_CONCATN | ALLOC_LIB
+        )
+    {
         // N3b: the trace is about to leave at this allocation (a collector step is due, or the call needs the interpreter)
         rn_core::jit_hooks::note_alloc_refusal();
     }
@@ -829,7 +897,9 @@ unsafe fn setmt_core(st: &mut rn_core::state::State, t: u64, mt: u64) -> u64 {
         }
     }
     // `luaC_checkfinalizer` would move the table to `finobj`: the interpreter does that
-    if mt.is_some_and(|m| st.heap().fast_tm(Some(m), rn_core::meta::Tm::Gc).is_some()) && !mutants::active("setmt_gc_skip") {
+    if mt.is_some_and(|m| st.heap().fast_tm(Some(m), rn_core::meta::Tm::Gc).is_some())
+        && !mutants::active("setmt_gc_skip")
+    {
         return 0;
     }
     // (the barrier, the store and `check_finalizer`, which has nothing to do for a metatable without `__gc`)
@@ -845,7 +915,11 @@ unsafe fn setmt_core(st: &mut rn_core::state::State, t: u64, mt: u64) -> u64 {
 pub fn tnew_core(st: &mut rn_core::state::State, b: u32, c: u32) -> u64 {
     let hsize = if b > 0 { 1u32 << (b - 1) } else { 0 };
     // MUTANT `tnew_bytes_small`: the node vector is left out of the bound
-    let counted_hsize = if mutants::active("tnew_bytes_small") { 0 } else { hsize };
+    let counted_hsize = if mutants::active("tnew_bytes_small") {
+        0
+    } else {
+        hsize
+    };
     let Some(bytes) = rn_core::table::new_table_bytes(c, counted_hsize) else {
         return 0;
     };
@@ -866,16 +940,32 @@ pub fn tnew_core(st: &mut rn_core::state::State, b: u32, c: u32) -> u64 {
 /// `SNEW` without the GC step: the string `luaO_tostring` makes of `n`, or 0 when a step would be due after the allocation
 /// (or it could fail, or it would grow the string table).
 pub fn snew_core(st: &mut rn_core::state::State, n: rn_core::number::Number) -> u64 {
-    rn_core::number::with_tostring(n, |b| short_core::<true>(st, b, mutants::active("snew_bytes_small"), mutants::active("snew_no_gc_check")))
+    rn_core::number::with_tostring(n, |b| {
+        short_core::<true>(
+            st,
+            b,
+            mutants::active("snew_bytes_small"),
+            mutants::active("snew_no_gc_check"),
+        )
+    })
 }
 
 /// P-B: the interned short string `s` (at most 40 bytes) with ONE hash and one chain walk (the probe of
 /// [`rn_core::heap::Heap::jit_str_probe`] and its commit), or 0 when a step would be due after the allocation, it could fail or the
 /// string table would grow. `small` / `nogc` are the names of the two mutants of the caller (`*_bytes_small`, `*_no_gc_check`). `FRESH`: the bytes were written by
 /// byte stores just before (a formatted number, an assembled concatenation): the hash is read byte by byte (BUNDLE-P P3, [`rn_core::string::fast_hash_fresh`]).
-fn short_core<const FRESH: bool>(st: &mut rn_core::state::State, s: &[u8], small: bool, nogc: bool) -> u64 {
+fn short_core<const FRESH: bool>(
+    st: &mut rn_core::state::State,
+    s: &[u8],
+    small: bool,
+    nogc: bool,
+) -> u64 {
     let heap = st.heap();
-    let (h, found, bytes) = if FRESH { heap.jit_str_probe_fresh(s) } else { heap.jit_str_probe(s) };
+    let (h, found, bytes) = if FRESH {
+        heap.jit_str_probe_fresh(s)
+    } else {
+        heap.jit_str_probe(s)
+    };
     let Some(bytes) = bytes else {
         return 0;
     };
@@ -900,7 +990,11 @@ pub unsafe fn concat_core(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
     let mut parts: [Option<rn_core::string::StrRef>; 3] = [None; 3];
     let mut tl = 0usize;
     for k in 0..n {
-        let tag = if bits >> k & 1 != 0 { ctb(LUA_VLNGSTR) } else { ctb(LUA_VSHRSTR) };
+        let tag = if bits >> k & 1 != 0 {
+            ctb(LUA_VLNGSTR)
+        } else {
+            ctb(LUA_VSHRSTR)
+        };
         // SAFETY: caller contract; `Value` is `repr(C)` `{ tag word, payload }`.
         let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), ops[k]]) };
         let Some(s) = v.as_strref() else {
@@ -914,7 +1008,9 @@ pub unsafe fn concat_core(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
         parts[k] = Some(s);
     }
     // MUTANT `concat_kind_skip`: the result kind is not compared with the recorded one
-    if (tl > rn_core::string::MAX_SHORT_LEN) != (bits & 16 != 0) && !mutants::active("concat_kind_skip") {
+    if (tl > rn_core::string::MAX_SHORT_LEN) != (bits & 16 != 0)
+        && !mutants::active("concat_kind_skip")
+    {
         return 0;
     }
     let bytes_of = |k: usize| parts[k].expect("operand").get().as_bytes();
@@ -926,14 +1022,23 @@ pub unsafe fn concat_core(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
             short[off..off + b.len()].copy_from_slice(b);
             off += b.len();
         }
-        return short_core::<true>(st, &short[..tl], mutants::active("concat_bytes_small"), mutants::active("concat_no_gc_check"));
+        return short_core::<true>(
+            st,
+            &short[..tl],
+            mutants::active("concat_bytes_small"),
+            mutants::active("concat_no_gc_check"),
+        );
     }
     let heap = st.heap();
     let Some(bytes) = heap.jit_str_bytes_long(tl) else {
         return 0;
     };
     // MUTANT `concat_bytes_small`: the object size is left out of the bound
-    let bytes = if mutants::active("concat_bytes_small") { 0 } else { bytes };
+    let bytes = if mutants::active("concat_bytes_small") {
+        0
+    } else {
+        bytes
+    };
     // MUTANT `concat_no_gc_check`: allocate even when the collector would step right after the allocation
     if !mutants::active("concat_no_gc_check") && !heap.jit_alloc_ok(bytes) {
         return 0;
@@ -980,9 +1085,14 @@ unsafe fn concat_core_num(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
             });
             (t.as_ptr(), l)
         } else {
-            let tag = if bits >> k & 1 != 0 { ctb(LUA_VLNGSTR) } else { ctb(LUA_VSHRSTR) };
+            let tag = if bits >> k & 1 != 0 {
+                ctb(LUA_VLNGSTR)
+            } else {
+                ctb(LUA_VSHRSTR)
+            };
             // SAFETY: caller contract; `Value` is `repr(C)` `{ tag word, payload }`.
-            let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), ops[k]]) };
+            let v: Value =
+                unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), ops[k]]) };
             let Some(s) = v.as_strref() else {
                 return 0;
             };
@@ -996,7 +1106,9 @@ unsafe fn concat_core_num(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
         parts[k] = (p, l);
     }
     // MUTANT `concat_kind_skip`: the result kind is not compared with the recorded one
-    if (tl > rn_core::string::MAX_SHORT_LEN) != (bits & 16 != 0) && !mutants::active("concat_kind_skip") {
+    if (tl > rn_core::string::MAX_SHORT_LEN) != (bits & 16 != 0)
+        && !mutants::active("concat_kind_skip")
+    {
         return 0;
     }
     // SAFETY (all `bytes_of` uses): each part is `l` live bytes: a live string of the caller's contract, or `texts`.
@@ -1009,14 +1121,23 @@ unsafe fn concat_core_num(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
             short[off..off + b.len()].copy_from_slice(b);
             off += b.len();
         }
-        return short_core::<true>(st, &short[..tl], mutants::active("concat_bytes_small"), mutants::active("concat_no_gc_check"));
+        return short_core::<true>(
+            st,
+            &short[..tl],
+            mutants::active("concat_bytes_small"),
+            mutants::active("concat_no_gc_check"),
+        );
     }
     let heap = st.heap();
     let Some(bytes) = heap.jit_str_bytes_long(tl) else {
         return 0;
     };
     // MUTANT `concat_bytes_small`: the object size is left out of the bound
-    let bytes = if mutants::active("concat_bytes_small") { 0 } else { bytes };
+    let bytes = if mutants::active("concat_bytes_small") {
+        0
+    } else {
+        bytes
+    };
     // MUTANT `concat_no_gc_check`: allocate even when the collector would step right after the allocation
     if !mutants::active("concat_no_gc_check") && !heap.jit_alloc_ok(bytes) {
         return 0;
@@ -1039,19 +1160,32 @@ unsafe fn concat_core_num(st: &mut rn_core::state::State, bits: u32, ops: [u64; 
 /// one is a new object; 0 when a step would be due, the allocation could fail or the string table would grow.
 fn bytes_core(st: &mut rn_core::state::State, s: &[u8]) -> u64 {
     if s.len() <= rn_core::string::MAX_SHORT_LEN {
-        return short_core::<false>(st, s, mutants::active("lib_bytes_small"), mutants::active("lib_no_gc_check"));
+        return short_core::<false>(
+            st,
+            s,
+            mutants::active("lib_bytes_small"),
+            mutants::active("lib_no_gc_check"),
+        );
     }
     let heap = st.heap();
     let Some(bytes) = heap.jit_str_bytes_long(s.len()) else {
         return 0;
     };
-    let bytes = if mutants::active("lib_bytes_small") { 0 } else { bytes };
+    let bytes = if mutants::active("lib_bytes_small") {
+        0
+    } else {
+        bytes
+    };
     if !mutants::active("lib_no_gc_check") && !heap.jit_alloc_ok(bytes) {
         return 0;
     }
     // SAFETY: the closure initialises all `s.len()` bytes; nothing allocates inside.
-    unsafe { heap.new_long_str_with(s.len(), |dst| std::ptr::copy_nonoverlapping(s.as_ptr(), dst, s.len())) }
-        .map_or(0, |r| r.as_ptr() as u64)
+    unsafe {
+        heap.new_long_str_with(s.len(), |dst| {
+            std::ptr::copy_nonoverlapping(s.as_ptr(), dst, s.len())
+        })
+    }
+    .map_or(0, |r| r.as_ptr() as u64)
 }
 
 /// N3b: whether the metatable `old` has a non-nil `__metatable` field (`get_metafield` of `base_setmetatable`), without creating the
@@ -1063,7 +1197,10 @@ pub(crate) fn setmt_protected(heap: &rn_core::heap::Heap, old: rn_core::table::T
     }
     // SAFETY: `found` is a live interned short string (a probe result with no allocation since); `Value` is `repr(C)` `{ tag word, payload }`.
     let v: rn_core::value::Value = unsafe {
-        std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(rn_core::value::ctb(rn_core::value::LUA_VSHRSTR)), found as u64])
+        std::mem::transmute::<[u64; 2], rn_core::value::Value>([
+            u64::from(rn_core::value::ctb(rn_core::value::LUA_VSHRSTR)),
+            found as u64,
+        ])
     };
     match v.as_strref() {
         Some(k) => !old.get_short_str(k).is_nil(),
@@ -1099,13 +1236,23 @@ fn sub_piece(st: &mut rn_core::state::State, b: &[u8], fl: u32, args: [u64; 3]) 
             l.wrapping_add(pos as usize).wrapping_add(1)
         }
     };
-            let start = if mutants::active("sub_start_off") { posrelat(args[1] as i64) + 1 } else { posrelat(args[1] as i64) };
-            let end = endpos(args[2] as i64);
-            let piece: &[u8] = if start <= end { &b[start - 1..end] } else { b"" };
-            if (piece.len() > rn_core::string::MAX_SHORT_LEN) != (fl & 2 != 0) && !mutants::active("lib_kind_skip") {
-                return 0;
-            }
-            bytes_core(st, piece)
+    let start = if mutants::active("sub_start_off") {
+        posrelat(args[1] as i64) + 1
+    } else {
+        posrelat(args[1] as i64)
+    };
+    let end = endpos(args[2] as i64);
+    let piece: &[u8] = if start <= end {
+        &b[start - 1..end]
+    } else {
+        b""
+    };
+    if (piece.len() > rn_core::string::MAX_SHORT_LEN) != (fl & 2 != 0)
+        && !mutants::active("lib_kind_skip")
+    {
+        return 0;
+    }
+    bytes_core(st, piece)
 }
 
 thread_local! {
@@ -1175,17 +1322,28 @@ fn char_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3]) -> u64 {
 unsafe fn random_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3]) -> u64 {
     use rn_core::value::{ctb, Value, LUA_VCCL};
     // SAFETY: caller contract; `Value` is `repr(C)` `{ tag word, payload }`.
-    let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]]) };
+    let v: Value =
+        unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]]) };
     if kind == lib::RANDF {
         return match rn_std::lib_math::jit_random_float(st, &v) {
             // MUTANT `randf_plus_zero`: the result convention's `+ 1` is missing
-            Some(m) => if mutants::active("randf_plus_zero") { m } else { m + 1 },
+            Some(m) => {
+                if mutants::active("randf_plus_zero") {
+                    m
+                } else {
+                    m + 1
+                }
+            }
             None => 0,
         };
     }
     let (low, up) = (args[1] as i64, args[2] as i64);
     // MUTANT `random_range_off`: the upper bound is one less
-    let up = if mutants::active("random_range_off") { up.wrapping_sub(1) } else { up };
+    let up = if mutants::active("random_range_off") {
+        up.wrapping_sub(1)
+    } else {
+        up
+    };
     match rn_std::lib_math::jit_random_range(st, &v, low, up) {
         Some(x) => (x as u64).wrapping_add(1),
         None => 0,
@@ -1197,7 +1355,11 @@ unsafe fn random_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3])
 fn find_core(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
     use rn_core::value::{ctb, Value, LUA_VLNGSTR, LUA_VSHRSTR};
     let strv = |p: u64, long: bool| -> Option<rn_core::string::StrRef> {
-        let tag = if long { ctb(LUA_VLNGSTR) } else { ctb(LUA_VSHRSTR) };
+        let tag = if long {
+            ctb(LUA_VLNGSTR)
+        } else {
+            ctb(LUA_VSHRSTR)
+        };
         // SAFETY: caller contract of `lib_core`; `Value` is `repr(C)` `{ tag word, payload }`.
         let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), p]) };
         v.as_strref()
@@ -1207,11 +1369,18 @@ fn find_core(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
     };
     let (x, y) = (x.get().as_bytes(), y.get().as_bytes());
     // MUTANT `find_specials_skip`: a non-plain call is searched plainly even when the pattern has specials now
-    if kind == lib::FINDS && !mutants::active("find_specials_skip") && !rn_std::pattern::nospecials(y) {
+    if kind == lib::FINDS
+        && !mutants::active("find_specials_skip")
+        && !rn_std::pattern::nospecials(y)
+    {
         return 0;
     }
     // MUTANT `find_init_neg_skip`: a negative start counts from 1
-    let init = if mutants::active("find_init_neg_skip") && (args[2] as i64) < 0 { 1 } else { args[2] as i64 };
+    let init = if mutants::active("find_init_neg_skip") && (args[2] as i64) < 0 {
+        1
+    } else {
+        args[2] as i64
+    };
     match rn_std::pattern::find_plain_pos(x, y, init) {
         Some(pos) => pos as u64 + 2,
         None => 1,
@@ -1227,7 +1396,11 @@ fn find_core(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
 unsafe fn cmp_core_raw(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
     use rn_core::value::{ctb, Value, LUA_VLNGSTR, LUA_VSHRSTR};
     let strv = |p: u64, long: bool| -> Option<rn_core::string::StrRef> {
-        let tag = if long { ctb(LUA_VLNGSTR) } else { ctb(LUA_VSHRSTR) };
+        let tag = if long {
+            ctb(LUA_VLNGSTR)
+        } else {
+            ctb(LUA_VSHRSTR)
+        };
         // SAFETY: caller contract; `Value` is `repr(C)` `{ tag word, payload }`.
         let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), p]) };
         v.as_strref()
@@ -1242,7 +1415,11 @@ unsafe fn cmp_core_raw(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
         _ => x <= y,
     };
     // MUTANT `strcmp_lt_as_le`: `<` answers like `<=`
-    let r = if kind == lib::STRLT && mutants::active("strcmp_lt_as_le") { x <= y } else { r };
+    let r = if kind == lib::STRLT && mutants::active("strcmp_lt_as_le") {
+        x <= y
+    } else {
+        r
+    };
     1 + u64::from(r)
 }
 
@@ -1257,7 +1434,11 @@ fn cmp_core(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
 fn strfn_core(st: &mut rn_core::state::State, kind: u32, fl: u32, args: [u64; 3]) -> u64 {
     use rn_core::value::{ctb, Value, LUA_VLNGSTR, LUA_VSHRSTR};
     let strv = |p: u64, long: bool| -> Option<rn_core::string::StrRef> {
-        let tag = if long { ctb(LUA_VLNGSTR) } else { ctb(LUA_VSHRSTR) };
+        let tag = if long {
+            ctb(LUA_VLNGSTR)
+        } else {
+            ctb(LUA_VSHRSTR)
+        };
         // SAFETY: caller contract of `lib_core`; `Value` is `repr(C)` `{ tag word, payload }`.
         let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), p]) };
         v.as_strref()
@@ -1283,14 +1464,18 @@ fn strfn_core(st: &mut rn_core::state::State, kind: u32, fl: u32, args: [u64; 3]
             0
         } else {
             match per.checked_mul(n as usize) {
-                Some(t) if t - sep.len() <= lib::REP_MAX || mutants::active("rep_cap_skip") => t - sep.len(),
+                Some(t) if t - sep.len() <= lib::REP_MAX || mutants::active("rep_cap_skip") => {
+                    t - sep.len()
+                }
                 _ => {
                     STR_BUF.with(|c| c.set(buf));
                     return 0;
                 }
             }
         };
-        if (total > rn_core::string::MAX_SHORT_LEN) != (fl & 2 != 0) && !mutants::active("lib_kind_skip") {
+        if (total > rn_core::string::MAX_SHORT_LEN) != (fl & 2 != 0)
+            && !mutants::active("lib_kind_skip")
+        {
             STR_BUF.with(|c| c.set(buf));
             return 0;
         }
@@ -1316,7 +1501,9 @@ fn strfn_core(st: &mut rn_core::state::State, kind: u32, fl: u32, args: [u64; 3]
     } else {
         match kind {
             // MUTANT `lower_is_upper`: `lower` upper-cases
-            lib::LOWER if !mutants::active("lower_is_upper") => buf.extend(b.iter().map(u8::to_ascii_lowercase)),
+            lib::LOWER if !mutants::active("lower_is_upper") => {
+                buf.extend(b.iter().map(u8::to_ascii_lowercase))
+            }
             lib::LOWER | lib::UPPER => buf.extend(b.iter().map(u8::to_ascii_uppercase)),
             _ => buf.extend(b.iter().rev()),
         }
@@ -1380,8 +1567,12 @@ fn lean_lib_entry(kind: u32, libcall: u32) -> Option<u64> {
         lib::CHAR | lib::CHAR2 | lib::CHAR3 => jit_tr_lib_char as *const () as usize as u64,
         lib::RANDOM | lib::RANDF => jit_tr_lib_random as *const () as usize as u64,
         lib::STREQ | lib::STRLT | lib::STRLE => jit_tr_lib_cmp as *const () as usize as u64,
-        lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS => jit_tr_lib_strfn as *const () as usize as u64,
-        lib::FIND | lib::FINDS if libcall & 512 != 0 => jit_tr_lib_find as *const () as usize as u64,
+        lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS => {
+            jit_tr_lib_strfn as *const () as usize as u64
+        }
+        lib::FIND | lib::FINDS if libcall & 512 != 0 => {
+            jit_tr_lib_find as *const () as usize as u64
+        }
         _ => return None,
     })
 }
@@ -1404,7 +1595,11 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
     use rn_core::value::{ctb, Value, LUA_VCCL, LUA_VLNGSTR, LUA_VSHRSTR};
     let (kind, fl) = (x & 0xFF, x >> 8);
     let strv = |p: u64, long: bool| -> Option<rn_core::string::StrRef> {
-        let tag = if long { ctb(LUA_VLNGSTR) } else { ctb(LUA_VSHRSTR) };
+        let tag = if long {
+            ctb(LUA_VLNGSTR)
+        } else {
+            ctb(LUA_VSHRSTR)
+        };
         // SAFETY: caller contract; `Value` is `repr(C)` `{ tag word, payload }`.
         let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), p]) };
         v.as_strref()
@@ -1443,7 +1638,11 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
                     return 0;
                 }
                 let byte = u64::from(b[posi - 1]);
-                return if mutants::active("byte_plus1_skip") { byte } else { byte + 1 };
+                return if mutants::active("byte_plus1_skip") {
+                    byte
+                } else {
+                    byte + 1
+                };
             }
             sub_piece(st, b, fl, args)
         }
@@ -1459,7 +1658,8 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
         }
         k if lib::is_fmt(k) => {
             // BUNDLE-C (`tfmt`): the reference format engine on the argument values (see `rn_std::lib_string::jit_format`)
-            let Some(fmt) = rn_std::lib_string::jit_fmt_get(((k - lib::FMT_BASE) & 63) as usize) else {
+            let Some(fmt) = rn_std::lib_string::jit_fmt_get(((k - lib::FMT_BASE) & 63) as usize)
+            else {
                 return 0;
             };
             let ext = lib::is_fmt_ext(k);
@@ -1472,7 +1672,11 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             let mut n = dn;
             if ext {
                 // MUTANT `tfmt_stash_stale`: the stash is not cleared by the `FMT` that used it
-                let (sv, sn) = if mutants::active("tfmt_stash_stale") { FMT_STASH.with(|c| c.get()) } else { FMT_STASH.with(|c| c.replace(([Value::NIL; 3], 0))) };
+                let (sv, sn) = if mutants::active("tfmt_stash_stale") {
+                    FMT_STASH.with(|c| c.get())
+                } else {
+                    FMT_STASH.with(|c| c.replace(([Value::NIL; 3], 0)))
+                };
                 if sn == 0 || dn != 2 {
                     return 0;
                 }
@@ -1487,17 +1691,28 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             out.clear();
             let ok = rn_std::lib_string::jit_format(st, fmt, &vals[..n], &mut out);
             // MUTANT `tfmt_kind_skip`: the result kind is not compared with the recorded one
-            let r = if ok && ((out.len() > rn_core::string::MAX_SHORT_LEN) == (fl & 2 != 0) || mutants::active("tfmt_kind_skip")) { bytes_core(st, &out) } else { 0 };
+            let r = if ok
+                && ((out.len() > rn_core::string::MAX_SHORT_LEN) == (fl & 2 != 0)
+                    || mutants::active("tfmt_kind_skip"))
+            {
+                bytes_core(st, &out)
+            } else {
+                0
+            };
             FMT_BUF.with(|c| c.set(out));
             r
         }
         lib::GMATCH => {
             // SAFETY: caller contract: a live C closure (the trace's type guard on the operand); `Value` is `repr(C)` `{ tag word, payload }`.
-            let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]]) };
+            let v: Value = unsafe {
+                std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]])
+            };
             let want_long = fl & 2 != 0;
             let mut res = 0u64;
             let mut with = |b: &[u8]| -> bool {
-                if (b.len() > rn_core::string::MAX_SHORT_LEN) != want_long && !mutants::active("gm_kind_skip") {
+                if (b.len() > rn_core::string::MAX_SHORT_LEN) != want_long
+                    && !mutants::active("gm_kind_skip")
+                {
                     return false;
                 }
                 res = bytes_core(st, b);
@@ -1513,8 +1728,12 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             }
         }
         lib::CCALLS => {
-            let used = u64::from(rn_core::state::get_ccalls(st.ncalls_raw())) + args[0] + CCALLS_MARGIN;
-            u64::from(used < u64::from(rn_core::state::LUAI_MAXCCALLS) || mutants::active("ccalls_guard_off"))
+            let used =
+                u64::from(rn_core::state::get_ccalls(st.ncalls_raw())) + args[0] + CCALLS_MARGIN;
+            u64::from(
+                used < u64::from(rn_core::state::LUAI_MAXCCALLS)
+                    || mutants::active("ccalls_guard_off"),
+            )
         }
         lib::SETMT => {
             // SAFETY: caller contract: `args[0]` a live table (the trace's type guard), `args[1]` a live table or 0.
@@ -1522,7 +1741,9 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
         }
         lib::IPAIRS_END => {
             // SAFETY: caller contract: a live table (the trace's type guard on the operand).
-            let t = unsafe { rn_core::table::TableRef::from_raw(args[0] as *mut rn_core::table::Table) };
+            let t = unsafe {
+                rn_core::table::TableRef::from_raw(args[0] as *mut rn_core::table::Table)
+            };
             u64::from(t.get_int(args[1] as i64).is_nil() || mutants::active("gfor_end_always"))
         }
         lib::CHAR | lib::CHAR2 | lib::CHAR3 => char_core(st, kind, args),
@@ -1530,7 +1751,9 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             // SAFETY: caller contract: a live C closure (its tag is checked by the trace's type guard).
             unsafe { random_core(st, kind, args) }
         }
-        lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS => strfn_core(st, kind, fl, args),
+        lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS => {
+            strfn_core(st, kind, fl, args)
+        }
         lib::STRMETH => {
             let Some(key) = strv(args[0], false) else {
                 return 0;
@@ -1556,11 +1779,15 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
         }
         lib::TYPE => {
             // SAFETY: caller contract: a live C closure (its tag is checked by the trace's type guard).
-            let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]]) };
+            let v: Value = unsafe {
+                std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]])
+            };
             let Some(c) = v.as_cclosure() else {
                 return 0;
             };
-            if c.f as usize != rn_core::jit_hooks::type_fn_addr() && !mutants::active("type_closure_unchecked") {
+            if c.f as usize != rn_core::jit_hooks::type_fn_addr()
+                && !mutants::active("type_closure_unchecked")
+            {
                 return 0;
             }
             let k = args[1] as usize;
@@ -1570,11 +1797,18 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             c.upvalue(k).as_strref().map_or(0, |s| s.as_ptr() as u64)
         }
         lib::TYPENAME => match lib::TYPENAMES.get(args[0] as usize) {
-            Some(n) => short_core::<false>(st, n.as_bytes(), mutants::active("lib_bytes_small"), mutants::active("lib_no_gc_check")),
+            Some(n) => short_core::<false>(
+                st,
+                n.as_bytes(),
+                mutants::active("lib_bytes_small"),
+                mutants::active("lib_no_gc_check"),
+            ),
             None => 0,
         },
         lib::TOSTR => {
-            if st.type_metatable(rn_core::value::LuaType::Number).is_some() && !mutants::active("tostr_meta_skip") {
+            if st.type_metatable(rn_core::value::LuaType::Number).is_some()
+                && !mutants::active("tostr_meta_skip")
+            {
                 return 0;
             }
             let n = if fl & 4 != 0 {
@@ -1582,7 +1816,14 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             } else {
                 rn_core::number::Number::Int(args[0] as i64)
             };
-            rn_core::number::with_tostring(n, |b| short_core::<true>(st, b, mutants::active("lib_bytes_small"), mutants::active("lib_no_gc_check")))
+            rn_core::number::with_tostring(n, |b| {
+                short_core::<true>(
+                    st,
+                    b,
+                    mutants::active("lib_bytes_small"),
+                    mutants::active("lib_no_gc_check"),
+                )
+            })
         }
         _ => 0,
     }
@@ -1835,8 +2076,15 @@ impl Cx<'_> {
         }
         // SAFETY: `env.fpool` is the address of the live per-state pool (`AsmEnv::fpool`); one assembly runs at a time.
         let pool = unsafe { &mut *(self.env.fpool as *mut super::FPool) };
-        let k = pool.intern(if mutants::active("fpool_bits_off") { b ^ 1 } else { b })?;
-        Some(M { base: Base::Cnt, off: self.env.fpool_off + 8 * k as i32 })
+        let k = pool.intern(if mutants::active("fpool_bits_off") {
+            b ^ 1
+        } else {
+            b
+        })?;
+        Some(M {
+            base: Base::Cnt,
+            off: self.env.fpool_off + 8 * k as i32,
+        })
     }
 
     /// Loads the double constant `b` into `X` register `dst`: one pool load, else `movabs; movq` through `V7`.
@@ -1916,7 +2164,9 @@ impl Cx<'_> {
             _ => false,
         };
         // (N2b: a snapshot after a `RETF` is not the state at the head, whatever its map)
-        if !(kind && s.seg == 0 && s.map.1 == 0 && s.nframes == 0 && s.frame == 0 && s.top == 0) || self.env.head == 0 {
+        if !(kind && s.seg == 0 && s.map.1 == 0 && s.nframes == 0 && s.frame == 0 && s.top == 0)
+            || self.env.head == 0
+        {
             return EntryKind::No;
         }
         match self.ir.loop_at {
@@ -2015,11 +2265,18 @@ impl Cx<'_> {
     fn poll_ops(&mut self, x: L) {
         if let Some(off) = self.env.poll_off {
             // P2-3b: the poll word is addressed from `r15`
-            let off = if mutants::active("poll_r15_disp_off") { off + 1 } else { off };
+            let off = if mutants::active("poll_r15_disp_off") {
+                off + 1
+            } else {
+                off
+            };
             self.push(Op::BrM {
                 cc: Cc::Ne,
                 w: W::B1,
-                m: M { base: Base::Cnt, off },
+                m: M {
+                    base: Base::Cnt,
+                    off,
+                },
                 imm: 0,
                 to: x,
             });
@@ -2244,7 +2501,11 @@ pub fn assemble(
         saved: Vec::new(),
         nstubs: 0,
         pre_snaps: exit::pre_roll_snaps(ir),
-        chain_snaps: if env.chain && env.side.is_some() && !mutants::active("chain_stub_never") { exit::guard_kinds(ir).iter().map(|g| g & 1 != 0).collect() } else { Vec::new() },
+        chain_snaps: if env.chain && env.side.is_some() && !mutants::active("chain_stub_never") {
+            exit::guard_kinds(ir).iter().map(|g| g & 1 != 0).collect()
+        } else {
+            Vec::new()
+        },
         sites: exit::site_classes(ir),
         mat_shared: Vec::new(),
         mat_frames: Vec::new(),
@@ -2266,14 +2527,23 @@ pub fn assemble(
     let entry_fail = cx.label();
     cx.bind(entry);
     if env.seg_oracle && !ir.segs.is_empty() {
-        cx.push(Op::Lea(7, M { base: Base::Ci, off: 0 }));
+        cx.push(Op::Lea(
+            7,
+            M {
+                base: Base::Ci,
+                off: 0,
+            },
+        ));
         let m = spill_m(cx.ext_slot(ORACLE_SLOT_K));
         cx.st(W::B8, m, Src::V(7));
     }
     cx.entry_checks(entry_fail)?;
     let rec_fail = cx.label();
-    let inner = (rolled && env.side.is_none() && env.head != 0 && (ir.rec_call.is_some() || ir.rec_ret.is_some()))
-        .then(|| cx.label());
+    let inner = (rolled
+        && env.side.is_none()
+        && env.head != 0
+        && (ir.rec_call.is_some() || ir.rec_ret.is_some()))
+    .then(|| cx.label());
     if let Some(inner) = inner {
         let past = cx.label();
         cx.push(Op::Jmp(past));
@@ -2289,7 +2559,10 @@ pub fn assemble(
         // The frame is a running Lua frame of this prototype entered by a native return or self-call: its own registers are
         // inside the stack (`ci.top <= stack_size`), and the frame it returns into has called before, so its `next` exists.
         // Only the room for the registers of an inlined or pushed callee is not implied.
-        let own_only = ir.depth == 0 && env.head_pc != 0 && usize::from(ir.extent) <= usize::from(env.root_maxstack) && env.root_maxstack != 0;
+        let own_only = ir.depth == 0
+            && env.head_pc != 0
+            && usize::from(ir.extent) <= usize::from(env.root_maxstack)
+            && env.root_maxstack != 0;
         if own_only || mutants::active("rec_inner_room_skip") {
             // nothing to check
         } else if ir.depth <= 1 && env.root_maxstack != 0 && env.head_pc != 0 {
@@ -2325,7 +2598,8 @@ pub fn assemble(
             }
             continue;
         }
-        if env.side_room && ir.ins[i].op == TOp::Budget && !mutants::active("side_room_check_skip") {
+        if env.side_room && ir.ins[i].op == TOp::Budget && !mutants::active("side_room_check_skip")
+        {
             // R2: the room checks of a frameful side trace that needs more than its parent guarantees: in front of the first budget
             // charge, behind the loads of the frames' function slots (the start snapshot restores them), failing through that snapshot
             // (V0 and V1 may hold the loaded function slots the snapshot restores: they are saved around the checks)
@@ -2387,12 +2661,18 @@ pub fn assemble(
         }
         cx.push(Op::Jmp(loop_l));
     }
-    cx.stubs_and_tail(entry_fail, (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(rec_fail))?;
+    cx.stubs_and_tail(
+        entry_fail,
+        (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(rec_fail),
+    )?;
     // P2 bundle 1 (`xregs`): `V10` is `r14`, the constants pointer of tier 1. A trace that allocated it leaves through a `JmpR` (every exit stub,
     // link and tail) with `r14` clobbered: reload it from `ci.kcache` (`r13` is the frame the code jumps into at every `JmpR`: the root
     // frame for a frameless exit, the rebuilt one after `SetCi`) in front of each jump. `Ret` needs nothing (the thunk pops the saved `r14`).
     // `V9` is `rbp`: nothing but the thunk's frame-pointer chain reads it, and the thunk restores it on `Ret`.
-    if al.uses_gpr(10) && (ir.rec_call.is_some() || ir.rec_ret.is_some()) && !mutants::active("xregs_rec_r14") {
+    if al.uses_gpr(10)
+        && (ir.rec_call.is_some() || ir.rec_ret.is_some())
+        && !mutants::active("xregs_rec_r14")
+    {
         return incons("V10 (r14) allocated in a trace with a native frame push / pop");
     }
     if al.uses_gpr(10) && !mutants::active("xregs_no_reloadk") {
@@ -2476,12 +2756,58 @@ impl Cx<'_> {
                 let stable = f0.iter().all(|f| self.ktag.contains(f));
                 self.ktag = if stable { f0 } else { Vec::new() };
             }
-            TOp::Sload | TOp::Add | TOp::Sub | TOp::Mul | TOp::Neg | TOp::Band | TOp::Bor | TOp::Bxor | TOp::Bnot | TOp::Shl | TOp::Shr
-            | TOp::Idiv | TOp::Mod | TOp::Fadd | TOp::Fsub | TOp::Fmul | TOp::Fdiv | TOp::Fneg | TOp::Fabs | TOp::Fsqrt | TOp::Ffloor
-            | TOp::Fmin | TOp::Fmax | TOp::ConvNumInt | TOp::F2iExact | TOp::Eq | TOp::Ne | TOp::Lt | TOp::Le | TOp::Gt | TOp::Ge
-            | TOp::Ult | TOp::Uge | TOp::Fcmp | TOp::Eqref | TOp::Fload | TOp::Aref | TOp::Aload | TOp::Astore | TOp::Uref | TOp::Uload
-            | TOp::Ustore | TOp::Poll | TOp::Budget | TOp::Phi | TOp::Hrefk | TOp::Hrefv | TOp::Hmiss | TOp::Kint | TOp::Knum
-            | TOp::Kpri | TOp::Kptr => {}
+            TOp::Sload
+            | TOp::Add
+            | TOp::Sub
+            | TOp::Mul
+            | TOp::Neg
+            | TOp::Band
+            | TOp::Bor
+            | TOp::Bxor
+            | TOp::Bnot
+            | TOp::Shl
+            | TOp::Shr
+            | TOp::Idiv
+            | TOp::Mod
+            | TOp::Fadd
+            | TOp::Fsub
+            | TOp::Fmul
+            | TOp::Fdiv
+            | TOp::Fneg
+            | TOp::Fabs
+            | TOp::Fsqrt
+            | TOp::Ffloor
+            | TOp::Fmin
+            | TOp::Fmax
+            | TOp::ConvNumInt
+            | TOp::F2iExact
+            | TOp::Eq
+            | TOp::Ne
+            | TOp::Lt
+            | TOp::Le
+            | TOp::Gt
+            | TOp::Ge
+            | TOp::Ult
+            | TOp::Uge
+            | TOp::Fcmp
+            | TOp::Eqref
+            | TOp::Fload
+            | TOp::Aref
+            | TOp::Aload
+            | TOp::Astore
+            | TOp::Uref
+            | TOp::Uload
+            | TOp::Ustore
+            | TOp::Poll
+            | TOp::Budget
+            | TOp::Phi
+            | TOp::Hrefk
+            | TOp::Hrefv
+            | TOp::Hmiss
+            | TOp::Kint
+            | TOp::Knum
+            | TOp::Kpri
+            | TOp::Kptr => {}
             _ => self.ktag.clear(),
         }
     }
@@ -2541,8 +2867,14 @@ impl Cx<'_> {
     /// spare `CallInfo`) are the entry checks of the frame that executes the call; the poll and the budget run at the loop
     /// top of the new frame.
     fn rec_call_tail(&mut self, rc: RecCall, loop_l: L, rec_fail: L) -> Result<(), AsmError> {
-        let ciw = |o: usize| M { base: Base::Ci, off: o as i32 };
-        let thw = |o: usize| M { base: Base::Thread, off: o as i32 };
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
+        let thw = |o: usize| M {
+            base: Base::Thread,
+            off: o as i32,
+        };
         if self.env.lazy {
             return self.rec_call_tail_lazy(rc, loop_l, rec_fail);
         }
@@ -2555,30 +2887,61 @@ impl Cx<'_> {
         self.ld(2, W::B8, ciw(ci::FUNC));
         self.push(Op::Add(2, Src::Imm(i32::from(rc.a) + 1))); // callee function index
         self.st(W::B8, rm(1, ci::FUNC as i32), Src::V(2));
-        let top_extra = if mutants::active("rec_push_top_off") { 0 } else { 1 };
+        let top_extra = if mutants::active("rec_push_top_off") {
+            0
+        } else {
+            1
+        };
         self.push(Op::Lea(3, rm(2, i32::from(rc.maxstack) + top_extra)));
         self.st(W::B8, rm(1, ci::TOP as i32), Src::V(3)); // func + 1 + maxstacksize
         self.push(Op::Lea(3, rm(2, i32::from(rc.nargs) + 1)));
         self.st(W::B8, thw(thr::TOP), Src::V(3)); // end of the arguments
-        let cs = if mutants::active("rec_push_callstatus_off") { rc.c - 1 } else { rc.c };
+        let cs = if mutants::active("rec_push_callstatus_off") {
+            rc.c - 1
+        } else {
+            rc.c
+        };
         self.st(W::B4, rm(1, ci::CALLSTATUS as i32), Src::Imm(cs as i32));
         self.st(W::B4, rm(1, ci::TRAP as i32), Src::Imm(0));
         self.push(Op::Mov(3, rc.code));
         self.st(W::B8, rm(1, ci::SAVEDPC as i32), Src::V(3));
-        self.push(Op::Lea(3, M { base: Base::K, off: 0 }));
+        self.push(Op::Lea(
+            3,
+            M {
+                base: Base::K,
+                off: 0,
+            },
+        ));
         self.st(W::B8, rm(1, ci::KCACHE as i32), Src::V(3));
-        let after = if mutants::active("rec_push_savedpc_off") { rc.after + 4 } else { rc.after };
+        let after = if mutants::active("rec_push_savedpc_off") {
+            rc.after + 4
+        } else {
+            rc.after
+        };
         self.push(Op::Mov(3, after));
         self.st(W::B8, ciw(ci::SAVEDPC), Src::V(3)); // the caller continues after its CALL
         self.st(W::B8, thw(thr::CI), Src::V(1));
-        self.push(Op::Lea(4, M { base: Base::Frame, off: (i32::from(rc.a) + 1) * 16 }));
+        self.push(Op::Lea(
+            4,
+            M {
+                base: Base::Frame,
+                off: (i32::from(rc.a) + 1) * 16,
+            },
+        ));
         self.push(Op::SetCi(1));
         self.push(Op::SetFrame(4));
         if self.env.rec_link_cell != 0 {
             // a continuation trace: the new frame enters the function-entry head through its dispatch cell (which is the
             // function-entry trace, its counting stub or tier 1: whatever a flat call would reach)
             if let Some(r) = self.env.budget_reg {
-                self.st(W::B4, M { base: Base::Cnt, off: 0 }, Src::V(r));
+                self.st(
+                    W::B4,
+                    M {
+                        base: Base::Cnt,
+                        off: 0,
+                    },
+                    Src::V(r),
+                );
             }
             self.push(Op::Mov(7, self.env.rec_link_cell));
             self.ld(7, W::B8, rm(7, 0));
@@ -2605,7 +2968,10 @@ impl Cx<'_> {
     /// where the frame returns to) are stored; `top`, `callstatus`, `trap`, `kcache`, the callee's `savedpc`, `thread.top` and `thread.ci` are
     /// completed by `exit::lazy_leave` on every path that leaves the region. The registers (`r13`, the frame base) switch as in the eager push.
     fn rec_call_tail_lazy(&mut self, rc: RecCall, loop_l: L, rec_fail: L) -> Result<(), AsmError> {
-        let ciw = |o: usize| M { base: Base::Ci, off: o as i32 };
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
         if mutants::active("rec_push_no_ci_next") {
             self.push(Op::Lea(1, ciw(0)));
         } else {
@@ -2614,15 +2980,32 @@ impl Cx<'_> {
         self.ld(2, W::B8, ciw(ci::FUNC));
         self.push(Op::Add(2, Src::Imm(i32::from(rc.a) + 1))); // callee function index
         self.st(W::B8, rm(1, ci::FUNC as i32), Src::V(2));
-        let after = if mutants::active("rec_push_savedpc_off") { rc.after + 4 } else { rc.after };
+        let after = if mutants::active("rec_push_savedpc_off") {
+            rc.after + 4
+        } else {
+            rc.after
+        };
         self.push(Op::Mov(3, after));
         self.st(W::B8, ciw(ci::SAVEDPC), Src::V(3)); // the caller continues after its CALL
-        self.push(Op::Lea(4, M { base: Base::Frame, off: (i32::from(rc.a) + 1) * 16 }));
+        self.push(Op::Lea(
+            4,
+            M {
+                base: Base::Frame,
+                off: (i32::from(rc.a) + 1) * 16,
+            },
+        ));
         self.push(Op::SetCi(1));
         self.push(Op::SetFrame(4));
         if self.env.rec_link_cell != 0 {
             if let Some(r) = self.env.budget_reg {
-                self.st(W::B4, M { base: Base::Cnt, off: 0 }, Src::V(r));
+                self.st(
+                    W::B4,
+                    M {
+                        base: Base::Cnt,
+                        off: 0,
+                    },
+                    Src::V(r),
+                );
             }
             self.lazy_rec_jump(self.env.rec_link_cell, true);
             return Ok(());
@@ -2659,7 +3042,10 @@ impl Cx<'_> {
     /// exit through that instruction's snapshot, the state at the start): the frame was called for exactly one result, and its caller is suspended at a continuation head.
     fn rec_ret_guards(&mut self, i: usize, _rr: RecRet) -> Result<(), AsmError> {
         let x = self.guard_label(i)?;
-        let ciw = |o: usize| M { base: Base::Ci, off: o as i32 };
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
         if self.env.rec_nsites == 0 {
             return incons("a native return without continuation heads");
         }
@@ -2688,7 +3074,12 @@ impl Cx<'_> {
                 // (mutant: the root frame takes the lazy path, without the callstatus tests)
                 self.push(Op::Jmp(lazy_ok));
             } else {
-                self.push(Op::BrMR { cc: Cc::Ne, m: Self::lroot_m(), src: 3, to: lazy_ok });
+                self.push(Op::BrMR {
+                    cc: Cc::Ne,
+                    m: Self::lroot_m(),
+                    src: 3,
+                    to: lazy_ok,
+                });
             }
             self.ld(3, W::B4, ciw(ci::CALLSTATUS));
             self.push(Op::And(3, Src::Imm(ci::CIST_FRESH as i32)));
@@ -2738,14 +3129,24 @@ impl Cx<'_> {
     /// `RETURN1` does (`thread.top = func + 1`, `thread.ci = previous`, the pinned registers of the caller) and continues at
     /// the dispatch cell of the continuation head the caller is suspended at.
     fn rec_ret_tail(&mut self, n: u8) -> Result<(), AsmError> {
-        let ciw = |o: usize| M { base: Base::Ci, off: o as i32 };
-        let thw = |o: usize| M { base: Base::Thread, off: o as i32 };
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
+        let thw = |o: usize| M {
+            base: Base::Thread,
+            off: o as i32,
+        };
         let lazy = self.env.lazy;
         self.ld(1, W::B8, ciw(ci::PREVIOUS));
         self.ld(2, W::B8, rm(1, ci::SAVEDPC as i32));
         if !lazy {
             self.ld(3, W::B8, ciw(ci::FUNC));
-            let top_n = if mutants::active("rec_ret_top_off") { i32::from(n) + 1 } else { i32::from(n) };
+            let top_n = if mutants::active("rec_ret_top_off") {
+                i32::from(n) + 1
+            } else {
+                i32::from(n)
+            };
             self.push(Op::Add(3, Src::Imm(top_n)));
             self.st(W::B8, thw(thr::TOP), Src::V(3));
             self.st(W::B8, thw(thr::CI), Src::V(1));
@@ -2753,7 +3154,12 @@ impl Cx<'_> {
             // the root frame returns into its (complete) caller, which becomes the root: the thread follows it as in the eager protocol
             let lz = self.label();
             self.push(Op::Lea(4, ciw(0)));
-            self.push(Op::BrMR { cc: Cc::Ne, m: Self::lroot_m(), src: 4, to: lz });
+            self.push(Op::BrMR {
+                cc: Cc::Ne,
+                m: Self::lroot_m(),
+                src: 4,
+                to: lz,
+            });
             self.ld(3, W::B8, ciw(ci::FUNC));
             self.push(Op::Add(3, Src::Imm(i32::from(n))));
             self.st(W::B8, thw(thr::TOP), Src::V(3));
@@ -2765,7 +3171,14 @@ impl Cx<'_> {
         }
         self.push(Op::SetCi(1));
         if let Some(r) = self.env.budget_reg {
-            self.st(W::B4, M { base: Base::Cnt, off: 0 }, Src::V(r));
+            self.st(
+                W::B4,
+                M {
+                    base: Base::Cnt,
+                    off: 0,
+                },
+                Src::V(r),
+            );
         }
         let n = usize::from(self.env.rec_nsites);
         for k in 0..n {
@@ -2777,8 +3190,18 @@ impl Cx<'_> {
             }
             // the caller's frame base: the returning frame sits `A + 1` slots above it (its function slot is the caller's
             // register `A` of the `CALL` the caller is suspended after)
-            let up = if mutants::active("rec_ret_base_off") { i32::from(a) + 2 } else { i32::from(a) + 1 };
-            self.push(Op::Lea(4, M { base: Base::Frame, off: -up * 16 }));
+            let up = if mutants::active("rec_ret_base_off") {
+                i32::from(a) + 2
+            } else {
+                i32::from(a) + 1
+            };
+            self.push(Op::Lea(
+                4,
+                M {
+                    base: Base::Frame,
+                    off: -up * 16,
+                },
+            ));
             self.push(Op::SetFrame(4));
             if lazy {
                 self.lazy_rec_jump(cell, false);
@@ -2797,15 +3220,25 @@ impl Cx<'_> {
     /// Scratch: `V1` (`C`), `V2`, `V7`; the allocator excludes `V1` / `V2` from the trace (`ra::op_clobbers`).
     fn retf(&mut self, i: usize) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
-        if self.env.lazy || self.ir.loop_at.is_some() || self.ir.rec_call.is_some() || self.ir.rec_ret.is_some() {
+        if self.env.lazy
+            || self.ir.loop_at.is_some()
+            || self.ir.rec_call.is_some()
+            || self.ir.rec_ret.is_some()
+        {
             return incons("RETF in a lazy, looping or native-push/pop trace");
         }
         if self.al.uses_gpr(1) || self.al.uses_gpr(2) || self.al.uses_gpr(10) {
             return incons("RETF in a trace that allocated V1 / V2 / V10");
         }
         let x = self.guard_label(i)?;
-        let ciw = |o: usize| M { base: Base::Ci, off: o as i32 };
-        let thw = |o: usize| M { base: Base::Thread, off: o as i32 };
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
+        let thw = |o: usize| M {
+            base: Base::Thread,
+            off: o as i32,
+        };
         let bits = aux_bits(ins.aux);
         self.ld(1, W::B8, ciw(ci::PREVIOUS));
         if !mutants::active("retf_callstatus_unchecked") {
@@ -2836,7 +3269,13 @@ impl Cx<'_> {
             self.ld(2, W::B8, thw(thr::OPENUPVAL));
             self.br(Cc::Eq, 2, Src::Imm(0), nc);
             self.ld(2, W::B8, rm(2, rn_core::jit_layout::upval::V as i32));
-            self.push(Op::Lea(7, M { base: Base::Frame, off: 0 }));
+            self.push(Op::Lea(
+                7,
+                M {
+                    base: Base::Frame,
+                    off: 0,
+                },
+            ));
             self.br(Cc::Ge, 2, Src::V(7), x);
             self.bind(nc);
         }
@@ -2847,8 +3286,18 @@ impl Cx<'_> {
         if !mutants::active("retf_ci_stays") {
             self.push(Op::SetCi(1));
         }
-        let up = if mutants::active("retf_shift_off") { i32::from(ins.b) + 1 } else { i32::from(ins.b) };
-        self.push(Op::Lea(2, M { base: Base::Frame, off: -up * 16 }));
+        let up = if mutants::active("retf_shift_off") {
+            i32::from(ins.b) + 1
+        } else {
+            i32::from(ins.b)
+        };
+        self.push(Op::Lea(
+            2,
+            M {
+                base: Base::Frame,
+                off: -up * 16,
+            },
+        ));
         self.push(Op::SetFrame(2));
         if !mutants::active("retf_no_reloadk") {
             self.ld(2, W::B8, ciw(ci::KCACHE)); // (r13 = C now)
@@ -2893,8 +3342,16 @@ impl Cx<'_> {
     fn room_stack_check_from(&mut self, f: V, fail: L) {
         let ir = self.ir;
         if !mutants::active("entry_no_extent") {
-            let off = i32::from(ir.extent) + 1 - 64 * i32::from(mutants::active("fd_room_extent_off"));
-            self.ld(0, W::B8, M { base: Base::Thread, off: thr::STACK_SIZE as i32 });
+            let off =
+                i32::from(ir.extent) + 1 - 64 * i32::from(mutants::active("fd_room_extent_off"));
+            self.ld(
+                0,
+                W::B8,
+                M {
+                    base: Base::Thread,
+                    off: thr::STACK_SIZE as i32,
+                },
+            );
             self.push(Op::Lea(1, rm(f, off)));
             self.br(Cc::Ge, 1, Src::V(0), fail);
         }
@@ -2955,9 +3412,18 @@ impl Cx<'_> {
             self.st(W::B4, rm(0, head_off::ENTRY_OK as i32), Src::V(1));
             self.bind(skip);
         }
-        if self.env.lazy && (self.env.side.is_none() || self.env.prelude) && !mutants::active("lazy_root_not_set") {
+        if self.env.lazy
+            && (self.env.side.is_none() || self.env.prelude)
+            && !mutants::active("lazy_root_not_set")
+        {
             // BUNDLE-K L1: this (complete) frame is the root of the region the trace may start
-            self.push(Op::Lea(1, M { base: Base::Ci, off: 0 }));
+            self.push(Op::Lea(
+                1,
+                M {
+                    base: Base::Ci,
+                    off: 0,
+                },
+            ));
             self.st(W::B8, Self::lroot_m(), Src::V(1));
         }
         Ok(())
@@ -3163,7 +3629,8 @@ impl Cx<'_> {
                 // register may hold a value the exit restores
                 // P2 (`f2ifl`): the operand is a floor (integral, or NaN / inf / out of range): `cvttsd2si` alone decides
                 let fl = self.env.f2ifl
-                    && ((TraceIr::is_ins(ins.a) && self.ir.at(ins.a).op == TOp::Ffloor) || mutants::active("f2ifl_all"))
+                    && ((TraceIr::is_ins(ins.a) && self.ir.at(ins.a).op == TOp::Ffloor)
+                        || mutants::active("f2ifl_all"))
                     && !mutants::active("f2ifl_never");
                 if fl {
                     self.push(Op::F2IFloor { dst: 7, src, to: x });
@@ -3221,7 +3688,14 @@ impl Cx<'_> {
                 // P-B: the length of a string is a load (`shrlen` byte / `u.len` word), no helper call
                 let d = self.g(dst);
                 let (w, off) = if self.ir.ty_of(ins.a) == Ty::ShrStr {
-                    (if mutants::active("tlen_str_wide") { W::B8 } else { W::B1 }, rn_core::jit_layout::string::SHRLEN)
+                    (
+                        if mutants::active("tlen_str_wide") {
+                            W::B8
+                        } else {
+                            W::B1
+                        },
+                        rn_core::jit_layout::string::SHRLEN,
+                    )
                 } else {
                     (W::B8, rn_core::jit_layout::string::LNGLEN)
                 };
@@ -3229,7 +3703,15 @@ impl Cx<'_> {
                 self.ld(d, w, rm(t, off as i32));
             }
             TOp::Newref if ins.aux & nrplan::INLINE != 0 => self.newref_inline(i)?,
-            TOp::Tnew | TOp::Newref | TOp::Tlen | TOp::Tset | TOp::Tnext | TOp::Snew | TOp::Concat | TOp::Strto | TOp::Lib => self.class_a(i)?,
+            TOp::Tnew
+            | TOp::Newref
+            | TOp::Tlen
+            | TOp::Tset
+            | TOp::Tnext
+            | TOp::Snew
+            | TOp::Concat
+            | TOp::Strto
+            | TOp::Lib => self.class_a(i)?,
             TOp::Sstore => {
                 let slot = ins.aux as u16;
                 self.store_slot(slot, ins.a, ops[0])?;
@@ -3269,12 +3751,19 @@ impl Cx<'_> {
                     off: 0,
                 };
                 if let Some(r) = self.env.budget_reg {
-                    if self.env.budget_sub && !mutants::active("budget_no_check") && !mutants::active("budget_no_store") {
+                    if self.env.budget_sub
+                        && !mutants::active("budget_no_check")
+                        && !mutants::active("budget_no_store")
+                    {
                         // P2-3a: `sub r, n; jl refund` and the refund stub adds `n` back before the real exit (the exit sees the budget as
                         // the compare-first form left it)
                         let refund = self.label();
                         self.bud_cold.push((refund, x, n));
-                        self.push(Op::SubJl { d: r, imm: n, to: refund });
+                        self.push(Op::SubJl {
+                            d: r,
+                            imm: n,
+                            to: refund,
+                        });
                     } else {
                         if !mutants::active("budget_no_check") {
                             self.br(Cc::Lt, r, Src::Imm(n), x);
@@ -3466,7 +3955,9 @@ impl Cx<'_> {
         let t = if d != a {
             d
         } else {
-            let t = (0..=6u8).find(|&v| v != a && Some(v) != self.env.budget_reg).expect("a free temporary");
+            let t = (0..=6u8)
+                .find(|&v| v != a && Some(v) != self.env.budget_reg)
+                .expect("a free temporary");
             self.saved.clear();
             self.save(Loc::G(t));
             t
@@ -3477,8 +3968,16 @@ impl Cx<'_> {
         if !mutants::active("divmagic_no_sign") {
             self.push(Op::Xor(8, Src::V(t))); // V8 = m
         }
-        let sh = if mutants::active("divmagic_shift_off") { sh + 1 } else { sh };
-        self.push(Op::MulHiU { dst: 8, a: 8, k: mg });
+        let sh = if mutants::active("divmagic_shift_off") {
+            sh + 1
+        } else {
+            sh
+        };
+        self.push(Op::MulHiU {
+            dst: 8,
+            a: 8,
+            k: mg,
+        });
         if sh > 0 {
             self.push(Op::ShrI(8, sh));
         }
@@ -3537,7 +4036,11 @@ impl Cx<'_> {
                 self.load_g(d, aloc);
                 let k = c.trailing_zeros() as u8;
                 if is_mod {
-                    let mask = if mutants::active("mod_pow2_mask_k") { c } else { c - 1 };
+                    let mask = if mutants::active("mod_pow2_mask_k") {
+                        c
+                    } else {
+                        c - 1
+                    };
                     self.push(Op::And(d, Src::Imm(mask.min(i64::from(i32::MAX)) as i32)));
                 } else if mutants::active("idiv_pow2_logical") {
                     self.push(Op::ShrI(d, k));
@@ -3691,10 +4194,20 @@ impl Cx<'_> {
         // with its payload and sign, zeros and infinities keep their sign)
         if self.env.fpool != 0 && op == FOp::Mul {
             let two = |c: Loc, cx: &Self| matches!(c, Loc::Const(r) if cx.kbits_of(r) == 2.0f64.to_bits() || (mutants::active("mul2_any_const") && cx.kbits_of(r) == 4.0f64.to_bits()));
-            let (x, k) = if two(ops[1], self) { (ops[0], true) } else if two(ops[0], self) { (ops[1], true) } else { (ops[0], false) };
+            let (x, k) = if two(ops[1], self) {
+                (ops[0], true)
+            } else if two(ops[0], self) {
+                (ops[1], true)
+            } else {
+                (ops[0], false)
+            };
             if k && matches!(x, Loc::X(_)) {
                 self.load_x(d, x);
-                self.push(Op::FBin { op: FOp::Add, dst: d, src: d });
+                self.push(Op::FBin {
+                    op: FOp::Add,
+                    dst: d,
+                    src: d,
+                });
                 return;
             }
         }
@@ -3892,9 +4405,18 @@ impl Cx<'_> {
         if let (Some(addr), Loc::G(c)) = (proto, ops[0]) {
             if c != 7 && self.env.hk_key64 {
                 // J1-1: one 64-bit compare against a register (`movabs v7, proto; cmp [closure + P], v7; jne exit`)
-                let k = if mutants::active("eqref_proto64_hi") { addr ^ (1 << 40) } else { addr };
+                let k = if mutants::active("eqref_proto64_hi") {
+                    addr ^ (1 << 40)
+                } else {
+                    addr
+                };
                 self.push(Op::Mov(7, k));
-                self.push(Op::BrMR { cc: Cc::Ne, m: rm(c, lclosure::PROTO as i32), src: 7, to: x });
+                self.push(Op::BrMR {
+                    cc: Cc::Ne,
+                    m: rm(c, lclosure::PROTO as i32),
+                    src: 7,
+                    to: x,
+                });
                 return Ok(());
             }
             // the callee closure's proto: compare `closure.p` with the constant, 32 bits at a time (no register)
@@ -3970,7 +4492,11 @@ impl Cx<'_> {
         let t = self.ir.ty_of(r);
         if matches!(t, Ty::Nil | Ty::False | Ty::True) {
             if !self.env.nopay {
-                self.push(Op::StI { w: W::B8, m, src: Src::Imm(0) });
+                self.push(Op::StI {
+                    w: W::B8,
+                    m,
+                    src: Src::Imm(0),
+                });
             }
             return;
         }
@@ -3978,16 +4504,35 @@ impl Cx<'_> {
             return;
         }
         match loc {
-            Loc::G(n) => self.push(Op::StI { w: W::B8, m, src: Src::V(n) }),
+            Loc::G(n) => self.push(Op::StI {
+                w: W::B8,
+                m,
+                src: Src::V(n),
+            }),
             Loc::X(n) => self.push(Op::StFi { m, src: n }),
             Loc::Const(c) => {
                 let b = self.kbits_of(c);
                 match fits(b as i64) {
-                    Some(i) => self.push(Op::StI { w: W::B8, m, src: Src::Imm(i) }),
+                    Some(i) => self.push(Op::StI {
+                        w: W::B8,
+                        m,
+                        src: Src::Imm(i),
+                    }),
                     None => {
-                        self.push(Op::StI { w: W::B4, m, src: Src::Imm(b as u32 as i32) });
-                        let m2 = Mi { off: m.off + 4, ..m };
-                        self.push(Op::StI { w: W::B4, m: m2, src: Src::Imm((b >> 32) as u32 as i32) });
+                        self.push(Op::StI {
+                            w: W::B4,
+                            m,
+                            src: Src::Imm(b as u32 as i32),
+                        });
+                        let m2 = Mi {
+                            off: m.off + 4,
+                            ..m
+                        };
+                        self.push(Op::StI {
+                            w: W::B4,
+                            m: m2,
+                            src: Src::Imm((b >> 32) as u32 as i32),
+                        });
                     }
                 }
             }
@@ -4006,7 +4551,8 @@ impl Cx<'_> {
             Loc::G(b) => b,
             _ => return unsup("constant array base"),
         };
-        let check = aux_bits(ins.aux) & 1 != 0 && !(ins.t == Ty::Nil && mutants::active("aload_nil_skip"));
+        let check =
+            aux_bits(ins.aux) & 1 != 0 && !(ins.t == Ty::Nil && mutants::active("aload_nil_skip"));
         if check {
             let x = self.guard_label(i)?;
             // M1: a nil element (any nil variant: `tag & 0x0F == 0`, as the nil `HLOAD`)
@@ -4017,7 +4563,11 @@ impl Cx<'_> {
                 None => return unsup(format!("ALOAD of type {:?}", ins.t)),
             };
             let anystr = ins.flags & F_ANYSTR != 0 || nil;
-            let (tmask, twant) = if nil { (0x0F, 0) } else { (ANYSTR_MASK, i32::from(tag & ANYSTR_MASK as u8)) };
+            let (tmask, twant) = if nil {
+                (0x0F, 0)
+            } else {
+                (ANYSTR_MASK, i32::from(tag & ANYSTR_MASK as u8))
+            };
             if anystr {
                 // N5: any string variant: the tag byte with the variant bit masked
                 match ops[1] {
@@ -4045,31 +4595,31 @@ impl Cx<'_> {
                 self.push(Op::And(7, Src::Imm(tmask)));
                 self.br(Cc::Ne, 7, Src::Imm(twant), x);
             } else {
-            match ops[1] {
-                Loc::Const(r) => {
-                    let (toff, _) = const_index_offsets(self.kbits_of(r))?;
-                    self.push(Op::BrM {
+                match ops[1] {
+                    Loc::Const(r) => {
+                        let (toff, _) = const_index_offsets(self.kbits_of(r))?;
+                        self.push(Op::BrM {
+                            cc: Cc::Ne,
+                            w: W::B1,
+                            m: rm(base, toff),
+                            imm: i32::from(tag as i8),
+                            to: x,
+                        });
+                    }
+                    Loc::G(u) => self.push(Op::BrMi {
                         cc: Cc::Ne,
                         w: W::B1,
-                        m: rm(base, toff),
+                        m: Mi {
+                            base,
+                            idx: u,
+                            scale: 1,
+                            off: table::ARRAY_TAG_BASE as i32,
+                        },
                         imm: i32::from(tag as i8),
                         to: x,
-                    });
+                    }),
+                    l => panic!("operand {l:?}"),
                 }
-                Loc::G(u) => self.push(Op::BrMi {
-                    cc: Cc::Ne,
-                    w: W::B1,
-                    m: Mi {
-                        base,
-                        idx: u,
-                        scale: 1,
-                        off: table::ARRAY_TAG_BASE as i32,
-                    },
-                    imm: i32::from(tag as i8),
-                    to: x,
-                }),
-                l => panic!("operand {l:?}"),
-            }
             }
         }
         if let (true, Loc::G(u)) = (self.env.b2_arr, ops[1]) {
@@ -4077,8 +4627,17 @@ impl Cx<'_> {
             // BUNDLE-L A (`aidx`): the address carries the complemented index as a value: `[base + 8 * n + 8 * d]`, no `mov; not`
             let pre = match (ops[2], ar.third()) {
                 (Loc::G(n), Some(_)) => {
-                    let d = if mutants::active("aidx_disp_ignored") { 0 } else { aref_disp(ar.aux) };
-                    Some(Mi { base, idx: n, scale: 8, off: 8 * d + if mutants::active("aidx_off8") { 8 } else { 0 } })
+                    let d = if mutants::active("aidx_disp_ignored") {
+                        0
+                    } else {
+                        aref_disp(ar.aux)
+                    };
+                    Some(Mi {
+                        base,
+                        idx: n,
+                        scale: 8,
+                        off: 8 * d + if mutants::active("aidx_off8") { 8 } else { 0 },
+                    })
                 }
                 _ => None,
             };
@@ -4088,7 +4647,11 @@ impl Cx<'_> {
                         self.push(Op::Mov(d, 0));
                     } else {
                         let m = pre.unwrap_or_else(|| self.payload_scaled(base, u));
-                        self.push(Op::LdI { dst: d, w: W::B8, m });
+                        self.push(Op::LdI {
+                            dst: d,
+                            w: W::B8,
+                            m,
+                        });
                     }
                 }
                 Loc::X(d) => {
@@ -4184,7 +4747,11 @@ impl Cx<'_> {
             return None;
         }
         let (h, l) = (&self.ir.ins[i], &self.ir.ins[i + 1]);
-        if l.op != TOp::Hload || l.a != REF_BIAS + i as Ref || aux_bits(l.aux) != 1 || l.flags & F_ANYSTR != 0 {
+        if l.op != TOp::Hload
+            || l.a != REF_BIAS + i as Ref
+            || aux_bits(l.aux) != 1
+            || l.flags & F_ANYSTR != 0
+        {
             return None;
         }
         if matches!(l.t, Ty::Nil) {
@@ -4193,7 +4760,10 @@ impl Cx<'_> {
         let (sh, sl) = (aux_snap(h.aux), aux_snap(l.aux));
         let split = sh != sl;
         if split {
-            if mutants::active("hkfuse_split_never") || (!mutants::active("hkfuse_state_skip") && !self.hk_same_state(i, sh as usize, sl as usize)) {
+            if mutants::active("hkfuse_split_never")
+                || (!mutants::active("hkfuse_state_skip")
+                    && !self.hk_same_state(i, sh as usize, sl as usize))
+            {
                 return None;
             }
         }
@@ -4202,7 +4772,11 @@ impl Cx<'_> {
 
     /// J1-1: the exit of the `HLOAD` guard at `i + 1` may be taken at the `HREFK` at `i` (see [`Cx::hk_fuse_tag`]).
     fn hk_same_state(&self, i: usize, sh: usize, sl: usize) -> bool {
-        if sh >= self.ir.snaps.len() || sl >= self.ir.snaps.len() || sh >= self.al.snap_locs.len() || sl >= self.al.snap_locs.len() {
+        if sh >= self.ir.snaps.len()
+            || sl >= self.ir.snaps.len()
+            || sh >= self.al.snap_locs.len()
+            || sl >= self.al.snap_locs.len()
+        {
             return false;
         }
         // the guards must be of the same kind of entry (`stub_label` / `disp_label`), and nothing may run between them
@@ -4213,10 +4787,18 @@ impl Cx<'_> {
             return false;
         }
         let (a, b) = (&self.ir.snaps[sh], &self.ir.snaps[sl]);
-        if !(a.pc == b.pc && a.frame == b.frame && a.nframes == b.nframes && a.refund == b.refund && a.land == b.land && a.top == b.top) {
+        if !(a.pc == b.pc
+            && a.frame == b.frame
+            && a.nframes == b.nframes
+            && a.refund == b.refund
+            && a.land == b.land
+            && a.top == b.top)
+        {
             return false;
         }
-        let win = |s: &super::ir::Snap| &self.ir.snapmap[s.map.0 as usize..s.map.0 as usize + usize::from(s.map.1)];
+        let win = |s: &super::ir::Snap| {
+            &self.ir.snapmap[s.map.0 as usize..s.map.0 as usize + usize::from(s.map.1)]
+        };
         win(a) == win(b) && self.al.snap_locs[sh] == self.al.snap_locs[sl]
     }
 
@@ -4243,12 +4825,21 @@ impl Cx<'_> {
             let at = |o: usize| rm(n, off + o as i32);
             if let Some((tag, split)) = self.hk_fuse_tag(i) {
                 // B4-3: key tag (byte +9) and the value tag of the `HLOAD` that follows (byte +8) in one 16-bit compare
-                let want = if mutants::active("hkfuse_tag_skip") { 0 } else { u16::from(tag) };
+                let want = if mutants::active("hkfuse_tag_skip") {
+                    0
+                } else {
+                    u16::from(tag)
+                };
                 let to = if split {
                     // J1-1: the two guards have their own exits: a failed compare picks the exit of the guard that failed
                     let xl = self.guard_label(i + 1)?;
                     let cold = self.label();
-                    self.hk_cold.push(HkCold { label: cold, m: at(node::KEY_TT), hrefk_exit: x, hload_exit: xl });
+                    self.hk_cold.push(HkCold {
+                        label: cold,
+                        m: at(node::KEY_TT),
+                        hrefk_exit: x,
+                        hload_exit: xl,
+                    });
                     self.hk_split_n += 1;
                     cold
                 } else {
@@ -4275,18 +4866,43 @@ impl Cx<'_> {
                 if n != 7 && self.env.hk_key64 {
                     // H3-F: the 64-bit key address in one compare against a register (`movabs v7, key; cmp [node + KEY], v7; jne`:
                     // two micro-ops, the two 32-bit memory-immediate compares were four)
-                    let k = if mutants::active("hrefk_key64_hi") { key ^ (1 << 40) } else { key };
+                    let k = if mutants::active("hrefk_key64_hi") {
+                        key ^ (1 << 40)
+                    } else {
+                        key
+                    };
                     self.push(Op::Mov(7, k));
-                    self.push(Op::BrMR { cc: Cc::Ne, m: at(node::KEY), src: 7, to: x });
+                    self.push(Op::BrMR {
+                        cc: Cc::Ne,
+                        m: at(node::KEY),
+                        src: 7,
+                        to: x,
+                    });
                 } else {
                     for (half, o) in [(key as u32, 0), ((key >> 32) as u32, 4)] {
-                        self.push(Op::BrM { cc: Cc::Ne, w: W::B4, m: at(node::KEY + o as usize), imm: half as i32, to: x });
+                        self.push(Op::BrM {
+                            cc: Cc::Ne,
+                            w: W::B4,
+                            m: at(node::KEY + o as usize),
+                            imm: half as i32,
+                            to: x,
+                        });
                     }
                 }
             }
             let d = self.g(self.dst(i));
             if off != 0 {
-                self.push(Op::Lea(d, rm(n, if mutants::active("b2hk_lea_off") { 0 } else { off })));
+                self.push(Op::Lea(
+                    d,
+                    rm(
+                        n,
+                        if mutants::active("b2hk_lea_off") {
+                            0
+                        } else {
+                            off
+                        },
+                    ),
+                ));
             } else if d != n {
                 self.push(Op::MovR(d, n));
             }
@@ -4348,7 +4964,11 @@ impl Cx<'_> {
         let Loc::G(n) = ops[0] else {
             return unsup("HREFV of a constant node vector");
         };
-        let x = if nilm { None } else { Some(self.guard_label(i)?) };
+        let x = if nilm {
+            None
+        } else {
+            Some(self.guard_label(i)?)
+        };
         // BUNDLE-L D1b: `HREF_ABS` = the absence proof of a dynamic key: the walk exits when it FINDS the key and falls through (no result)
         // when the chain ends without it
         let abs = ibits & super::ir::HREF_ABS != 0;
@@ -4370,8 +4990,16 @@ impl Cx<'_> {
             v
         };
         let t1 = pick(self);
-        let t2 = if let Loc::Const(_) = ops[1] { Some(pick(self)) } else { None };
-        let t3 = if int_key && lsize >= 2 { Some(pick(self)) } else { None };
+        let t2 = if let Loc::Const(_) = ops[1] {
+            Some(pick(self))
+        } else {
+            None
+        };
+        let t3 = if int_key && lsize >= 2 {
+            Some(pick(self))
+        } else {
+            None
+        };
         self.saved.clear();
         self.save(Loc::G(t1));
         if let Some(t) = t2 {
@@ -4389,15 +5017,24 @@ impl Cx<'_> {
             }
             _ => unreachable!(),
         };
-        let (lloop, lnext, lmiss, lfound) = (self.label(), self.label(), self.label(), self.label());
+        let (lloop, lnext, lmiss, lfound) =
+            (self.label(), self.label(), self.label(), self.label());
         if int_key {
             // `hashint`: node `key % ((sizenode - 1) | 1)` (unsigned); 1 node or 2 nodes: index 0
             let c = ((1u64 << lsize) - 1) | 1;
-            let c = if mutants::active("hrefi_mod_size") { 1u64 << lsize } else { c };
+            let c = if mutants::active("hrefi_mod_size") {
+                1u64 << lsize
+            } else {
+                c
+            };
             if let Some(td) = t3 {
                 self.push(Op::Mov(td, c));
                 // (the emulator poisons `rax` / `rdx` after a division: the remainder is `key - quotient * modulus`)
-                self.push(Op::UDiv { dst: t1, a: k, b: td });
+                self.push(Op::UDiv {
+                    dst: t1,
+                    a: k,
+                    b: td,
+                });
                 self.push(Op::Mul(t1, Src::V(td)));
                 self.push(Op::MovR(7, k));
                 self.push(Op::Sub(7, Src::V(t1)));
@@ -4411,8 +5048,21 @@ impl Cx<'_> {
             // n = the table: V7 = (hash & DYN_MASKS[lsizenode]) * sizeof(Node) + [n + NODE]
             self.ld(t1, W::B1, rm(n, table::LSIZENODE as i32));
             self.push(Op::Mov(7, super::ir::DYN_MASKS.as_ptr() as u64));
-            self.push(Op::LdI { dst: 7, w: W::B4, m: crate::ir::Mi { base: 7, idx: t1, scale: 4, off: 0 } });
-            self.ld(t1, W::B4, rm(k, rn_core::jit_layout::string::SHORT_HASH as i32));
+            self.push(Op::LdI {
+                dst: 7,
+                w: W::B4,
+                m: crate::ir::Mi {
+                    base: 7,
+                    idx: t1,
+                    scale: 4,
+                    off: 0,
+                },
+            });
+            self.ld(
+                t1,
+                W::B4,
+                rm(k, rn_core::jit_layout::string::SHORT_HASH as i32),
+            );
             if mutants::active("dynmask_mask_off_by_one") {
                 self.push(Op::And(7, Src::Imm(-2))); // MUTANT: bit 0 of the mask dropped
             }
@@ -4421,8 +5071,16 @@ impl Cx<'_> {
             self.ld(t1, W::B8, rm(n, table::NODE as i32));
             self.push(Op::Add(7, Src::V(t1)));
         } else {
-            self.ld(7, W::B4, rm(k, rn_core::jit_layout::string::SHORT_HASH as i32));
-            let m = if mutants::active("hrefv_mask_off_by_one") { mask >> 1 } else { mask };
+            self.ld(
+                7,
+                W::B4,
+                rm(k, rn_core::jit_layout::string::SHORT_HASH as i32),
+            );
+            let m = if mutants::active("hrefv_mask_off_by_one") {
+                mask >> 1
+            } else {
+                mask
+            };
             self.push(Op::And(7, Src::Imm(m as i32)));
             self.push(Op::Mul(7, Src::Imm(node::SIZE as i32)));
             self.push(Op::Add(7, Src::V(n)));
@@ -4432,7 +5090,11 @@ impl Cx<'_> {
             cc: Cc::Ne,
             w: W::B1,
             m: rm(7, node::KEY_TT as i32),
-            imm: if int_key { i32::from(LUA_VNUMINT as i8) } else { i32::from(ctb(LUA_VSHRSTR) as i8) },
+            imm: if int_key {
+                i32::from(LUA_VNUMINT as i8)
+            } else {
+                i32::from(ctb(LUA_VSHRSTR) as i8)
+            },
             to: lnext,
         });
         self.ld(t1, W::B8, rm(7, node::KEY as i32));
@@ -4528,9 +5190,18 @@ impl Cx<'_> {
         });
         if !mutants::active("hmiss_key_skip") && n != 7 && self.env.hk_key64 {
             // J1-1: the 64-bit key address in one compare against a register (`movabs v7, key; cmp [node + KEY], v7; je exit`)
-            let k = if mutants::active("hmiss_key64_hi") { key ^ (1 << 40) } else { key };
+            let k = if mutants::active("hmiss_key64_hi") {
+                key ^ (1 << 40)
+            } else {
+                key
+            };
             self.push(Op::Mov(7, k));
-            self.push(Op::BrMR { cc: Cc::Eq, m: rm(n, off + node::KEY as i32), src: 7, to: x });
+            self.push(Op::BrMR {
+                cc: Cc::Eq,
+                m: rm(n, off + node::KEY as i32),
+                src: 7,
+                to: x,
+            });
         } else if !mutants::active("hmiss_key_skip") {
             self.push(Op::BrM {
                 cc: Cc::Ne,
@@ -4909,19 +5580,39 @@ impl Cx<'_> {
         self.ld(7, W::B8, rm(t, table::NODE as i32));
         let nb = at(plan.node);
         if !mutants::active("nr_key_skip") {
-            self.st(W::B1, rm(7, nb + node::KEY_TT as i32), Src::Imm(i32::from(ctb(LUA_VSHRSTR) as i8)));
+            self.st(
+                W::B1,
+                rm(7, nb + node::KEY_TT as i32),
+                Src::Imm(i32::from(ctb(LUA_VSHRSTR) as i8)),
+            );
             self.store_const(rm(7, nb + node::KEY as i32), key);
         }
         if plan.node != plan.main && !mutants::active("nr_next_skip") {
-            self.st(W::B4, rm(7, nb + node::NEXT as i32), Src::Imm(plan.node_next));
-            self.st(W::B4, rm(7, at(plan.main) + node::NEXT as i32), Src::Imm(plan.main_next));
+            self.st(
+                W::B4,
+                rm(7, nb + node::NEXT as i32),
+                Src::Imm(plan.node_next),
+            );
+            self.st(
+                W::B4,
+                rm(7, at(plan.main) + node::NEXT as i32),
+                Src::Imm(plan.main_next),
+            );
         }
         if !mutants::active("nr_flags_skip") {
-            self.st(W::B1, rm(t, table::FLAGS as i32), Src::Imm(i32::from(plan.flags as i8)));
+            self.st(
+                W::B1,
+                rm(t, table::FLAGS as i32),
+                Src::Imm(i32::from(plan.flags as i8)),
+            );
         }
         if let Some(l) = plan.lastfree {
             self.push(Op::Lea(d, rm(7, at(l))));
-            self.st(W::B8, rm(7, -(rn_core::jit_layout::node::LASTFREE_BYTES as i32)), Src::V(d));
+            self.st(
+                W::B8,
+                rm(7, -(rn_core::jit_layout::node::LASTFREE_BYTES as i32)),
+                Src::V(d),
+            );
         }
         self.push(Op::Lea(d, rm(7, nb)));
         Ok(())
@@ -4939,13 +5630,21 @@ impl Cx<'_> {
         // (`ispow2realasize`, `limitequalsasize`), so the inline answer / store diverged on tables with holes: BUNDLE-VA, `tlen_inline` under
         // `--cfg rustynail_lua54`); the helper call is exact
         // A1: `setmetatable` of a table without a metatable to a metatable without `__gc`: a store (the helper call below is the slow path)
-        let fast_done = if ins.op == TOp::Tlen && !cfg!(rustynail_lua54) && self.ir.ty_of(ins.a) == Ty::Tab && self.env.alloc == jit_tr_alloc as *const () as usize as u64 {
+        let fast_done = if ins.op == TOp::Tlen
+            && !cfg!(rustynail_lua54)
+            && self.ir.ty_of(ins.a) == Ty::Tab
+            && self.env.alloc == jit_tr_alloc as *const () as usize as u64
+        {
             self.tlen_fast(&ops, d)
         } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::SETMT && self.env.setmt_inline {
             self.setmt_fast(&ops, d)
         } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::CCALLS && self.env.ccalls_inline {
             self.ccalls_fast(&ops, d)
-        } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::TYPE && self.env.libcall & 4 != 0 && self.env.alloc == jit_tr_alloc as *const () as usize as u64 {
+        } else if ins.op == TOp::Lib
+            && ins.aux & 0xFF == lib::TYPE
+            && self.env.libcall & 4 != 0
+            && self.env.alloc == jit_tr_alloc as *const () as usize as u64
+        {
             self.type_fast(&ops, d)
         } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::BYTE && self.env.f2_byte {
             self.byte_fast(&ops, d, self.ir.ty_of(ins.a) == Ty::LngStr)
@@ -4967,7 +5666,11 @@ impl Cx<'_> {
                 if !matches!(st, Ty::ShrStr | Ty::LngStr) {
                     return unsup(format!("STRTO of type {st:?}"));
                 }
-                (ALLOC_STRTO | u32::from(st == Ty::LngStr) << 8 | ins.aux << 9, 0, 1)
+                (
+                    ALLOC_STRTO | u32::from(st == Ty::LngStr) << 8 | ins.aux << 9,
+                    0,
+                    1,
+                )
             }
             TOp::Snew => {
                 let nt = self.ir.ty_of(ins.a);
@@ -4996,7 +5699,15 @@ impl Cx<'_> {
                 if ins.t == Ty::LngStr {
                     bits |= 16;
                 }
-                (if bits & 0x7E0 != 0 { ALLOC_CONCATN } else { ALLOC_CONCAT } | bits << 8, 0, n)
+                (
+                    if bits & 0x7E0 != 0 {
+                        ALLOC_CONCATN
+                    } else {
+                        ALLOC_CONCAT
+                    } | bits << 8,
+                    0,
+                    n,
+                )
             }
             TOp::Lib => {
                 let kind = ins.aux & 0xFF;
@@ -5010,7 +5721,11 @@ impl Cx<'_> {
                 if self.ir.ty_of(ins.a) == Ty::Num {
                     fl |= 4;
                 }
-                if matches!(kind, lib::STREQ | lib::STRLT | lib::STRLE | lib::FIND | lib::FINDS) && self.ir.ty_of(ins.b) == Ty::LngStr {
+                if matches!(
+                    kind,
+                    lib::STREQ | lib::STRLT | lib::STRLE | lib::FIND | lib::FINDS
+                ) && self.ir.ty_of(ins.b) == Ty::LngStr
+                {
                     fl |= 8;
                 }
                 // BUNDLE-H: the separator of `REPS` is a long string (bit 4)
@@ -5020,7 +5735,10 @@ impl Cx<'_> {
                 // BUNDLE-C (`tfmt`): the flags are the argument types (2 bits each from bit 4) and the result kind
                 if lib::is_fmt(kind) || kind == lib::FMTX {
                     fl = u32::from(ins.t == Ty::LngStr) << 1;
-                    for (j, r) in [ins.a, ins.b, (ins.aux >> 8) as Ref].into_iter().enumerate() {
+                    for (j, r) in [ins.a, ins.b, (ins.aux >> 8) as Ref]
+                        .into_iter()
+                        .enumerate()
+                    {
                         let c = match self.ir.ty_of(r) {
                             Ty::Int => 0,
                             Ty::ShrStr => 1,
@@ -5033,8 +5751,25 @@ impl Cx<'_> {
                 let n = match kind {
                     k if lib::is_fmt(k) || k == lib::FMTX => 3,
                     lib::SUB | lib::RANDOM | lib::FIND | lib::FINDS | lib::CHAR3 | lib::REPS => 3,
-                    lib::BYTE | lib::TYPE | lib::IPAIRS_END | lib::SETMT | lib::STREQ | lib::STRLT | lib::STRLE | lib::CHAR2 | lib::REP => 2,
-                    lib::CHAR | lib::STRMETH | lib::TYPENAME | lib::TOSTR | lib::CCALLS | lib::GMATCH | lib::RANDF | lib::LOWER | lib::UPPER | lib::REVERSE => 1,
+                    lib::BYTE
+                    | lib::TYPE
+                    | lib::IPAIRS_END
+                    | lib::SETMT
+                    | lib::STREQ
+                    | lib::STRLT
+                    | lib::STRLE
+                    | lib::CHAR2
+                    | lib::REP => 2,
+                    lib::CHAR
+                    | lib::STRMETH
+                    | lib::TYPENAME
+                    | lib::TOSTR
+                    | lib::CCALLS
+                    | lib::GMATCH
+                    | lib::RANDF
+                    | lib::LOWER
+                    | lib::UPPER
+                    | lib::REVERSE => 1,
                     k => return unsup(format!("LIB kind {k}")),
                 };
                 (ALLOC_LIB | (kind | fl << 8) << 8, 0, n)
@@ -5089,7 +5824,10 @@ impl Cx<'_> {
             jit_tr_tlen as *const () as usize as u64
         } else if real && ins.op == TOp::Lib && ins.aux & 0xFF == lib::SUB && self.env.lean_sub {
             jit_tr_lib_sub as *const () as usize as u64
-        } else if let Some(lean) = (real && ins.op == TOp::Lib && self.env.libcall & 2 != 0).then(|| lean_lib_entry(ins.aux & 0xFF, self.env.libcall)).flatten() {
+        } else if let Some(lean) = (real && ins.op == TOp::Lib && self.env.libcall & 2 != 0)
+            .then(|| lean_lib_entry(ins.aux & 0xFF, self.env.libcall))
+            .flatten()
+        {
             lean
         } else {
             self.env.alloc
@@ -5125,8 +5863,22 @@ impl Cx<'_> {
             self.st(W::B8, m, Src::V(r));
             (r, Some(m))
         };
-        let (slow, slow_r, done, got, full, empty) = (self.label(), self.label(), self.label(), self.label(), self.label(), self.label());
-        let (pop, push, zero, pscan, pend, pnil) = (self.label(), self.label(), self.label(), self.label(), self.label(), self.label());
+        let (slow, slow_r, done, got, full, empty) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
+        let (pop, push, zero, pscan, pend, pnil) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
         self.ld(7, W::B4, rm(t, table::ASIZE as i32));
         self.br(Cc::Eq, 7, Src::Imm(0), empty);
         self.ld(r, W::B8, rm(t, table::ARRAY as i32));
@@ -5309,12 +6061,20 @@ impl Cx<'_> {
             return None;
         };
         let k = self.kbits_of(r) as i64;
-        let bound = i64::from(rn_core::state::LUAI_MAXCCALLS) - k - CCALLS_MARGIN as i64 + i64::from(mutants::active("ccalls_inline_off_by_one"));
+        let bound = i64::from(rn_core::state::LUAI_MAXCCALLS) - k - CCALLS_MARGIN as i64
+            + i64::from(mutants::active("ccalls_inline_off_by_one"));
         if !(1..=i64::from(i32::MAX)).contains(&bound) {
             return None;
         }
         let (slow, done) = (self.label(), self.label());
-        self.ld(7, W::B4, M { base: Base::Thread, off: thr::NCALLS as i32 });
+        self.ld(
+            7,
+            W::B4,
+            M {
+                base: Base::Thread,
+                off: thr::NCALLS as i32,
+            },
+        );
         self.push(Op::And(7, Src::Imm(0xffff)));
         self.br(Cc::Ge, 7, Src::Imm(bound as i32), slow);
         self.push(Op::Mov(d, 1));
@@ -5353,8 +6113,19 @@ impl Cx<'_> {
             self.ld(r, W::B8, m);
         }
         // MUTANT `libk_type_index_off`: the neighbouring upvalue (the next type's name)
-        let k = if mutants::active("libk_type_index_off") { k + 1 } else { k };
-        self.ld(d, W::B8, rm(c, (rn_core::jit_layout::cclosure::UPVALS as i64 + 16 * k + 8) as i32));
+        let k = if mutants::active("libk_type_index_off") {
+            k + 1
+        } else {
+            k
+        };
+        self.ld(
+            d,
+            W::B8,
+            rm(
+                c,
+                (rn_core::jit_layout::cclosure::UPVALS as i64 + 16 * k + 8) as i32,
+            ),
+        );
         self.push(Op::Jmp(done));
         self.push(Op::Bind(slow_r));
         if let Some(m) = spilled {
@@ -5390,7 +6161,11 @@ impl Cx<'_> {
                 }
                 self.push(Op::MovR(7, i));
                 self.push(Op::Add(7, Src::V(s)));
-                let off = if mutants::active("byte_inline_off_by_one") { data } else { data - 1 };
+                let off = if mutants::active("byte_inline_off_by_one") {
+                    data
+                } else {
+                    data - 1
+                };
                 self.ld(d, W::B1, rm(7, off));
             }
             Loc::Const(r) => {
@@ -5401,7 +6176,11 @@ impl Cx<'_> {
                 if !mutants::active("byte_inline_len_skip") {
                     self.br(Cc::Lt, 7, Src::Imm(k as i32), slow);
                 }
-                let off = if mutants::active("byte_inline_off_by_one") { data + k as i32 } else { data + k as i32 - 1 };
+                let off = if mutants::active("byte_inline_off_by_one") {
+                    data + k as i32
+                } else {
+                    data + k as i32 - 1
+                };
                 self.ld(d, W::B1, rm(s, off));
             }
             _ => return None,
@@ -5431,7 +6210,13 @@ impl Cx<'_> {
             self.st(W::B8, m, Src::V(r));
             (r, Some(m))
         };
-        let (slow, slow_r, done, eql, ne) = (self.label(), self.label(), self.label(), self.label(), self.label());
+        let (slow, slow_r, done, eql, ne) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
         let data = rn_core::jit_layout::string::CONTENTS as i32;
         self.br(Cc::Eq, s, Src::V(t), eql);
         // inline long strings only (`shrlen == -1`)
@@ -5441,7 +6226,16 @@ impl Cx<'_> {
         self.br(Cc::Ne, 7, Src::Imm(0xFF), slow);
         self.ld(r, W::B8, rm(s, rn_core::jit_layout::string::LNGLEN as i32));
         self.ld(7, W::B8, rm(t, rn_core::jit_layout::string::LNGLEN as i32));
-        self.br(Cc::Ne, r, Src::V(7), if mutants::active("streq_inline_len_diff_eq") { eql } else { ne });
+        self.br(
+            Cc::Ne,
+            r,
+            Src::V(7),
+            if mutants::active("streq_inline_len_diff_eq") {
+                eql
+            } else {
+                ne
+            },
+        );
         // a long string has more than 40 bytes: the eight-byte read at the end is inside the contents
         self.br(Cc::Lt, r, Src::Imm(8), slow_r);
         self.push(Op::MovR(7, r));
@@ -5449,7 +6243,16 @@ impl Cx<'_> {
         self.ld(7, W::B8, rm(7, data - 8));
         self.push(Op::Add(r, Src::V(t)));
         self.ld(r, W::B8, rm(r, data - 8));
-        self.br(Cc::Ne, 7, Src::V(r), if mutants::active("streq_inline_tail_ne_eq") { eql } else { ne });
+        self.br(
+            Cc::Ne,
+            7,
+            Src::V(r),
+            if mutants::active("streq_inline_tail_ne_eq") {
+                eql
+            } else {
+                ne
+            },
+        );
         if mutants::active("streq_inline_tail_eq") {
             self.push(Op::Jmp(eql));
         } else {
@@ -5647,7 +6450,10 @@ impl Cx<'_> {
 
     /// The region root word (`ExitArea::lazy_root`).
     fn lroot_m() -> M {
-        M { base: Base::Cnt, off: exit_area::FROM_R15 + exit_area::LAZY_ROOT as i32 }
+        M {
+            base: Base::Cnt,
+            off: exit_area::FROM_R15 + exit_area::LAZY_ROOT as i32,
+        }
     }
 
     /// Label of the shared leave block: `V6` = the address to continue at, every other register dead. It completes the lazy chain
@@ -5673,7 +6479,10 @@ impl Cx<'_> {
     /// `new_frame == false` first tests for the common case without lazy frames (no region, or the running frame is the root).
     fn lazy_leave_seq(&mut self, new_frame: bool, save_v6: bool) {
         let lroot = Self::lroot_m();
-        let thw = |o: usize| M { base: Base::Thread, off: o as i32 };
+        let thw = |o: usize| M {
+            base: Base::Thread,
+            off: o as i32,
+        };
         let call = self.label();
         let done = self.label();
         if !new_frame {
@@ -5681,10 +6490,22 @@ impl Cx<'_> {
             let plain = self.label();
             self.ld(0, W::B8, lroot);
             self.br(Cc::Eq, 0, Src::Imm(0), plain);
-            self.push(Op::Lea(1, M { base: Base::Ci, off: 0 }));
+            self.push(Op::Lea(
+                1,
+                M {
+                    base: Base::Ci,
+                    off: 0,
+                },
+            ));
             self.br(Cc::Ne, 0, Src::V(1), call);
             self.bind(plain);
-            self.push(Op::Lea(1, M { base: Base::Ci, off: 0 }));
+            self.push(Op::Lea(
+                1,
+                M {
+                    base: Base::Ci,
+                    off: 0,
+                },
+            ));
             self.st(W::B8, thw(thr::CI), Src::V(1));
             self.st(W::B8, lroot, Src::V(1));
             self.ld(2, W::B8, rm(1, ci::TOP as i32));
@@ -5692,7 +6513,10 @@ impl Cx<'_> {
             self.push(Op::Jmp(done));
         }
         self.bind(call);
-        if let (Some(cs), true) = (self.env.lazy_cs, self.env.root_maxstack != 0 && (!new_frame || self.env.root_code != 0)) {
+        if let (Some(cs), true) = (
+            self.env.lazy_cs,
+            self.env.root_maxstack != 0 && (!new_frame || self.env.root_code != 0),
+        ) {
             {
                 // the frames above the root are all of the root's prototype: `top`, `kcache`, `trap` and `callstatus` are constants of it (V0 = root, V1 = the frame)
                 let (lp, fin) = (self.label(), self.label());
@@ -5701,11 +6525,20 @@ impl Cx<'_> {
                     self.ld(0, W::B8, lroot);
                 }
                 self.ld(3, W::B8, rm(0, ci::KCACHE as i32));
-                self.push(Op::Lea(1, M { base: Base::Ci, off: 0 }));
+                self.push(Op::Lea(
+                    1,
+                    M {
+                        base: Base::Ci,
+                        off: 0,
+                    },
+                ));
                 self.bind(lp);
                 self.br(Cc::Eq, 1, Src::V(0), fin);
                 self.ld(2, W::B8, rm(1, ci::FUNC as i32));
-                self.push(Op::Add(2, Src::Imm(top_extra + i32::from(self.env.root_maxstack))));
+                self.push(Op::Add(
+                    2,
+                    Src::Imm(top_extra + i32::from(self.env.root_maxstack)),
+                ));
                 self.st(W::B8, rm(1, ci::TOP as i32), Src::V(2));
                 self.st(W::B8, rm(1, ci::KCACHE as i32), Src::V(3));
                 self.st(W::B4, rm(1, ci::CALLSTATUS as i32), Src::Imm(cs as i32));
@@ -5713,7 +6546,13 @@ impl Cx<'_> {
                 self.ld(1, W::B8, rm(1, ci::PREVIOUS as i32));
                 self.push(Op::Jmp(lp));
                 self.bind(fin);
-                self.push(Op::Lea(1, M { base: Base::Ci, off: 0 }));
+                self.push(Op::Lea(
+                    1,
+                    M {
+                        base: Base::Ci,
+                        off: 0,
+                    },
+                ));
                 self.st(W::B8, thw(thr::CI), Src::V(1));
                 self.st(W::B8, lroot, Src::V(1));
                 if new_frame {
@@ -5732,7 +6571,11 @@ impl Cx<'_> {
         if save_v6 {
             self.st(W::B8, area_m(exit_area::ARGS), Src::V(6));
         }
-        self.push(Op::CallH { f: self.env.lazy_leave_fn, a: u32::from(new_frame), b: 0 });
+        self.push(Op::CallH {
+            f: self.env.lazy_leave_fn,
+            a: u32::from(new_frame),
+            b: 0,
+        });
         if save_v6 {
             self.ld(6, W::B8, area_m(exit_area::ARGS));
         }
@@ -5762,7 +6605,14 @@ impl Cx<'_> {
             // in the new frame (a legal fresh frame); the budget register holds tier 1's state at that label
             self.bind(l);
             if let Some(r) = self.env.budget_reg {
-                self.st(W::B4, M { base: Base::Cnt, off: 0 }, Src::V(r));
+                self.st(
+                    W::B4,
+                    M {
+                        base: Base::Cnt,
+                        off: 0,
+                    },
+                    Src::V(r),
+                );
             }
             if self.env.lazy && !mutants::active("lazy_recfail_no_leave") {
                 // BUNDLE-K L1: the chain is completed first; the frame of a function-entry head was pushed natively just now
@@ -5777,15 +6627,32 @@ impl Cx<'_> {
         // mismatch is the `HREFK` guard, otherwise the value tag was wrong
         for c in std::mem::take(&mut self.hk_cold) {
             self.bind(c.label);
-            let (kx, vx) = if mutants::active("hkfuse_cold_swap") { (c.hload_exit, c.hrefk_exit) } else { (c.hrefk_exit, c.hload_exit) };
-            self.push(Op::BrM { cc: Cc::Ne, w: W::B1, m: c.m, imm: i32::from(ctb(LUA_VSHRSTR) as i8), to: kx });
+            let (kx, vx) = if mutants::active("hkfuse_cold_swap") {
+                (c.hload_exit, c.hrefk_exit)
+            } else {
+                (c.hrefk_exit, c.hload_exit)
+            };
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B1,
+                m: c.m,
+                imm: i32::from(ctb(LUA_VSHRSTR) as i8),
+                to: kx,
+            });
             self.push(Op::Jmp(vx));
         }
         // P2-3a: the refund stubs of the budget (registers and flags are dead at the exit; only the budget register changes)
         for (label, exit, n) in std::mem::take(&mut self.bud_cold) {
             self.bind(label);
-            let r = self.env.budget_reg.expect("a refund stub needs the budget register");
-            let back = if mutants::active("budget_refund_short") { n - 1 } else { n };
+            let r = self
+                .env
+                .budget_reg
+                .expect("a refund stub needs the budget register");
+            let back = if mutants::active("budget_refund_short") {
+                n - 1
+            } else {
+                n
+            };
             if !mutants::active("budget_refund_skip") {
                 self.push(Op::Add(r, Src::Imm(back)));
             }
@@ -5825,8 +6692,18 @@ impl Cx<'_> {
                 .slots
                 .iter()
                 .map(|s| s.src)
-                .chain(es.sunk.iter().flat_map(|t| t.fields.iter().map(|f| f.src).chain(t.mt.map(|m| m.1))))
-                .filter_map(|src| if let ValSrc::Reg(r) = src { Some(r) } else { None })
+                .chain(
+                    es.sunk
+                        .iter()
+                        .flat_map(|t| t.fields.iter().map(|f| f.src).chain(t.mt.map(|m| m.1))),
+                )
+                .filter_map(|src| {
+                    if let ValSrc::Reg(r) = src {
+                        Some(r)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             // (the same scratch register `inline_stub` looks for: one that no slot reads and that is not the budget register)
             let scratch_free = [0u8, 1, 2, 3, 4, 5, 6, 8]
@@ -5849,7 +6726,10 @@ impl Cx<'_> {
                 && !mutants::active("sinkstub_never")
                 && exit::sunk_stub_ok(&es)
                 && !entry
-                && !matches!(self.sites.get(snap as usize), Some(super::cache::ExitSite::Alloc));
+                && !matches!(
+                    self.sites.get(snap as usize),
+                    Some(super::cache::ExitSite::Alloc)
+                );
             // J1-2: the same for a frameful exit (the callee of an inlined constructor): hook test, the counter of the `fmat` stub, slot
             // stores, budget, the helper, then the frames are rebuilt in place (`mat_shared`) and the stub lands in tier 1
             let site = self.sites.get(snap as usize).copied();
@@ -5866,7 +6746,9 @@ impl Cx<'_> {
                 && !entry
                 && match site {
                     Some(super::cache::ExitSite::TypeGuard) => self.env.hot_exit >= 2,
-                    Some(super::cache::ExitSite::Other) => self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2,
+                    Some(super::cache::ExitSite::Other) => {
+                        self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2
+                    }
                     _ => false,
                 };
             if sunk_frames {
@@ -5878,7 +6760,10 @@ impl Cx<'_> {
             }
             // BUNDLE-K L1: a lazy-aware trace has inline stubs only for frameless exits that continue through their cell (the stub
             // completes the chain before it lands at the tier-1 label); every other exit goes through the handler, which does
-            let lz_ok = !lz || ((es.frames.is_empty() || frame_cell) && es.sunk.is_empty() && self.env.exit_cells != 0);
+            let lz_ok = !lz
+                || ((es.frames.is_empty() || frame_cell)
+                    && es.sunk.is_empty()
+                    && self.env.exit_cells != 0);
             let inline = (es.frames.is_empty() || frame_cell)
                 && lz_ok
                 && !(self.env.seg_oracle && es.seg_pops > 0)
@@ -5900,10 +6785,11 @@ impl Cx<'_> {
                 && self.env.counters != 0
                 && match site {
                     Some(super::cache::ExitSite::TypeGuard) => self.env.hot_exit >= 2,
-                    Some(super::cache::ExitSite::Other) => self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2,
+                    Some(super::cache::ExitSite::Other) => {
+                        self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2
+                    }
                     _ => false,
-                }
-                ;
+                };
             // N3b: the linking exit of a side trace (frames rebuilt, then the head's dispatch cell): an inline stub instead of the handler
             let link_mat = self.env.link_mat
                 && snap == self.env.frame_link_snap
@@ -5924,7 +6810,14 @@ impl Cx<'_> {
             }
             if inline {
                 let generic_l = self.label();
-                self.inline_stub(&es, snap, generic_l, entry, frame_cell, if mat { site } else { None })?;
+                self.inline_stub(
+                    &es,
+                    snap,
+                    generic_l,
+                    entry,
+                    frame_cell,
+                    if mat { site } else { None },
+                )?;
                 if counting || frame_cell {
                     // the generic twin the hot divert jumps to
                     self.bind(generic_l);
@@ -5943,8 +6836,14 @@ impl Cx<'_> {
             for op in exit::frame_mat_shared_ops(frames, code) {
                 self.push(op);
             }
-            self.push(Op::ReloadFrame { stack_off: self.env.stack_off });
-            self.ld(4, W::B8, rm(2, rn_core::jit_layout::callinfo::KCACHE as i32));
+            self.push(Op::ReloadFrame {
+                stack_off: self.env.stack_off,
+            });
+            self.ld(
+                4,
+                W::B8,
+                rm(2, rn_core::jit_layout::callinfo::KCACHE as i32),
+            );
             self.push(Op::SetK(4));
             self.push(Op::JmpR(6));
         }
@@ -6012,39 +6911,76 @@ impl Cx<'_> {
         self.ld(7, W::B8, rm(7, 0));
         self.br(Cc::Eq, 7, Src::Imm(0), unatt);
         self.push(Op::Mov(7, addr));
-        if self.chain_snaps.get(snap as usize).copied().unwrap_or(false) {
+        if self
+            .chain_snaps
+            .get(snap as usize)
+            .copied()
+            .unwrap_or(false)
+        {
             // P3: the exit that makes the counter `CHAIN_EXITS` goes through the handler (the counter is even here: the handler adds the second 1 after `fix`
             // added the first). The handler re-bases the counter, so that the test comes up every `CHAIN_EXITS` exits (`cache::chain_check`)
             if !mutants::active("chain_stub_no_test") {
-                self.push(Op::BrM { cc: Cc::Eq, w: W::B4, m: rm(7, 0), imm: exit::CHAIN_EXITS as i32 - 2, to: fix });
+                self.push(Op::BrM {
+                    cc: Cc::Eq,
+                    w: W::B4,
+                    m: rm(7, 0),
+                    imm: exit::CHAIN_EXITS as i32 - 2,
+                    to: fix,
+                });
             }
         }
-        self.push(Op::AddM { w: W::B4, m: rm(7, 0), imm: 2 });
+        self.push(Op::AddM {
+            w: W::B4,
+            m: rm(7, 0),
+            imm: 2,
+        });
         self.push(Op::Jmp(common));
         self.bind(unatt);
         // a hooked thread: the rebuilt frames need `trap = 1`
         {
-            self.ld(7, W::B1, M { base: Base::Thread, off: rn_core::jit_hooks::thread::HOOKMASK as i32 });
+            self.ld(
+                7,
+                W::B1,
+                M {
+                    base: Base::Thread,
+                    off: rn_core::jit_hooks::thread::HOOKMASK as i32,
+                },
+            );
             self.br(Cc::Ne, 7, Src::Imm(0), generic_l);
         }
         self.push(Op::Mov(7, addr));
         match site {
             ExitSite::TypeGuard => {
                 // the handler reports every exit from the threshold on (the flush rule)
-                self.push(Op::BrM { cc: Cc::Ge, w: W::B4, m: rm(7, 0), imm: hot1 - 1, to: fix });
+                self.push(Op::BrM {
+                    cc: Cc::Ge,
+                    w: W::B4,
+                    m: rm(7, 0),
+                    imm: hot1 - 1,
+                    to: fix,
+                });
             }
             _ => {
                 // the handler reports every `hot_exit`-th exit (the side-trace attempt and its retries)
                 if !mutants::active("fmat_mask_skip") {
                     self.ld(7, W::B4, rm(7, 0));
                     // (H3-A: the mask also keeps the `Black` bit, so a blacklisted exit never compares equal)
-                    self.push(Op::And(7, Src::Imm((self.env.hot_exit as i32 - 1) | super::cache::EXIT_BLACK_BIT as i32)));
+                    self.push(Op::And(
+                        7,
+                        Src::Imm(
+                            (self.env.hot_exit as i32 - 1) | super::cache::EXIT_BLACK_BIT as i32,
+                        ),
+                    ));
                     self.br(Cc::Eq, 7, Src::Imm(self.env.hot_exit as i32 - 2), fix);
                     self.push(Op::Mov(7, addr));
                 }
             }
         }
-        self.push(Op::AddM { w: W::B4, m: rm(7, 0), imm: 2 });
+        self.push(Op::AddM {
+            w: W::B4,
+            m: rm(7, 0),
+            imm: 2,
+        });
         self.bind(common);
         for op in head {
             self.push(*op);
@@ -6062,19 +6998,36 @@ impl Cx<'_> {
             self.lazy_leave_seq(false, false);
         }
         // (the chain is rebuilt by a copy shared by the snapshots with the same frames: V5 = the innermost `savedpc`, V6 = the landing)
-        self.push(Op::Mov(5, exit::frame_mat_innermost_pc(es, self.seg_code(es))));
+        self.push(Op::Mov(
+            5,
+            exit::frame_mat_innermost_pc(es, self.seg_code(es)),
+        ));
         self.push(Op::Mov(6, es.land_addr));
         let key: Vec<MatKey> = es
             .frames
             .iter()
-            .map(|f| (f.func_slot, f.nresults, f.call_pc, f.code as usize, f.k as usize, f.maxstack, f.tail))
+            .map(|f| {
+                (
+                    f.func_slot,
+                    f.nresults,
+                    f.call_pc,
+                    f.code as usize,
+                    f.k as usize,
+                    f.maxstack,
+                    f.tail,
+                )
+            })
             .collect();
         let shared = self.mat_label(key, es);
         self.push(Op::Jmp(shared));
         // the exit the handler is wanted for: it counts it (the second 1)
         self.bind(fix);
         self.push(Op::Mov(7, addr));
-        self.push(Op::AddM { w: W::B4, m: rm(7, 0), imm: 1 });
+        self.push(Op::AddM {
+            w: W::B4,
+            m: rm(7, 0),
+            imm: 1,
+        });
         self.push(Op::Jmp(generic_l));
         Ok(())
     }
@@ -6084,16 +7037,30 @@ impl Cx<'_> {
     /// link target's dispatch cell (read now: it is whatever tier 1 would reach, a root trace entry or the tier-1 label).
     fn link_mat_stub(&mut self, es: &ExitSnap, snap: u32, generic_l: L) -> Result<(), AsmError> {
         let addr = self.env.counters + 4 * u64::from(snap);
-        self.ld(7, W::B1, M { base: Base::Thread, off: rn_core::jit_hooks::thread::HOOKMASK as i32 });
+        self.ld(
+            7,
+            W::B1,
+            M {
+                base: Base::Thread,
+                off: rn_core::jit_hooks::thread::HOOKMASK as i32,
+            },
+        );
         self.br(Cc::Ne, 7, Src::Imm(0), generic_l);
         self.push(Op::Mov(7, addr));
-        self.push(Op::AddM { w: W::B4, m: rm(7, 0), imm: 1 });
+        self.push(Op::AddM {
+            w: W::B4,
+            m: rm(7, 0),
+            imm: 1,
+        });
         let full = exit::inline_stub_ops_via(es, self.env.vb(), None);
         // (the last two ops are `Mov V7, land; JmpR V7`)
         for op in &full[..full.len() - 2] {
             self.push(*op);
         }
-        self.push(Op::Mov(5, exit::frame_link_innermost_pc(es, self.seg_code(es))));
+        self.push(Op::Mov(
+            5,
+            exit::frame_link_innermost_pc(es, self.seg_code(es)),
+        ));
         let (target, through) = exit::frame_link_target(es);
         self.push(Op::Mov(7, target));
         if through {
@@ -6104,7 +7071,17 @@ impl Cx<'_> {
         let key: Vec<MatKey> = es
             .frames
             .iter()
-            .map(|f| (f.func_slot, f.nresults, f.call_pc, f.code as usize, f.k as usize, f.maxstack, f.tail))
+            .map(|f| {
+                (
+                    f.func_slot,
+                    f.nresults,
+                    f.call_pc,
+                    f.code as usize,
+                    f.k as usize,
+                    f.maxstack,
+                    f.tail,
+                )
+            })
             .collect();
         let shared = self.mat_label(key, es);
         self.push(Op::Jmp(shared));
@@ -6116,13 +7093,21 @@ impl Cx<'_> {
     /// handler from the threshold on (the flush rule), any other exit every `hot_exit`-th time (the side-trace attempt and its retries,
     /// never when blacklisted). SINK-F: with a frame cell (`frame_cell`) a side trace may be attached; then the stub counts, stores the slots,
     /// materialises and jumps through the cell (read after the helper: a flush by its policy leaves 0 or the tier-1 landing, and the frames are rebuilt).
-    fn sunk_frame_stub(&mut self, es: &ExitSnap, snap: u32, generic_l: L, site: super::cache::ExitSite, frame_cell: bool) -> Result<(), AsmError> {
+    fn sunk_frame_stub(
+        &mut self,
+        es: &ExitSnap,
+        snap: u32,
+        generic_l: L,
+        site: super::cache::ExitSite,
+        frame_cell: bool,
+    ) -> Result<(), AsmError> {
         use super::cache::ExitSite;
         let addr = self.env.counters + 4 * u64::from(snap);
         let hot1 = self.env.hot_exit.clamp(1, i32::MAX as u32) as i32 - 1;
         // SINK-F: a snapshot with a frame cell may have a side trace attached (cell != 0): count (and keep the pre-roll test of the ineffective
         // rule) and go on to the slot stores and the helper; the jump through the cell after it keeps the frames virtual
-        let cell = (self.env.exit_cells != 0 && frame_cell).then(|| self.env.exit_cells + 8 * u64::from(snap));
+        let cell = (self.env.exit_cells != 0 && frame_cell)
+            .then(|| self.env.exit_cells + 8 * u64::from(snap));
         let common = self.label();
         if let Some(c) = cell {
             let unatt = self.label();
@@ -6136,7 +7121,11 @@ impl Cx<'_> {
                 self.br(Cc::Eq, 7, Src::Imm(exit::INEFF_EXITS as i32 - 1), generic_l);
                 self.push(Op::Mov(7, addr));
             }
-            self.push(Op::AddM { w: W::B4, m: rm(7, 0), imm: 1 });
+            self.push(Op::AddM {
+                w: W::B4,
+                m: rm(7, 0),
+                imm: 1,
+            });
             if mutants::active("sunkframe_cell_nomat") {
                 // (MUTANT: the side trace is entered without the slot stores and the tables)
                 self.push(Op::Mov(7, c));
@@ -6147,16 +7136,32 @@ impl Cx<'_> {
             self.bind(unatt);
         }
         // a hooked thread: the rebuilt frames need `trap = 1`, and a hook may look at the stack: the handler does it all
-        self.ld(7, W::B1, M { base: Base::Thread, off: rn_core::jit_hooks::thread::HOOKMASK as i32 });
+        self.ld(
+            7,
+            W::B1,
+            M {
+                base: Base::Thread,
+                off: rn_core::jit_hooks::thread::HOOKMASK as i32,
+            },
+        );
         self.br(Cc::Ne, 7, Src::Imm(0), generic_l);
         self.push(Op::Mov(7, addr));
         match site {
             ExitSite::TypeGuard => {
-                self.push(Op::BrM { cc: Cc::Ge, w: W::B4, m: rm(7, 0), imm: hot1, to: generic_l });
+                self.push(Op::BrM {
+                    cc: Cc::Ge,
+                    w: W::B4,
+                    m: rm(7, 0),
+                    imm: hot1,
+                    to: generic_l,
+                });
             }
             _ => {
                 self.ld(7, W::B4, rm(7, 0));
-                self.push(Op::And(7, Src::Imm((self.env.hot_exit as i32 - 1) | super::cache::EXIT_BLACK_BIT as i32)));
+                self.push(Op::And(
+                    7,
+                    Src::Imm((self.env.hot_exit as i32 - 1) | super::cache::EXIT_BLACK_BIT as i32),
+                ));
                 self.br(Cc::Eq, 7, Src::Imm(hot1), generic_l);
                 self.push(Op::Mov(7, addr));
             }
@@ -6170,7 +7175,11 @@ impl Cx<'_> {
             self.br(Cc::Eq, 7, Src::Imm(exit::INEFF_EXITS as i32 - 1), generic_l);
             self.push(Op::Mov(7, addr));
         }
-        self.push(Op::AddM { w: W::B4, m: rm(7, 0), imm: 1 });
+        self.push(Op::AddM {
+            w: W::B4,
+            m: rm(7, 0),
+            imm: 1,
+        });
         self.bind(common);
         // the slot stores and the budget of a frameless exit (the helper needs the frame slots in place, the frames come after)
         let mut flat = es.clone();
@@ -6188,12 +7197,24 @@ impl Cx<'_> {
             self.push(op);
         }
         let err = self.label();
-        self.push(Op::CallH { f: self.env.mat_fn, a: snap, b: self.env.trace_id });
+        self.push(Op::CallH {
+            f: self.env.mat_fn,
+            a: snap,
+            b: self.env.trace_id,
+        });
         if !mutants::active("sinkstub_err_ignored") {
-            self.push(Op::Br { cc: Cc::Ne, a: 0, b: Src::Imm(0), to: err });
+            self.push(Op::Br {
+                cc: Cc::Ne,
+                a: 0,
+                b: Src::Imm(0),
+                to: err,
+            });
         }
         // the chain is rebuilt by a copy shared by the snapshots with the same frames (V5 = the innermost `savedpc`, V6 = the landing)
-        self.push(Op::Mov(5, exit::frame_mat_innermost_pc(es, self.seg_code(es))));
+        self.push(Op::Mov(
+            5,
+            exit::frame_mat_innermost_pc(es, self.seg_code(es)),
+        ));
         self.push(Op::Mov(6, es.land_addr));
         if let Some(c) = cell {
             // the tables exist: a side trace continues with the frames virtual. The cell is read AFTER the helper, whose policy may have flushed the
@@ -6209,7 +7230,17 @@ impl Cx<'_> {
         let key: Vec<MatKey> = es
             .frames
             .iter()
-            .map(|f| (f.func_slot, f.nresults, f.call_pc, f.code as usize, f.k as usize, f.maxstack, f.tail))
+            .map(|f| {
+                (
+                    f.func_slot,
+                    f.nresults,
+                    f.call_pc,
+                    f.code as usize,
+                    f.k as usize,
+                    f.maxstack,
+                    f.tail,
+                )
+            })
             .collect();
         let shared = self.mat_label(key, es);
         self.push(Op::Jmp(shared));
@@ -6221,13 +7252,19 @@ impl Cx<'_> {
 
     /// N2a: the code pointer of the root frame of `es`'s segment (`env.root_code` for segment 0).
     fn seg_code(&self, es: &ExitSnap) -> u64 {
-        if es.root_code.is_null() { self.env.root_code } else { es.root_code as usize as u64 }
+        if es.root_code.is_null() {
+            self.env.root_code
+        } else {
+            es.root_code as usize as u64
+        }
     }
 
     /// The label of the shared frame-rebuild copy for `key` (the frames) with the segment's root code of `es`.
     fn mat_label(&mut self, key: Vec<MatKey>, es: &ExitSnap) -> L {
         let code = self.seg_code(es);
-        if let Some(i) = (0..self.mat_shared.len()).find(|&i| self.mat_shared[i].0 == key && self.mat_codes[i] == code) {
+        if let Some(i) = (0..self.mat_shared.len())
+            .find(|&i| self.mat_shared[i].0 == key && self.mat_codes[i] == code)
+        {
             return self.mat_shared[i].1;
         }
         let l = self.label();
@@ -6263,8 +7300,18 @@ impl Cx<'_> {
                 .slots
                 .iter()
                 .map(|s| s.src)
-                .chain(es.sunk.iter().flat_map(|t| t.fields.iter().map(|f| f.src).chain(t.mt.map(|m| m.1))))
-                .filter_map(|src| if let ValSrc::Reg(r) = src { Some(r) } else { None })
+                .chain(
+                    es.sunk
+                        .iter()
+                        .flat_map(|t| t.fields.iter().map(|f| f.src).chain(t.mt.map(|m| m.1))),
+                )
+                .filter_map(|src| {
+                    if let ValSrc::Reg(r) = src {
+                        Some(r)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             let addr = self.env.counters + 4 * u64::from(snap);
             let sr = [0u8, 1, 2, 3, 4, 5, 6, 8]
@@ -6280,7 +7327,11 @@ impl Cx<'_> {
                 && !frame_cell
                 && es.frames.is_empty()
                 && es.sunk.is_empty()
-                && self.chain_snaps.get(snap as usize).copied().unwrap_or(false);
+                && self
+                    .chain_snaps
+                    .get(snap as usize)
+                    .copied()
+                    .unwrap_or(false);
             if let (true, Some(sr)) = (pre_site, sr) {
                 self.push(Op::Mov(7, addr));
                 self.ld(sr, W::B4, rm(7, 0));
@@ -6316,7 +7367,13 @@ impl Cx<'_> {
                     });
                 }
                 if chain_site && !mutants::active("chain_stub_no_test") {
-                    self.push(Op::BrM { cc: Cc::Eq, w: W::B4, m: rm(7, 0), imm: exit::CHAIN_EXITS as i32 - 1, to: generic_l });
+                    self.push(Op::BrM {
+                        cc: Cc::Eq,
+                        w: W::B4,
+                        m: rm(7, 0),
+                        imm: exit::CHAIN_EXITS as i32 - 1,
+                        to: generic_l,
+                    });
                 }
                 if !mutants::active("exit_mem_counter_no_count") {
                     self.push(Op::AddM {
@@ -6356,9 +7413,18 @@ impl Cx<'_> {
                 self.push(op);
             }
             let err = self.label();
-            self.push(Op::CallH { f: self.env.mat_fn, a: snap, b: self.env.trace_id });
+            self.push(Op::CallH {
+                f: self.env.mat_fn,
+                a: snap,
+                b: self.env.trace_id,
+            });
             if !mutants::active("sinkstub_err_ignored") {
-                self.push(Op::Br { cc: Cc::Ne, a: 0, b: Src::Imm(0), to: err });
+                self.push(Op::Br {
+                    cc: Cc::Ne,
+                    a: 0,
+                    b: Src::Imm(0),
+                    to: err,
+                });
             }
             for op in fin {
                 self.push(*op);
@@ -6441,7 +7507,8 @@ pub mod support {
                     tracemove: d.tr.cfg.opts.tracemove,
                     seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                     line: p.linedefined,
-                    fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0) && !p.is_vararg(),
+                    fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)
+                        && !p.is_vararg(),
                     recnat: d.tr.cfg.limits.recnat != 0,
                     lazy: d.tr.cfg.limits.lazyci != 0,
                     fn_loops: d.tr.cfg.limits.recany != 0,
@@ -6513,7 +7580,11 @@ mod b4_tests {
     fn floor_ref(a: i64, c: i64) -> (i64, i64) {
         let q = a.wrapping_div(c);
         let r = a.wrapping_rem(c);
-        if r != 0 && (r ^ c) < 0 { (q - 1, r + c) } else { (q, r) }
+        if r != 0 && (r ^ c) < 0 {
+            (q - 1, r + c)
+        } else {
+            (q, r)
+        }
     }
 
     #[test]
@@ -6531,7 +7602,19 @@ mod b4_tests {
                 cs.push((1i64 << k) + d);
             }
         }
-        cs.extend([i64::MAX, 1 << 62, (1 << 62) - 1, 1_000_003, 255, 1000, 86400, 0x7FFF_FFFF, 0x8000_0001, 0xFFFF_FFFF, 0x1_0000_0001]);
+        cs.extend([
+            i64::MAX,
+            1 << 62,
+            (1 << 62) - 1,
+            1_000_003,
+            255,
+            1000,
+            86400,
+            0x7FFF_FFFF,
+            0x8000_0001,
+            0xFFFF_FFFF,
+            0x1_0000_0001,
+        ]);
         for _ in 0..300 {
             let sh = 1 + next() % 62;
             cs.push((next() >> sh) as i64);
@@ -6542,7 +7625,25 @@ mod b4_tests {
                 continue;
             }
             n_ok += 1;
-            let mut ns: Vec<i64> = vec![0, 1, -1, 2, -2, c - 1, c, c + 1, -c + 1, -c, -c - 1, i64::MIN, i64::MIN + 1, i64::MAX, i64::MAX - 1, 1 << 62, -(1 << 62)];
+            let mut ns: Vec<i64> = vec![
+                0,
+                1,
+                -1,
+                2,
+                -2,
+                c - 1,
+                c,
+                c + 1,
+                -c + 1,
+                -c,
+                -c - 1,
+                i64::MIN,
+                i64::MIN + 1,
+                i64::MAX,
+                i64::MAX - 1,
+                1 << 62,
+                -(1 << 62),
+            ];
             for k in 1..4 {
                 for j in -2..=2i64 {
                     ns.push(c.wrapping_mul(k).wrapping_add(j));

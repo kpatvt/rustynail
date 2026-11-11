@@ -23,7 +23,11 @@ fn run(src: &str) -> String {
     #[cfg(feature = "tr_mutants")]
     rn_jit::tr::mutants::apply_vm_mutants();
     let base = st.top();
-    assert_eq!(st.load_buffer(src.as_bytes(), b"=n2", None), Status::Ok, "load");
+    assert_eq!(
+        st.load_buffer(src.as_bytes(), b"=n2", None),
+        Status::Ok,
+        "load"
+    );
     let func = st.top() - 1;
     let status = st.pcall(func, LUA_MULTRET, 0);
     let v = st.get(func);

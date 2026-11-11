@@ -914,7 +914,9 @@ impl Heap {
     pub(crate) fn real_total(&self) -> usize {
         #[cfg(feature = "jit_trace")]
         {
-            self.mem.total_bytes().saturating_sub(self.mem.virtual_bytes())
+            self.mem
+                .total_bytes()
+                .saturating_sub(self.mem.virtual_bytes())
         }
         #[cfg(not(feature = "jit_trace"))]
         {
@@ -961,13 +963,18 @@ impl Heap {
             #[cfg(not(rustynail_lua54))]
             return self.minor_debt_bytes();
             #[cfg(rustynail_lua54)]
-            return (self.mem.total_bytes() / 100).saturating_mul(self.gc.params.v54.genminormul as usize);
+            return (self.mem.total_bytes() / 100)
+                .saturating_mul(self.gc.params.v54.genminormul as usize);
         }
         self.step_size_bytes()
     }
     /// Remembers the room the collector left before the next step (called at the end of `State::gc_step`).
     pub fn note_step_gap(&mut self) {
-        self.gc.last_gap = self.gc.threshold.saturating_sub(self.mem.total_bytes()).max(1);
+        self.gc.last_gap = self
+            .gc
+            .threshold
+            .saturating_sub(self.mem.total_bytes())
+            .max(1);
     }
     /// Is a stress mode on (a step at every safepoint)?
     pub fn jit_gc_stress(&self) -> bool {
@@ -2313,7 +2320,9 @@ impl Heap {
                         "string in wrong bucket"
                     );
                     // I-T: the tag in the link word is the low bits of the string-table hash
-                    if cfg!(all(target_arch = "x86_64", target_pointer_width = "64")) && (*s).extra_raw() != 0 {
+                    if cfg!(all(target_arch = "x86_64", target_pointer_width = "64"))
+                        && (*s).extra_raw() != 0
+                    {
                         assert_eq!(
                             LuaString::strtab_tag(s),
                             LuaString::strtab_hash(s, self.seed()) as usize & ((1usize << 19) - 1),

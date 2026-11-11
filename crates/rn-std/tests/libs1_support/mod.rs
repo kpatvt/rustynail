@@ -149,10 +149,7 @@ pub fn compare_batch(cases: &[String]) -> Vec<String> {
     let h = harness(cases);
     let mut st = rn_std::new_state_with_libs().expect("state");
     let status = st.load_chunk(h.as_bytes(), b"=harness", None);
-    assert!(
-        status == rn_core::status::Status::Ok,
-        "harness load failed"
-    );
+    assert!(status == rn_core::status::Status::Ok, "harness load failed");
     let f = st.top() - 1;
     let s = st.pcall(f, 1, 0);
     let v = st.get(st.top() - 1);

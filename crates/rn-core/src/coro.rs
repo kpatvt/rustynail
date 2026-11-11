@@ -286,7 +286,11 @@ impl State {
         let first = ftop - nargs;
         // (mutant `cofuse_room_skip`: no room check, so the values that do not fit are silently dropped)
         let room = (self.stack_size() as isize) - (top.0 as isize) - 1;
-        let nargs = if mut_cofuse(1) && (nargs as isize) > room { room.max(0) as usize } else { nargs };
+        let nargs = if mut_cofuse(1) && (nargs as isize) > room {
+            room.max(0) as usize
+        } else {
+            nargs
+        };
         // SAFETY: both ranges are inside the stack blocks (`nargs` values below `from`'s top; room checked above).
         unsafe {
             let src = from.slot_ptr(first);
@@ -305,13 +309,17 @@ impl State {
         }
         let status = self.raw_run_protected(|s| {
             s.tm().status = Status::Ok; // mark that it is running (again)
-            // `post_call(yci, nargs)` (no hook, a plain native frame): the common wanted-result counts inline
+                                        // `post_call(yci, nargs)` (no hook, a plain native frame): the common wanted-result counts inline
             let fw = yci.r().callstatus & (CIST_TBC | CIST_NRESULTS);
             if fw == 1 {
                 s.set_top(yci.r().func); // no value wanted
                 s.set_ci(prev);
             } else if fw == 2 {
-                let v = if nargs == 0 { Value::NIL } else { s.get(s.top() - nargs) };
+                let v = if nargs == 0 {
+                    Value::NIL
+                } else {
+                    s.get(s.top() - nargs)
+                };
                 let f = yci.r().func;
                 if !(nargs == 0 && mut_cofuse(16)) {
                     s.set(f, v);
@@ -346,7 +354,11 @@ impl State {
             let ftop = from.top();
             // (mutant `cofuse_results_room_skip`: no room check, so the results that do not fit are silently dropped)
             let room = (from.stack_size() as isize) - (ftop.0 as isize) - 1;
-            let ncopy = if mut_cofuse(32) && (nres as isize) > room { room.max(0) as usize } else { nres };
+            let ncopy = if mut_cofuse(32) && (nres as isize) > room {
+                room.max(0) as usize
+            } else {
+                nres
+            };
             let fci = from.ci(); // (`check_stack_api` raises the frame's top too)
             if fci.r().top < ftop + nres + 1 {
                 fci.w().top = ftop + nres + 1;

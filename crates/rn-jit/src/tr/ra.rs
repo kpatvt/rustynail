@@ -68,7 +68,6 @@ pub const BUDGET_GPR: u8 = 5;
 
 const GPR_POOL: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10];
 
-
 const NOREG: u8 = 255;
 const NONE: u32 = u32::MAX;
 
@@ -254,8 +253,14 @@ impl Allocation {
     pub fn carried_spills(&self, ir: &TraceIr) -> usize {
         let Some(l) = ir.loop_at else { return 0 };
         let l = usize::from(l - REF_BIAS);
-        let phis = (l + 1..self.ins.len()).filter(|&i| ir.ins[i].op == TOp::Phi && matches!(self.ins[i].dst, Loc::Spill(_))).count();
-        phis + self.backedge_seq.iter().filter(|m| matches!(m.src, Loc::Spill(_)) || matches!(m.dst, Loc::Spill(_))).count()
+        let phis = (l + 1..self.ins.len())
+            .filter(|&i| ir.ins[i].op == TOp::Phi && matches!(self.ins[i].dst, Loc::Spill(_)))
+            .count();
+        phis + self
+            .backedge_seq
+            .iter()
+            .filter(|m| matches!(m.src, Loc::Spill(_)) || matches!(m.dst, Loc::Spill(_)))
+            .count()
     }
 
     /// Does any instruction destination, operand, reload or snapshot location use general register `V<r>`?
@@ -301,10 +306,12 @@ pub fn op_clobbers(i: &Ins, ir: &TraceIr) -> CallClobber {
             xmm: 0,
         },
         // H1: the integer form of `HREFV` divides by the node-count modulus (`div` destroys `rdx` = V8) unless the modulus is 1
-        TOp::Hrefv if aux_bits(i.aux) & HREF_INT != 0 && (aux_bits(i.aux) & 0xFF) >= 2 => CallClobber {
-            gpr: 1 << 8,
-            xmm: 0,
-        },
+        TOp::Hrefv if aux_bits(i.aux) & HREF_INT != 0 && (aux_bits(i.aux) & 0xFF) >= 2 => {
+            CallClobber {
+                gpr: 1 << 8,
+                xmm: 0,
+            }
+        }
         TOp::Shl | TOp::Shr if !TraceIr::is_const(i.b) || ir.as_int(i.b).is_none() => CallClobber {
             gpr: 1 << 6,
             xmm: 0,
@@ -312,7 +319,10 @@ pub fn op_clobbers(i: &Ins, ir: &TraceIr) -> CallClobber {
         TOp::Fneg | TOp::Fabs | TOp::F2iExact => CallClobber { gpr: 0, xmm: 3 },
         // N2b: V10 (r14) is reloaded from the caller's kcache by the pop and the trace would then hold a stale value. The guards and the pop use V1 and V2 as scratch (and V7): a value in them would be lost at the
         // exits the guards take (the exit stubs restore from the registers)
-        TOp::Retf => CallClobber { gpr: 0b110 | 1 << 10, xmm: 0 },
+        TOp::Retf => CallClobber {
+            gpr: 0b110 | 1 << 10,
+            xmm: 0,
+        },
         _ => CallClobber::default(),
     }
 }
@@ -355,7 +365,20 @@ fn is_call(ir: &TraceIr, ins: &Ins) -> bool {
 }
 
 fn is_call_op(op: TOp) -> bool {
-    matches!(op, TOp::Calln | TOp::Tbar | TOp::Tnew | TOp::Newref | TOp::Tlen | TOp::Tset | TOp::Tnext | TOp::Snew | TOp::Concat | TOp::Strto | TOp::Lib)
+    matches!(
+        op,
+        TOp::Calln
+            | TOp::Tbar
+            | TOp::Tnew
+            | TOp::Newref
+            | TOp::Tlen
+            | TOp::Tset
+            | TOp::Tnext
+            | TOp::Snew
+            | TOp::Concat
+            | TOp::Strto
+            | TOp::Lib
+    )
 }
 
 /// Constant-defining instructions: operand `a` is the constant, `b` is unused (`NOREF` from the recorder).
@@ -388,7 +411,15 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
         TOp::Phi | TOp::Loop => [NOREF; 3],
         TOp::Tset => [a, b, ins.aux as Ref],
         TOp::Concat => [a, b, if ins.aux != 0 { ins.aux as Ref } else { NOREF }],
-        TOp::Lib => [a, b, if ins.aux >> 8 != 0 { (ins.aux >> 8) as Ref } else { NOREF }],
+        TOp::Lib => [
+            a,
+            b,
+            if ins.aux >> 8 != 0 {
+                (ins.aux >> 8) as Ref
+            } else {
+                NOREF
+            },
+        ],
         op if is_mem(op) && TraceIr::is_ins(a) && fused[idx(a)] => {
             let ar = ir.at(a);
             if op == TOp::Aload {
@@ -762,7 +793,13 @@ pub fn allocate(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> Result<Allocat
     let mut avail = Mask {
         g: 0x17F
             | (u16::from(opts.xregs & 1) << 9)
-            | if (ir.rec_call.is_some() || ir.rec_ret.is_some()) && !mutants::active("xregs_rec_r14") { 0 } else { u16::from(opts.xregs >> 1 & 1) << 10 },
+            | if (ir.rec_call.is_some() || ir.rec_ret.is_some())
+                && !mutants::active("xregs_rec_r14")
+            {
+                0
+            } else {
+                u16::from(opts.xregs >> 1 & 1) << 10
+            },
         x: 0xFFFF,
     };
     if let Some(r) = opts.reserve_gpr {

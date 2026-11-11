@@ -24,8 +24,8 @@ use crate::mem::CodeBlock;
 use crate::rt::{self, Fail, JitData, JitProto};
 use crate::x86::{self, Emitted};
 use rn_core::jit_hooks;
-use rn_core::ver::active::OpCode;
 use rn_core::state::{CallInfo, Ci, State, Thread};
+use rn_core::ver::active::OpCode;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -114,7 +114,13 @@ pub const REARMCLEAN_PROCESS: u32 = 1;
 /// R1: after [`REARM_MIN_ENTRIES`] entries. P1: or, with `rearmside` = `k` > 0, as soon as `k` side traces are installed (the trace is being shaped productively;
 /// the entries of the rearmed ticks are what makes its exits hot, and waiting for 1024 entries from the 1000-edge formation tick starves the cascade of side traces:
 /// `corpus/classic_vector` needed 255 of its 1000 steps to get there). C45: and the family is clean.
-pub fn rearm_young_ok(entry_ok: u32, family_sides: u32, clean: bool, rearmside: u32, rearmclean: u32) -> bool {
+pub fn rearm_young_ok(
+    entry_ok: u32,
+    family_sides: u32,
+    clean: bool,
+    rearmside: u32,
+    rearmclean: u32,
+) -> bool {
     if entry_ok >= REARM_MIN_ENTRIES {
         return true;
     }
@@ -228,10 +234,6 @@ pub const TNEXTINL_PROCESS: u32 = 1;
 /// BUNDLE-1: process default of [`TrLimits::hdrlib`].
 pub const HDRLIB_PROCESS: u32 = 2;
 
-
-
-
-
 /// J2-2: process default of [`TrLimits::deep`] (0 = off).
 pub const DEEP_PROCESS: u32 = 8;
 
@@ -272,7 +274,10 @@ pub const TSET_PROCESS: u32 = 15;
 /// like in [`TrLimits::parse`])? A process default is skipped only for a knob that is named. (Before K1 this was a substring test:
 /// `deepins=` switched the `deep` default off, `monwarm=` counted as `warm`.)
 pub fn names_limit(s: Option<&str>, key: &str) -> bool {
-    s.is_some_and(|s| s.split([' ', ',']).any(|w| w.split_once('=').map_or(w, |(k, _)| k) == key))
+    s.is_some_and(|s| {
+        s.split([' ', ','])
+            .any(|w| w.split_once('=').map_or(w, |(k, _)| k) == key)
+    })
 }
 
 /// `RUSTYNAIL_JIT_TRACE_LIMITS` (7.10).
@@ -924,7 +929,9 @@ impl TrConfig {
             self.limits.lockstep = LOCKSTEP_PROCESS;
         }
         // BUNDLE-1: a deterministic work budget instead of the time gate (`warm=` or `wgate=` named: as named; `warm=0` switches every gate off)
-        if !(names_limit(limits_env, "warm") || names_limit(limits_env, "wgate")) && !mutants::active("b1_default_ignored") {
+        if !(names_limit(limits_env, "warm") || names_limit(limits_env, "wgate"))
+            && !mutants::active("b1_default_ignored")
+        {
             self.limits.wgate = WGATE_PROCESS;
         } else if names_limit(limits_env, "warm") && !names_limit(limits_env, "wgate") {
             self.limits.wgate = 0;
@@ -948,9 +955,9 @@ impl TrConfig {
         match g("RUSTYNAIL_JIT_TRACE_PREF").as_deref().map(str::trim) {
             Some("region") => c.pref = TrPref::Region,
             Some("trace" | "") | None => {}
-            Some(o) => c
-                .warnings
-                .push(format!("unknown RUSTYNAIL_JIT_TRACE_PREF value {o:?} (trace)")),
+            Some(o) => c.warnings.push(format!(
+                "unknown RUSTYNAIL_JIT_TRACE_PREF value {o:?} (trace)"
+            )),
         }
         c
     }
@@ -1217,8 +1224,13 @@ impl HeadData {
             && self.rec_inner.get() != 0
             && self.pre.get() == 0
             && self.m_addr.get() == 0;
-        let plain = if self.lazy.get() && !mutants::active("lazy_rec_cell_plain") { 0 } else { self.cell.get() };
-        self.rec.set(if direct { self.rec_inner.get() } else { plain });
+        let plain = if self.lazy.get() && !mutants::active("lazy_rec_cell_plain") {
+            0
+        } else {
+            self.cell.get()
+        };
+        self.rec
+            .set(if direct { self.rec_inner.get() } else { plain });
     }
 
     /// The counter fires after `n` more back-edges (`n <= 1`: at the next one).
@@ -1236,7 +1248,8 @@ impl HeadData {
     /// recording must not start in the last iterations of the stay: a tick that lands near the end of a short loop would
     /// make every recording run past the loop's end, `LeaveLoop`).
     pub fn credit(&self, n: i64, floor: i32) {
-        self.ctr.set((i64::from(self.ctr.get()) - n).max(i64::from(floor)) as i32);
+        self.ctr
+            .set((i64::from(self.ctr.get()) - n).max(i64::from(floor)) as i32);
     }
 
     fn set_state_raw(&self, s: HeadState) {
@@ -1361,7 +1374,10 @@ impl TrProto {
 
     /// P-M3: is the head at `pc` a continuation head (after a self-`CALL`) of a function-entry prototype?
     pub fn is_cont_head(&self, pc: u32) -> bool {
-        pc != 0 && self.fn_head.get() && self.head_index(pc).is_some() && self.conts.borrow().contains(&pc)
+        pc != 0
+            && self.fn_head.get()
+            && self.head_index(pc).is_some()
+            && self.conts.borrow().contains(&pc)
     }
 
     /// P-E2: is the head at `pc` the function-entry head?
@@ -1504,14 +1520,20 @@ impl TrProto {
     fn nest_rule_traces(&self, i: usize) -> Vec<TrId> {
         let h = &self.heads[i];
         let n = self.ext[i].nest.get() as usize;
-        let Some(g) = n.checked_sub(1).and_then(|n| self.nests.get().and_then(|g| g.get(n))) else {
+        let Some(g) = n
+            .checked_sub(1)
+            .and_then(|n| self.nests.get().and_then(|g| g.get(n)))
+        else {
             return Vec::new();
         };
         if g.closed.get() || h.pc != g.lo || h.state.get() != HeadState::Black {
             return Vec::new();
         }
         let members: Vec<&HeadData> = self.members(n - 1).map(|(h, _)| h).collect();
-        if members.iter().any(|m| m.state.get() == HeadState::Recording) {
+        if members
+            .iter()
+            .any(|m| m.state.get() == HeadState::Recording)
+        {
             return Vec::new();
         }
         let traced: Vec<&HeadData> = members
@@ -1622,7 +1644,9 @@ impl TrProto {
 
     /// R1: does any head of the prototype hold an installed root trace?
     pub fn any_traced(&self) -> bool {
-        self.heads.iter().any(|h| h.state.get() == HeadState::Traced)
+        self.heads
+            .iter()
+            .any(|h| h.state.get() == HeadState::Traced)
     }
 
     /// Re-arms head `i` to the normal threshold.
@@ -1678,7 +1702,13 @@ impl TrProto {
             h.kl.set(kl);
             // (P-E2: a function-entry recording that ends short is a leaf-call sample; four in a row and the head is not
             // worth the recordings, each of which costs a lowering for the landing labels and an interpreter run)
-            if kl >= if reason == "FnShort" && !mutants::active("fn_short_budget_ignored") { MAX_FN_SHORT } else { MAX_LEAVE_LOOP } {
+            if kl
+                >= if reason == "FnShort" && !mutants::active("fn_short_budget_ignored") {
+                    MAX_FN_SHORT
+                } else {
+                    MAX_LEAVE_LOOP
+                }
+            {
                 self.set_state(i, HeadState::Black);
                 return Penalty::Black;
             }
@@ -1717,7 +1747,9 @@ impl TrProto {
     /// function root (see [`TrLimits::fnpromo`]).
     pub fn promote_fn(&self, i: usize, w: u32) -> Option<Penalty> {
         let h = &self.heads[i];
-        if mutants::active("fnpromo_never") || (self.fnpromo.get() && !mutants::active("fnpromo_repeats")) {
+        if mutants::active("fnpromo_never")
+            || (self.fnpromo.get() && !mutants::active("fnpromo_repeats"))
+        {
             return None;
         }
         self.fnpromo.set(true);
@@ -2168,8 +2200,12 @@ pub(crate) fn loop_len(code: &[u32], head: usize) -> u64 {
     for (j, &w) in code.iter().enumerate().skip(head) {
         let i = Instruction(w);
         match i.opcode() {
-            Some(O::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => return (j - head + 1) as u64,
-            Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => return (j - head + 1) as u64,
+            Some(O::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => {
+                return (j - head + 1) as u64
+            }
+            Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => {
+                return (j - head + 1) as u64
+            }
             _ => {}
         }
     }
@@ -2270,7 +2306,11 @@ impl TrState {
             return true;
         }
         // one hot firing of a head stands for `hot_loop` iterations of a loop of `len` bytecodes
-        let edges = if self.warm_edges != 0 { std::mem::take(&mut self.warm_edges) } else { self.cfg.hot_loop.max(1) as u64 };
+        let edges = if self.warm_edges != 0 {
+            std::mem::take(&mut self.warm_edges)
+        } else {
+            self.cfg.hot_loop.max(1) as u64
+        };
         self.warm_n += edges * len;
         if self.cfg.limits.wgate != 0 {
             if self.warm_n >= u64::from(self.cfg.limits.wgate) {
@@ -2299,8 +2339,14 @@ impl TrState {
     /// for anything but a trace. The family is clean when neither flag is set.
     pub(crate) fn family_clean(&self, id: TrId) -> (u32, bool, bool) {
         match self.slot(id) {
-            Some(Slot { body: Body::Trace(t), .. }) => match self.slot(t.family) {
-                Some(Slot { body: Body::Trace(f), .. }) => (
+            Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) => match self.slot(t.family) {
+                Some(Slot {
+                    body: Body::Trace(f),
+                    ..
+                }) => (
                     f.nside,
                     f.side_faults != 0 && !mutants::active("rearmclean_ignores_faults"),
                     f.la_any && !mutants::active("rearmclean_ignores_la"),
@@ -2532,7 +2578,10 @@ pub fn begin_side_recording_ex(
     else {
         return Err(Begin::NoHead);
     };
-    if d.tr.active.is_some() || (exit as usize) >= t.exit_st.len() || t.exit_st[exit as usize] != SideSt::Free {
+    if d.tr.active.is_some()
+        || (exit as usize) >= t.exit_st.len()
+        || t.exit_st[exit as usize] != SideSt::Free
+    {
         return Err(Begin::NotNow);
     }
     let (root, head) = (t.root, t.head);
@@ -2563,7 +2612,12 @@ pub fn begin_side_recording_ex(
     }));
     d.tr.active = Some(id);
     d.tr.stats.side_started += 1;
-    vlog(d, || format!("{no} side start from exit {exit} of trace slot {}", parent.slot));
+    vlog(d, || {
+        format!(
+            "{no} side start from exit {exit} of trace slot {}",
+            parent.slot
+        )
+    });
     Ok(id)
 }
 
@@ -2577,15 +2631,27 @@ fn side_failed(
     reason: &'static str,
     unchangeable: bool,
 ) {
-    vlog(d, || format!("side failed: parent {:?} exit {} fault {fault} {reason}", link.parent, link.exit));
+    vlog(d, || {
+        format!(
+            "side failed: parent {:?} exit {} fault {fault} {reason}",
+            link.parent, link.exit
+        )
+    });
     if fault {
         d.tr.stats.side_failed += 1;
         // C45: the family root remembers it
         let fam = match d.tr.slot(link.parent) {
-            Some(Slot { body: Body::Trace(p), .. }) => Some(p.family),
+            Some(Slot {
+                body: Body::Trace(p),
+                ..
+            }) => Some(p.family),
             _ => None,
         };
-        if let Some(Slot { body: Body::Trace(f), .. }) = fam.and_then(|f| d.tr.slot_mut(f)) {
+        if let Some(Slot {
+            body: Body::Trace(f),
+            ..
+        }) = fam.and_then(|f| d.tr.slot_mut(f))
+        {
             f.side_faults = f.side_faults.saturating_add(1);
         }
     }
@@ -2604,10 +2670,15 @@ fn side_failed(
     let mut repeat = false;
     if fault {
         t.fails[k] = t.fails[k].saturating_add(1);
-        repeat = unchangeable && t.last[k] == Some(reason) && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
+        repeat = unchangeable
+            && t.last[k] == Some(reason)
+            && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
-    if reason == "SideUntraced" && t.fails[k] < MAX_SIDE_FAILS && !mutants::active("side_untraced_retry") {
+    if reason == "SideUntraced"
+        && t.fails[k] < MAX_SIDE_FAILS
+        && !mutants::active("side_untraced_retry")
+    {
         // F2b: wait for the head to get its trace (`install`); the counter stays past the divert value
         t.exit_st[k] = SideSt::Wait;
     } else if t.fails[k] >= MAX_SIDE_FAILS || repeat {
@@ -2622,7 +2693,11 @@ fn side_failed(
 /// BUNDLE-D (`sbump2`): the extra recursion unroll of the next side attempt at an exit inside inlined frames (`framed`) whose last attempts (`fails` of them, the last
 /// ended `last`) were cut by the recursion / depth limits: one more level per failed attempt, at most `sbump2` (0 = off). Counters only, per exit.
 pub fn sbump2_extra(sbump2: u32, last: Option<&'static str>, fails: u32, framed: bool) -> u32 {
-    if sbump2 == 0 || !framed || mutants::active("sbump2_never") || !matches!(last, Some("SideShort" | "Recursion" | "Depth")) {
+    if sbump2 == 0
+        || !framed
+        || mutants::active("sbump2_never")
+        || !matches!(last, Some("SideShort" | "Recursion" | "Depth"))
+    {
         return 0;
     }
     if mutants::active("sbump2_unbounded") {
@@ -2635,7 +2710,10 @@ pub fn sbump2_extra(sbump2: u32, last: Option<&'static str>, fails: u32, framed:
 /// BUNDLE-D (`sbump2`): does a failure with `reason` (the `fails`th at its exit) leave a retry with more unroll pending? Then it is not a "repeat" (the second identical
 /// unchangeable abort that blacklists the exit): the escalation gets its attempts, bounded by `sbump2` failed attempts and by `MAX_SIDE_FAILS`.
 pub fn sbump2_pending(sbump2: u32, reason: &str, fails: u32) -> bool {
-    sbump2 != 0 && matches!(reason, "SideShort" | "Recursion" | "Depth") && fails <= sbump2 && !mutants::active("sbump2_never")
+    sbump2 != 0
+        && matches!(reason, "SideShort" | "Recursion" | "Depth")
+        && fails <= sbump2
+        && !mutants::active("sbump2_never")
 }
 
 /// H3-A: bit of an exit counter that marks a blacklisted exit: the frame-materialising stub's periodic report test masks it in
@@ -2876,11 +2954,17 @@ pub fn abort_recording(st: &mut State, id: TrId, reason: &'static str, unchangea
 pub fn abort_retf(st: &mut State, id: TrId, reason: &'static str) {
     let d = d_of(st);
     let link = match d.tr.slot(id) {
-        Some(Slot { body: Body::Rec(r), .. }) => r.side,
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) => r.side,
         _ => None,
     };
     if let Some(l) = link {
-        if let Some(Slot { body: Body::Trace(t), .. }) = d.tr.slot_mut(l.parent) {
+        if let Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) = d.tr.slot_mut(l.parent)
+        {
             if let Some(f) = t.noretf.get_mut(l.exit as usize) {
                 *f = true;
             }
@@ -2957,7 +3041,13 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
                 && tp.on_deep(r.head)
             {
                 d.tr.stats.deep_sites += 1;
-                vlog(d, || format!("--- deep site proto:{} pc {} after {reason}", tp.line, tp.head(r.head).pc));
+                vlog(d, || {
+                    format!(
+                        "--- deep site proto:{} pc {} after {reason}",
+                        tp.line,
+                        tp.head(r.head).pc
+                    )
+                });
                 Penalty::Wait(1)
             } else {
                 let p = tp.on_abort(r.head, reason, u);
@@ -2968,10 +3058,18 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
                     } else {
                         p
                     }
-                } else if p == Penalty::Black && reason == "FnShort" && d.tr.cfg.limits.fnpromo != 0 && tp.is_fn_head(tp.head(r.head).pc) && !tp.recursive.get() && d.tr.stats.fn_promoted < u64::from(d.tr.cfg.limits.fnpromo) {
+                } else if p == Penalty::Black
+                    && reason == "FnShort"
+                    && d.tr.cfg.limits.fnpromo != 0
+                    && tp.is_fn_head(tp.head(r.head).pc)
+                    && !tp.recursive.get()
+                    && d.tr.stats.fn_promoted < u64::from(d.tr.cfg.limits.fnpromo)
+                {
                     if let Some(w) = tp.promote_fn(r.head, d.tr.cfg.limits.fnpromow) {
                         d.tr.stats.fn_promoted += 1;
-                        vlog(d, || format!("--- fnpromo: function head pc {} of proto:{} (code {}) becomes a generic function root", tp.head(r.head).pc, tp.line, tp.pcs.len()));
+                        vlog(d, || {
+                            format!("--- fnpromo: function head pc {} of proto:{} (code {}) becomes a generic function root", tp.head(r.head).pc, tp.line, tp.pcs.len())
+                        });
                         w
                     } else {
                         p
@@ -2979,7 +3077,14 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
                 } else if p == Penalty::Black && reason == "InnerLoop" {
                     if let Some(w) = tp.inner_chance(r.head, d.tr.cfg.limits.innerretry) {
                         d.tr.stats.inner_retried += 1;
-                        vlog(d, || format!("--- innerretry: head pc {} of proto:{} gets round {}", tp.head(r.head).pc, tp.line, tp.heads[r.head].inner_n.get()));
+                        vlog(d, || {
+                            format!(
+                                "--- innerretry: head pc {} of proto:{} gets round {}",
+                                tp.head(r.head).pc,
+                                tp.line,
+                                tp.heads[r.head].inner_n.get()
+                            )
+                        });
                         w
                     } else {
                         p
@@ -3108,7 +3213,12 @@ pub fn shape_hash_ir(ir: &super::ir::TraceIr, al: &super::ra::Allocation) -> u64
     for (i, ins) in ir.ins.iter().enumerate() {
         ins.op.hash(&mut h);
         ins.t.hash(&mut h);
-        h.word(u64::from(ins.flags) | u64::from(ins.a) << 8 | u64::from(ins.b) << 24 | u64::from(ins.aux) << 40);
+        h.word(
+            u64::from(ins.flags)
+                | u64::from(ins.a) << 8
+                | u64::from(ins.b) << 24
+                | u64::from(ins.aux) << 40,
+        );
         h.word(u64::from(ins.aux >> 24));
         let ia = &al.ins[i];
         ia.dst.hash(&mut h);
@@ -3209,9 +3319,18 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
     if side.is_none() && d.tr.cfg.limits.centry != 0 {
         if let Some(tp) = tr_of(d, root) {
             if tp.is_cent() {
-                vlog(d, || format!("centry: root of head {head} has {} IR instructions", ti.weight));
+                vlog(d, || {
+                    format!(
+                        "centry: root of head {head} has {} IR instructions",
+                        ti.weight
+                    )
+                });
             }
-            if tp.is_cent() && tp.head(head).pc == 0 && ti.weight < d.tr.cfg.limits.centrymin && !mutants::active("centry_weight_ignored") {
+            if tp.is_cent()
+                && tp.head(head).pc == 0
+                && ti.weight < d.tr.cfg.limits.centrymin
+                && !mutants::active("centry_weight_ignored")
+            {
                 tp.cent_off.set(true);
                 d.tr.stats.c_light += 1;
             }
@@ -3235,7 +3354,9 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
             });
         if keep {
             d.tr.stats.ident_kept += 1;
-            vlog(d, || format!("second: identical re-record of head {head} installed once"));
+            vlog(d, || {
+                format!("second: identical re-record of head {head} installed once")
+            });
         } else if same {
             finish_abort(st, id, "Identical", AbortKind::Identical);
             return Err(InstallError::Refused);
@@ -3383,7 +3504,11 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
     } else if let Some(tp) = tr_of(d, root) {
         let h = tp.head(head);
         h.entry.set(entry);
-        h.rec_inner.set(if ti.inner_off != 0 { block_addr + ti.inner_off } else { 0 });
+        h.rec_inner.set(if ti.inner_off != 0 {
+            block_addr + ti.inner_off
+        } else {
+            0
+        });
         h.trace.set(Some(id));
         tp.set_state(head, HeadState::Traced);
         if d.live.contains(&root) {
@@ -3457,7 +3582,11 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                         tp.on_rerecord(t.head)
                     }
                 }
-                FlushWhy::Dep | FlushWhy::Cap | FlushWhy::Unsink | FlushWhy::Dom | FlushWhy::Chain => {
+                FlushWhy::Dep
+                | FlushWhy::Cap
+                | FlushWhy::Unsink
+                | FlushWhy::Dom
+                | FlushWhy::Chain => {
                     tp.to_warm(t.head, i64::from(hot));
                     Penalty::Wait(hot)
                 }
@@ -3468,7 +3597,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                 FlushWhy::Nest => {
                     h.trace.set(None);
                     h.entry.set(0);
-        h.rec_inner.set(0);
+                    h.rec_inner.set(0);
                     h.rec_inner.set(0);
                     h.pre.set(0);
                     tp.blacklist(t.head);
@@ -3920,14 +4049,28 @@ pub fn exit_hot_policy(
             return HotAction::None; // (P-B) the side trace would exit at the same allocation again
         }
     }
-    let want = if fc_new && !mutants::active("fck_ignored") { hot.saturating_mul(d.tr.cfg.limits.fck) } else { hot };
+    let want = if fc_new && !mutants::active("fck_ignored") {
+        hot.saturating_mul(d.tr.cfg.limits.fck)
+    } else {
+        hot
+    };
     if out.count != want {
         return HotAction::None;
     }
     // N3a (RETF): the room the parent's entry checks promise is relative to the ENTRY frame; a child of a segment-k exit starts in the frame
     // popped `seg_pops` times, `seg_shift` slots lower, with that many more CallInfo nodes behind it
     let (pext, pdep) = child_room(meta.extent, meta.depth, snap.seg_shift, snap.seg_pops);
-    side_attempt(st, ci, id, ex.snap, snap, out.entry, frame_sides, pext, pdep)
+    side_attempt(
+        st,
+        ci,
+        id,
+        ex.snap,
+        snap,
+        out.entry,
+        frame_sides,
+        pext,
+        pdep,
+    )
 }
 
 /// N3a (RETF): the room (stack extent, spare `CallInfo` nodes) a side trace attached to an exit of segment `k` (the entry frame popped `seg_pops` times, `seg_shift`
@@ -3938,8 +4081,16 @@ pub fn child_room(extent: u16, depth: u8, seg_shift: u16, seg_pops: u8) -> (u16,
         return (extent, depth);
     }
     (
-        if mutants::active("retf_extent_unshifted") { extent } else { extent.saturating_add(seg_shift) },
-        if mutants::active("retf_maxci_unshifted") { depth } else { depth.saturating_add(seg_pops) },
+        if mutants::active("retf_extent_unshifted") {
+            extent
+        } else {
+            extent.saturating_add(seg_shift)
+        },
+        if mutants::active("retf_maxci_unshifted") {
+            depth
+        } else {
+            depth.saturating_add(seg_pops)
+        },
     )
 }
 
@@ -3993,7 +4144,9 @@ fn side_attempt(
             // against a prelude the decision waits for one more window of `hot_exit` failures and then looks only at
             // the successes in between.
             let (prelude, defer) = match (cand, t.mark.get(k as usize).copied().flatten()) {
-                (Some(ok), None) if u64::from(ok) <= 2 * u64::from(d.tr.cfg.hot_exit) => (true, None),
+                (Some(ok), None) if u64::from(ok) <= 2 * u64::from(d.tr.cfg.hot_exit) => {
+                    (true, None)
+                }
                 (Some(ok), None) => (false, Some(ok)),
                 (Some(ok), Some(m)) => (
                     u64::from(ok.saturating_sub(m)) <= 2 * u64::from(d.tr.cfg.hot_exit),
@@ -4011,7 +4164,12 @@ fn side_attempt(
                     t.side.is_none(),
                     tr_of(d, t.root).map(|tp| {
                         let h = tp.head(t.head);
-                        (h.state.get(), h.trace.get() == Some(id), h.pre.get(), h.entry_ok.get())
+                        (
+                            h.state.get(),
+                            h.trace.get() == Some(id),
+                            h.pre.get(),
+                            h.entry_ok.get(),
+                        )
                     })
                 )
             });
@@ -4022,22 +4180,33 @@ fn side_attempt(
     if state != Some(SideSt::Free) {
         return HotAction::None;
     }
-    if d.tr.cfg.limits.loopanymax != 0 && !snap.frames.is_empty() && !mutants::active("loopany_guard_never") {
+    if d.tr.cfg.limits.loopanymax != 0
+        && !snap.frames.is_empty()
+        && !mutants::active("loopany_guard_never")
+    {
         let sites = family_la(d, id);
         if !sites.is_empty() {
             let (fam, max) = match d.tr.slot(id) {
-                Some(Slot { body: Body::Trace(t), .. }) => (t.family, d.tr.cfg.limits.loopanymax),
+                Some(Slot {
+                    body: Body::Trace(t),
+                    ..
+                }) => (t.family, d.tr.cfg.limits.loopanymax),
                 _ => return HotAction::None,
             };
             let n = match d.tr.slot_mut(fam) {
-                Some(Slot { body: Body::Trace(f), .. }) => {
+                Some(Slot {
+                    body: Body::Trace(f),
+                    ..
+                }) => {
                     f.la_sides += 1;
                     f.la_sides
                 }
                 _ => 0,
             };
             if n > max {
-                vlog(d, || format!("loopany guard: family {fam:?} had {n} side attempts inside callee frames: sites blocked"));
+                vlog(d, || {
+                    format!("loopany guard: family {fam:?} had {n} side attempts inside callee frames: sites blocked")
+                });
                 let root_unrolled = matches!(d.tr.slot(fam), Some(Slot { body: Body::Trace(f), .. }) if !f.la.is_empty());
                 let plan = la_plan(d.tr.cfg.limits.laprune, root_unrolled);
                 let mut victims: Vec<TrId> = Vec::new();
@@ -4045,7 +4214,10 @@ fn side_attempt(
                     for (i, sl) in d.tr.slots.iter().enumerate() {
                         if let Body::Trace(x) = &sl.body {
                             if la_is_victim(x.family == fam, x.side.is_some(), !x.la.is_empty()) {
-                                victims.push(TrId { slot: i as u32, gen: sl.gen });
+                                victims.push(TrId {
+                                    slot: i as u32,
+                                    gen: sl.gen,
+                                });
                             }
                         }
                     }
@@ -4055,8 +4227,14 @@ fn side_attempt(
                 }
                 d.tr.stats.la_blocked += 1;
                 if plan == LaPlan::Sides {
-                    vlog(d, || format!("loopany guard: root of {fam:?} unrolled nothing: pruned side traces {victims:?}, root kept"));
-                    if let Some(Slot { body: Body::Trace(f), .. }) = d.tr.slot_mut(fam) {
+                    vlog(d, || {
+                        format!("loopany guard: root of {fam:?} unrolled nothing: pruned side traces {victims:?}, root kept")
+                    });
+                    if let Some(Slot {
+                        body: Body::Trace(f),
+                        ..
+                    }) = d.tr.slot_mut(fam)
+                    {
                         f.la_sides = 0;
                     }
                     if !mutants::active("laprune_never_flushes_sides") {
@@ -4092,7 +4270,11 @@ fn side_attempt(
     if cd != 0 && chain_refuse(d, id, k as usize, cd) {
         d.tr.stats.chain_deep += 1;
         side_failed(d, link, true, "ChainDepth", true);
-        if let Some(Slot { body: Body::Trace(t), .. }) = d.tr.slot_mut(id) {
+        if let Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) = d.tr.slot_mut(id)
+        {
             black_exit(&mut t.exit_st, &t.exits, k as usize);
         }
         return HotAction::None;
@@ -4107,11 +4289,15 @@ fn side_attempt(
         };
         // only exits of a dispatch guard (callee identity, hash node / metatable of a method or field lookup): a polymorphic site; the cold
         // exits of branches / bounds / type checks keep the hard cap (awfy json / queens spent their extra side traces for nothing)
-        let deep = snap.frames.len() as u32 >= d.tr.cfg.limits.polyframes || mutants::active("polyframes_ignored");
+        let deep = snap.frames.len() as u32 >= d.tr.cfg.limits.polyframes
+            || mutants::active("polyframes_ignored");
         let hot_family = poly > 0 && nside < cap && deep;
         if hot_family {
             let waited = match d.tr.slot_mut(link.parent) {
-                Some(Slot { body: Body::Trace(t), .. }) if (k as usize) < t.defer.len() => {
+                Some(Slot {
+                    body: Body::Trace(t),
+                    ..
+                }) if (k as usize) < t.defer.len() => {
                     let c = &mut t.defer[k as usize];
                     *c = c.saturating_add(1);
                     u32::from(*c) >= wait || mutants::active("polywait_ignored")
@@ -4119,7 +4305,9 @@ fn side_attempt(
                 _ => false,
             };
             if waited {
-                vlog(d, || format!("polyside: exit {k} (pc {} frames {}) of {:?} beyond the cap ({nside} side traces in the family)", snap.pc, snap.frames.len(), link.parent));
+                vlog(d, || {
+                    format!("polyside: exit {k} (pc {} frames {}) of {:?} beyond the cap ({nside} side traces in the family)", snap.pc, snap.frames.len(), link.parent)
+                });
                 capped = false;
             } else {
                 side_failed(d, link, false, "PolyWait", false);
@@ -4160,7 +4348,13 @@ fn side_attempt(
         let sf: Vec<SideFrame> = snap
             .frames
             .iter()
-            .map(|f| SideFrame { func_slot: f.func_slot, nresults: f.nresults, call_pc: f.call_pc, tail: f.tail, mm: f.mm })
+            .map(|f| SideFrame {
+                func_slot: f.func_slot,
+                nresults: f.nresults,
+                call_pc: f.call_pc,
+                tail: f.tail,
+                mm: f.mm,
+            })
             .collect();
         if !super::record::side_frames_supported(st, &sf) {
             // (a metamethod frame of an instruction the recorder does not inline: the path ends the same way next time)
@@ -4175,17 +4369,26 @@ fn side_attempt(
     // S1: the frames stay virtual; slot numbers are root-relative in every frame, so the exit stub's slots are known
     // for a side trace with frames as well.
     let virt = frame_side && snap.frame_side_ok();
-    vlog(d_of(st), || format!("side start at exit {k}: frames {} (mm {}) virtual {virt}", snap.frames.len(), snap.frames.iter().filter(|f| f.mm).count()));
+    vlog(d_of(st), || {
+        format!(
+            "side start at exit {k}: frames {} (mm {}) virtual {virt}",
+            snap.frames.len(),
+            snap.frames.iter().filter(|f| f.mm).count()
+        )
+    });
     let known: Vec<(u16, super::ir::Ty)> = if snap.frames.is_empty() || virt {
-        snap
-            .slots
+        snap.slots
             .iter()
             .filter_map(|s| super::exit::ty_of_tag(s.tag).map(|t| (s.slot, t)))
             .collect()
     } else {
         Vec::new()
     };
-    let ci = if snap.frames.is_empty() || virt { ci } else { st.ci() };
+    let ci = if snap.frames.is_empty() || virt {
+        ci
+    } else {
+        st.ci()
+    };
     let frames: Vec<SideFrame> = if virt {
         snap.frames
             .iter()
@@ -4203,11 +4406,25 @@ fn side_attempt(
     let ubump = {
         let d = d_of(st);
         let (last, fails) = match d.tr.slot(id) {
-            Some(Slot { body: Body::Trace(t), .. }) => (t.last.get(k as usize).copied().flatten(), t.fails.get(k as usize).copied().map_or(0, u32::from)),
+            Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) => (
+                t.last.get(k as usize).copied().flatten(),
+                t.fails.get(k as usize).copied().map_or(0, u32::from),
+            ),
             _ => (None, 0),
         };
         let retry = matches!(last, Some("SideShort" | "Recursion"));
-        let base = if d.tr.cfg.limits.sbump != 0 && retry && !frames.is_empty() && !mutants::active("sbump_never") { d.tr.cfg.limits.sbump } else { 0 };
+        let base = if d.tr.cfg.limits.sbump != 0
+            && retry
+            && !frames.is_empty()
+            && !mutants::active("sbump_never")
+        {
+            d.tr.cfg.limits.sbump
+        } else {
+            0
+        };
         base + sbump2_extra(d.tr.cfg.limits.sbump2, last, fails, !frames.is_empty())
     };
     let no_retf = matches!(d_of(st).tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.noretf.get(k as usize).copied().unwrap_or(false));
@@ -4228,7 +4445,12 @@ fn side_attempt(
     ) {
         Some(rem) => HotAction::Interp(rem),
         None => {
-            vlog(d_of(st), || format!("side start refused at exit {k} (frames {})", snap.frames.len()));
+            vlog(d_of(st), || {
+                format!(
+                    "side start refused at exit {k} (frames {})",
+                    snap.frames.len()
+                )
+            });
             abort_transient(st, rid, "StartRefused");
             HotAction::None
         }
@@ -4274,7 +4496,10 @@ pub fn verbose_aborts() -> bool {
 /// J2-2: is the recording `id` (root or side) one of a family whose root head is recorded with the deep limits?
 pub fn rec_deep(st: &mut State, id: TrId) -> bool {
     let d = d_of(st);
-    let Some(Slot { body: Body::Rec(r), .. }) = d.tr.slot(id) else {
+    let Some(Slot {
+        body: Body::Rec(r), ..
+    }) = d.tr.slot(id)
+    else {
         return false;
     };
     let (root, head) = (r.root, r.head);
@@ -4350,12 +4575,15 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
         {
             // P3 (`ncallee`): a persistent entry failure of a root whose entry segment holds a callee identity guard: the callee changes between entries (a call
             // through a table of functions). The re-record keeps the callee guards in the body, where a mismatch is an ordinary exit with a side trace.
-            let ec = matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.entry_callee);
+            let ec =
+                matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.entry_callee);
             if ncallee_due(d.tr.cfg.limits.ncallee, ec) {
                 if !tp.head(i).ncallee.replace(true) {
                     d.tr.stats.ncallee_heads += 1;
                 }
-                vlog(d, || format!("entry-fail flush of a root with a callee guard in its entry segment: head pc {pc} records its callee guards in the body"));
+                vlog(d, || {
+                    format!("entry-fail flush of a root with a callee guard in its entry segment: head pc {pc} records its callee guards in the body")
+                });
             }
             request_flush(st, id, FlushWhy::Rerec);
             true
@@ -4434,7 +4662,10 @@ pub fn alloc_storm(st: &mut State, id: TrId, budget: i32) -> bool {
         if m.len() > 256 {
             m.clear();
         }
-        storm_step(m.entry((family.slot, family.gen)).or_insert((budget, 0)), budget)
+        storm_step(
+            m.entry((family.slot, family.gen)).or_insert((budget, 0)),
+            budget,
+        )
     });
     if flush {
         request_flush(st, family, FlushWhy::Ineffective);
@@ -4446,7 +4677,10 @@ pub fn alloc_storm(st: &mut State, id: TrId, budget: i32) -> bool {
 /// that shape). Returns whether a flush was requested.
 pub fn sink_demoted(st: &mut State, id: TrId) -> bool {
     let family = match d_of(st).tr.slot(id) {
-        Some(Slot { body: Body::Trace(t), .. }) => t.family,
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => t.family,
         _ => return false,
     };
     request_flush(st, family, FlushWhy::Unsink);
@@ -4533,7 +4767,8 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             n += c; // N5: body exits (includes entry-check exits, which a persistent failure flushes by its own rule)
         }
     }
-    let persistent = !cover || (top * 100 >= p * PERSIST_PCT && !mutants::active("ineff_persist_never"));
+    let persistent =
+        !cover || (top * 100 >= p * PERSIST_PCT && !mutants::active("ineff_persist_never"));
     let p_all = p;
     if cover && !persistent {
         p = pu; // polymorphic: the side-trace hops are coverage, only the exits that left the trace count
@@ -4567,11 +4802,19 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             ..
         }) => t.exit_st.iter().enumerate().any(|(k, s)| {
             matches!(s, SideSt::Has(_))
-                && meta.exits.get(k).is_some_and(|e| e.site == ExitSite::TypeGuard)
+                && meta
+                    .exits
+                    .get(k)
+                    .is_some_and(|e| e.site == ExitSite::TypeGuard)
         }),
         _ => false,
     };
-    vlog(d, || format!("pre-roll check trace slot {} p {p} e {e} n {n} guarded {guarded}", id.slot));
+    vlog(d, || {
+        format!(
+            "pre-roll check trace slot {} p {p} e {e} n {n} guarded {guarded}",
+            id.slot
+        )
+    });
     vlog(d, || {
         let mut o = String::new();
         for (k, x) in meta.exits.iter().enumerate() {
@@ -4579,7 +4822,10 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             let c = exit_count(unsafe { &*meta.counters.add(k) }.get());
             if c > 0 {
                 let st = match d.tr.slot(id) {
-                    Some(Slot { body: Body::Trace(t), .. }) => format!("{:?}", t.exit_st.get(k)),
+                    Some(Slot {
+                        body: Body::Trace(t),
+                        ..
+                    }) => format!("{:?}", t.exit_st.get(k)),
                     _ => String::new(),
                 };
                 o += &format!(" [{k}: pre {} {:?} {st} x{c}]", x.pre, x.site);
@@ -4592,7 +4838,11 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
     // (oop_methods: entry -> exit -> side -> entry per iteration, ~100 cycles apart; richards / deltablue: thousands of cycles of
     // work in the tree per entry). The rate is measured between two checks of the same trace with the time-stamp counter.
     let mut hopping = false;
-    if hop_rule_applies(cover, tp.head_deep(tp.head_index(h.pc).unwrap_or(0)) && d.tr.cfg.limits.deephop != 0) && p_all * 100 >= e * COVER_PCT {
+    if hop_rule_applies(
+        cover,
+        tp.head_deep(tp.head_index(h.pc).unwrap_or(0)) && d.tr.cfg.limits.deephop != 0,
+    ) && p_all * 100 >= e * COVER_PCT
+    {
         // BUNDLE-P: the default rule is deterministic (counters only): a root through which `hoptop` percent of the entries leave by ONE pre-roll
         // site, into the same side trace, never runs its own loop (a trampoline: the loop runs in the side trace, without the root's loop
         // optimisations).
@@ -4607,7 +4857,8 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
         let (mut streak, mut due) = (0u32, false);
         let mut dom_only = false;
         if let Some(p0) = prev {
-            let by_top = lim_top != 0 && top_any * 100 >= e * lim_top && !mutants::active("hop_top_ignored");
+            let by_top =
+                lim_top != 0 && top_any * 100 >= e * lim_top && !mutants::active("hop_top_ignored");
             let by_dom = dom_due(lim.domtop, lim.domn, top_any, e, h.dom_done.get());
             dom_only = by_dom && !by_top;
             due = (by_top || by_dom) && !mutants::active("ineff_hop_never");
@@ -4620,20 +4871,28 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             // C36: the root sits on a rare path of its loop: one re-record (once per head, so no re-record loop), nothing else changes
             h.dom_done.set(true);
             d.tr.stats.dom_flushes += 1;
-            vlog(d_of(st), || format!("dominant side: root slot {} had {}% of its {e} entries through one side trace: re-record once", id.slot, top_any * 100 / e.max(1)));
+            vlog(d_of(st), || {
+                format!("dominant side: root slot {} had {}% of its {e} entries through one side trace: re-record once", id.slot, top_any * 100 / e.max(1))
+            });
             request_flush(st, id, FlushWhy::Dom);
             return true;
         }
-        vlog(d_of(st), || format!("hop rate: top site {}% of the entries (limit {lim_top}) streak {streak} hopping {hopping}", top_any * 100 / e.max(1)));
+        vlog(d_of(st), || {
+            format!("hop rate: top site {}% of the entries (limit {lim_top}) streak {streak} hopping {hopping}", top_any * 100 / e.max(1))
+        });
     }
     if !hopping && !pre_exit_flush_due_n(p, e, guarded, tp.is_fn_head(h.pc), n) {
         return false;
     }
     // BUNDLE-L B (`bhoist`): a root with hoisted bounds guards that leaves before its body most of the time (the loop runs past the array part, or a
     // later check of the original body failed first): re-record once without the hoist (counter-based, once per head, no penalty).
-    if matches!(d_of(st).tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.hoisted) && !h.nohoist.get() {
+    if matches!(d_of(st).tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.hoisted)
+        && !h.nohoist.get()
+    {
         h.nohoist.set(true);
-        vlog(d_of(st), || format!("bhoist: ineffective root slot {} with hoisted bounds guards: re-record without the hoist", id.slot));
+        vlog(d_of(st), || {
+            format!("bhoist: ineffective root slot {} with hoisted bounds guards: re-record without the hoist", id.slot)
+        });
         return sink_demoted(st, id);
     }
     // SINK-R (`sinkroot`): a root whose leaving pre-roll exits name sunk tables is re-recorded once without sinking those shapes (Unsink: no penalty)
@@ -4650,12 +4909,18 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             }
             for t in &meta.snaps[ex.snap as usize].sunk {
                 let sh = super::sink::shape_of(t.b, t.c, t.fields.first().map_or(0, |f| f.key));
-                let key = if scoped { super::sink::scoped_shape(sh, pk, h.pc) } else { sh };
+                let key = if scoped {
+                    super::sink::scoped_shape(sh, pk, h.pc)
+                } else {
+                    sh
+                };
                 any |= super::sink::demote_shape(key);
             }
         }
         if any {
-            vlog(d_of(st), || format!("sinkroot: ineffective root slot {} with sunk pre-roll exits: re-record without sinking", id.slot));
+            vlog(d_of(st), || {
+                format!("sinkroot: ineffective root slot {} with sunk pre-roll exits: re-record without sinking", id.slot)
+            });
             return sink_demoted(st, id);
         }
     }
@@ -4837,25 +5102,38 @@ pub enum LaPlan {
 /// C36 (`domtop`): is a root with `e` entries since its trace was installed, `top_any` of which left through its busiest pre-roll site into a side trace, to be
 /// re-recorded (once per head: `done`)?
 pub fn dom_due(domtop: u32, domn: u32, top_any: u64, e: u64, done: bool) -> bool {
-    domtop != 0 && top_any * 100 >= e * u64::from(domtop) && e >= u64::from(domn) && (!done || mutants::active("dom_repeats")) && !mutants::active("dom_never")
+    domtop != 0
+        && top_any * 100 >= e * u64::from(domtop)
+        && e >= u64::from(domn)
+        && (!done || mutants::active("dom_repeats"))
+        && !mutants::active("dom_never")
 }
 
 /// C36 (`second` bit 0): does an abort that just blacklisted its head (`black`) get the head's second chance? Only a changeable cause of the kind `LeaveFrame`: the
 /// recording started at a back-edge from which the loop leaves its function before it closes (a phase effect of the counter trigger; awfy/list at `wgate=45000`). Other
 /// changeable causes (`IntMiss`, `LeaveLoop`, `StartRefused`) are data or property of the head and recorded worse traces than tier 1 when retried (regex_nfa +28 %).
 pub fn second_retry_due(second: u32, black: bool, unchangeable: bool, reason: &str) -> bool {
-    black && !unchangeable && reason == "LeaveFrame" && second & 1 != 0 && !mutants::active("second_retry_never")
+    black
+        && !unchangeable
+        && reason == "LeaveFrame"
+        && second & 1 != 0
+        && !mutants::active("second_retry_never")
 }
 
 /// C39 (`innerretry`): does an abort `reason` that just blacklisted its head (`black`) start retry round `done + 1` of at most `max`?
 pub fn inner_retry_due(max: u32, black: bool, reason: &str, done: u8) -> bool {
-    black && reason == "InnerLoop" && (u32::from(done) < max || mutants::active("inner_retry_unbounded")) && !mutants::active("inner_retry_never")
+    black
+        && reason == "InnerLoop"
+        && (u32::from(done) < max || mutants::active("inner_retry_unbounded"))
+        && !mutants::active("inner_retry_never")
 }
 
 /// C36 (`second` bit 1): is an identical re-record of a head (the compile equals the trace flushed last) installed once instead of blacklisting the head
 /// (`kept_before`: it was already)?
 pub fn ident_keep_due(second: u32, kept_before: bool) -> bool {
-    second & 2 != 0 && !mutants::active("second_identical_never") && (!kept_before || mutants::active("second_identical_repeats"))
+    second & 2 != 0
+        && !mutants::active("second_identical_never")
+        && (!kept_before || mutants::active("second_identical_repeats"))
 }
 
 /// `loopany` guard policy (pure): the family root that unrolled a callee loop itself is the exit-storm trace (flush the family); a root that
@@ -4878,7 +5156,10 @@ pub fn set_la_sites(st: &mut State, id: TrId, la: Vec<(usize, usize)>) {
     let d = d_of(st);
     let nonempty = !la.is_empty();
     let fam = match d.tr.slot_mut(id) {
-        Some(Slot { body: Body::Trace(t), .. }) => {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => {
             t.la = la;
             Some(t.family)
         }
@@ -4886,16 +5167,28 @@ pub fn set_la_sites(st: &mut State, id: TrId, la: Vec<(usize, usize)>) {
     };
     if nonempty {
         // C45: the family is no longer clean
-        if let Some(Slot { body: Body::Trace(f), .. }) = fam.and_then(|f| d.tr.slot_mut(f)) {
+        if let Some(Slot {
+            body: Body::Trace(f),
+            ..
+        }) = fam.and_then(|f| d.tr.slot_mut(f))
+        {
             f.la_any = true;
         }
-        vlog(d, || format!("loopany: trace {id:?} unrolled callee loops, family {fam:?} is not clean for rearmside"));
+        vlog(d, || {
+            format!("loopany: trace {id:?} unrolled callee loops, family {fam:?} is not clean for rearmside")
+        });
     }
 }
 
 /// `loopany` guard: the callee loops unrolled by the traces of the family of `id`.
 fn family_la(d: &JitData, id: TrId) -> Vec<(usize, usize)> {
-    let Some(Slot { body: Body::Trace(t), .. }) = d.tr.slot(id) else { return Vec::new() };
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(id)
+    else {
+        return Vec::new();
+    };
     let fam = t.family;
     let mut v: Vec<(usize, usize)> = Vec::new();
     for sl in &d.tr.slots {
@@ -4914,7 +5207,11 @@ fn family_la(d: &JitData, id: TrId) -> Vec<(usize, usize)> {
 
 /// BUNDLE-O O0: attaches the guard classes of the snapshots to the installed trace (diagnostic dump only).
 pub fn set_gkinds(st: &mut State, id: TrId, gk: Vec<u16>, dbl: &[u32]) {
-    if let Some(Slot { body: Body::Trace(t), .. }) = d_of(st).tr.slot_mut(id) {
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d_of(st).tr.slot_mut(id)
+    {
         t.dbl = vec![false; gk.len()];
         for &s in dbl {
             if let Some(x) = t.dbl.get_mut(s as usize) {
@@ -4927,14 +5224,22 @@ pub fn set_gkinds(st: &mut State, id: TrId, gk: Vec<u16>, dbl: &[u32]) {
 
 /// P3 (`ncallee`): the entry segment of trace `id` holds a callee identity guard (`EQREF` on an empty-map snapshot).
 pub fn set_entry_callee(st: &mut State, id: TrId, v: bool) {
-    if let Some(Slot { body: Body::Trace(t), .. }) = d_of(st).tr.slot_mut(id) {
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d_of(st).tr.slot_mut(id)
+    {
         t.entry_callee = v;
     }
 }
 
 /// BUNDLE-L B: the trace `id` holds hoisted bounds guards.
 pub fn set_hoisted(st: &mut State, id: TrId, v: bool) {
-    if let Some(Slot { body: Body::Trace(t), .. }) = d_of(st).tr.slot_mut(id) {
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d_of(st).tr.slot_mut(id)
+    {
         t.hoisted = v;
     }
 }
@@ -4942,7 +5247,9 @@ pub fn set_hoisted(st: &mut State, id: TrId, v: bool) {
 /// BUNDLE-L B: is the head `pc` of `pr` to be recorded without hoisted bounds guards?
 pub fn head_nohoist(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
     let d = d_of(st);
-    tr_of(d, pr.0).and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).nohoist.get())).unwrap_or(false)
+    tr_of(d, pr.0)
+        .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).nohoist.get()))
+        .unwrap_or(false)
 }
 
 /// P3 (`ncallee`): is the head `pc` of `pr` to be recorded with its callee guards out of the entry segment?
@@ -4951,12 +5258,17 @@ pub fn head_ncallee(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
         return false;
     }
     let d = d_of(st);
-    d.tr.cfg.limits.ncallee != 0 && tr_of(d, pr.0).and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).ncallee.get())).unwrap_or(false)
+    d.tr.cfg.limits.ncallee != 0
+        && tr_of(d, pr.0)
+            .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).ncallee.get()))
+            .unwrap_or(false)
 }
 
 /// P3 (`ncallee`): is a persistent entry failure of a root to set the head's flag? Pure rule: the knob is on, the flushed trace had a callee guard in its entry segment.
 pub fn ncallee_due(ncallee: u32, entry_callee: bool) -> bool {
-    ncallee != 0 && (entry_callee || mutants::active("ncallee_without_entry_guard")) && !mutants::active("ncallee_never")
+    ncallee != 0
+        && (entry_callee || mutants::active("ncallee_without_entry_guard"))
+        && !mutants::active("ncallee_never")
 }
 
 /// P3 (`chainre`): re-orders of one exit's child subtree after which the exit keeps its chain.
@@ -4991,9 +5303,17 @@ pub fn chain_due(chainre: u32, chainn: u32, v: &[u64], done: u8, fam: u32) -> bo
     }
     let m = v.len() - 1;
     let mut shares: Vec<u64> = (0..m).map(|i| v[i].saturating_sub(v[i + 1])).collect();
-    let cur: u64 = shares.iter().enumerate().map(|(i, s)| (i as u64 + 1) * s).sum();
+    let cur: u64 = shares
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (i as u64 + 1) * s)
+        .sum();
     shares.sort_unstable_by(|a, b| b.cmp(a));
-    let ideal: u64 = shares.iter().enumerate().map(|(i, s)| (i as u64 + 1) * s).sum();
+    let ideal: u64 = shares
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (i as u64 + 1) * s)
+        .sum();
     let gain = cur - ideal;
     gain * 100 >= v[0] * CHAIN_GAIN_PCT || mutants::active("chain_gain_ignored")
 }
@@ -5005,14 +5325,31 @@ pub fn chain_counts(d: &JitData, id: TrId, k: usize) -> Vec<u64> {
     let is_cg = |t: &Trace, e: usize| t.gk.get(e).is_some_and(|g| g & 1 != 0);
     let mut c = Vec::new();
     match d.tr.slot(id) {
-        Some(Slot { body: Body::Trace(t), .. }) if is_cg(t, k) => c.push(norm_count(t, k, t.exits[k].get())),
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) if is_cg(t, k) => c.push(norm_count(t, k, t.exits[k].get())),
         _ => return c,
     }
     let mut cur = id;
     for _ in 0..512 {
-        let Some(Slot { body: Body::Trace(t), .. }) = d.tr.slot(cur) else { break };
-        let Some(sl) = t.side.filter(|sl| !sl.prelude) else { break };
-        let Some(Slot { body: Body::Trace(p), .. }) = d.tr.slot(sl.parent) else { break };
+        let Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) = d.tr.slot(cur)
+        else {
+            break;
+        };
+        let Some(sl) = t.side.filter(|sl| !sl.prelude) else {
+            break;
+        };
+        let Some(Slot {
+            body: Body::Trace(p),
+            ..
+        }) = d.tr.slot(sl.parent)
+        else {
+            break;
+        };
         let e = sl.exit as usize;
         if !is_cg(p, e) {
             break;
@@ -5036,7 +5373,11 @@ pub const CHAIN_COVER_PCT: u64 = 30;
 /// `100 - CHAIN_COVER_PCT` percent: a wide, flat dispatch, where every further link makes all the unmatched calls pay one more pass-through for a share of about
 /// `1 / (callees left)`.
 pub fn chain_refuse_rule(cd: u32, c: &[u64], hot: u64) -> bool {
-    if cd == 0 || c.len() < 2 || ((c.len() - 1) as u32) < cd || mutants::active("chaindepth_ignored") {
+    if cd == 0
+        || c.len() < 2
+        || ((c.len() - 1) as u32) < cd
+        || mutants::active("chaindepth_ignored")
+    {
         return false;
     }
     if mutants::active("chaindepth_cover_ignored") {
@@ -5075,7 +5416,15 @@ fn trace_exits(t: &Trace) -> u64 {
     t.exits
         .iter()
         .enumerate()
-        .map(|(k, c)| u64::from(exit_count(c.get())) + t.chain_off.get(k).copied().unwrap_or(0) * if t.dbl.get(k).copied().unwrap_or(false) { 2 } else { 1 })
+        .map(|(k, c)| {
+            u64::from(exit_count(c.get()))
+                + t.chain_off.get(k).copied().unwrap_or(0)
+                    * if t.dbl.get(k).copied().unwrap_or(false) {
+                        2
+                    } else {
+                        1
+                    }
+        })
         .sum()
 }
 
@@ -5083,7 +5432,12 @@ fn trace_exits(t: &Trace) -> u64 {
 /// counted before the counter was re-based).
 fn norm_count(t: &Trace, k: usize, c: u32) -> u64 {
     let n = u64::from(exit_count(c));
-    t.chain_off.get(k).copied().unwrap_or(0) + if t.dbl.get(k).copied().unwrap_or(false) { n / 2 } else { n }
+    t.chain_off.get(k).copied().unwrap_or(0)
+        + if t.dbl.get(k).copied().unwrap_or(false) {
+            n / 2
+        } else {
+            n
+        }
 }
 
 /// P3 (`chainre`): exit `exitno` of trace `id` (a callee-guard exit of a side trace, which has a side trace attached) took another [`exit::CHAIN_EXITS`] exits. A megamorphic
@@ -5099,27 +5453,44 @@ pub fn chain_check(st: &mut State, id: TrId, exitno: usize) -> bool {
     if chainre == 0 {
         return false;
     }
-    let Some(Slot { body: Body::Trace(t), .. }) = d.tr.slot(id) else {
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(id)
+    else {
         return false;
     };
     let Some(sl) = t.side.filter(|sl| !sl.prelude) else {
         return false;
     };
-    if t.gk.get(exitno).is_none_or(|g| g & 1 == 0) || !matches!(t.exit_st.get(exitno), Some(SideSt::Has(_))) {
+    if t.gk.get(exitno).is_none_or(|g| g & 1 == 0)
+        || !matches!(t.exit_st.get(exitno), Some(SideSt::Has(_)))
+    {
         return false;
     }
-    let Some(Slot { body: Body::Trace(p), .. }) = d.tr.slot(sl.parent) else {
+    let Some(Slot {
+        body: Body::Trace(p),
+        ..
+    }) = d.tr.slot(sl.parent)
+    else {
         return false;
     };
     let k = sl.exit as usize;
     let done = p.chain_done.get(k).copied().unwrap_or(u8::MAX);
-    let mut v = vec![norm_count(p, k, p.exits[k].get()), norm_count(t, exitno, t.exits[exitno].get())];
+    let mut v = vec![
+        norm_count(p, k, p.exits[k].get()),
+        norm_count(t, exitno, t.exits[exitno].get()),
+    ];
     let mut cur = match t.exit_st[exitno] {
         SideSt::Has(c) => c,
         _ => return false,
     };
     for _ in 0..CHAIN_WALK {
-        let Some(Slot { body: Body::Trace(ct), .. }) = d.tr.slot(cur) else {
+        let Some(Slot {
+            body: Body::Trace(ct),
+            ..
+        }) = d.tr.slot(cur)
+        else {
             break;
         };
         let Some((k2, n)) = chain_exit(ct) else {
@@ -5135,16 +5506,25 @@ pub fn chain_check(st: &mut State, id: TrId, exitno: usize) -> bool {
     let family = t.family;
     let parent = sl.parent;
     let fam_n = match d.tr.slot(family) {
-        Some(Slot { body: Body::Trace(f), .. }) => f.chain_n,
+        Some(Slot {
+            body: Body::Trace(f),
+            ..
+        }) => f.chain_n,
         _ => 0,
     };
     d.tr.stats.chain_checks += 1;
-    vlog(d, || format!("chain check: side trace slot {} (parent slot {} exit {k}) counts {v:?} done {done} family {fam_n}", id.slot, parent.slot));
+    vlog(d, || {
+        format!("chain check: side trace slot {} (parent slot {} exit {k}) counts {v:?} done {done} family {fam_n}", id.slot, parent.slot)
+    });
     if !chain_due(chainre, chainn, &v, done, fam_n) {
         // the counter of the exit is re-based, so that the stub diverts again after another CHAIN_EXITS exits (the inline test is an equality: no mask on the hot path)
         if !mutants::active("chain_no_rebase") {
             let hot = d.tr.cfg.hot_exit;
-            if let Some(Slot { body: Body::Trace(tm), .. }) = d.tr.slot_mut(id) {
+            if let Some(Slot {
+                body: Body::Trace(tm),
+                ..
+            }) = d.tr.slot_mut(id)
+            {
                 let c = tm.exits[exitno].get();
                 let n = exit_count(c);
                 if n > hot {
@@ -5156,21 +5536,35 @@ pub fn chain_check(st: &mut State, id: TrId, exitno: usize) -> bool {
         }
         return false;
     }
-    vlog(d, || format!("chain re-order: side trace slot {} (parent slot {} exit {k}) counts {v:?}: flushed with its subtree (re-order {} of this exit)", id.slot, parent.slot, done + 1));
+    vlog(d, || {
+        format!("chain re-order: side trace slot {} (parent slot {} exit {k}) counts {v:?}: flushed with its subtree (re-order {} of this exit)", id.slot, parent.slot, done + 1)
+    });
     // the side attempts of the flushed links inside callee frames are given back to the `loopany` guard of the family: the re-recorded chain makes them again
     // (they would block the exits of the new chain after a few links otherwise; the bound of the re-order itself is `CHAIN_MAX_*`)
     let mut n_sub = 0u32;
     let mut stack = vec![id];
     while let Some(x) = stack.pop() {
-        if let Some(Slot { body: Body::Trace(xt), .. }) = d.tr.slot(x) {
+        if let Some(Slot {
+            body: Body::Trace(xt),
+            ..
+        }) = d.tr.slot(x)
+        {
             n_sub += 1;
             stack.extend(xt.kids.iter().copied());
         }
     }
-    if let Some(Slot { body: Body::Trace(pt), .. }) = d.tr.slot_mut(parent) {
+    if let Some(Slot {
+        body: Body::Trace(pt),
+        ..
+    }) = d.tr.slot_mut(parent)
+    {
         pt.chain_done[k] = pt.chain_done[k].saturating_add(1);
     }
-    if let Some(Slot { body: Body::Trace(f), .. }) = d.tr.slot_mut(family) {
+    if let Some(Slot {
+        body: Body::Trace(f),
+        ..
+    }) = d.tr.slot_mut(family)
+    {
         f.chain_n += 1;
         f.la_sides = f.la_sides.saturating_sub(n_sub);
     }
@@ -5250,7 +5644,9 @@ fn hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
         tp.rearm(i);
         return false;
     }
-    let len = st.ci_lclosure(ci).map_or(8, |cl| loop_len(cl.proto().code(), pc as usize));
+    let len = st
+        .ci_lclosure(ci)
+        .map_or(8, |cl| loop_len(cl.proto().code(), pc as usize));
     let d = d_of(st);
     if !d.tr.warm_elapsed(len) {
         // P-G: the state has run loops for too short a time for a trace to pay off yet. BUNDLE-1: with the work gate the head fires
@@ -5258,7 +5654,8 @@ fn hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
         // full threshold changed the order in which the loops of a nest formed their traces, mandelbrot: 16 M entries instead of 1 M)
         let wg = u64::from(d.tr.cfg.limits.wgate);
         if wg != 0 && !mutants::active("wgate_full_rearm") {
-            let left = (wg.saturating_sub(d.tr.warm_n) / len.max(1) + 1).min(i64::from(tp.hot) as u64);
+            let left =
+                (wg.saturating_sub(d.tr.warm_n) / len.max(1) + 1).min(i64::from(tp.hot) as u64);
             d.tr.warm_edges = left;
             h.arm(left as i64);
         } else {
@@ -5342,7 +5739,10 @@ fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
         return false;
     }
     let depth = match tp.head(i).trace.get().and_then(|id| match d.tr.slot(id) {
-        Some(Slot { body: Body::Trace(t), .. }) => t.xmeta.as_ref().map(|m| m.depth),
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => t.xmeta.as_ref().map(|m| m.depth),
         _ => None,
     }) {
         Some(n) if n > 0 => usize::from(n),
@@ -5358,7 +5758,9 @@ fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
                 h.entry_ok.set(0);
                 h.pending.set(0);
             }
-            vlog(d_of(st), || format!("cispare: head pc {pc}: {added} spare CallInfo node(s) allocated (trace needs {depth}), entry-failure account restarted"));
+            vlog(d_of(st), || {
+                format!("cispare: head pc {pc}: {added} spare CallInfo node(s) allocated (trace needs {depth}), entry-failure account restarted")
+            });
             // (mutant `cispare_flush_anyway`: the repair is made, the account stays and the flush follows)
             !mutants::active("cispare_flush_anyway")
         }
@@ -5554,7 +5956,10 @@ pub(crate) fn emit_dispatch(
             let h = h as usize;
             env.kinds[h] != Kind::Stub
                 && !env.follower[h]
-                && !dis.skip.iter().any(|&(lo, hi)| (lo..=hi).contains(&(h as u32)))
+                && !dis
+                    .skip
+                    .iter()
+                    .any(|&(lo, hi)| (lo..=hi).contains(&(h as u32)))
         })
         .collect();
     // P-E2: a loop-free function that calls something gets the entry head (its callees are what a recording can inline)
@@ -5562,8 +5967,11 @@ pub(crate) fn emit_dispatch(
         && (env.backedges.is_empty() || c.fn_loops)
         && env.kinds[0] != Kind::Stub
         && !env.follower[0]
-        && (env.ops.iter().any(|o| matches!(o, Some(OpCode::Call))) || (c.c_entered && !mutants::active("centry_no_head")) || mutants::active("fn_head_calls_ignored"))
-        && (!env.ops.iter().any(|o| matches!(o, Some(OpCode::Tbc))) || mutants::active("fn_head_tbc_ignored"));
+        && (env.ops.iter().any(|o| matches!(o, Some(OpCode::Call)))
+            || (c.c_entered && !mutants::active("centry_no_head"))
+            || mutants::active("fn_head_calls_ignored"))
+        && (!env.ops.iter().any(|o| matches!(o, Some(OpCode::Tbc)))
+            || mutants::active("fn_head_tbc_ignored"));
     let mut conts: Vec<u32> = Vec::new();
     if fn_head {
         pcs.push(0);
@@ -5582,12 +5990,29 @@ pub(crate) fn emit_dispatch(
                     (1..=12usize)
                         .filter(|k| *k <= pc)
                         .find(|k| env.ins[pc - k].a() == a && env.ops[pc - k].is_some())
-                        .is_some_and(|k| matches!(env.ops[pc - k], Some(OpCode::Getupval | OpCode::SelfOp | OpCode::Gettabup | OpCode::Getfield)))
+                        .is_some_and(|k| {
+                            matches!(
+                                env.ops[pc - k],
+                                Some(
+                                    OpCode::Getupval
+                                        | OpCode::SelfOp
+                                        | OpCode::Gettabup
+                                        | OpCode::Getfield
+                                )
+                            )
+                        })
                 } else {
-                    (1..=3usize).filter(|k| *k <= pc).any(|k| matches!(env.ops[pc - k], Some(OpCode::Getupval)) && env.ins[pc - k].a() == a)
+                    (1..=3usize).filter(|k| *k <= pc).any(|k| {
+                        matches!(env.ops[pc - k], Some(OpCode::Getupval))
+                            && env.ins[pc - k].a() == a
+                    })
                 };
                 let p = pc + 1;
-                if uv && env.kinds[p] != Kind::Stub && !env.follower[p] && conts.len() < MAX_CONT_SITES {
+                if uv
+                    && env.kinds[p] != Kind::Stub
+                    && !env.follower[p]
+                    && conts.len() < MAX_CONT_SITES
+                {
                     pcs.push(p as u32);
                     conts.push(p as u32);
                 }
@@ -5777,7 +6202,10 @@ pub fn attach_exits(st: &mut State, id: TrId, meta: ExitMeta) -> Option<Arc<Exit
             // continue in the root trace): nothing may replace that
             for (k, home) in t.cells_init.iter().enumerate() {
                 // (S1: the cell of an exit with virtual-able frames starts at 0)
-                if meta.snaps.get(k).is_some_and(|s| s.land_addr as usize != *home && !(*home == 0 && s.frame_side_ok())) && k < t.exit_st.len() {
+                if meta.snaps.get(k).is_some_and(|s| {
+                    s.land_addr as usize != *home && !(*home == 0 && s.frame_side_ok())
+                }) && k < t.exit_st.len()
+                {
                     black_exit(&mut t.exit_st, &t.exits, k);
                 }
             }

@@ -318,7 +318,11 @@ fn insert_plan_matches_the_real_insertion() {
         let nodes = [1u32, 2, 4, 8][round % 4];
         let t = h.new_table().unwrap();
         t.resize(&mut h, (round % 3) as u32, nodes).unwrap();
-        assert!(t.plan_shortstr_insert(h.new_str(b"probe").unwrap()).is_some() || nodes >= 1);
+        assert!(
+            t.plan_shortstr_insert(h.new_str(b"probe").unwrap())
+                .is_some()
+                || nodes >= 1
+        );
         let mut img = t.hash_image();
         let mut tracked = true;
         for k in 0..nodes {
@@ -344,7 +348,10 @@ fn insert_plan_matches_the_real_insertion() {
             img = got;
         }
     }
-    assert!(some > 400 && chained > 20 && none > 0, "some {some} none {none} chained {chained}");
+    assert!(
+        some > 400 && chained > 20 && none > 0,
+        "some {some} none {none} chained {chained}"
+    );
 }
 
 /// F1: `next_hinted` is `next` for any hint: after each real step the hint is the returned position, and arbitrary (stale, foreign, out of
@@ -360,7 +367,8 @@ fn next_hinted_equals_next() {
         let n = 1 + rng.below(60) as usize;
         for _ in 0..n {
             let k = keys[rng.below(keys.len() as u64) as usize];
-            t.set(&mut h, &k, &Value::int(rng.below(100) as i64)).unwrap();
+            t.set(&mut h, &k, &Value::int(rng.below(100) as i64))
+                .unwrap();
             let k2 = keys[rng.below(keys.len() as u64) as usize];
             other.set(&mut h, &k2, &Value::TRUE).unwrap();
         }
@@ -381,7 +389,11 @@ fn next_hinted_equals_next() {
             }
             // some rounds interleave a step on another table (the hint now belongs to that table)
             if rng.below(3) == 0 {
-                let ok = if rng.below(2) == 0 { Value::NIL } else { keys[rng.below(keys.len() as u64) as usize] };
+                let ok = if rng.below(2) == 0 {
+                    Value::NIL
+                } else {
+                    keys[rng.below(keys.len() as u64) as usize]
+                };
                 let _ = other.next_hinted(&ok, &mut hint);
             }
             // some rounds clear the value of the key just returned (the allowed modification during a traversal)
@@ -391,13 +403,19 @@ fn next_hinted_equals_next() {
         }
         // arbitrary hints and keys, valid or not
         for _ in 0..80 {
-            let k = if rng.below(5) == 0 { Value::NIL } else { keys[rng.below(keys.len() as u64) as usize] };
+            let k = if rng.below(5) == 0 {
+                Value::NIL
+            } else {
+                keys[rng.below(keys.len() as u64) as usize]
+            };
             let mut hint = rng.below(100) as u32;
             let a = t.next_hinted(&k, &mut hint);
             let b = t.next(&k);
             match (a, b) {
                 (Ok(None), Ok(None)) => {}
-                (Ok(Some((ak, av))), Ok(Some((bk, bv)))) => assert!(ak.raw_equal(&bk) && av.raw_equal(&bv)),
+                (Ok(Some((ak, av))), Ok(Some((bk, bv)))) => {
+                    assert!(ak.raw_equal(&bk) && av.raw_equal(&bv))
+                }
                 (Err(x), Err(y)) => assert_eq!(x, y),
                 (x, y) => panic!("differ: {x:?} vs {y:?}"),
             }
@@ -410,7 +428,18 @@ fn next_hinted_equals_next() {
 // ---------------------------------------------------------------------------------------------
 
 /// Everything observable about a table's layout and accounting.
-fn fingerprint(t: TableRef, h: &Heap) -> (u32, u32, usize, u8, crate::table::HashImage, Vec<(Vec<u8>, i64)>, u64) {
+fn fingerprint(
+    t: TableRef,
+    h: &Heap,
+) -> (
+    u32,
+    u32,
+    usize,
+    u8,
+    crate::table::HashImage,
+    Vec<(Vec<u8>, i64)>,
+    u64,
+) {
     let mut order = Vec::new();
     let mut k = Value::NIL;
     while let Some((nk, nv)) = t.next(&k).unwrap() {
@@ -443,16 +472,22 @@ fn growth_lockstep(seed: u64, ops: usize) {
     let all = key_pool(&mut h);
     let mut r = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
     // a sub-pool of the keys: small pools make collisions and re-growth of the same shapes frequent
-    let strs: Vec<Value> = all.iter().copied().filter(|v| v.as_string().is_some()).collect();
+    let strs: Vec<Value> = all
+        .iter()
+        .copied()
+        .filter(|v| v.as_string().is_some())
+        .collect();
     let mode = r.below(5);
-    let pool: Vec<Value> = (0..1 + r.below(10)).map(|_| strs[r.below(strs.len() as u64) as usize]).collect();
+    let pool: Vec<Value> = (0..1 + r.below(10))
+        .map(|_| strs[r.below(strs.len() as u64) as usize])
+        .collect();
     let mut fast = h.new_table().unwrap();
     let mut slow = h.new_table().unwrap();
     let mut counter = 0i64;
     for step in 0..ops {
         let n = fast.array_size() as i64;
         let key = match (mode, r.below(6)) {
-            (_, 0..=1) => Value::int(n + 1),                              // the append the shortcut handles
+            (_, 0..=1) => Value::int(n + 1), // the append the shortcut handles
             (0, _) => Value::int(r.below(12) as i64 + 1),
             (1, _) => pool[r.below(pool.len() as u64) as usize],
             (2, _) => Value::int(n + 1 + r.below(3) as i64),
@@ -468,7 +503,10 @@ fn growth_lockstep(seed: u64, ops: usize) {
         counter += 1;
         let (val, resize) = match r.below(10) {
             0..=1 => (Value::NIL, None),
-            2 => (Value::int(counter), Some((r.below(9) as u32, r.below(9) as u32))),
+            2 => (
+                Value::int(counter),
+                Some((r.below(9) as u32, r.below(9) as u32)),
+            ),
             _ => (Value::int(counter), None),
         };
         let mut res = [Ok(()), Ok(())];
@@ -488,10 +526,19 @@ fn growth_lockstep(seed: u64, ops: usize) {
         }
         crate::table::NO_FAST_GROWTH.with(|c| c.set(false));
         assert_eq!(res[0], res[1], "seed {seed} step {step}");
-        assert_eq!(dbytes[0], dbytes[1], "seed {seed} step {step}: accounted bytes");
-        assert_eq!(fingerprint(fast, &h), fingerprint(slow, &h), "seed {seed} step {step}: layout");
+        assert_eq!(
+            dbytes[0], dbytes[1],
+            "seed {seed} step {step}: accounted bytes"
+        );
+        assert_eq!(
+            fingerprint(fast, &h),
+            fingerprint(slow, &h),
+            "seed {seed} step {step}: layout"
+        );
         // SAFETY: live tables.
-        assert_eq!(unsafe { (*fast.as_ptr()).byte_size() }, unsafe { (*slow.as_ptr()).byte_size() });
+        assert_eq!(unsafe { (*fast.as_ptr()).byte_size() }, unsafe {
+            (*slow.as_ptr()).byte_size()
+        });
         if step % 97 == 96 {
             // start over with fresh tables: more shapes from small sizes
             fast = h.new_table().unwrap();
@@ -526,6 +573,9 @@ fn append_growth_sizes_and_bytes() {
     // shrink back through the small sizes and free: nothing leaks (Heap::drop asserts 0 bytes)
     for na in [33u32, 5, 4, 3, 1, 0] {
         t.resize(&mut h, na, 0).unwrap();
-        assert_eq!(h.total_bytes() - base, if na == 0 { 0 } else { na as usize * 9 + 4 });
+        assert_eq!(
+            h.total_bytes() - base,
+            if na == 0 { 0 } else { na as usize * 9 + 4 }
+        );
     }
 }

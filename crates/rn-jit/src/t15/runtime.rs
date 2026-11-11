@@ -717,60 +717,60 @@ pub(crate) fn lower_with_regions_hook(
     let mut hook = |cx: &mut Cx<'_>, env: &RegionEnv<'_>| -> RegionOut {
         let mut out = RegionOut::default();
         'regions: {
-        let info = super::FuncInfo {
-            code,
-            k: k.clone(),
-            k_int: k_int.clone(),
-            max_stack: meta.max_stack,
-            escaped: meta.escaped,
-            extra_heads: env.head.to_vec(),
-        };
-        let Ok(an) = super::analysis::Analysis::new(&info) else {
-            break 'regions;
-        };
-        let policy = super::Policy {
-            intr: meta.intr.clone(),
-            ..super::Policy::default()
-        };
-        for p in plans {
-            let sel = an.select_nest(p.head, p.end, &policy);
-            let obs: &[u8] = meta.obs.get(p.nest as usize).map_or(&[], Vec::as_slice);
-            let np: Option<NestPolicy> = ctl
-                .as_ref()
-                .and_then(|c| c.nests.get(p.nest as usize))
-                .cloned();
-            let (ew, dw, fb) = np.map_or((Vec::new(), Vec::new(), None), |n| {
-                (n.entry_widen, n.def_widen, n.fb)
-            });
-            let spec = super::Speculation {
-                obs,
-                prof: &meta.prof,
-                entry_widen: &ew,
-                def_widen: &dw,
+            let info = super::FuncInfo {
+                code,
+                k: k.clone(),
+                k_int: k_int.clone(),
+                max_stack: meta.max_stack,
+                escaped: meta.escaped,
+                extra_heads: env.head.to_vec(),
             };
-            let plan = match sel.and_then(|l| an.plan(l, &spec, &policy)) {
-                Ok(pl) => pl,
-                Err(e) => {
-                    if rt::verbose() {
-                        eprintln!("[t15] nest [{}, {}]: no region ({e:?})", p.head, p.end);
-                    }
-                    continue;
-                }
+            let Ok(an) = super::analysis::Analysis::new(&info) else {
+                break 'regions;
             };
-            if let Some(r) = super::codegen::emit_region(cx, env, &plan, &meta.opt, fb) {
-                if let Some(c) = ctl.as_deref_mut() {
-                    c.sites.extend(r.sites.into_iter().map(|s| (p.nest, s)));
-                }
-                out.points.extend(r.points);
-                if meta.opt.shadow {
-                    for &(hpc, l) in &r.heads {
-                        super::verify::add_stub_head(l, hpc);
+            let policy = super::Policy {
+                intr: meta.intr.clone(),
+                ..super::Policy::default()
+            };
+            for p in plans {
+                let sel = an.select_nest(p.head, p.end, &policy);
+                let obs: &[u8] = meta.obs.get(p.nest as usize).map_or(&[], Vec::as_slice);
+                let np: Option<NestPolicy> = ctl
+                    .as_ref()
+                    .and_then(|c| c.nests.get(p.nest as usize))
+                    .cloned();
+                let (ew, dw, fb) = np.map_or((Vec::new(), Vec::new(), None), |n| {
+                    (n.entry_widen, n.def_widen, n.fb)
+                });
+                let spec = super::Speculation {
+                    obs,
+                    prof: &meta.prof,
+                    entry_widen: &ew,
+                    def_widen: &dw,
+                };
+                let plan = match sel.and_then(|l| an.plan(l, &spec, &policy)) {
+                    Ok(pl) => pl,
+                    Err(e) => {
+                        if rt::verbose() {
+                            eprintln!("[t15] nest [{}, {}]: no region ({e:?})", p.head, p.end);
+                        }
+                        continue;
                     }
+                };
+                if let Some(r) = super::codegen::emit_region(cx, env, &plan, &meta.opt, fb) {
+                    if let Some(c) = ctl.as_deref_mut() {
+                        c.sites.extend(r.sites.into_iter().map(|s| (p.nest, s)));
+                    }
+                    out.points.extend(r.points);
+                    if meta.opt.shadow {
+                        for &(hpc, l) in &r.heads {
+                            super::verify::add_stub_head(l, hpc);
+                        }
+                    }
+                    out.heads.extend(r.heads);
+                    out.overrides.extend(r.overrides);
                 }
-                out.heads.extend(r.heads);
-                out.overrides.extend(r.overrides);
             }
-        }
         }
         if let Some(x) = extra.as_mut() {
             let o = x(cx, env);
@@ -1443,11 +1443,7 @@ fn give_up(
     nest.fail.set(i32::MAX);
     let plans = promoted_plans(data);
     let _ = rt::recompile_with(st, p, jpp, &plans, true);
-    if let Some(id) = data
-        .nests
-        .iter()
-        .position(|n| std::ptr::eq(n, nest))
-    {
+    if let Some(id) = data.nests.iter().position(|n| std::ptr::eq(n, nest)) {
         // SAFETY: the descriptor is live (the caller holds the frame of its prototype).
         tr_close(st, unsafe { &*jpp }, id as u32, false);
     }

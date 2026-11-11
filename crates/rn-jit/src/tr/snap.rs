@@ -219,7 +219,14 @@ pub struct FrameRec {
 /// closure: the restore needs the frame's `func`), and its `FrameLink`s are **appended** to `ir.frames` (see
 /// [`frame_links`]). Mutant `snap_drop_last` omits the last map entry of the slot map (before the `FUNC` entries
 /// are merged). `top` is [`Snap::top`] (`0`: none).
-pub fn take(ir: &mut TraceIr, sm: &SlotMap, pc: u32, land: Land, frames: &[FrameRec], top: u16) -> u32 {
+pub fn take(
+    ir: &mut TraceIr,
+    sm: &SlotMap,
+    pc: u32,
+    land: Land,
+    frames: &[FrameRec],
+    top: u16,
+) -> u32 {
     let mut entries = sm.entries();
     if mutants::active("snap_drop_last") {
         entries.pop();

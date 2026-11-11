@@ -763,7 +763,12 @@ fn hook2(frame: usize, p: *const Proto, pc: usize, base: *mut Value, _ms: usize)
                     }
                     Some(why) => {
                         c.cps[i].tried += 1;
-                        if debug_on() { eprintln!("P8A-TRY cp {} at fetch clock {clock} pc {pc}: {why}", c.cps[i].clock); }
+                        if debug_on() {
+                            eprintln!(
+                                "P8A-TRY cp {} at fetch clock {clock} pc {pc}: {why}",
+                                c.cps[i].clock
+                            );
+                        }
                         if c.cps[i].fail.is_none() {
                             c.cps[i].fail = Some(why);
                         }
@@ -797,7 +802,11 @@ fn skip_chain_stays(c: &mut Check, p: *const Proto, clock: u64) {
             && (cp.dig.key == key || prev_proto.is_some_and(|q| proto_key(q) == cp.dig.key))
         {
             let pc = cp.dig.pc as usize;
-            let owner = if cp.dig.key == key { proto } else { prev_proto.unwrap() };
+            let owner = if cp.dig.key == key {
+                proto
+            } else {
+                prev_proto.unwrap()
+            };
             let op = owner
                 .code()
                 .get(pc)
@@ -805,8 +814,7 @@ fn skip_chain_stays(c: &mut Check, p: *const Proto, clock: u64) {
             if matches!(
                 op,
                 Some(
-                    rn_core::ver::active::OpCode::Tforcall
-                        | rn_core::ver::active::OpCode::Tforloop
+                    rn_core::ver::active::OpCode::Tforcall | rn_core::ver::active::OpCode::Tforloop
                 )
             ) {
                 c.cps[i].done = true;
@@ -1022,7 +1030,14 @@ fn run_cells(title: &str, cells: &[Cell], core_only: bool, gen: u32) {
         .iter()
         .chain(sink_progs::SINK_PROGS)
         .map(|p| p.name)
-        .filter(|n| *n != "pm3_rec" && *n != "r2_rec_deep" && *n != "bf_rec_deep" && *n != "be_queens" && *n != "h1_towers_piles" && *n != "h1_hash_int_many")
+        .filter(|n| {
+            *n != "pm3_rec"
+                && *n != "r2_rec_deep"
+                && *n != "bf_rec_deep"
+                && *n != "be_queens"
+                && *n != "h1_towers_piles"
+                && *n != "h1_hash_int_many"
+        })
         .collect();
     let mut items = corpus(&names, gen);
     if core_only {

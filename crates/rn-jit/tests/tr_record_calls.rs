@@ -16,7 +16,9 @@
 use rn_core::func::{LClosure, Proto};
 use rn_core::instruction::Instruction;
 use rn_core::jit_hooks::{self, Abort, RecCtx, RecStep, RecVTable};
-use rn_core::state::{Ci, LuaState, State, StkId, CIST_NRESULTS, CIST_TAIL, LUA_MINSTACK, LUA_MULTRET};
+use rn_core::state::{
+    Ci, LuaState, State, StkId, CIST_NRESULTS, CIST_TAIL, LUA_MINSTACK, LUA_MULTRET,
+};
 use rn_core::status::{LuaResult, Status};
 use rn_core::table::TableRef;
 use rn_core::value::{Gc, Value};
@@ -39,7 +41,9 @@ use std::sync::Once;
 /// LeakSanitizer (scripts/asan-jit.sh) does not report it.
 static KEPT: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 fn keep<T: ?Sized>(r: &'static T) -> &'static T {
-    KEPT.lock().unwrap_or_else(|e| e.into_inner()).push((r as *const T).cast::<u8>() as usize);
+    KEPT.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((r as *const T).cast::<u8>() as usize);
     r
 }
 
@@ -1348,7 +1352,11 @@ fn check_frames(what: &str, ir: &TraceIr, s: u32, real: &Step) -> Result<(), Str
     }
     // F4: a snapshot that carries a `top` restores exactly the `thread.top` the interpreter holds before the instruction
     if sn.top != 0 && real.top != i64::from(sn.top) - 1 {
-        return Err(format!("{what}: snapshot top {} but the VM's top is {}", i64::from(sn.top) - 1, real.top));
+        return Err(format!(
+            "{what}: snapshot top {} but the VM's top is {}",
+            i64::from(sn.top) - 1,
+            real.top
+        ));
     }
     if real.frames[real.depth].pc != sn.pc as usize || real.pc != sn.pc as usize {
         return Err(format!(
@@ -1586,9 +1594,17 @@ fn vararg_replay_matches_the_interpreter() {
         }
         eprintln!("{}: {st:?}", p.name);
         // (`vararg_selvar`: the selector changes every iteration, so every replayed iteration leaves the trace)
-        assert!((st.done > 0 || p.name == "vararg_selvar") && st.forced > 0, "{}: nothing replayed: {st:?}", p.name);
+        assert!(
+            (st.done > 0 || p.name == "vararg_selvar") && st.forced > 0,
+            "{}: nothing replayed: {st:?}",
+            p.name
+        );
         if ["vararg_selvar", "vararg_types"].contains(&p.name) {
-            assert!(st.in_frames > 0, "{}: no exit inside an inlined vararg frame: {st:?}", p.name);
+            assert!(
+                st.in_frames > 0,
+                "{}: no exit inside an inlined vararg frame: {st:?}",
+                p.name
+            );
         }
     }
 }
@@ -1841,7 +1857,9 @@ fn is_intrinsic_call(rc: &Rec, r: &Recorded, i: usize) -> bool {
         && i + 1 < r.path.len()
         && r.path_depth[i + 1] <= r.path_depth[i]
         && r.path_proto[i + 1] == r.path_proto[i])
-        || (ins.opcode() == Some(OpCode::Tailcall) && i + 1 < r.path.len() && r.path_depth[i + 1] < r.path_depth[i])
+        || (ins.opcode() == Some(OpCode::Tailcall)
+            && i + 1 < r.path.len()
+            && r.path_depth[i + 1] < r.path_depth[i])
 }
 
 /// TR3: the slots of a popped frame stay in the snapshots (and in the writeback) until the iteration redefines them.
@@ -2058,7 +2076,11 @@ fn vararg_room_and_layout() {
             let code = &rc.codes[&r.path_proto[i].0];
             let ins = Instruction(code[r.path[i] as usize]);
             let d = r.path_depth[i] as usize;
-            if d == 0 && ins.opcode() == Some(OpCode::Call) && i + 1 < r.path.len() && r.path_depth[i + 1] == 1 {
+            if d == 0
+                && ins.opcode() == Some(OpCode::Call)
+                && i + 1 < r.path.len()
+                && r.path_depth[i + 1] == 1
+            {
                 let nargs = ins.b() as usize - 1;
                 let total = nargs.max(np);
                 let func = ins.a() as usize;
@@ -2075,13 +2097,21 @@ fn vararg_room_and_layout() {
             }
         }
         assert!(ncalls > 0, "{name}: no vararg call on the path");
-        assert_eq!(r.room as usize, room, "{name}: TR6c room of the vararg frames\n{}", dump(&r.ir));
+        assert_eq!(
+            r.room as usize,
+            room,
+            "{name}: TR6c room of the vararg frames\n{}",
+            dump(&r.ir)
+        );
         // every snapshot inside a vararg frame carries the number of extra arguments and the shifted function slot
         let mut seen = false;
         for s in 0..r.ir.snaps.len() as u32 {
             for l in snap::frame_links(&r.ir, s) {
                 seen = true;
-                assert!(l.nextra >= 0, "{name}: snapshot {s}: vararg frame without nextraargs");
+                assert!(
+                    l.nextra >= 0,
+                    "{name}: snapshot {s}: vararg frame without nextraargs"
+                );
             }
         }
         let _ = seen;
@@ -2095,13 +2125,30 @@ fn select_selectors_are_guarded() {
     let p = VPROGS.iter().find(|p| p.name == "vararg_selvar").unwrap();
     let (_, rc) = record_prog(p, 1, strict());
     let r = closed(&rc);
-    let int_guards = r.ir.ins.iter().filter(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0).count();
-    assert!(int_guards >= 1, "no EQ guard on the integer selector\n{}", dump(&r.ir));
+    let int_guards =
+        r.ir.ins
+            .iter()
+            .filter(|i| i.op == TOp::Eq && i.flags & F_GUARD != 0)
+            .count();
+    assert!(
+        int_guards >= 1,
+        "no EQ guard on the integer selector\n{}",
+        dump(&r.ir)
+    );
     let p = VPROGS.iter().find(|p| p.name == "vararg_select").unwrap();
     let (_, rc) = record_prog(p, 1, strict());
     let r = closed(&rc);
-    let str_guards = r.ir.ins.iter().filter(|i| i.op == TOp::Eqref && i.flags & F_GUARD != 0 && i.b != NOREF && i.b >= REF_BIAS).count();
-    assert!(str_guards >= 1, "no EQREF guard on the '#' selector\n{}", dump(&r.ir));
+    let str_guards = r
+        .ir
+        .ins
+        .iter()
+        .filter(|i| i.op == TOp::Eqref && i.flags & F_GUARD != 0 && i.b != NOREF && i.b >= REF_BIAS)
+        .count();
+    assert!(
+        str_guards >= 1,
+        "no EQREF guard on the '#' selector\n{}",
+        dump(&r.ir)
+    );
 }
 
 // ---- TR6d: entry guards -----------------------------------------------------------------------------------------
@@ -2251,7 +2298,10 @@ fn side_recording_shape_and_count_model() {
     let s0 = rc.ir.snaps[0];
     assert_eq!((s0.pc, s0.refund, s0.map.1), (info.start_pc, 0, 0));
     let sl = rc.ir.snaps[info.link_snap as usize];
-    assert_eq!((sl.pc, sl.refund, sl.map.1, sl.land), (info.link_pc, 0, 0, Land::Pre));
+    assert_eq!(
+        (sl.pc, sl.refund, sl.map.1, sl.land),
+        (info.link_pc, 0, 0, Land::Pre)
+    );
     // every other snapshot refunds what the interpreter would not have fetched yet (n - fetches - land)
     for (k, s) in rc.ir.snaps.iter().enumerate() {
         if k == 0 || k as u32 == info.link_snap {
@@ -2285,7 +2335,11 @@ fn side_known_types_skip_typechecks() {
     assert_eq!(any(closed(&known)), any(closed(&none)), "the loads stay");
     let wrong: Vec<(u16, Ty)> = (0..8).map(|s| (s, Ty::Num)).collect();
     let bad = side_rec("", SIDE_LOOP, &wrong, true);
-    assert_eq!(checked(closed(&bad)), n0, "a known type that is wrong is not trusted");
+    assert_eq!(
+        checked(closed(&bad)),
+        n0,
+        "a known type that is wrong is not trusted"
+    );
 }
 
 /// A side trace of fewer bytecodes than `min_len` is not installed (`SideShort`); one of exactly that length is.
@@ -2308,7 +2362,10 @@ fn short_side_traces_are_refused() {
     let below = side_rec("", SIDE_LOOP, &[], true);
     SIDE_MIN.set(0);
     assert!(closed(&at).side.is_some());
-    assert!(matches!(below.out, RecOutcome::Aborted(AbortReason::SideShort)));
+    assert!(matches!(
+        below.out,
+        RecOutcome::Aborted(AbortReason::SideShort)
+    ));
 }
 
 /// Reaching a loop head without a trace aborts the side recording (7.8); the loop end of the function does too.
@@ -2410,7 +2467,10 @@ fn nest_root_shape_and_entry_guard_rules() {
     assert_eq!(rc.ir.ins[0].op, TOp::Poll, "{}", dump(&rc.ir));
     assert_eq!(rc.ir.ins[1].op, TOp::Budget);
     let sl = rc.ir.snaps[info.link_snap as usize];
-    assert_eq!((sl.pc, sl.refund, sl.map.1, sl.land), (info.link_pc, 0, 0, Land::Pre));
+    assert_eq!(
+        (sl.pc, sl.refund, sl.map.1, sl.land),
+        (info.link_pc, 0, 0, Land::Pre)
+    );
     let g = eqref_proto_guards(&rc.ir);
     assert_eq!(g.len(), 1, "{}", dump(&rc.ir));
     assert_eq!(Some(g[0].1), rc.entry_snap, "{}", dump(&rc.ir));
@@ -2615,14 +2675,32 @@ fn mutants_are_caught() {
         ),
         ("native_room_skip", &["room_and_ci_conditions"]),
         ("vararg_room_skip", &["vararg_room_and_layout"]),
-        ("vararg_orig_not_nilled", &["vararg_replay_matches_the_interpreter"]),
-        ("vararg_delta_off", &["vararg_replay_matches_the_interpreter"]),
-        ("vararg_ret_dest", &["vararg_replay_matches_the_interpreter"]),
-        ("vararg_first_nil", &["vararg_replay_matches_the_interpreter"]),
+        (
+            "vararg_orig_not_nilled",
+            &["vararg_replay_matches_the_interpreter"],
+        ),
+        (
+            "vararg_delta_off",
+            &["vararg_replay_matches_the_interpreter"],
+        ),
+        (
+            "vararg_ret_dest",
+            &["vararg_replay_matches_the_interpreter"],
+        ),
+        (
+            "vararg_first_nil",
+            &["vararg_replay_matches_the_interpreter"],
+        ),
         ("vararg_top_off", &["vararg_replay_matches_the_interpreter"]),
         ("select_guard_skip", &["select_selectors_are_guarded"]),
-        ("select_count_off", &["vararg_replay_matches_the_interpreter"]),
-        ("select_index_off", &["vararg_replay_matches_the_interpreter"]),
+        (
+            "select_count_off",
+            &["vararg_replay_matches_the_interpreter"],
+        ),
+        (
+            "select_index_off",
+            &["vararg_replay_matches_the_interpreter"],
+        ),
         (
             "native_ci_skip",
             &[
@@ -2914,7 +2992,10 @@ fn recursion_unrolls_to_the_limit_and_exits_beyond() {
     for unroll in 1..=3u32 {
         let rc = record_src(FIB_LOOP, f4_cfg(unroll, 4));
         let r = closed(&rc);
-        assert!(r.stitched, "unroll {unroll}: the call beyond the limit ends the recording with a stitching exit");
+        assert!(
+            r.stitched,
+            "unroll {unroll}: the call beyond the limit ends the recording with a stitching exit"
+        );
         assert_eq!(
             r.path_depth.iter().max(),
             Some(&(unroll as u8)),
@@ -2922,7 +3003,12 @@ fn recursion_unrolls_to_the_limit_and_exits_beyond() {
         );
         assert_eq!(usize::from(r.ir.depth), unroll as usize);
         // the always-taken exit is the last guard; its snapshot rebuilds `unroll` frames and carries no top
-        let last = r.ir.ins.iter().rev().find(|i| i.flags & F_GUARD != 0).expect("the exit guard");
+        let last =
+            r.ir.ins
+                .iter()
+                .rev()
+                .find(|i| i.flags & F_GUARD != 0)
+                .expect("the exit guard");
         let sn = r.ir.snaps[aux_snap(last.aux) as usize];
         assert_eq!(usize::from(sn.nframes), unroll as usize);
         assert_eq!(sn.top, 0);
@@ -2930,7 +3016,10 @@ fn recursion_unrolls_to_the_limit_and_exits_beyond() {
     // unroll 0 (the prototype's rule), no stitching, a prefix shorter than `stitch_min`: Recursion
     assert_eq!(aborted_cfg(FIB_LOOP, f4_cfg(0, 4)), AbortReason::Recursion);
     assert_eq!(aborted_cfg(FIB_LOOP, f4_cfg(2, 0)), AbortReason::Recursion);
-    assert_eq!(aborted_cfg(FIB_LOOP, f4_cfg(2, 4000)), AbortReason::Recursion);
+    assert_eq!(
+        aborted_cfg(FIB_LOOP, f4_cfg(2, 4000)),
+        AbortReason::Recursion
+    );
 }
 
 /// `TAILCALL` replaces the frame: one frame deeper only for the original call, `CIST_TAIL` and the callee's prototype in
@@ -2941,7 +3030,11 @@ fn recursion_unrolls_to_the_limit_and_exits_beyond() {
 fn tailcall_replaces_the_frame() {
     let (_, rc) = record_prog(prog("tail_chain"), 1, strict());
     let r = closed(&rc);
-    assert_eq!(r.path_depth.iter().max(), Some(&1), "mid -> leaf is one frame, not two");
+    assert_eq!(
+        r.path_depth.iter().max(),
+        Some(&1),
+        "mid -> leaf is one frame, not two"
+    );
     assert_eq!(usize::from(r.ir.depth), 1);
     let mut tails = 0;
     for s in 0..r.ir.snaps.len() as u32 {
@@ -2949,14 +3042,23 @@ fn tailcall_replaces_the_frame() {
         for l in links {
             if l.tail {
                 tails += 1;
-                assert_eq!(l.nresults, 1, "the replaced frame keeps the wanted results of the original call");
+                assert_eq!(
+                    l.nresults, 1,
+                    "the replaced frame keeps the wanted results of the original call"
+                );
             }
         }
     }
     assert!(tails > 0, "no snapshot inside the tail-called frame");
     // the frames' prototype is the callee's (`leaf`), not the original callee's (`mid`)
     let protos: std::collections::HashSet<_> = (0..r.ir.snaps.len() as u32)
-        .flat_map(|s| snap::frame_links(&r.ir, s).iter().filter(|l| l.tail).map(|l| l.proto.0).collect::<Vec<_>>())
+        .flat_map(|s| {
+            snap::frame_links(&r.ir, s)
+                .iter()
+                .filter(|l| l.tail)
+                .map(|l| l.proto.0)
+                .collect::<Vec<_>>()
+        })
         .collect();
     assert_eq!(protos.len(), 1);
 }
@@ -2969,7 +3071,10 @@ fn multret_consumers_carry_top() {
     let (_, rc) = record_prog(prog("multret_intrinsic2"), 1, strict());
     let r = closed(&rc);
     let with_top = r.ir.snaps.iter().filter(|s| s.top != 0).count();
-    assert!(with_top >= 2, "the min / max guards of the consumers carry the top: {with_top}");
+    assert!(
+        with_top >= 2,
+        "the min / max guards of the consumers carry the top: {with_top}"
+    );
     // snapshot 0 (the loop head) never has one
     assert_eq!(r.ir.snaps[0].top, 0);
     let (_, rc) = record_prog(prog("multret_chain"), 1, strict());
@@ -2981,12 +3086,18 @@ fn multret_consumers_carry_top() {
 // ---- P-O: pcall / xpcall of a Lua closure -------------------------------------------------------------------------
 
 fn pcall_cfg() -> RecCfg {
-    RecCfg { pcall: true, ..strict() }
+    RecCfg {
+        pcall: true,
+        ..strict()
+    }
 }
 
 /// Counts the `Lib` ops of kind `lib::CCALLS` in `ir`.
 fn ccalls_guards(ir: &TraceIr) -> usize {
-    ir.ins.iter().filter(|i| i.op == TOp::Lib && (i.aux & 0xFF) == lib::CCALLS).count()
+    ir.ins
+        .iter()
+        .filter(|i| i.op == TOp::Lib && (i.aux & 0xFF) == lib::CCALLS)
+        .count()
 }
 
 /// A pure body is inlined: the recording closes, the room covers the native's frame (`top + LUA_MINSTACK`) and the callee's
@@ -3076,27 +3187,74 @@ fn g2_ccalls_guard_is_hoisted() {
 fn h1_int_hash_keys_record_the_integer_hrefv() {
     let src = "local t = { [0] = 5, [-1] = 6, [1 << 40] = 7, 1 } local m = { [0] = false, [-9] = 1 } m[0] = nil
          function f(n) local s = 0 arm() for i = 1, n do s = s + t[0] + t[-1] + t[1 << 40] t[0] = i if m[0] == nil then s = s + 1 end m[0] = nil end return s end return f(40)";
-    let rc = record_src(src, RecCfg { nil_store: true, ..strict() });
+    let rc = record_src(
+        src,
+        RecCfg {
+            nil_store: true,
+            ..strict()
+        },
+    );
     let r = closed(&rc);
-    let hv: Vec<(usize, &Ins)> = r.ir.ins.iter().enumerate().filter(|(_, i)| i.op == TOp::Hrefv && aux_bits(i.aux) & HREF_INT != 0).collect();
-    assert!(hv.len() >= 5, "integer HREFV for every access\n{}", dump(&r.ir));
+    let hv: Vec<(usize, &Ins)> =
+        r.ir.ins
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.op == TOp::Hrefv && aux_bits(i.aux) & HREF_INT != 0)
+            .collect();
+    assert!(
+        hv.len() >= 5,
+        "integer HREFV for every access\n{}",
+        dump(&r.ir)
+    );
     for (n, h) in &hv {
         // the node-count guard: an `EQ` of `FLOAD lsizenode` precedes (otherwise the modulus is wrong for a table with a smaller hash part)
         let node = r.ir.at(h.a);
-        assert!(node.op == TOp::Fload && node.b == Field::Node as Ref, "{}", dump(&r.ir));
+        assert!(
+            node.op == TOp::Fload && node.b == Field::Node as Ref,
+            "{}",
+            dump(&r.ir)
+        );
         let guarded = r.ir.ins[..*n].iter().any(|g| {
-            g.op == TOp::Eq && TraceIr::is_ins(g.a) && r.ir.at(g.a).op == TOp::Fload && r.ir.at(g.a).b == Field::Lsizenode as Ref && r.ir.at(g.a).a == node.a
+            g.op == TOp::Eq
+                && TraceIr::is_ins(g.a)
+                && r.ir.at(g.a).op == TOp::Fload
+                && r.ir.at(g.a).b == Field::Lsizenode as Ref
+                && r.ir.at(g.a).a == node.a
         });
-        assert!(guarded, "HREFV {n} without the node-count guard\n{}", dump(&r.ir));
+        assert!(
+            guarded,
+            "HREFV {n} without the node-count guard\n{}",
+            dump(&r.ir)
+        );
     }
-    assert!(r.ir.ins.iter().any(|i| i.op == TOp::Hstore), "{}", dump(&r.ir));
+    assert!(
+        r.ir.ins.iter().any(|i| i.op == TOp::Hstore),
+        "{}",
+        dump(&r.ir)
+    );
     // the nil-valued node `m[0]` and its store: the metatable guards (`metatable == 0`; with a metatable, the flag-cache guards)
-    let mt_guards = r.ir.ins.iter().filter(|g| g.op == TOp::Eq && TraceIr::is_ins(g.a) && r.ir.at(g.a).op == TOp::Fload && r.ir.at(g.a).b == Field::Metatable as Ref).count();
-    assert!(mt_guards >= 2, "the metatable guards of the nil-valued reads and stores\n{}", dump(&r.ir));
+    let mt_guards =
+        r.ir.ins
+            .iter()
+            .filter(|g| {
+                g.op == TOp::Eq
+                    && TraceIr::is_ins(g.a)
+                    && r.ir.at(g.a).op == TOp::Fload
+                    && r.ir.at(g.a).b == Field::Metatable as Ref
+            })
+            .count();
+    assert!(
+        mt_guards >= 2,
+        "the metatable guards of the nil-valued reads and stores\n{}",
+        dump(&r.ir)
+    );
     // a key that is in neither part is not recorded as a hash access
     let absent = "local t = { [0] = 5, 1 } function f(n) local s = 0 arm() for i = 1, n do s = s + (t[77] or 0) end return s end return f(40)";
     let a = record_src(absent, strict());
-    assert!(matches!(a.out, RecOutcome::Aborted(_)), "an absent key does not record");
+    assert!(
+        matches!(a.out, RecOutcome::Aborted(_)),
+        "an absent key does not record"
+    );
 }
 
 /// A body that changes something before it can leave the trace is not inlined (an exit would repeat the change): the

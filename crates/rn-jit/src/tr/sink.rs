@@ -33,8 +33,8 @@ use super::ir::*;
 use super::mutants;
 use super::record::Recorded;
 use super::TraceOpts;
-use std::cell::RefCell;
 use crate::fx::{HashMap, HashSet};
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Tables sunk, traces with a sunk table, peeled loops and their PHIs (process-wide, for `RUSTYNAIL_JIT_VERBOSE` and the
@@ -102,7 +102,9 @@ pub fn shape_of(b: u32, c: u32, first_key: u64) -> u64 {
 /// SINK-R: a shape key scoped to one root head (prototype address, pc): the ineffective-root rule demotes a shape for the root that failed with it,
 /// not for every loop that builds a table of that shape (`sinkroot=2`).
 pub fn scoped_shape(shape: u64, proto: u64, pc: u32) -> u64 {
-    let mut h = shape ^ proto.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(pc).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    let mut h = shape
+        ^ proto.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ u64::from(pc).wrapping_mul(0xD6E8_FEB8_6659_FD93);
     h ^= h >> 31;
     h.wrapping_mul(0xBF58_476D_1CE4_E5B9) | 1
 }
@@ -114,7 +116,8 @@ pub fn demote_shape(shape: u64) -> bool {
 
 /// H3-G: is `shape` demoted (the recorder must not sink it)?
 pub fn is_demoted(shape: u64) -> bool {
-    !mutants::active("sink_demote_ignored") && DEMOTED.with(|d| !d.borrow().is_empty() && d.borrow().contains(&shape))
+    !mutants::active("sink_demote_ignored")
+        && DEMOTED.with(|d| !d.borrow().is_empty() && d.borrow().contains(&shape))
 }
 
 /// H3-G (tests): forget every demotion of this thread.
@@ -235,7 +238,13 @@ fn slot_is_dead_at(head: (ProtoKey, u32), slot: u16) -> bool {
     usize::from(slot) >= nact
 }
 
-fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool, end: EndKind) -> Option<Cand> {
+fn analyse(
+    rec: &Recorded,
+    t: usize,
+    loaded: &HashSet<u16>,
+    sinkmt: bool,
+    end: EndKind,
+) -> Option<Cand> {
     let ir = &rec.ir;
     let n = ir.ins.len();
     let ti = ir.ins[t];
@@ -283,7 +292,12 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool, end: E
             }
         });
         // BUNDLE-2: `metatable != 0` of a sunk table that was given one: true (any other user of that load is renamed to the metatable ref)
-        if sinkmt && i.op == TOp::Ne && TraceIr::is_ins(i.a) && mtf.contains(&idx(i.a)) && is_const_int(i.b, 0) {
+        if sinkmt
+            && i.op == TOp::Ne
+            && TraceIr::is_ins(i.a)
+            && mtf.contains(&idx(i.a))
+            && is_const_int(i.b, 0)
+        {
             cand.remove.push(j);
             j += 1;
             continue;
@@ -315,19 +329,37 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool, end: E
                 }
                 cand.remove.push(j);
             }
-            TOp::Eq if TraceIr::is_ins(i.a) && meta_flds.contains(&idx(i.a)) && is_const_int(i.b, 0) => {
+            TOp::Eq
+                if TraceIr::is_ins(i.a)
+                    && meta_flds.contains(&idx(i.a))
+                    && is_const_int(i.b, 0) =>
+            {
                 cand.remove.push(j);
             }
             // BUNDLE-2: `setmetatable(t, mt)` of the sunk table with a table `mt` (an instruction's value): the helper and its guard `NE %lib, 0` are
             // replaced (see `rebuild`) by the guard that `mt` has no `__gc` (the helper's only other failure, a protected old metatable, cannot
             // happen: the table is new)
-            TOp::Lib if sinkmt && i.a == tr && (i.aux & 0xFF) == lib::SETMT && setmt.is_none() && !mutants::active("sinkmt_never") => {
+            TOp::Lib
+                if sinkmt
+                    && i.a == tr
+                    && (i.aux & 0xFF) == lib::SETMT
+                    && setmt.is_none()
+                    && !mutants::active("sinkmt_never") =>
+            {
                 let mt = i.b;
-                if !TraceIr::is_ins(mt) || ir.ty_of(mt) != Ty::Tab || ir.ins[idx(mt)].op == TOp::Tnew || idx(mt) >= j {
+                if !TraceIr::is_ins(mt)
+                    || ir.ty_of(mt) != Ty::Tab
+                    || ir.ins[idx(mt)].op == TOp::Tnew
+                    || idx(mt) >= j
+                {
                     return None;
                 }
                 let ne = *ir.ins.get(j + 1)?;
-                if !(ne.op == TOp::Ne && ne.a == ref_of(j) && is_const_int(ne.b, 0) && ne.flags & F_GUARD != 0) {
+                if !(ne.op == TOp::Ne
+                    && ne.a == ref_of(j)
+                    && is_const_int(ne.b, 0)
+                    && ne.flags & F_GUARD != 0)
+                {
                     return None;
                 }
                 setmt = Some((j, mt));
@@ -339,13 +371,22 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool, end: E
                 cand.remove.push(j + 1);
             }
             // BUNDLE-2: the absent-key proof of a method lookup on a sunk table: true when the key was never stored
-            TOp::Hmiss if sinkmt && TraceIr::is_ins(i.a) && node_flds.contains(&idx(i.a)) && TraceIr::is_const(i.b) => {
+            TOp::Hmiss
+                if sinkmt
+                    && TraceIr::is_ins(i.a)
+                    && node_flds.contains(&idx(i.a))
+                    && TraceIr::is_const(i.b) =>
+            {
                 if store.iter().any(|&(k, _)| k == i.b) {
                     return None;
                 }
                 cand.remove.push(j);
             }
-            TOp::Eq if TraceIr::is_ins(i.a) && ls_flds.contains(&idx(i.a)) && TraceIr::is_const(i.b) => {
+            TOp::Eq
+                if TraceIr::is_ins(i.a)
+                    && ls_flds.contains(&idx(i.a))
+                    && TraceIr::is_const(i.b) =>
+            {
                 cand.remove.push(j);
             }
             TOp::Newref if i.a == tr => {
@@ -443,7 +484,9 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool, end: E
         if e.r == tr {
             let dead = match end {
                 EndKind::Loop => slot_is_dead(ir.head, e.slot, loaded),
-                EndKind::Link(h) => mutants::active("sinkside_dead_all") || slot_is_dead_at(h, e.slot),
+                EndKind::Link(h) => {
+                    mutants::active("sinkside_dead_all") || slot_is_dead_at(h, e.slot)
+                }
                 EndKind::Exit => true,
                 EndKind::Nothing => false,
             };
@@ -460,7 +503,8 @@ fn analyse(rec: &Recorded, t: usize, loaded: &HashSet<u16>, sinkmt: bool, end: E
         _ => None,
     });
     let shape = shape_of(b, c, first_key.unwrap_or(0));
-    if is_demoted(shape) || is_demoted(scoped_shape(shape, rec.ir.head.0 .0 as u64, rec.ir.head.1)) {
+    if is_demoted(shape) || is_demoted(scoped_shape(shape, rec.ir.head.0 .0 as u64, rec.ir.head.1))
+    {
         return None;
     }
     Some(cand)
@@ -543,7 +587,9 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
             first_g[s] = first_g[s].min(at);
             last_g[s] = last_g[s].max(at);
             if mt_consts.is_none() {
-                let bit = rec.ir.konst(KVal::Int(1i64 << (rn_core::meta::Tm::Gc as u8)));
+                let bit = rec
+                    .ir
+                    .konst(KVal::Int(1i64 << (rn_core::meta::Tm::Gc as u8)));
                 let z = rec.ir.konst(KVal::Int(0));
                 mt_consts = Some((bit, z));
             }
@@ -640,10 +686,38 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
             let flags_ref = ref_of(out.len());
             let band_ref = ref_of(out.len() + 1);
             let seq = [
-                Ins { op: TOp::Fload, t: Ty::U32, flags: 0, a: mtr, b: Field::Flags as Ref, prev: NOREF, aux: 0 },
+                Ins {
+                    op: TOp::Fload,
+                    t: Ty::U32,
+                    flags: 0,
+                    a: mtr,
+                    b: Field::Flags as Ref,
+                    prev: NOREF,
+                    aux: 0,
+                },
                 // (MUTANT `sinkmt_gc_guard_skip`: the guard tests a bit that is always set)
-                Ins { op: TOp::Band, t: Ty::I64, flags: 0, a: flags_ref, b: if mutants::active("sinkmt_gc_guard_skip") { z } else { bit }, prev: NOREF, aux: 0 },
-                Ins { op: TOp::Ne, t: Ty::I64, flags: ne.flags, a: band_ref, b: z, prev: NOREF, aux: ne.aux },
+                Ins {
+                    op: TOp::Band,
+                    t: Ty::I64,
+                    flags: 0,
+                    a: flags_ref,
+                    b: if mutants::active("sinkmt_gc_guard_skip") {
+                        z
+                    } else {
+                        bit
+                    },
+                    prev: NOREF,
+                    aux: 0,
+                },
+                Ins {
+                    op: TOp::Ne,
+                    t: Ty::I64,
+                    flags: ne.flags,
+                    a: band_ref,
+                    b: z,
+                    prev: NOREF,
+                    aux: ne.aux,
+                },
             ];
             for mut g in seq {
                 if mutants::active("sinkmt_gc_guard_skip") && g.op == TOp::Ne {
@@ -666,7 +740,11 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
                 a: NOREF,
                 b: NOREF,
                 prev: NOREF,
-                aux: if mutants::active("sink_vbytes_zero") { 0 } else { c.vbytes },
+                aux: if mutants::active("sink_vbytes_zero") {
+                    0
+                } else {
+                    c.vbytes
+                },
             };
         } else {
             let (ra, rb) = i.op.ref_operands();
@@ -687,7 +765,8 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
     // ---- snapshots ----
     let old_map = std::mem::take(&mut rec.ir.snapmap);
     let mut new_map: Vec<SnapEntry> = Vec::with_capacity(old_map.len());
-    #[allow(clippy::needless_range_loop)] // `s` also indexes the snapshot table, `last_g` and the output
+    #[allow(clippy::needless_range_loop)]
+    // `s` also indexes the snapshot table, `last_g` and the output
     for s in 0..nsn {
         let (st, len) = rec.ir.snaps[s].map;
         let at = new_map.len();
@@ -707,9 +786,13 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
                 let c = &cands[ci];
                 let g = first_g[s];
                 if g != usize::MAX && g <= c.t {
-                    return Err(format!("sink: snapshot {s} names a table before its allocation"));
+                    return Err(format!(
+                        "sink: snapshot {s} names a table before its allocation"
+                    ));
                 }
-                let hk = rec.ir.konst(KVal::Int(i64::from(c.b) | i64::from(c.c) << 16));
+                let hk = rec
+                    .ir
+                    .konst(KVal::Int(i64::from(c.b) | i64::from(c.c) << 16));
                 new_map.push(SnapEntry {
                     slot: e.slot,
                     r: hk,

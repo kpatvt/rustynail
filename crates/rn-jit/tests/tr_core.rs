@@ -17,21 +17,21 @@
 //! every job's statistics).
 #![cfg(feature = "trace")]
 
+#[path = "tr_core/nr_progs.rs"]
+mod nr_progs;
 #[path = "tr_core/progs.rs"]
 mod progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
-#[path = "tr_core/nr_progs.rs"]
-mod nr_progs;
 
+use nr_progs::NR_PROGS;
+use progs::{Prog, PROGS, Y_PROGS};
 use rn_core::state::{LuaState, LUA_MULTRET};
 use rn_core::status::Status;
 use rn_jit::tr::cache::{TrConfig, TrLimits, TrMode};
 use rn_jit::tr::TraceOpts;
 use rn_jit::{Config, Mode};
-use progs::{Prog, PROGS, Y_PROGS};
 use sink_progs::SINK_PROGS;
-use nr_progs::NR_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -231,7 +231,10 @@ fn trace_cfg(job: &Job) -> TrConfig {
             cfg.limits.rearm = v.parse().unwrap_or(4);
         }
     }
-    cfg.verbose = std::env::var("TR_CORE_VERBOSE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    cfg.verbose = std::env::var("TR_CORE_VERBOSE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     // BUNDLE-M: `TR_CORE_DUMPDIR=<dir>` writes the `RUSTYNAIL_JIT_DUMP` files of the run (IR, micro-ops, machine code of every trace)
     if let Ok(d) = std::env::var("TR_CORE_DUMPDIR") {
         cfg.dump = Some(d);
@@ -248,9 +251,13 @@ fn citop(st: &mut rn_core::state::State) -> rn_core::status::LuaResult<usize> {
     // `jit_layout::callinfo` offsets).
     let v = unsafe {
         let ci = *th.add(rn_core::jit_hooks::thread::CI).cast::<*mut u8>();
-        let prev = *ci.add(rn_core::jit_layout::callinfo::PREVIOUS).cast::<*mut u8>();
+        let prev = *ci
+            .add(rn_core::jit_layout::callinfo::PREVIOUS)
+            .cast::<*mut u8>();
         let top = *prev.add(rn_core::jit_layout::callinfo::TOP).cast::<usize>();
-        let func = *prev.add(rn_core::jit_layout::callinfo::FUNC).cast::<usize>();
+        let func = *prev
+            .add(rn_core::jit_layout::callinfo::FUNC)
+            .cast::<usize>();
         (top - func) as i64 - 1
     };
     st.push(rn_core::value::Value::int(v));
@@ -259,7 +266,10 @@ fn citop(st: &mut rn_core::state::State) -> rn_core::status::LuaResult<usize> {
 
 fn one_state(job: &Job, baseline: bool) -> (String, u64, u64) {
     // BUNDLE-M: `TR_CORE_SEED=<n>` pins the string-hash seed (the identity test compares dumps, whose node indices follow it)
-    let mut st = match std::env::var("TR_CORE_SEED").ok().and_then(|v| v.parse().ok()) {
+    let mut st = match std::env::var("TR_CORE_SEED")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
         Some(seed) => {
             let mut st = rn_std::new_state(seed).expect("state");
             rn_std::open_libs(&mut st).expect("libs");
@@ -273,7 +283,8 @@ fn one_state(job: &Job, baseline: bool) -> (String, u64, u64) {
     );
     {
         let g = st.globals();
-        st.raw_set_str(g, b"__citop", rn_core::value::Value::native(citop)).unwrap();
+        st.raw_set_str(g, b"__citop", rn_core::value::Value::native(citop))
+            .unwrap();
     }
     if let Some(c) = job.code_cap {
         rn_jit::set_code_cap(&mut st, c);
@@ -383,7 +394,10 @@ fn child_main(spec: &str) {
     rn_jit::tr::install_driver();
     #[cfg(feature = "tr_mutants")]
     rn_jit::tr::mutants::apply_vm_mutants();
-    if let Some(n) = std::env::var("TR_CORE_MATFAULT").ok().and_then(|v| v.parse().ok()) {
+    if let Some(n) = std::env::var("TR_CORE_MATFAULT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
         rn_jit::tr::exit::set_materialise_fault(n);
     }
     if job.ident {
@@ -548,11 +562,25 @@ impl TStats {
             } else if let Some(r) = l.strip_prefix("exit handler: blacklisted exits reported ") {
                 s.black_handled = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("fused HREFK+HLOAD tag checks: ") {
-                s.hk_fused = r.split_whitespace().next().and_then(|v| v.parse().ok()).unwrap_or(0);
-                s.hk_split = r.split("two exits: ").nth(1).and_then(|v| v.trim_end_matches(')').parse().ok()).unwrap_or(0);
+                s.hk_fused = r
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                s.hk_split = r
+                    .split("two exits: ")
+                    .nth(1)
+                    .and_then(|v| v.trim_end_matches(')').parse().ok())
+                    .unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("loopany guard: fired ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
-                let g = |k: &str| w.iter().position(|x| *x == k).and_then(|i| w.get(i + 1)).and_then(|v| v.trim_end_matches(')').parse::<u64>().ok()).unwrap_or(0);
+                let g = |k: &str| {
+                    w.iter()
+                        .position(|x| *x == k)
+                        .and_then(|i| w.get(i + 1))
+                        .and_then(|v| v.trim_end_matches(')').parse::<u64>().ok())
+                        .unwrap_or(0)
+                };
                 s.la_fired = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.la_family = g("flushes");
                 s.la_pruned = g("sides");
@@ -562,11 +590,23 @@ impl TStats {
             } else if let Some(r) = l.strip_prefix("domtop: roots re-recorded ") {
                 s.dom_flushes = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("chainre: callee chains re-ordered ") {
-                s.chain_flushes = r.split_whitespace().next().and_then(|v| v.parse().ok()).unwrap_or(0);
-                s.chain_checks = r.split("checks ").nth(1).and_then(|v| v.trim_end_matches(')').trim().parse().ok()).unwrap_or(0);
-            } else if let Some(r) = l.strip_prefix("chaindepth: callee-guard exits that got no further link ") {
+                s.chain_flushes = r
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                s.chain_checks = r
+                    .split("checks ")
+                    .nth(1)
+                    .and_then(|v| v.trim_end_matches(')').trim().parse().ok())
+                    .unwrap_or(0);
+            } else if let Some(r) =
+                l.strip_prefix("chaindepth: callee-guard exits that got no further link ")
+            {
                 s.chain_deep = r.trim().parse().unwrap_or(0);
-            } else if let Some(r) = l.strip_prefix("ncallee: heads re-recorded without entry callee guards ") {
+            } else if let Some(r) =
+                l.strip_prefix("ncallee: heads re-recorded without entry callee guards ")
+            {
                 s.ncallee_heads = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
@@ -586,11 +626,27 @@ impl TStats {
             } else if let Some(r) = l.strip_prefix("innerretry: rounds started ") {
                 s.inner_retried = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("second: heads given a second chance ") {
-                s.retried = r.split_whitespace().next().and_then(|v| v.parse().ok()).unwrap_or(0);
-                s.ident_kept = r.split("installed ").nth(1).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                s.retried = r
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                s.ident_kept = r
+                    .split("installed ")
+                    .nth(1)
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("deep sites: ") {
-                s.deep_sites = r.split_whitespace().next().and_then(|v| v.parse().ok()).unwrap_or(0);
-                s.deep_recs = r.split("recordings: ").nth(1).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                s.deep_sites = r
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                s.deep_recs = r
+                    .split("recordings: ")
+                    .nth(1)
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("links: nest roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 let g = |k: &str| {
@@ -606,14 +662,20 @@ impl TStats {
                 s.side_links = g("sidelinks");
             } else if let Some(r) = l.strip_prefix("side aborted ") {
                 if let Some((k, v)) = r.rsplit_once(": ") {
-                    s.side_aborts.insert(k.into(), v.trim().parse().unwrap_or(0));
+                    s.side_aborts
+                        .insert(k.into(), v.trim().parse().unwrap_or(0));
                 }
             } else if let Some(r) = l.strip_prefix("aborted ") {
                 if let Some((k, v)) = r.rsplit_once(": ") {
                     s.aborts.insert(k.into(), v.trim().parse().unwrap_or(0));
                 }
             } else if let Some(r) = l.strip_prefix("sink: tables ") {
-                s.retf = r.split(" retf ").nth(1).and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.retf = r
+                    .split(" retf ")
+                    .nth(1)
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
                 s.peeled = r
                     .split("loops peeled ")
                     .nth(1)
@@ -810,7 +872,11 @@ fn run_all(jobs: Vec<Job>) -> Vec<(Job, Out)> {
     let n = std::env::var("TR_CORE_JOBS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(3, |n| n.get()).min(3))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map_or(3, |n| n.get())
+                .min(3)
+        })
         .max(1);
     let queue = std::sync::Mutex::new(jobs.into_iter().enumerate().collect::<Vec<_>>());
     let results = std::sync::Mutex::new(Vec::new());
@@ -1059,7 +1125,9 @@ fn twins_options() {
             // K3a: `+tracemove` copies the whole Lua stack at every trace entry; with the shipped native recursion every level of a recursion to the
             // stack limit (`pm3_rec`, `bf_rec_deep`, `m1_interp`: ~200000 levels) is an entry, so the run is quadratic and hits the 120 s leash.
             // Those programs run the option without native recursion (the stack-move stress of native recursion is `twins_stackmove`).
-            if v == "+tracemove" && ["pm3_rec", "bf_rec_deep", "m1_interp", "bk_obs2"].contains(&p.name) {
+            if v == "+tracemove"
+                && ["pm3_rec", "bf_rec_deep", "m1_interp", "bk_obs2"].contains(&p.name)
+            {
                 j = j.limits_s("recnat=0,recany=0");
             }
             jobs.push(j);
@@ -1154,7 +1222,12 @@ fn twins_gc_stress() {
 fn twins_stackmove() {
     let mut jobs = Vec::new();
     // (`pm3_rec`, `r2_rec_deep` and `bf_rec_deep` recurse to the stack limit: quadratic when the stack moves at every helper call; `pm3_rec2` and `r2_rec` cover it)
-    for p in selected(false).into_iter().filter(|p| p.name != "pm3_rec" && p.name != "r2_rec_deep" && p.name != "bf_rec_deep" && p.name != "bk_obs2") {
+    for p in selected(false).into_iter().filter(|p| {
+        p.name != "pm3_rec"
+            && p.name != "r2_rec_deep"
+            && p.name != "bf_rec_deep"
+            && p.name != "bk_obs2"
+    }) {
         jobs.push(Job::new(p.name, "always").env("RUSTYNAIL_JIT_STRESS", "stackmove"));
         jobs.push(
             Job::new(p.name, "always")
@@ -1179,7 +1252,11 @@ fn twins_limits_and_caps() {
         j.code_cap = Some(64 << 10);
         jobs.push(j);
         // F2b: linking exits and stitching on, linking off
-        for (t, l) in [("always", "nest=2,stitchmin=4"), ("on2", "nest=2,stitchmin=4"), ("always", "nest=0")] {
+        for (t, l) in [
+            ("always", "nest=2,stitchmin=4"),
+            ("on2", "nest=2,stitchmin=4"),
+            ("always", "nest=0"),
+        ] {
             let mut j = Job::new(p.name, t);
             j.limits = l.into();
             jobs.push(j);
@@ -1204,7 +1281,9 @@ fn type_stability() {
     // BUNDLE-M M2: the expectations below encode the pre-hoist trace dynamics (`bhoist` is on by default now), so they pin `bhoist=0`;
     // `type_stability_hoisted` restates the type_late expectation under hoisting.
     let run = |p: &str, trace: &str| {
-        let r = run_all(vec![Job::new(p, trace).limits_s("bhoist=0")]).remove(0).1;
+        let r = run_all(vec![Job::new(p, trace).limits_s("bhoist=0")])
+            .remove(0)
+            .1;
         assert!(r.ok, "{p}: {}", r.stderr);
         eprintln!("{p:<20} [{trace}] {}", r.stats.line());
         r.stats
@@ -1231,13 +1310,19 @@ fn type_stability() {
         );
         let s = run("type_entry_stable", trace);
         // (F3: the loop that fills the table, `t[j] = ...` past the array part, is traced too: one more trace)
-        assert!((1..=2).contains(&(s.installed - s.nest_roots)), "stable twin keeps one trace (besides nest roots, F2b, and the fill loop, F3)");
+        assert!(
+            (1..=2).contains(&(s.installed - s.nest_roots)),
+            "stable twin keeps one trace (besides nest roots, F2b, and the fill loop, F3)"
+        );
         assert_eq!((s.rerecord, s.hot_type), (0, 0));
         // type_late: the hot type-guard exit of the peeled root gets a side trace (F2a); the root and its side trace
         // then ping-pong, which the ineffective-trace rule (Q2) ends with exactly one re-record
         let sl = run("type_late_stable", trace);
         let l = run("type_late", trace);
-        assert!((1..=2).contains(&(sl.installed - sl.nest_roots)), "type_late_stable keeps one trace (besides the fill loop, F3)");
+        assert!(
+            (1..=2).contains(&(sl.installed - sl.nest_roots)),
+            "type_late_stable keeps one trace (besides the fill loop, F3)"
+        );
         assert_eq!((sl.rerecord, sl.hot_type), (0, 0));
         assert_eq!(
             l.rerecord,
@@ -1245,12 +1330,20 @@ fn type_stability() {
             "type_late: exactly one re-record: {}",
             l.line()
         );
-        assert_eq!(l.hot_type, 0, "type_late: the type-guard exit gets a side trace");
+        assert_eq!(
+            l.hot_type, 0,
+            "type_late: the type-guard exit gets a side trace"
+        );
         assert_eq!(l.ineffective, 1, "type_late: the ping-pong is cut by Q2");
-        assert!(l.side_installed >= 1, "type_late: a side trace: {}", l.line());
+        assert!(
+            l.side_installed >= 1,
+            "type_late: a side trace: {}",
+            l.line()
+        );
         // (+ the loop that fills the table, F3)
         assert_eq!(
-            l.installed - l.nest_roots, 3,
+            l.installed - l.nest_roots,
+            3,
             "type_late: the integer trace and the float trace, and the fill loop"
         );
         assert_eq!(
@@ -1286,19 +1379,47 @@ fn type_stability() {
 fn type_stability_hoisted() {
     for trace in ["always", "on2"] {
         let run = |p: &str| {
-            let r = run_all(vec![Job::new(p, trace).limits_s("bhoist=1")]).remove(0).1;
+            let r = run_all(vec![Job::new(p, trace).limits_s("bhoist=1")])
+                .remove(0)
+                .1;
             assert!(r.ok, "{p}: {}", r.stderr);
             r.stats
         };
         let sl = run("type_late_stable");
         let l = run("type_late");
         assert_eq!((sl.rerecord, sl.hot_type), (0, 0));
-        assert!(l.rerecord <= 1, "type_late (hoisted): at most one re-record: {}", l.line());
-        assert_eq!(l.hot_type, 0, "type_late (hoisted): the type-guard exit gets a side trace: {}", l.line());
-        assert!(l.side_installed >= 1, "type_late (hoisted): a side trace: {}", l.line());
-        assert_eq!(l.blacklisted, sl.blacklisted, "type_late (hoisted): a head went Black: {}", l.line());
-        assert!(l.entered >= 300, "type_late (hoisted): the float trace is not running: {}", l.line());
-        assert!(l.installed - l.nest_roots <= 3, "type_late (hoisted): no trace explosion: {}", l.line());
+        assert!(
+            l.rerecord <= 1,
+            "type_late (hoisted): at most one re-record: {}",
+            l.line()
+        );
+        assert_eq!(
+            l.hot_type,
+            0,
+            "type_late (hoisted): the type-guard exit gets a side trace: {}",
+            l.line()
+        );
+        assert!(
+            l.side_installed >= 1,
+            "type_late (hoisted): a side trace: {}",
+            l.line()
+        );
+        assert_eq!(
+            l.blacklisted,
+            sl.blacklisted,
+            "type_late (hoisted): a head went Black: {}",
+            l.line()
+        );
+        assert!(
+            l.entered >= 300,
+            "type_late (hoisted): the float trace is not running: {}",
+            l.line()
+        );
+        assert!(
+            l.installed - l.nest_roots <= 3,
+            "type_late (hoisted): no trace explosion: {}",
+            l.line()
+        );
     }
 }
 
@@ -1309,18 +1430,35 @@ fn type_stability_hoisted() {
 fn nest_links() {
     for trace in ["always", "on2"] {
         for p in ["nest_mandel", "nest_types", "nest_flush", "nest_dep"] {
-            let with = run_all(vec![Job::new(p, trace).opts("+verify")]).remove(0).1;
+            let with = run_all(vec![Job::new(p, trace).opts("+verify")])
+                .remove(0)
+                .1;
             assert!(with.ok, "{p} [{trace}]: {}", with.stderr);
             let mut j = Job::new(p, trace).opts("+verify");
             j.limits = "nest=0".into();
             let without = run_all(vec![j]).remove(0).1;
             assert!(without.ok, "{p} [{trace}] nest=0: {}", without.stderr);
-            eprintln!("{p:<14} [{trace}] {} (nest=0: {})", with.stats.line(), without.stats.line());
-            assert_eq!(without.stats.nest_roots, 0, "{p}: nest=0 records no nest root");
-            assert!(with.stats.nest_roots >= 1, "{p} [{trace}]: no nest root: {}", with.stats.line());
+            eprintln!(
+                "{p:<14} [{trace}] {} (nest=0: {})",
+                with.stats.line(),
+                without.stats.line()
+            );
+            assert_eq!(
+                without.stats.nest_roots, 0,
+                "{p}: nest=0 records no nest root"
+            );
+            assert!(
+                with.stats.nest_roots >= 1,
+                "{p} [{trace}]: no nest root: {}",
+                with.stats.line()
+            );
             if p == "nest_mandel" {
                 // the inner loop's exits continue in side traces that link to the outer trace
-                assert!(with.stats.side_installed >= 2, "{p} [{trace}]: {}", with.stats.line());
+                assert!(
+                    with.stats.side_installed >= 2,
+                    "{p} [{trace}]: {}",
+                    with.stats.line()
+                );
             }
         }
     }
@@ -1342,9 +1480,20 @@ fn frame_links_and_stitches() {
             j.limits = "nest=1,loopany=0,retf=2".into();
             let without = run_all(vec![j]).remove(0).1;
             assert!(without.ok, "{p} [{trace}] nest=1: {}", without.stderr);
-            eprintln!("{p:<18} [{trace}] {} (nest=1: {})", with.stats.line(), without.stats.line());
-            assert_eq!(without.stats.frame_links, 0, "{p}: nest=1 records no linking exit");
-            assert!(with.stats.frame_links >= 1, "{p} [{trace}]: no linking exit: {}", with.stats.line());
+            eprintln!(
+                "{p:<18} [{trace}] {} (nest=1: {})",
+                with.stats.line(),
+                without.stats.line()
+            );
+            assert_eq!(
+                without.stats.frame_links, 0,
+                "{p}: nest=1 records no linking exit"
+            );
+            assert!(
+                with.stats.frame_links >= 1,
+                "{p} [{trace}]: no linking exit: {}",
+                with.stats.line()
+            );
             // the callee's loop trace is entered from the caller's trace (through the cell): per outer iteration the
             // caller's trace and the callee's are both entered, against the callee's alone without the link (the mutant
             // `frame_link_cell_ignored` lands in tier 1 behind the callee's head and enters only the caller's)
@@ -1360,7 +1509,11 @@ fn frame_links_and_stitches() {
         let with = compare(vec![j]).remove(0).1;
         assert!(with.ok, "nest_stitch [{trace}]: {}", with.stderr);
         eprintln!("nest_stitch [{trace}] {}", with.stats.line());
-        assert!(with.stats.stitches >= 1, "nest_stitch [{trace}]: no stitching trace: {}", with.stats.line());
+        assert!(
+            with.stats.stitches >= 1,
+            "nest_stitch [{trace}]: no stitching trace: {}",
+            with.stats.line()
+        );
         let mut j = Job::new("nest_stitch", trace).opts("+verify");
         j.limits = "stitchmin=0,libcall=7".into();
         let off = run_all(vec![j]).remove(0).1;
@@ -1385,7 +1538,10 @@ fn link_enters_target_with_guards_rechecked() {
     assert!(
         clean.iter().any(|(_, o)| o.stats.nest_roots >= 1),
         "no nest root: {:?}",
-        clean.iter().map(|(_, o)| o.stats.line()).collect::<Vec<_>>()
+        clean
+            .iter()
+            .map(|(_, o)| o.stats.line())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -1394,12 +1550,25 @@ fn link_enters_target_with_guards_rechecked() {
 #[test]
 fn nest_for_loops() {
     for trace in ["always", "on2"] {
-        let r = compare(vec![Job::new("nest_for_for", trace).opts("+verify")]).remove(0).1;
+        let r = compare(vec![Job::new("nest_for_for", trace).opts("+verify")])
+            .remove(0)
+            .1;
         assert!(r.ok, "nest_for_for [{trace}]: {}", r.stderr);
         eprintln!("nest_for_for [{trace}] {}", r.stats.line());
-        assert!(r.stats.nest_roots >= 1, "nest_for_for [{trace}]: {}", r.stats.line());
-        assert_eq!(r.stats.side_aborts.get("LeaveLoop").copied().unwrap_or(0), 0, "{}", r.stats.line());
-        let r = run_all(vec![Job::new("nest_float_limit", trace)]).remove(0).1;
+        assert!(
+            r.stats.nest_roots >= 1,
+            "nest_for_for [{trace}]: {}",
+            r.stats.line()
+        );
+        assert_eq!(
+            r.stats.side_aborts.get("LeaveLoop").copied().unwrap_or(0),
+            0,
+            "{}",
+            r.stats.line()
+        );
+        let r = run_all(vec![Job::new("nest_float_limit", trace)])
+            .remove(0)
+            .1;
         assert!(r.ok, "nest_float_limit [{trace}]: {}", r.stderr);
     }
 }
@@ -1411,11 +1580,15 @@ fn nest_for_loops() {
 fn pf_variable_step_loops() {
     for trace in ["always", "on2"] {
         for opts in ["+verify", "", "+exitstorm=3"] {
-            let r = compare(vec![Job::new("pf_var_step", trace).opts(opts)]).remove(0).1;
+            let r = compare(vec![Job::new("pf_var_step", trace).opts(opts)])
+                .remove(0)
+                .1;
             assert!(r.ok, "pf_var_step [{trace}] {opts}: {}", r.stderr);
             eprintln!("pf_var_step [{trace}] {opts}: {}", r.stats.line());
         }
-        let r = compare(vec![Job::new("pf_var_step", trace).budget(17)]).remove(0).1;
+        let r = compare(vec![Job::new("pf_var_step", trace).budget(17)])
+            .remove(0)
+            .1;
         assert!(r.ok);
     }
     // the sieve shape: the inner loop (step = the outer index) is one trace for all runs: no ineffective flush of it, no
@@ -1430,7 +1603,12 @@ fn pf_variable_step_loops() {
         "sieve_rounds: {}",
         r.stats.line()
     );
-    assert_eq!(r.stats.aborts.get("Identical").copied().unwrap_or(0), 0, "{}", r.stats.line());
+    assert_eq!(
+        r.stats.aborts.get("Identical").copied().unwrap_or(0),
+        0,
+        "{}",
+        r.stats.line()
+    );
     assert!(
         r.stats.side_aborts.get("SideShort").copied().unwrap_or(0) >= 1,
         "no SideShort abort: {}",
@@ -1441,7 +1619,11 @@ fn pf_variable_step_loops() {
     let r = run_all(vec![Job::new("sieve_rounds", "on2")]).remove(0).1;
     assert!(r.ok, "{}", r.stderr);
     eprintln!("sieve_rounds [on2] {}", r.stats.line());
-    assert!(r.stats.side_recorded <= 12, "sieve_rounds: {}", r.stats.line());
+    assert!(
+        r.stats.side_recorded <= 12,
+        "sieve_rounds: {}",
+        r.stats.line()
+    );
 }
 
 /// P-L: an exit whose snapshot reads every scratch register still gets an inline stub (the exit counter lives in memory:
@@ -1452,7 +1634,9 @@ fn pf_variable_step_loops() {
 fn pl_exit_counter_in_memory_without_a_free_register() {
     for trace in ["always", "on2"] {
         for opts in ["", "+verify"] {
-            let r = compare(vec![Job::new("pl_varargs_exit", trace).opts(opts)]).remove(0).1;
+            let r = compare(vec![Job::new("pl_varargs_exit", trace).opts(opts)])
+                .remove(0)
+                .1;
             assert!(r.ok, "pl_varargs_exit [{trace}] {opts}: {}", r.stderr);
             eprintln!("pl_varargs_exit [{trace}] {opts}: {}", r.stats.line());
             assert!(
@@ -1470,7 +1654,9 @@ fn pl_exit_counter_in_memory_without_a_free_register() {
 fn pn_pow2_divmod() {
     for trace in ["always", "on2"] {
         for opts in ["", "+verify"] {
-            let r = compare(vec![Job::new("pn_pow2_divmod", trace).opts(opts)]).remove(0).1;
+            let r = compare(vec![Job::new("pn_pow2_divmod", trace).opts(opts)])
+                .remove(0)
+                .1;
             assert!(r.ok, "pn_pow2_divmod [{trace}] {opts}: {}", r.stderr);
         }
     }
@@ -1485,8 +1671,16 @@ fn pv_string_methods() {
         for opts in ["", "+verify"] {
             // (K3b: `hdrlib=0` is the row that detects `strmt_flush_skip`: with the shipped `hdrlib=2` the stale constant is not observable on this program)
             for lim in ["", "hdrlib=0"] {
-                let r = compare(vec![Job::new("pv_string_methods", trace).opts(opts).limits_s(lim)]).remove(0).1;
-                assert!(r.ok, "pv_string_methods [{trace}] {opts} {lim}: {}", r.stderr);
+                let r = compare(vec![Job::new("pv_string_methods", trace)
+                    .opts(opts)
+                    .limits_s(lim)])
+                .remove(0)
+                .1;
+                assert!(
+                    r.ok,
+                    "pv_string_methods [{trace}] {opts} {lim}: {}",
+                    r.stderr
+                );
             }
         }
     }
@@ -1499,9 +1693,15 @@ fn pv_string_methods() {
 fn po_protected_calls() {
     for trace in ["always", "on2"] {
         for opts in ["", "+verify"] {
-            let r = compare(vec![Job::new("po_protected_calls", trace).opts(opts)]).remove(0).1;
+            let r = compare(vec![Job::new("po_protected_calls", trace).opts(opts)])
+                .remove(0)
+                .1;
             assert!(r.ok, "po_protected_calls [{trace}] {opts}: {}", r.stderr);
-            assert!(r.stats.entered >= 1, "po_protected_calls [{trace}] {opts}: trace never entered: {}", r.stats.line());
+            assert!(
+                r.stats.entered >= 1,
+                "po_protected_calls [{trace}] {opts}: trace never entered: {}",
+                r.stats.line()
+            );
         }
     }
 }
@@ -1513,7 +1713,13 @@ fn po_protected_calls() {
 fn g2_pcall_depth() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("g2_pcall_depth", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -1525,7 +1731,12 @@ fn g2_pcall_depth() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" {
-            assert!(o.stats.entered >= 1, "{}: traces did not run: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -1541,7 +1752,14 @@ const H1_PROC: &str = "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,type
 fn h1_hash_int_keys() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop", 0), ("-fwd", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 17),
+            ("-loop", 0),
+            ("-fwd", 0),
+        ] {
             let mut j = Job::new("h1_hash_int", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -1557,7 +1775,12 @@ fn h1_hash_int_keys() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
-            assert!(o.stats.entered >= 1, "{}: traces did not run: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -1572,9 +1795,22 @@ fn h1_int_keys_do_not_exit_per_key() {
         Job::new("h1_hash_int_many", "on2"),
     ]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 1, "{} {}: {}", j.prog, j.trace, o.stats.line());
+        assert!(
+            o.stats.installed >= 1,
+            "{} {}: {}",
+            j.prog,
+            j.trace,
+            o.stats.line()
+        );
         // (one exit per leave of the inner loop: about 100; a miss per key would be 8000; 5.4 does not record hash-part integer keys)
-        assert!(cfg!(rustynail_lua54) || o.stats.exits < 300, "{} {} {}: too many exits: {}", j.prog, j.trace, j.opts, o.stats.line());
+        assert!(
+            cfg!(rustynail_lua54) || o.stats.exits < 300,
+            "{} {} {}: too many exits: {}",
+            j.prog,
+            j.trace,
+            j.opts,
+            o.stats.line()
+        );
     }
 }
 
@@ -1588,13 +1824,29 @@ fn h1_frame_side_thresholds() {
         j.limits = format!("{H1_PROC},{lim}");
         j
     };
-    let res = compare(vec![job("fck=1,framemin=0"), job("fck=1024,framemin=0"), job("fck=1,framemin=100000")]);
+    let res = compare(vec![
+        job("fck=1,framemin=0"),
+        job("fck=1024,framemin=0"),
+        job("fck=1,framemin=100000"),
+    ]);
     let rec = |i: usize| res[i].1.stats.side_recorded;
     if cfg!(rustynail_lua54) {
         return; // (5.4 aborts `IntMiss` on the hash-part keys of the piles: the thresholds have nothing to act on)
     }
-    assert!(rec(0) > rec(1), "an unreachable fck still records side traces ({} vs {}): {}", rec(0), rec(1), res[1].1.stats.line());
-    assert!(rec(0) > rec(2), "an unreachable framemin still records side traces ({} vs {}): {}", rec(0), rec(2), res[2].1.stats.line());
+    assert!(
+        rec(0) > rec(1),
+        "an unreachable fck still records side traces ({} vs {}): {}",
+        rec(0),
+        rec(1),
+        res[1].1.stats.line()
+    );
+    assert!(
+        rec(0) > rec(2),
+        "an unreachable framemin still records side traces ({} vs {}): {}",
+        rec(0),
+        rec(2),
+        res[2].1.stats.line()
+    );
 }
 
 /// BUNDLE-H1: towers with a key-0 pile: the exits inside inlined frames of function-entry / continuation traces get side traces with virtual
@@ -1625,7 +1877,14 @@ fn h1_towers_frame_sides() {
         jobs.push(j);
     }
     let res = compare(jobs);
-    let rec = |lim: &str| res.iter().find(|(j, _)| j.trace == "always" && j.opts == "+verify" && j.limits == format!("{H1_PROC},{lim}")).map(|(_, o)| o.stats.side_recorded).unwrap();
+    let rec = |lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.trace == "always" && j.opts == "+verify" && j.limits == format!("{H1_PROC},{lim}")
+            })
+            .map(|(_, o)| o.stats.side_recorded)
+            .unwrap()
+    };
     assert!(
         rec("fck=1,framemin=0") >= 30,
         "h1_towers_piles: the frame cells of function-entry / recursion traces record side traces ({})",
@@ -1654,7 +1913,14 @@ fn h3_black_exits_not_reported() {
     for (j, o) in &res {
         assert!(o.ok, "{} {}: {}", j.prog, j.limits, o.stderr);
         total += o.stats.exits;
-        assert_eq!(o.stats.black_handled, 0, "{} {}: blacklisted exits reached the handler: {}", j.prog, j.limits, o.stats.line());
+        assert_eq!(
+            o.stats.black_handled,
+            0,
+            "{} {}: blacklisted exits reached the handler: {}",
+            j.prog,
+            j.limits,
+            o.stats.line()
+        );
     }
     assert!(total > 10000, "the programs exit through traces ({total})");
 }
@@ -1666,9 +1932,15 @@ fn h3_black_exits_not_reported() {
 fn px_typed_landing_labels() {
     for trace in ["always", "on2"] {
         for opts in ["", "+verify"] {
-            let r = compare(vec![Job::new("px_typed_landing", trace).opts(opts)]).remove(0).1;
+            let r = compare(vec![Job::new("px_typed_landing", trace).opts(opts)])
+                .remove(0)
+                .1;
             assert!(r.ok, "px_typed_landing [{trace}] {opts}: {}", r.stderr);
-            assert!(r.stats.side_recorded >= 1, "px_typed_landing [{trace}] {opts}: {}", r.stats.line());
+            assert!(
+                r.stats.side_recorded >= 1,
+                "px_typed_landing [{trace}] {opts}: {}",
+                r.stats.line()
+            );
         }
     }
 }
@@ -1696,11 +1968,18 @@ fn pm4_recursion_typed_landing() {
     let res = compare(jobs);
     for (j, o) in res.iter().filter(|(j, _)| !j.opts.contains("emurun")) {
         // (under `+emurun` the emulator refuses the native self-call / return tails: `Compile(emu-unsupported)`, nothing runs)
-        assert!(o.stats.entered >= 1 || o.stats.exits > 0, "px_rec_landing [{}] {}: no trace ran: {}", j.trace, j.opts, o.stats.line());
+        assert!(
+            o.stats.entered >= 1 || o.stats.exits > 0,
+            "px_rec_landing [{}] {}: no trace ran: {}",
+            j.trace,
+            j.opts,
+            o.stats.line()
+        );
     }
     // (the side recordings at the float iterations are what puts the exits mid-block)
     assert!(
-        res.iter().any(|(j, o)| j.trace == "always" && j.opts.is_empty() && o.stats.side_recorded >= 1),
+        res.iter()
+            .any(|(j, o)| j.trace == "always" && j.opts.is_empty() && o.stats.side_recorded >= 1),
         "px_rec_landing: no side trace recorded"
     );
 }
@@ -1719,7 +1998,13 @@ fn pm4_recursion_entry_counters() {
         }
     }
     for (j, o) in &compare(jobs) {
-        assert!(o.stats.entered < 1 << 24, "pm4_rec_counters [{}] {}: entry counters wrapped: {}", j.trace, j.opts, o.stats.line());
+        assert!(
+            o.stats.entered < 1 << 24,
+            "pm4_rec_counters [{}] {}: entry counters wrapped: {}",
+            j.trace,
+            j.opts,
+            o.stats.line()
+        );
     }
 }
 
@@ -1744,7 +2029,9 @@ const MUST_SIDE: &[&str] = &[
 fn side_traces_install_and_run() {
     for trace in ["always", "on2"] {
         for p in MUST_SIDE {
-            let with = run_all(vec![Job::new(p, trace).opts("+verify")]).remove(0).1;
+            let with = run_all(vec![Job::new(p, trace).opts("+verify")])
+                .remove(0)
+                .1;
             assert!(with.ok, "{p} [{trace}]: {}", with.stderr);
             let mut j = Job::new(p, trace).opts("+verify");
             j.limits = "maxside=0".into();
@@ -1756,7 +2043,10 @@ fn side_traces_install_and_run() {
                 without.iterations,
                 with.stats.line()
             );
-            assert_eq!(without.stats.side_recorded, 0, "{p}: maxside=0 records nothing");
+            assert_eq!(
+                without.stats.side_recorded, 0,
+                "{p}: maxside=0 records nothing"
+            );
             assert!(
                 with.stats.side_installed >= 1,
                 "{p} [{trace}]: no side trace: {}",
@@ -1797,13 +2087,20 @@ fn side_traces_install_and_run() {
     // the generic exit path (`+emuverify` sends every exit through the handler) follows the exit cells too, and
     // `maxside` bounds the side traces of a family
     for trace in ["always", "on2"] {
-        let with = run_all(vec![Job::new("side_branch", trace).opts("+verify +emuverify")])
-            .remove(0)
-            .1;
+        let with = run_all(vec![
+            Job::new("side_branch", trace).opts("+verify +emuverify")
+        ])
+        .remove(0)
+        .1;
         let mut j = Job::new("side_branch", trace).opts("+verify +emuverify");
         j.limits = "maxside=0".into();
         let without = run_all(vec![j]).remove(0).1;
-        assert!(with.ok && without.ok, "{} / {}", with.stderr, without.stderr);
+        assert!(
+            with.ok && without.ok,
+            "{} / {}",
+            with.stderr,
+            without.stderr
+        );
         assert!(
             with.iterations > without.iterations,
             "side_branch [{trace} +emuverify]: the generic path never entered the side trace ({} vs {})",
@@ -1828,7 +2125,12 @@ fn side_traces_install_and_run() {
         let r = run_all(vec![j]).remove(0).1;
         assert!(r.ok, "side_untraced_head: {}", r.stderr);
         assert!(
-            r.stats.side_aborts.get("SideUntraced").copied().unwrap_or(0) >= 1,
+            r.stats
+                .side_aborts
+                .get("SideUntraced")
+                .copied()
+                .unwrap_or(0)
+                >= 1,
             "side_untraced_head [{trace}]: {}",
             r.stats.line()
         );
@@ -1844,7 +2146,12 @@ fn entry0_prelude() {
         let e = run_all(vec![Job::new("type_entry", trace)]).remove(0).1;
         assert!(e.ok, "type_entry: {}", e.stderr);
         eprintln!("type_entry [{trace}] {}", e.stats.line());
-        assert_eq!(e.stats.side_preludes, 1, "type_entry [{trace}]: {}", e.stats.line());
+        assert_eq!(
+            e.stats.side_preludes,
+            1,
+            "type_entry [{trace}]: {}",
+            e.stats.line()
+        );
         // one exit per run (the loop end), not two (the failing entry as well, which the prelude takes over)
         let (exits, entered) = (e.stats.exits, e.stats.entered);
         assert!(
@@ -1878,9 +2185,11 @@ fn ineffective_trace_rule() {
             muts.push(',');
         }
         muts.push_str("forloop_step_always_lit");
-        let r = run_all(vec![Job::new("ineff_marking", trace).env("RUSTYNAIL_JIT_MUT", &muts)])
-            .remove(0)
-            .1;
+        let r = run_all(vec![
+            Job::new("ineff_marking", trace).env("RUSTYNAIL_JIT_MUT", &muts)
+        ])
+        .remove(0)
+        .1;
         assert!(r.ok, "ineff_marking: {}", r.stderr);
         eprintln!("ineff_marking [{trace}] {}", r.stats.line());
         let s = &r.stats;
@@ -2016,7 +2325,10 @@ fn side_recording_start_keeps_the_count_identity() {
         }
         started += o.stats.side_recorded;
     }
-    assert!(started > 0, "no job started a side recording: the test is vacuous");
+    assert!(
+        started > 0,
+        "no job started a side recording: the test is vacuous"
+    );
     assert!(
         bad.is_empty(),
         "{} of {n} identity failures:\n{}",
@@ -2176,7 +2488,11 @@ fn proto_churn_aborts_the_recording_with_dep_freed() {
 #[test]
 fn root_freed_before_its_callee() {
     for trace in ["always", "on2"] {
-        for (opts, stress) in [("+verify", None), ("+verify +tracemove", None), ("", Some("2"))] {
+        for (opts, stress) in [
+            ("+verify", None),
+            ("+verify +tracemove", None),
+            ("", Some("2")),
+        ] {
             let mut j = Job::new("alloc_root_before_callee", trace).opts(opts);
             if let Some(s) = stress {
                 j = j.env("RUSTYNAIL_GC_STRESS", s);
@@ -2196,7 +2512,22 @@ fn root_freed_before_its_callee() {
 // ---- F3b: generic `for` (ipairs / next), CONCAT, STRTO ------------------------------------------------------------------
 
 /// The F3b programs.
-const F3B: &[&str] = &["tfor_ipairs", "tfor_closure", "tfor_pairs", "tfor_errors", "tfor_te1", "tfor_te2", "tfor_te3", "tfor_te4", "tfor_te5", "tfor_te6", "str_concat", "strto_for", "str_temporaries", "tfor_iter_swap"];
+const F3B: &[&str] = &[
+    "tfor_ipairs",
+    "tfor_closure",
+    "tfor_pairs",
+    "tfor_errors",
+    "tfor_te1",
+    "tfor_te2",
+    "tfor_te3",
+    "tfor_te4",
+    "tfor_te5",
+    "tfor_te6",
+    "str_concat",
+    "strto_for",
+    "str_temporaries",
+    "tfor_iter_swap",
+];
 
 /// The F3b programs install and enter traces, in `always` and `on2`, with the lockstep (`+verify`), with every guard failing
 /// now and then (`+exitstorm`) and with small budgets: the same results as the interpreter.
@@ -2214,7 +2545,10 @@ fn f3b_programs_run_on_traces() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.trace == "always" && j.opts == "+verify" && !["tfor_te2", "tfor_te4"].contains(&j.prog.as_str()) {
+        if j.trace == "always"
+            && j.opts == "+verify"
+            && !["tfor_te2", "tfor_te4"].contains(&j.prog.as_str())
+        {
             assert!(
                 o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
                 "{}: no trace ran: {}",
@@ -2246,7 +2580,9 @@ fn f3b_programs_under_gc_stress() {
         // both collector modes, with and without stress
         for mode in ["gen", "inc"] {
             for stress in [None, Some("2")] {
-                let mut j = Job::new(p, "always").opts("+verify").env("TR_CORE_GCMODE", mode);
+                let mut j = Job::new(p, "always")
+                    .opts("+verify")
+                    .env("TR_CORE_GCMODE", mode);
                 if let Some(st) = stress {
                     j = j.env("RUSTYNAIL_GC_STRESS", st);
                 }
@@ -2321,9 +2657,18 @@ fn pg_warm_gate_delays_the_first_recording() {
         jobs.push(j);
     }
     let res = compare(jobs);
-    assert_eq!(res[0].1.stats.recorded, 0, "a gate beyond the program's firings: {}", res[0].1.stats.line());
+    assert_eq!(
+        res[0].1.stats.recorded,
+        0,
+        "a gate beyond the program's firings: {}",
+        res[0].1.stats.line()
+    );
     assert_eq!(res[0].1.stats.installed, 0);
-    assert!(res[1].1.stats.installed >= 1, "warm=2 only delays: {}", res[1].1.stats.line());
+    assert!(
+        res[1].1.stats.installed >= 1,
+        "warm=2 only delays: {}",
+        res[1].1.stats.line()
+    );
     assert!(res[2].1.stats.installed >= res[1].1.stats.installed.min(1));
 }
 
@@ -2333,7 +2678,13 @@ fn pg_warm_gate_delays_the_first_recording() {
 fn f4_unroll_limits_and_the_exit_beyond() {
     let mut jobs = Vec::new();
     for p in F4 {
-        for l in ["unroll=0", "unroll=1,stitchmin=4", "unroll=2,stitchmin=4", "unroll=3,stitchmin=4", "unroll=2,stitchmin=4,maxside=0"] {
+        for l in [
+            "unroll=0",
+            "unroll=1,stitchmin=4",
+            "unroll=2,stitchmin=4",
+            "unroll=3,stitchmin=4",
+            "unroll=2,stitchmin=4,maxside=0",
+        ] {
             for trace in ["always", "on2"] {
                 // (`fnroot=0`: these are the F4 loop recordings, with `table.pack` as the stitching C call of `multret_cfunc`; P-E2 function-entry roots are covered by the `pe2_*` tests)
                 let mut j = Job::new(p, trace).opts("+verify");
@@ -2353,7 +2704,19 @@ fn f4_unroll_limits_and_the_exit_beyond() {
 #[test]
 fn f4_programs_install_and_enter_traces() {
     let must = [
-        "rec_fib", "rec_ack", "rec_depth", "rec_mutual", "rec_tree", "tail_loop", "tail_args", "tail_mutual", "tail_flag", "swap_divmod", "multret_calls", "multret_return", "multret_intrinsic",
+        "rec_fib",
+        "rec_ack",
+        "rec_depth",
+        "rec_mutual",
+        "rec_tree",
+        "tail_loop",
+        "tail_args",
+        "tail_mutual",
+        "tail_flag",
+        "swap_divmod",
+        "multret_calls",
+        "multret_return",
+        "multret_intrinsic",
     ];
     let mut jobs = Vec::new();
     for p in must {
@@ -2380,13 +2743,23 @@ fn f4_programs_under_gc_stress() {
     for p in F4 {
         for stress in ["1", "2"] {
             jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress));
-            let mut j = Job::new(p, "on2").opts("+verify").env("RUSTYNAIL_GC_STRESS", stress);
+            let mut j = Job::new(p, "on2")
+                .opts("+verify")
+                .env("RUSTYNAIL_GC_STRESS", stress);
             j.limits = "stitchmin=4".into();
             jobs.push(j);
         }
-        jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1"));
+        jobs.push(
+            Job::new(p, "always")
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .env("RUSTYNAIL_GC_VERIFY", "1"),
+        );
         for mode in ["gen", "inc"] {
-            jobs.push(Job::new(p, "always").opts("+verify").env("TR_CORE_GCMODE", mode));
+            jobs.push(
+                Job::new(p, "always")
+                    .opts("+verify")
+                    .env("TR_CORE_GCMODE", mode),
+            );
         }
     }
     compare(jobs);
@@ -2395,7 +2768,15 @@ fn f4_programs_under_gc_stress() {
 // ---- P-E: inlined vararg callees, `select`, loops of callees unrolled --------------------------------------------------
 
 /// The P-E programs.
-const PE: &[&str] = &["vararg_fwd", "vararg_loop", "vararg_types", "vararg_nested", "vararg_misc", "vararg_select", "multret_vararg_root"];
+const PE: &[&str] = &[
+    "vararg_fwd",
+    "vararg_loop",
+    "vararg_types",
+    "vararg_nested",
+    "vararg_misc",
+    "vararg_select",
+    "multret_vararg_root",
+];
 
 /// The P-E programs in every mode with the lockstep (`+verify`: the recorder's model of the vararg frame layout, of `top` after
 /// `VARARG C=0` and of the `select` results against the interpreter), with every guard failing now and then (`+exitstorm`:
@@ -2424,7 +2805,15 @@ fn pe_programs_run_on_traces() {
 // ---- P-E2: function-entry roots, `table.pack` -------------------------------------------------------------------------------
 
 /// The P-E2 programs.
-const PE2: &[&str] = &["pack_basic", "fnroot_fib", "fnroot_mutual", "fnroot_error", "fnroot_coro", "fnroot_hook", "fnroot_types"];
+const PE2: &[&str] = &[
+    "pack_basic",
+    "fnroot_fib",
+    "fnroot_mutual",
+    "fnroot_error",
+    "fnroot_coro",
+    "fnroot_hook",
+    "fnroot_types",
+];
 
 /// The P-E2 programs in every mode with the lockstep, exit storms (every exit of every snapshot is taken and compared), small
 /// budgets and the unroll / depth limits that make the function roots record deeper trees.
@@ -2440,7 +2829,13 @@ fn pe2_programs_run_on_traces() {
             jobs.push(Job::new(p, trace).budget(17));
         }
         jobs.push(Job::new(p, "always").opts("-loop -fwd"));
-        for l in ["fnroot=0", "fnroot=1", "fnroot=1,unroll=4,maxdepth=6,fnmin=4", "fnroot=1,unroll=8,maxdepth=8,fnmin=8,maxside=0", "fnroot=1,fnmin=0"] {
+        for l in [
+            "fnroot=0",
+            "fnroot=1",
+            "fnroot=1,unroll=4,maxdepth=6,fnmin=4",
+            "fnroot=1,unroll=8,maxdepth=8,fnmin=8,maxside=0",
+            "fnroot=1,fnmin=0",
+        ] {
             let mut j = Job::new(p, "always").opts("+verify");
             j.limits = l.into();
             jobs.push(j);
@@ -2461,8 +2856,18 @@ fn ineffective_fn_root(prog: &str) {
     j.limits = "fnroot=1,fnmin=4,maxside=0".into();
     let res = compare(vec![j]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 1, "{}: no function root was installed: {}", j.prog, o.stats.line());
-        assert!(o.stats.ineffective >= 1, "{}: the ineffective function root was not flushed: {}", j.prog, o.stats.line());
+        assert!(
+            o.stats.installed >= 1,
+            "{}: no function root was installed: {}",
+            j.prog,
+            o.stats.line()
+        );
+        assert!(
+            o.stats.ineffective >= 1,
+            "{}: the ineffective function root was not flushed: {}",
+            j.prog,
+            o.stats.line()
+        );
     }
 }
 
@@ -2474,8 +2879,18 @@ fn fn_root_final_exit_gets_no_side_trace() {
     j.limits = "fnroot=1,fnmin=4,maxside=8".into();
     let res = compare(vec![j]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 1, "{}: no function root was installed: {}", j.prog, o.stats.line());
-        assert!(o.stats.side_installed < 8, "{}: a chain of empty side traces: {}", j.prog, o.stats.line());
+        assert!(
+            o.stats.installed >= 1,
+            "{}: no function root was installed: {}",
+            j.prog,
+            o.stats.line()
+        );
+        assert!(
+            o.stats.side_installed < 8,
+            "{}: a chain of empty side traces: {}",
+            j.prog,
+            o.stats.line()
+        );
     }
 }
 
@@ -2494,7 +2909,14 @@ fn fn_root_short_recordings_blacklist_the_head() {
     for (j, o) in &res {
         let short = o.stats.aborts.get("FnShort").copied().unwrap_or(0);
         let want = if j.limits.contains("fnpromo=0") { 4 } else { 5 };
-        assert_eq!(short, want, "{} [{}]: the head is blacklisted after {want} short recordings: {}", j.prog, j.limits, o.stats.line());
+        assert_eq!(
+            short,
+            want,
+            "{} [{}]: the head is blacklisted after {want} short recordings: {}",
+            j.prog,
+            j.limits,
+            o.stats.line()
+        );
     }
 }
 
@@ -2515,11 +2937,23 @@ fn pe2_programs_under_gc_stress() {
     for p in PE2 {
         for stress in ["1", "2"] {
             jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress));
-            jobs.push(Job::new(p, "on2").opts("+verify").env("RUSTYNAIL_GC_STRESS", stress));
+            jobs.push(
+                Job::new(p, "on2")
+                    .opts("+verify")
+                    .env("RUSTYNAIL_GC_STRESS", stress),
+            );
         }
-        jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1"));
+        jobs.push(
+            Job::new(p, "always")
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .env("RUSTYNAIL_GC_VERIFY", "1"),
+        );
         for mode in ["gen", "inc"] {
-            jobs.push(Job::new(p, "always").opts("+verify").env("TR_CORE_GCMODE", mode));
+            jobs.push(
+                Job::new(p, "always")
+                    .opts("+verify")
+                    .env("TR_CORE_GCMODE", mode),
+            );
         }
     }
     // (function-entry roots are off by default: the jobs without limits turn them on)
@@ -2561,7 +2995,15 @@ fn r2_recursion_programs() {
     let mut jobs = Vec::new();
     for p in ["r2_rec", "r2_rec_deep"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -2596,9 +3038,25 @@ fn r2_recursion_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.limits == on && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && j.prog == "r2_rec" {
-            assert!(o.stats.installed >= 3, "{}: traces installed: {}", j.prog, o.stats.line());
-            assert!(o.stats.entered >= 1, "{}: no trace entered: {}", j.prog, o.stats.line());
+        if j.limits == on
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+            && j.prog == "r2_rec"
+        {
+            assert!(
+                o.stats.installed >= 3,
+                "{}: traces installed: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                o.stats.entered >= 1,
+                "{}: no trace entered: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -2646,7 +3104,16 @@ fn be_native_return_guards_keep_registers() {
 fn r2_side_room_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+        ] {
             let mut j = Job::new("r2_side_room", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2668,15 +3135,40 @@ fn r2_side_room_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.limits == "siderooms=1" && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
-            assert!(o.stats.side_installed >= 2, "{}: side traces installed: {}", j.prog, o.stats.line());
-            assert!(!o.stats.aborts.contains_key("Compile(side-room)"), "{}: side-room aborts: {}", j.prog, o.stats.line());
+        if j.limits == "siderooms=1"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+        {
+            assert!(
+                o.stats.side_installed >= 2,
+                "{}: side traces installed: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                !o.stats.aborts.contains_key("Compile(side-room)"),
+                "{}: side-room aborts: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
         // Y4: the control without room checks at the start of a side trace refuses a frameful side trace that needs more room than its parent
         // checked (`Compile(side-room)`); that refusal is the install-time check the mutant `fside_room_ignored` removes (deterministic detector,
         // no reliance on the heap corruption the missing check causes at run time)
-        if j.limits == "siderooms=0" && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
-            assert!(o.stats.side_aborts.contains_key("Compile(side-room)"), "{}: siderooms=0 refused no oversize frameful side trace: {}", j.prog, o.stats.line());
+        if j.limits == "siderooms=0"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+        {
+            assert!(
+                o.stats.side_aborts.contains_key("Compile(side-room)"),
+                "{}: siderooms=0 refused no oversize frameful side trace: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -2688,7 +3180,16 @@ fn r2_side_room_programs() {
 fn r2_nilstore_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+        ] {
             let mut j = Job::new("r2_nilstore", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2729,7 +3230,18 @@ fn r2_nilstore_programs() {
 fn b2_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new("b2_backend", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2749,7 +3261,11 @@ fn b2_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 3 && o.stats.entered >= 1, "b2_backend: traces did not run: {}", o.stats.line());
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "b2_backend: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -2761,7 +3277,18 @@ fn b4_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new("b4_backend", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2781,7 +3308,11 @@ fn b4_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 3 && o.stats.entered >= 1, "b4_backend: traces did not run: {}", o.stats.line());
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "b4_backend: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -2793,7 +3324,18 @@ fn b4_div_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new("b4_div", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2813,7 +3355,11 @@ fn b4_div_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 3 && o.stats.entered >= 1, "b4_div: traces did not run: {}", o.stats.line());
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "b4_div: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -2826,7 +3372,18 @@ fn b5_sink_programs() {
     const ON: &str = "sinkmt=1,sinkside=1";
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new("b5_sink", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2836,7 +3393,9 @@ fn b5_sink_programs() {
         }
         for gc in ["1", "2"] {
             for gm in ["gen", "inc"] {
-                let mut j = Job::new("b5_sink", trace).env("RUSTYNAIL_GC_STRESS", gc).env("TR_CORE_GCMODE", gm);
+                let mut j = Job::new("b5_sink", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("TR_CORE_GCMODE", gm);
                 j.limits = ON.into();
                 jobs.push(j);
             }
@@ -2853,7 +3412,11 @@ fn b5_sink_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 3 && o.stats.entered >= 1, "b5_sink: traces did not run: {}", o.stats.line());
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "b5_sink: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -2867,7 +3430,11 @@ fn b5_sink_counts() {
         j.limits = l.into();
         j
     };
-    let res = compare(vec![mk("sinkmt=0,sinkside=0"), mk("sinkmt=1,sinkside=0"), mk("sinkmt=1,sinkside=1")]);
+    let res = compare(vec![
+        mk("sinkmt=0,sinkside=0"),
+        mk("sinkmt=1,sinkside=0"),
+        mk("sinkmt=1,sinkside=1"),
+    ]);
     let n: Vec<u64> = res.iter().map(|(_, o)| o.stats.sunk).collect();
     assert!(n[1] > n[0], "sinkmt sank nothing: {n:?}");
     assert!(n[2] >= n[1], "sinkside sank fewer tables: {n:?}");
@@ -2880,7 +3447,18 @@ fn b4_hk_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new("b4_hk", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2900,7 +3478,11 @@ fn b4_hk_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 3 && o.stats.entered >= 1, "b4_hk: traces did not run: {}", o.stats.line());
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "b4_hk: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -2921,8 +3503,19 @@ fn j1_hkfuse_fires() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.prog != "be_queens" {
-            assert!(o.stats.hk_fused >= 3, "{}: the fusion does not fire: {} (fused {})", j.prog, o.stats.line(), o.stats.hk_fused);
-            assert!(o.stats.hk_split >= 1, "{}: no fused pair with two exits (the typesides split): {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.hk_fused >= 3,
+                "{}: the fusion does not fire: {} (fused {})",
+                j.prog,
+                o.stats.line(),
+                o.stats.hk_fused
+            );
+            assert!(
+                o.stats.hk_split >= 1,
+                "{}: no fused pair with two exits (the typesides split): {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -2931,7 +3524,14 @@ fn j1_hkfuse_fires() {
 fn j2_jobs(prog: &str, limits: &str, traces: &[&str]) -> Vec<Job> {
     let mut jobs = Vec::new();
     for &trace in traces {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 17), ("-loop -fwd -cse -sink", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 17),
+            ("-loop -fwd -cse -sink", 0),
+        ] {
             let mut j = Job::new(prog, trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -2961,11 +3561,22 @@ fn j2_deep_programs() {
     let mut jobs = Vec::new();
     jobs.extend(j2_jobs("j2_deep", ON, &["always", "on2"]));
     jobs.extend(j2_jobs("j2_deep", "deep=0", &["always"]));
-    jobs.extend(j2_jobs("j2_deep", "deep=8,deepins=300,recnat=1,recany=1", &["always"]));
+    jobs.extend(j2_jobs(
+        "j2_deep",
+        "deep=8,deepins=300,recnat=1,recany=1",
+        &["always"],
+    ));
     let res = compare(jobs);
     let pick = |trace: &str, limits: &str| -> TStats {
         res.iter()
-            .find(|(j, _)| j.prog == "j2_deep" && j.trace == trace && j.opts.is_empty() && j.budget.is_none() && j.env.is_empty() && j.limits == limits)
+            .find(|(j, _)| {
+                j.prog == "j2_deep"
+                    && j.trace == trace
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.is_empty()
+                    && j.limits == limits
+            })
             .unwrap_or_else(|| panic!("no result for {trace} {limits}"))
             .1
             .stats
@@ -2973,18 +3584,40 @@ fn j2_deep_programs() {
     };
     let on = pick("always", ON);
     let off = pick("always", "deep=0");
-    assert_eq!((off.deep_sites, off.deep_recs), (0, 0), "deep stats without the knob: {}", off.line());
-    assert!(on.deep_sites >= 1 && on.deep_recs >= 2, "no site is re-recorded deeper: {}", on.line());
+    assert_eq!(
+        (off.deep_sites, off.deep_recs),
+        (0, 0),
+        "deep stats without the knob: {}",
+        off.line()
+    );
+    assert!(
+        on.deep_sites >= 1 && on.deep_recs >= 2,
+        "no site is re-recorded deeper: {}",
+        on.line()
+    );
     // once per site: the program has six loop heads, so at most six re-records (one each), never a chain of them (the third loop recurses
     // deeper than any limit: its deep recording stops at the limit again and keeps the normal penalties)
-    assert!(on.deep_sites <= 6, "a site is re-recorded more than once: {}", on.line());
+    assert!(
+        on.deep_sites <= 6,
+        "a site is re-recorded more than once: {}",
+        on.line()
+    );
     // the deep recording is installed (the loop trace of the first loop) and the program runs on traces
-    assert!(on.installed >= off.installed, "fewer traces with the deep limits: {} vs {}", on.line(), off.line());
+    assert!(
+        on.installed >= off.installed,
+        "fewer traces with the deep limits: {} vs {}",
+        on.line(),
+        off.line()
+    );
     // the IR bound: with a tiny bound no deep recording completes (TooLong), with the default bound one does
     let mut j = Job::new("j2_deep", "always");
     j.limits = "deep=8,deepins=40".into();
     let tiny = compare(vec![j]).remove(0).1.stats;
-    assert!(tiny.aborts.get("TooLong").copied().unwrap_or(0) >= 1, "the IR bound of a deep recording does not fire: {}", tiny.line());
+    assert!(
+        tiny.aborts.get("TooLong").copied().unwrap_or(0) >= 1,
+        "the IR bound of a deep recording does not fire: {}",
+        tiny.line()
+    );
     assert!(tiny.deep_sites <= 6, "{}", tiny.line());
 }
 
@@ -2998,7 +3631,18 @@ fn p2_loopdiet_programs() {
     let mut jobs = Vec::new();
     for prog in ["p2_fconst", "float_poly", "special_floats", "b4_poll"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+                ("-fwd -cse -loop -sink", 0),
+                ("+membudget +verify", 0),
+            ] {
                 let mut j = Job::new(prog, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3023,8 +3667,17 @@ fn p2_loopdiet_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "p2_fconst" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 2 && o.stats.entered >= 1, "p2_fconst: traces did not run: {}", o.stats.line());
+        if j.prog == "p2_fconst"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits == ON
+        {
+            assert!(
+                o.stats.installed >= 2 && o.stats.entered >= 1,
+                "p2_fconst: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -3039,7 +3692,17 @@ fn p2_uvsep_programs() {
     let mut jobs = Vec::new();
     for prog in ["p2_uvsep", "p2_uvroll", "upval_acc", "be_queens"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+                ("-fwd -cse -loop -sink", 0),
+            ] {
                 let mut j = Job::new(prog, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3064,8 +3727,18 @@ fn p2_uvsep_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if (j.prog == "p2_uvsep" || j.prog == "p2_uvroll") && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 2 && o.stats.entered >= 1, "{}: traces did not run: {}", j.prog, o.stats.line());
+        if (j.prog == "p2_uvsep" || j.prog == "p2_uvroll")
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits == ON
+        {
+            assert!(
+                o.stats.installed >= 2 && o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -3077,9 +3750,30 @@ fn p2_uvsep_programs() {
 fn p2_xregs_programs() {
     const ON: &str = "xregs=3";
     let mut jobs = Vec::new();
-    for prog in ["p2_xregs", "int_rec2", "be_queens", "b4_div", "rec_fib", "field_rw", "lib_str"] {
+    for prog in [
+        "p2_xregs",
+        "int_rec2",
+        "be_queens",
+        "b4_div",
+        "rec_fib",
+        "field_rw",
+        "lib_str",
+    ] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("+verify +randra=11", 0), ("+verify +randra=23", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("+verify +randra=11", 0),
+                ("+verify +randra=23", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+                ("-fwd -cse -loop -sink", 0),
+                ("+membudget +verify", 0),
+            ] {
                 let mut j = Job::new(prog, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3101,7 +3795,11 @@ fn p2_xregs_programs() {
                 j.limits = l.into();
                 jobs.push(j);
             }
-            for opts in ["+exitstorm=3 +verify", "+exitstorm=5 +verify +randra=9", "+verify +randra=31"] {
+            for opts in [
+                "+exitstorm=3 +verify",
+                "+exitstorm=5 +verify +randra=9",
+                "+verify +randra=31",
+            ] {
                 let mut j = Job::new(prog, trace).opts(opts);
                 j.limits = "xregs=3,maxside=0".into();
                 jobs.push(j);
@@ -3111,7 +3809,16 @@ fn p2_xregs_programs() {
     // native recursion (function-entry traces with a native frame push, which must not allocate `r14`)
     const XREC: &str = "recnat=1,recany=1,fnroot=1,fnmin=4,unroll=4,maxdepth=6,siderooms=1";
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("+verify +randra=11", 0), ("", 3), ("", 17), ("+emurun +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("+verify +randra=11", 0),
+            ("", 3),
+            ("", 17),
+            ("+emurun +verify", 0),
+        ] {
             for xr in ["xregs=3", "xregs=0"] {
                 let mut j = Job::new("p2_xregs_rec", trace).opts(opts);
                 if budget != 0 {
@@ -3132,8 +3839,17 @@ fn p2_xregs_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "p2_xregs" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 2 && o.stats.entered >= 1, "p2_xregs: traces did not run: {}", o.stats.line());
+        if j.prog == "p2_xregs"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits == ON
+        {
+            assert!(
+                o.stats.installed >= 2 && o.stats.entered >= 1,
+                "p2_xregs: traces did not run: {}",
+                o.stats.line()
+            );
         }
     }
 }
@@ -3146,8 +3862,22 @@ fn p2_xregs_programs() {
 fn f2_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
-    for (prog, trace) in ["f2_lib", "f2_byte"].into_iter().flat_map(|p| ["always", "on2", "on"].map(move |t| (p, t))) {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+    for (prog, trace) in ["f2_lib", "f2_byte"]
+        .into_iter()
+        .flat_map(|p| ["always", "on2", "on"].map(move |t| (p, t)))
+    {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new(prog, trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3167,18 +3897,32 @@ fn f2_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 1 && o.stats.entered >= 1, "{}: traces did not run: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
     // the recorders replace aborts: the programs have (almost) no `CFunc` / `Nyi` aborts (K3b: the knob-off control is gone; the figure is printed)
     let mut on = 0u64;
     for (j, o) in &res {
         if j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
-            on += o.stats.aborts.iter().filter(|(k, _)| k.starts_with("CFunc") || k.starts_with("Nyi")).map(|(_, v)| *v).sum::<u64>();
+            on += o
+                .stats
+                .aborts
+                .iter()
+                .filter(|(k, _)| k.starts_with("CFunc") || k.starts_with("Nyi"))
+                .map(|(_, v)| *v)
+                .sum::<u64>();
         }
     }
     eprintln!("f2_programs: CFunc / Nyi aborts {on}");
-    assert!(on <= 100, "the f2 recorders must remove CFunc / Nyi aborts: {on}");
+    assert!(
+        on <= 100,
+        "the f2 recorders must remove CFunc / Nyi aborts: {on}"
+    );
 }
 
 /// BUNDLE-G1 items 4 and 5: `string.format("%s", s)` folded to `s` (K3b: `g1fmt`, hard-wired on) and the inline long-string equality (`asm::streq_fast`) in every trace mode with lockstep, exit storms, budgets, GC stress and the stack-move stress. Mutants `g1fmt_fmt_guard_skip`, `g1fmt_result_fmt`, `streq_inline_len_diff_eq`, `streq_inline_tail_ne_eq`, `streq_inline_tail_eq`.
@@ -3186,8 +3930,20 @@ fn f2_programs() {
 fn g1_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
-    for (prog, trace) in ["g1_fmt", "g1_streq"].into_iter().flat_map(|p| ["always", "on2", "on"].map(move |t| (p, t))) {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0)] {
+    for (prog, trace) in ["g1_fmt", "g1_streq"]
+        .into_iter()
+        .flat_map(|p| ["always", "on2", "on"].map(move |t| (p, t)))
+    {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+        ] {
             let mut j = Job::new(prog, trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3207,7 +3963,12 @@ fn g1_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits == ON {
-            assert!(o.stats.installed >= 1 && o.stats.entered >= 1, "{}: traces did not run: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -3219,7 +3980,15 @@ fn g1_programs() {
 fn c2_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("c2_tier1", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3243,7 +4012,15 @@ fn c2_programs() {
 fn bb_cmpmm_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("bb_cmpmm", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3268,7 +4045,14 @@ fn bb_tset_programs() {
     let mut jobs = Vec::new();
     for p in ["ba_nilset", "r2_nilstore", "bb_tset", "g1_tget"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 3), ("", 17), ("-loop", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3300,7 +4084,15 @@ fn bb_tset_programs() {
 fn t3_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("t3_index", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3332,7 +4124,14 @@ fn t3_programs() {
 fn t1i_inline_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 3), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("t1i_inline", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3341,7 +4140,11 @@ fn t1i_inline_programs() {
         }
         for gc in ["1", "2"] {
             jobs.push(Job::new("t1i_inline", trace).env("RUSTYNAIL_GC_STRESS", gc));
-            jobs.push(Job::new("t1i_inline", trace).env("RUSTYNAIL_GC_STRESS", gc).env("RUSTYNAIL_GC_MODE", "inc"));
+            jobs.push(
+                Job::new("t1i_inline", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_MODE", "inc"),
+            );
         }
         jobs.push(Job::new("t1i_inline", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
     }
@@ -3357,7 +4160,19 @@ fn t1i_inline_programs() {
         }
     }
     // controls: the knob off, and every bit alone
-    for l in ["t1inline=0", "t1inline=1", "t1inline=2", "t1inline=4", "t1inline=8", "t1inline=16", "t1inline=32", "t1inline=64", "t1inline=128", "t1inline=256", "t1inline=512"] {
+    for l in [
+        "t1inline=0",
+        "t1inline=1",
+        "t1inline=2",
+        "t1inline=4",
+        "t1inline=8",
+        "t1inline=16",
+        "t1inline=32",
+        "t1inline=64",
+        "t1inline=128",
+        "t1inline=256",
+        "t1inline=512",
+    ] {
         let mut off = Job::new("t1i_inline", "always").opts("+verify");
         off.limits = l.into();
         jobs.push(off);
@@ -3373,7 +4188,14 @@ fn t1i_inline_programs() {
 fn k_strself_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 3), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("k_strself", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3390,7 +4212,12 @@ fn k_strself_programs() {
     }
     // (BUNDLE-M: the receiver of a hot `SELF` site that is sometimes not a string: mutant `strself_tag_skip`)
     for trace in ["always", "on2", "on"] {
-        for (opts, lim) in [("", "t3idx=2"), ("+verify", "t3idx=2"), ("+verify", ""), ("+exitstorm=3 +verify", "")] {
+        for (opts, lim) in [
+            ("", "t3idx=2"),
+            ("+verify", "t3idx=2"),
+            ("+verify", ""),
+            ("+exitstorm=3 +verify", ""),
+        ] {
             jobs.push(Job::new("k_strself2", trace).opts(opts).limits_s(lim));
         }
     }
@@ -3411,7 +4238,14 @@ fn k_strself_programs() {
 fn l_d1_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 3), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("l_d1", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -3420,9 +4254,17 @@ fn l_d1_programs() {
         }
         for gc in ["1", "2"] {
             jobs.push(Job::new("l_d1", trace).env("RUSTYNAIL_GC_STRESS", gc));
-            jobs.push(Job::new("l_d1", trace).env("RUSTYNAIL_GC_STRESS", gc).env("TR_CORE_GCMODE", "gen"));
+            jobs.push(
+                Job::new("l_d1", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("TR_CORE_GCMODE", "gen"),
+            );
         }
-        jobs.push(Job::new("l_d1", trace).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1"));
+        jobs.push(
+            Job::new("l_d1", trace)
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .env("RUSTYNAIL_GC_VERIFY", "1"),
+        );
         jobs.push(Job::new("l_d1", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
     }
     for j in jobs.iter_mut() {
@@ -3449,7 +4291,16 @@ fn dm_programs() {
     let mut jobs = Vec::new();
     for p in ["dm_dynkey", "dm_growth"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("-fwd -cse -sink", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("-fwd -cse -sink", 0),
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3458,9 +4309,17 @@ fn dm_programs() {
             }
             for gc in ["1", "2"] {
                 jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", gc));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", gc).env("TR_CORE_GCMODE", "gen"));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .env("TR_CORE_GCMODE", "gen"),
+                );
             }
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1"));
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1"),
+            );
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
             jobs.push(Job::new(p, trace).opts("+emurun +verify"));
         }
@@ -3482,13 +4341,20 @@ fn dm_programs() {
     // the shipped process defaults of every other knob (nil-valued stores, header-safe library calls, 64-bit key compares, ...)
     for p in ["dm_dynkey", "dm_growth"] {
         for trace in ["always", "on2"] {
-            for opts in ["", "+verify", "+exitstorm=3 +verify", "+exitstorm=7 +verify +randra=5"] {
+            for opts in [
+                "",
+                "+verify",
+                "+exitstorm=3 +verify",
+                "+exitstorm=7 +verify +randra=5",
+            ] {
                 let mut j = Job::new(p, trace).opts(opts).env("TR_CORE_PROCESS", "1");
                 j.limits = "dynmask=1".into();
                 jobs.push(j);
             }
             for gc in ["1", "2"] {
-                let mut j = Job::new(p, trace).env("TR_CORE_PROCESS", "1").env("RUSTYNAIL_GC_STRESS", gc);
+                let mut j = Job::new(p, trace)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("RUSTYNAIL_GC_STRESS", gc);
                 j.limits = "dynmask=1".into();
                 jobs.push(j);
             }
@@ -3496,8 +4362,18 @@ fn dm_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "dm_dynkey" && j.trace == "always" && j.opts == "+verify" && j.limits == "dynmask=1" && j.env.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+        if j.prog == "dm_dynkey"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.limits == "dynmask=1"
+            && j.env.is_empty()
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -3515,9 +4391,21 @@ fn dm_growth_exits_are_bounded() {
     on.limits = "dynmask=1,typesides=0".into();
     let res = compare(vec![off, on]);
     let (e0, e1) = (res[0].1.stats.exits, res[1].1.stats.exits);
-    assert!(res[1].1.stats.installed >= 1, "no trace: {}", res[1].1.stats.line());
-    assert!(e1 <= e0, "dynmask=1 exits more ({e1}) than dynmask=0 ({e0}): {}", res[1].1.stats.line());
-    assert!(e1 < 6000, "too many exits with dynmask=1: {}", res[1].1.stats.line());
+    assert!(
+        res[1].1.stats.installed >= 1,
+        "no trace: {}",
+        res[1].1.stats.line()
+    );
+    assert!(
+        e1 <= e0,
+        "dynmask=1 exits more ({e1}) than dynmask=0 ({e0}): {}",
+        res[1].1.stats.line()
+    );
+    assert!(
+        e1 < 6000,
+        "too many exits with dynmask=1: {}",
+        res[1].1.stats.line()
+    );
 }
 
 /// P2: the tree-aware ineffective-trace rule (`ineffcover`) and side traces on every hot type-guard exit (`typesides`): the scheduler
@@ -3529,7 +4417,15 @@ fn p2_programs() {
     let mut jobs = Vec::new();
     for p in ["p2_scheduler", "p2_type_flip", "p2_storm"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3546,7 +4442,11 @@ fn p2_programs() {
         j.limits = "ineffcover=1,typesides=1".into();
     }
     for p in ["p2_scheduler", "p2_type_flip", "p2_storm"] {
-        for l in ["ineffcover=0,typesides=0", "ineffcover=1,typesides=0", "ineffcover=0,typesides=1"] {
+        for l in [
+            "ineffcover=0,typesides=0",
+            "ineffcover=1,typesides=0",
+            "ineffcover=0,typesides=1",
+        ] {
             let mut j = Job::new(p, "always").opts("+verify");
             j.limits = l.into();
             jobs.push(j);
@@ -3565,7 +4465,11 @@ fn p2_scheduler_tree_is_kept() {
     let r = run_all(vec![on]).remove(0).1;
     assert!(r.ok, "{}", r.stderr);
     assert_eq!(r.stats.ineffective, 0, "p2_scheduler: {}", r.stats.line());
-    assert!(r.stats.side_installed >= 2, "p2_scheduler: {}", r.stats.line());
+    assert!(
+        r.stats.side_installed >= 2,
+        "p2_scheduler: {}",
+        r.stats.line()
+    );
 }
 
 /// P2: a hot type-guard exit of a rolled root gets a side trace instead of flushing the family (`typesides`); the control flushes
@@ -3580,7 +4484,12 @@ fn p2_type_guard_exits_get_side_traces() {
     let off = res.remove(1).1;
     let on = res.remove(0).1;
     assert!(on.ok && off.ok, "{} {}", on.stderr, off.stderr);
-    assert!(on.stats.side_installed > off.stats.side_installed, "on: {} off: {}", on.stats.line(), off.stats.line());
+    assert!(
+        on.stats.side_installed > off.stats.side_installed,
+        "on: {} off: {}",
+        on.stats.line(),
+        off.stats.line()
+    );
 }
 
 /// P2: a persistent type change at a peeled root's guard (the `ineff_marking` pattern) is still flushed as ineffective with
@@ -3600,9 +4509,21 @@ fn p2_persistent_change_is_still_flushed() {
         j.limits = "ineffcover=1,typesides=1,hoptop=98".into();
         let r = run_all(vec![j]).remove(0).1;
         assert!(r.ok, "ineff_marking: {}", r.stderr);
-        assert!(r.stats.ineffective >= 1, "ineff_marking [{trace}]: the rule did not fire: {}", r.stats.line());
-        assert!(r.stats.blacklisted >= 1, "ineff_marking [{trace}]: {}", r.stats.line());
-        assert!(r.stats.exits <= 64 * 1024, "ineff_marking [{trace}]: too many exits: {}", r.stats.line());
+        assert!(
+            r.stats.ineffective >= 1,
+            "ineff_marking [{trace}]: the rule did not fire: {}",
+            r.stats.line()
+        );
+        assert!(
+            r.stats.blacklisted >= 1,
+            "ineff_marking [{trace}]: {}",
+            r.stats.line()
+        );
+        assert!(
+            r.stats.exits <= 64 * 1024,
+            "ineff_marking [{trace}]: too many exits: {}",
+            r.stats.line()
+        );
     }
 }
 
@@ -3612,7 +4533,11 @@ fn p2_persistent_change_is_still_flushed() {
 fn pm3_programs_run_on_traces() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        jobs.push(Job::new("pm3_rec2", trace).opts("+verify").env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+        jobs.push(
+            Job::new("pm3_rec2", trace)
+                .opts("+verify")
+                .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+        );
         jobs.push(Job::new("pm3_rec", trace).opts("+verify"));
         jobs.push(Job::new("pm3_rec", trace).opts("+exitstorm=3"));
         jobs.push(Job::new("pm3_rec", trace).opts("+exitstorm=1 +verify"));
@@ -3631,7 +4556,11 @@ fn pm3_programs_run_on_traces() {
         j.env.push(("RUSTYNAIL_GC_STRESS".into(), gc.into()));
         jobs.push(j);
     }
-    for l in ["recnat=1,fnroot=1", "recnat=1,unroll=4,maxdepth=6", "recnat=0"] {
+    for l in [
+        "recnat=1,fnroot=1",
+        "recnat=1,unroll=4,maxdepth=6",
+        "recnat=0",
+    ] {
         let mut j = Job::new("pm3_rec", "always").opts("+verify");
         j.limits = l.into();
         jobs.push(j);
@@ -3660,8 +4589,16 @@ fn bk_lazy_programs() {
     }
     jobs.push(Job::new("px_rec_landing", "always").opts("+verify"));
     jobs.push(Job::new("px_rec_landing", "always").opts("+exitstorm=3"));
-    jobs.push(Job::new("bk_obs1", "always").opts("+verify").env("RUSTYNAIL_GC_STRESS", "2"));
-    jobs.push(Job::new("bk_obs1", "always").opts("+verify").env("RUSTYNAIL_GC_STRESS", "1"));
+    jobs.push(
+        Job::new("bk_obs1", "always")
+            .opts("+verify")
+            .env("RUSTYNAIL_GC_STRESS", "2"),
+    );
+    jobs.push(
+        Job::new("bk_obs1", "always")
+            .opts("+verify")
+            .env("RUSTYNAIL_GC_STRESS", "1"),
+    );
     for l in ["unroll=4,maxdepth=6", "fnroot=1", "lazyci=0"] {
         let mut j = Job::new("bk_obs1", "always").opts("+verify");
         j.limits = format!("recnat=1,lazyci=1,{l}").replace("lazyci=1,lazyci=0", "lazyci=0");
@@ -3682,7 +4619,13 @@ fn bl_programs() {
     for lim in ["aidx=1,bhoist=0", "aidx=1", "bhoist=1", "aidx=1,bhoist=1"] {
         for trace in ["always", "on2"] {
             for p in ["bl_obs1", "bl_oob", "bl_mat", "bl_off"] {
-                for opts in ["", "+verify", "+exitstorm=3", "+exitstorm=1 +verify", "+randra=5 +verify"] {
+                for opts in [
+                    "",
+                    "+verify",
+                    "+exitstorm=3",
+                    "+exitstorm=1 +verify",
+                    "+randra=5 +verify",
+                ] {
                     let mut j = Job::new(p, trace).opts(opts);
                     j.limits = lim.into();
                     jobs.push(j);
@@ -3690,7 +4633,9 @@ fn bl_programs() {
             }
         }
         for p in ["bl_obs1", "bl_oob", "bl_mat", "bl_off"] {
-            let mut j = Job::new(p, "always").opts("+verify").env("RUSTYNAIL_GC_STRESS", "2");
+            let mut j = Job::new(p, "always")
+                .opts("+verify")
+                .env("RUSTYNAIL_GC_STRESS", "2");
             j.limits = lim.into();
             jobs.push(j);
             let mut j = Job::new(p, "always").budget(17);
@@ -3708,7 +4653,12 @@ fn bl_programs_enter_traces() {
     j.limits = "aidx=1,bhoist=1".into();
     let res = compare(vec![j]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 2 && o.stats.entered >= 1, "{}: no trace ran: {}", j.prog, o.stats.line());
+        assert!(
+            o.stats.installed >= 2 && o.stats.entered >= 1,
+            "{}: no trace ran: {}",
+            j.prog,
+            o.stats.line()
+        );
         eprintln!("{:<22} {}", j.prog, o.stats.line());
     }
 }
@@ -3721,7 +4671,14 @@ fn bk_lazy_r2_programs() {
     let mut jobs = Vec::new();
     for p in ["r2_rec", "pm3_rec"] {
         for trace in ["always", "on2"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -3729,7 +4686,11 @@ fn bk_lazy_r2_programs() {
                 j.limits = on.into();
                 jobs.push(j);
             }
-            for lim in ["recnat=1,recany=1,lazyci=1,unroll=4,maxdepth=6", "recnat=1,recany=1,lazyci=1,maxside=0", "recnat=1,recany=1,lazyci=1,unroll=1"] {
+            for lim in [
+                "recnat=1,recany=1,lazyci=1,unroll=4,maxdepth=6",
+                "recnat=1,recany=1,lazyci=1,maxside=0",
+                "recnat=1,recany=1,lazyci=1,unroll=1",
+            ] {
                 let mut j = Job::new(p, trace);
                 j.limits = lim.into();
                 jobs.push(j);
@@ -3752,7 +4713,12 @@ fn bk_lazy_programs_enter_traces() {
     j.limits = "recnat=1,lazyci=1".into();
     let res = compare(vec![j]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 4 && o.stats.entered >= 1 && o.stats.exits >= 1, "{}: no recursion trace ran: {}", j.prog, o.stats.line());
+        assert!(
+            o.stats.installed >= 4 && o.stats.entered >= 1 && o.stats.exits >= 1,
+            "{}: no recursion trace ran: {}",
+            j.prog,
+            o.stats.line()
+        );
         eprintln!("{:<22} {}", j.prog, o.stats.line());
     }
 }
@@ -3764,7 +4730,12 @@ fn pm3_programs_install_and_enter_traces() {
     j.limits = "recnat=1".into();
     let res = compare(vec![j]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 2 && o.stats.entered >= 1, "{}: no recursion trace ran: {}", j.prog, o.stats.line());
+        assert!(
+            o.stats.installed >= 2 && o.stats.entered >= 1,
+            "{}: no recursion trace ran: {}",
+            j.prog,
+            o.stats.line()
+        );
         eprintln!("{:<22} {}", j.prog, o.stats.line());
     }
 }
@@ -3796,11 +4767,23 @@ fn pe_programs_under_gc_stress() {
     for p in PE {
         for stress in ["1", "2"] {
             jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress));
-            jobs.push(Job::new(p, "on2").opts("+verify").env("RUSTYNAIL_GC_STRESS", stress));
+            jobs.push(
+                Job::new(p, "on2")
+                    .opts("+verify")
+                    .env("RUSTYNAIL_GC_STRESS", stress),
+            );
         }
-        jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1"));
+        jobs.push(
+            Job::new(p, "always")
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .env("RUSTYNAIL_GC_VERIFY", "1"),
+        );
         for mode in ["gen", "inc"] {
-            jobs.push(Job::new(p, "always").opts("+verify").env("TR_CORE_GCMODE", mode));
+            jobs.push(
+                Job::new(p, "always")
+                    .opts("+verify")
+                    .env("TR_CORE_GCMODE", mode),
+            );
         }
     }
     compare(jobs);
@@ -3953,7 +4936,6 @@ fn mutant_probe_live_programs() {
     compare(jobs);
 }
 
-
 // ---- S0: allocation sinking (docs/JIT_TRACE.md 6.8) ----------------------------------------------------------------------------------
 
 /// The sinking programs install traces that sink tables (`sink: tables N`), run natively, and give the interpreter's output in
@@ -3975,7 +4957,12 @@ fn sink_programs_run_on_traces() {
         jobs.push(Job::new(p, "always").opts("-sink"));
     }
     let res = compare(jobs);
-    for p in ["sink_basic", "sink_exit_mid", "sink_alias_frames", "sink_hooks_getlocal"] {
+    for p in [
+        "sink_basic",
+        "sink_exit_mid",
+        "sink_alias_frames",
+        "sink_hooks_getlocal",
+    ] {
         let sunk = res
             .iter()
             .filter(|(j, _)| j.prog == p && j.trace == "always" && j.opts == "+verify")
@@ -4001,7 +4988,13 @@ fn j1_sinkstub_programs() {
     let mut jobs = Vec::new();
     for p in SINK {
         for trace in ["always", "on2"] {
-            for opts in ["+verify", "+exitstorm=3", "+wb +exitstorm=5 +verify", "+exitstorm=7 +verify +randra=3", "+exitstorm=3 +emurun"] {
+            for opts in [
+                "+verify",
+                "+exitstorm=3",
+                "+wb +exitstorm=5 +verify",
+                "+exitstorm=7 +verify +randra=3",
+                "+exitstorm=3 +emurun",
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 j.limits = ON.into();
                 jobs.push(j);
@@ -4010,7 +5003,11 @@ fn j1_sinkstub_programs() {
             j.limits = ON.into();
             jobs.push(j);
         }
-        if *p != "sink_count" && *p != "sink_count_stopped" && *p != "sink_pacing" && *p != "sinkroot_pre" {
+        if *p != "sink_count"
+            && *p != "sink_count_stopped"
+            && *p != "sink_pacing"
+            && *p != "sinkroot_pre"
+        {
             for stress in ["1", "2"] {
                 let mut j = Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress);
                 j.limits = ON.into();
@@ -4031,14 +5028,30 @@ fn j1_sinkstub_programs() {
     let mut used = 0;
     for (j, o) in &res {
         if j.limits.ends_with("sinkstub=0") {
-            assert_eq!(o.stats.stub_calls, 0, "{}: the stub was used with sinkstub=0", j.prog);
+            assert_eq!(
+                o.stats.stub_calls, 0,
+                "{}: the stub was used with sinkstub=0",
+                j.prog
+            );
         } else if j.opts == "+verify" && j.trace == "always" && !j.limits.contains("maxside") {
             used += o.stats.stub_calls;
         }
     }
-    assert!(used >= 50, "the inline materialising stub was hardly used ({used} calls)");
-    let framed: u64 = res.iter().filter(|(j, _)| j.prog == "j1_sinkf" && j.opts == "+verify" && j.limits.contains("maxside")).map(|(_, o)| o.stats.stub_frames).sum();
-    assert!(framed >= 1, "the frameful inline materialising stub was never used");
+    assert!(
+        used >= 50,
+        "the inline materialising stub was hardly used ({used} calls)"
+    );
+    let framed: u64 = res
+        .iter()
+        .filter(|(j, _)| {
+            j.prog == "j1_sinkf" && j.opts == "+verify" && j.limits.contains("maxside")
+        })
+        .map(|(_, o)| o.stats.stub_frames)
+        .sum();
+    assert!(
+        framed >= 1,
+        "the frameful inline materialising stub was never used"
+    );
 }
 
 /// J1-2: a host allocation that fails inside the helper of the inline stub raises the Lua memory error at the exit's pc, as the handler does
@@ -4049,18 +5062,24 @@ fn j1_sinkstub_alloc_failure_raises_memory_error() {
     let mut jobs = Vec::new();
     for n in 1..=4 {
         for (trace, opts) in [("always", ""), ("on2", ""), ("always", "+emurun")] {
-            let mut j = Job::new("sink_mem_error", trace).opts(opts).env("TR_CORE_MATFAULT", &n.to_string());
+            let mut j = Job::new("sink_mem_error", trace)
+                .opts(opts)
+                .env("TR_CORE_MATFAULT", &n.to_string());
             j.limits = "sinkstub=1".into();
             jobs.push(j);
         }
     }
-    let mut j = Job::new("sink_mem_error", "always").env("TR_CORE_MATFAULT", "3").env("RUSTYNAIL_GC_STRESS", "1");
+    let mut j = Job::new("sink_mem_error", "always")
+        .env("TR_CORE_MATFAULT", "3")
+        .env("RUSTYNAIL_GC_STRESS", "1");
     j.limits = "sinkstub=1,retf=2".into();
     jobs.push(j);
     // the frameful stub (no side traces: the exits stay on their stubs)
     for n in 1..=4 {
         for (trace, opts) in [("always", ""), ("on2", ""), ("always", "+emurun")] {
-            let mut j = Job::new("j1_sinkf_mem_error", trace).opts(opts).env("TR_CORE_MATFAULT", &n.to_string());
+            let mut j = Job::new("j1_sinkf_mem_error", trace)
+                .opts(opts)
+                .env("TR_CORE_MATFAULT", &n.to_string());
             j.limits = "sinkstub=1,maxside=0".into();
             jobs.push(j);
         }
@@ -4071,7 +5090,11 @@ fn j1_sinkstub_alloc_failure_raises_memory_error() {
             eprintln!("{:<20} {tag:<60} {}", j.prog, o.stats.line());
         }
         assert!(o.ok, "{tag}: child failed\n{}\n{}", o.result, o.stderr);
-        assert!(o.result.contains("true\t1\t") && o.result.contains("not enough memory"), "{tag}: {}", o.result);
+        assert!(
+            o.result.contains("true\t1\t") && o.result.contains("not enough memory"),
+            "{tag}: {}",
+            o.result
+        );
         assert!(o.result.contains("STATUS true nil"), "{tag}: {}", o.result);
     }
     for p in ["sink_mem_error", "j1_sinkf_mem_error"] {
@@ -4090,9 +5113,22 @@ fn j1_sinkstub_alloc_failure_raises_memory_error() {
 fn sinkf_side_programs() {
     const ON: &str = "sinkmt=1,sinkside=1,sinkstub=1";
     let mut jobs = Vec::new();
-    for p in ["sinkf_side", "sinkf_side_mem_error", "j1_sinkf", "sink_alias_frames"] {
+    for p in [
+        "sinkf_side",
+        "sinkf_side_mem_error",
+        "j1_sinkf",
+        "sink_alias_frames",
+    ] {
         for trace in ["always", "on2", "on16"] {
-            for opts in ["", "+verify", "+exitstorm=3", "+wb +exitstorm=5 +verify", "+exitstorm=7 +verify +randra=3", "+exitstorm=3 +emurun", "-loop -fwd -cse -sink"] {
+            for opts in [
+                "",
+                "+verify",
+                "+exitstorm=3",
+                "+wb +exitstorm=5 +verify",
+                "+exitstorm=7 +verify +randra=3",
+                "+exitstorm=3 +emurun",
+                "-loop -fwd -cse -sink",
+            ] {
                 let mut j = Job::new(p, trace).opts(opts);
                 j.limits = ON.into();
                 jobs.push(j);
@@ -4109,7 +5145,9 @@ fn sinkf_side_programs() {
         }
         for stress in ["1", "2"] {
             for gm in ["gen", "inc"] {
-                let mut j = Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress).env("TR_CORE_GCMODE", gm);
+                let mut j = Job::new(p, "always")
+                    .env("RUSTYNAIL_GC_STRESS", stress)
+                    .env("TR_CORE_GCMODE", gm);
                 j.limits = ON.into();
                 jobs.push(j);
             }
@@ -4138,7 +5176,10 @@ fn sinkf_side_programs() {
         }
     }
     assert!(side >= 1, "sinkf_side: no side trace was installed");
-    assert!(framed >= 1, "sinkf_side: the frameful materialising stub was never used");
+    assert!(
+        framed >= 1,
+        "sinkf_side: the frameful materialising stub was never used"
+    );
 }
 
 /// SINK-F: a host allocation failure in the helper of the frame stub of an exit that HAS a side trace raises the memory error at the exit's pc
@@ -4147,8 +5188,15 @@ fn sinkf_side_programs() {
 fn sinkf_side_alloc_failure_raises_memory_error() {
     let mut jobs = Vec::new();
     for n in 1..=6 {
-        for (trace, opts) in [("always", ""), ("on2", ""), ("always", "+emurun"), ("on16", "")] {
-            let mut j = Job::new("sinkf_side_mem_error", trace).opts(opts).env("TR_CORE_MATFAULT", &n.to_string());
+        for (trace, opts) in [
+            ("always", ""),
+            ("on2", ""),
+            ("always", "+emurun"),
+            ("on16", ""),
+        ] {
+            let mut j = Job::new("sinkf_side_mem_error", trace)
+                .opts(opts)
+                .env("TR_CORE_MATFAULT", &n.to_string());
             j.limits = "sinkmt=1,sinkside=1,sinkstub=1".into();
             jobs.push(j);
         }
@@ -4156,7 +5204,11 @@ fn sinkf_side_alloc_failure_raises_memory_error() {
     for (j, o) in run_all(jobs) {
         let tag = format!("{} {} {:?}", j.trace, j.opts, j.env);
         assert!(o.ok, "{tag}: child failed\n{}\n{}", o.result, o.stderr);
-        assert!(o.result.contains("true\t1\t") && o.result.contains("not enough memory"), "{tag}: {}", o.result);
+        assert!(
+            o.result.contains("true\t1\t") && o.result.contains("not enough memory"),
+            "{tag}: {}",
+            o.result
+        );
     }
     let mut j = Job::new("sinkf_side_mem_error", "always");
     j.limits = "sinkmt=1,sinkside=1,sinkstub=1".into();
@@ -4190,15 +5242,39 @@ fn sinkroot_programs() {
     let res = compare(jobs);
     let pick = |sr: &str| {
         let l = format!("{BASE},{sr}");
-        res.iter().find(|(j, _)| j.prog == "sinkroot_pre" && j.trace == "always" && j.opts.is_empty() && j.limits == l).unwrap().1.stats.clone()
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "sinkroot_pre"
+                    && j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.limits == l
+            })
+            .unwrap()
+            .1
+            .stats
+            .clone()
     };
     let off = pick("sinkroot=0");
-    assert!(off.ineffective >= 1, "the program does not reach the ineffective-root rule: {}", off.line());
+    assert!(
+        off.ineffective >= 1,
+        "the program does not reach the ineffective-root rule: {}",
+        off.line()
+    );
     for sr in ["sinkroot=1", "sinkroot=2"] {
         let on = pick(sr);
-        assert!(off.blacklisted > on.blacklisted, "{sr}: the rule did not keep a head from the blacklist: {} vs {}", on.line(), off.line());
+        assert!(
+            off.blacklisted > on.blacklisted,
+            "{sr}: the rule did not keep a head from the blacklist: {} vs {}",
+            on.line(),
+            off.line()
+        );
         // the demoted shape is not sunk by the recording that follows (`sink::is_demoted`, mutant `sink_demote_ignored`)
-        assert!(off.sunk > on.sunk, "{sr}: the re-recorded root sinks the demoted shape again: {} vs {}", on.line(), off.line());
+        assert!(
+            off.sunk > on.sunk,
+            "{sr}: the re-recorded root sinks the demoted shape again: {} vs {}",
+            on.line(),
+            off.line()
+        );
     }
 }
 
@@ -4207,7 +5283,11 @@ fn sinkroot_programs() {
 fn sink_programs_under_gc_stress() {
     let mut jobs = Vec::new();
     for p in SINK {
-        if *p == "sink_count" || *p == "sink_count_stopped" || *p == "sink_pacing" || *p == "sinkroot_pre" {
+        if *p == "sink_count"
+            || *p == "sink_count_stopped"
+            || *p == "sink_pacing"
+            || *p == "sinkroot_pre"
+        {
             continue; // not small
         }
         for stress in ["1", "2"] {
@@ -4239,19 +5319,36 @@ fn sink_materialise_alloc_failure_raises_memory_error() {
         }
     }
     // (`retf=2`: the shape of the allocations with GC stress 1 is the one of the pre-RETF default: the third materialisation does not exist with side RETF recording)
-    jobs.push(Job::new("sink_mem_error", "always").env("TR_CORE_MATFAULT", "3").env("RUSTYNAIL_GC_STRESS", "1").limits_s("retf=2"));
+    jobs.push(
+        Job::new("sink_mem_error", "always")
+            .env("TR_CORE_MATFAULT", "3")
+            .env("RUSTYNAIL_GC_STRESS", "1")
+            .limits_s("retf=2"),
+    );
     // F6: `+emurun` (the exit handler runs inside the emulated trace) returns `JitExit::Error` to the interpreter like the machine code
     for n in 1..=4 {
-        jobs.push(Job::new("sink_mem_error", "always").opts("+emurun").env("TR_CORE_MATFAULT", &n.to_string()));
+        jobs.push(
+            Job::new("sink_mem_error", "always")
+                .opts("+emurun")
+                .env("TR_CORE_MATFAULT", &n.to_string()),
+        );
     }
     // K3b: `sinkstub=0` routes the materialisation through the exit handler (`exit.rs`, mutant `sink_mem_error_dropped`); the shipped inline stub calls `jit_tr_mat`
     for n in 1..=4 {
-        jobs.push(Job::new("sink_mem_error", "always").env("TR_CORE_MATFAULT", &n.to_string()).limits_s("sinkstub=0"));
+        jobs.push(
+            Job::new("sink_mem_error", "always")
+                .env("TR_CORE_MATFAULT", &n.to_string())
+                .limits_s("sinkstub=0"),
+        );
     }
     for (j, o) in run_all(jobs) {
         let tag = format!("{} {:?}", j.trace, j.env);
         assert!(o.ok, "{tag}: child failed\n{}\n{}", o.result, o.stderr);
-        assert!(o.result.contains("true\t1\t") && o.result.contains("not enough memory"), "{tag}: {}", o.result);
+        assert!(
+            o.result.contains("true\t1\t") && o.result.contains("not enough memory"),
+            "{tag}: {}",
+            o.result
+        );
         assert!(o.result.contains("STATUS true nil"), "{tag}: {}", o.result);
     }
     // and no failure without the injection
@@ -4271,7 +5368,6 @@ fn sink_byte_count_matches_the_interpreter() {
     }
     compare(jobs);
 }
-
 
 /// The P-B programs.
 const PB: &[&str] = &["lib_str", "lib_tab", "str_concat", "str_temporaries"];
@@ -4293,7 +5389,12 @@ fn pb_programs_run_on_traces() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -4306,7 +5407,11 @@ fn pb_programs_under_gc_stress() {
         for stress in ["1", "2"] {
             jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress));
             for mode in ["gen", "inc"] {
-                jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", stress).env("TR_CORE_GCMODE", mode));
+                jobs.push(
+                    Job::new(p, "always")
+                        .env("RUSTYNAIL_GC_STRESS", stress)
+                        .env("TR_CORE_GCMODE", mode),
+                );
             }
         }
     }
@@ -4331,7 +5436,10 @@ fn pb_alloc_storm_gives_the_loop_back() {
     // sparse exits never fire
     let mut e = (1_000_000i32, 0u32);
     for k in 1..=STORM_STREAK * 3 {
-        assert!(!storm_step(&mut e, 1_000_000 - k as i32 * (STORM_INSNS as i32 + 1)));
+        assert!(!storm_step(
+            &mut e,
+            1_000_000 - k as i32 * (STORM_INSNS as i32 + 1)
+        ));
     }
     // a refill of the budget (the word goes up) restarts the streak
     let mut e = (1_000_000i32, 0u32);
@@ -4370,7 +5478,12 @@ fn string_variant_programs_run_on_traces() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.prog == "n5_str_variants" && j.trace == "always" && j.opts == "+verify" {
-            assert!(o.stats.installed >= 1, "{}: no trace installed: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1,
+                "{}: no trace installed: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -4389,13 +5502,34 @@ fn mixed_string_loops_are_not_flushed_as_ineffective() {
         Job::new("n5_cliff_shape", "on").limits_s("hdrlib=0,typesides=0"),
     ]);
     for (j, o) in &res {
-        assert_eq!(o.stats.ineffective, 0, "{} {} {}: flushed as ineffective: {}", j.prog, j.trace, j.opts, o.stats.line());
-        assert!(o.stats.installed >= 1, "{} {}: {}", j.prog, j.trace, o.stats.line());
+        assert_eq!(
+            o.stats.ineffective,
+            0,
+            "{} {} {}: flushed as ineffective: {}",
+            j.prog,
+            j.trace,
+            j.opts,
+            o.stats.line()
+        );
+        assert!(
+            o.stats.installed >= 1,
+            "{} {}: {}",
+            j.prog,
+            j.trace,
+            o.stats.line()
+        );
         if j.opts.is_empty() {
             // the string of the `unused` and `vararg` loops is only a snapshot value: no trace exit at all (without the pass these
             // loops leave their trace on every other iteration: ~25000 exits)
             let bound = if j.limits.is_empty() { 20000 } else { 1000 };
-            assert!(o.stats.exits < bound, "{} {} [{}]: {}", j.prog, j.trace, j.limits, o.stats.line());
+            assert!(
+                o.stats.exits < bound,
+                "{} {} [{}]: {}",
+                j.prog,
+                j.trace,
+                j.limits,
+                o.stats.line()
+            );
         }
     }
 }
@@ -4426,7 +5560,12 @@ fn upvalue_slot_alias_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.prog == "n1_alias_basic" && j.trace == "always" && j.opts == "+verify" {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -4444,7 +5583,12 @@ fn upvalue_slot_alias_programs() {
 #[test]
 fn gfor_programs() {
     let mut jobs = Vec::new();
-    for p in ["n7_gfor_nest", "n7_gfor_meta", "n7_gfor_misc", "n7_nest_hot"] {
+    for p in [
+        "n7_gfor_nest",
+        "n7_gfor_meta",
+        "n7_gfor_misc",
+        "n7_nest_hot",
+    ] {
         for trace in ["always", "on2"] {
             jobs.push(Job::new(p, trace).opts("+verify"));
             jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
@@ -4459,8 +5603,18 @@ fn gfor_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "n7_gfor_nest" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+        if j.prog == "n7_gfor_nest"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -4473,7 +5627,19 @@ fn gfor_programs() {
 #[test]
 fn mm_programs() {
     let mut jobs = Vec::new();
-    for p in ["n3_mm_arith", "n3_mm_swap", "n3_mm_nummt_late", "n3_mm_err", "n3_mm_exit", "n3_mm_depth", "n3_mm_cmp", "n3_mm_idx", "n3_mm_idx2", "nn_tail_call", "nn_idx_chain"] {
+    for p in [
+        "n3_mm_arith",
+        "n3_mm_swap",
+        "n3_mm_nummt_late",
+        "n3_mm_err",
+        "n3_mm_exit",
+        "n3_mm_depth",
+        "n3_mm_cmp",
+        "n3_mm_idx",
+        "n3_mm_idx2",
+        "nn_tail_call",
+        "nn_idx_chain",
+    ] {
         for trace in ["always", "on2"] {
             jobs.push(Job::new(p, trace).opts("+verify"));
             jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
@@ -4488,19 +5654,54 @@ fn mm_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "n3_mm_arith" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+        if j.prog == "n3_mm_arith"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
-        if (j.prog == "nn_tail_call" || j.prog == "nn_idx_chain") && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
+        if (j.prog == "nn_tail_call" || j.prog == "nn_idx_chain")
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
             // BUNDLE-N: a `TAILCALL` of a table with `__call` / into a vararg callee, an `__index` function behind a table chain and
             // `rawget(t, "str")` record: traces install, and no recording ends `Diverge` / `Frame` (a frame the interpreter does not run in place)
-            assert!(o.stats.installed >= 1 && o.stats.entered >= 1, "{}: {}", j.prog, o.stats.line());
-            assert!(!o.stats.aborts.contains_key("Frame") && !o.stats.aborts.contains_key("Diverge"), "{}: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                !o.stats.aborts.contains_key("Frame") && !o.stats.aborts.contains_key("Diverge"),
+                "{}: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
-        if j.prog == "n3_mm_cmp" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
+        if j.prog == "n3_mm_cmp"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
             // (a comparison whose recorded successor is not the interpreter's -- the wrong condition -- aborts the recording `Frame`)
             assert!(o.stats.installed >= 6, "{}: {}", j.prog, o.stats.line());
-            assert!(!o.stats.aborts.contains_key("Frame") && !o.stats.aborts.contains_key("Diverge"), "{}: {}", j.prog, o.stats.line());
+            assert!(
+                !o.stats.aborts.contains_key("Frame") && !o.stats.aborts.contains_key("Diverge"),
+                "{}: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -4513,23 +5714,67 @@ fn mm_programs() {
 fn s_loopany_guard_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["loopany=0", "loopany=1", "loopany=1,loopanymax=2", "loopany=1,loopanymax=100000"] {
+        for lim in [
+            "loopany=0",
+            "loopany=1",
+            "loopany=1,loopanymax=2",
+            "loopany=1,loopanymax=100000",
+        ] {
             jobs.push(Job::new("s_loopany", trace).opts("+verify").limits_s(lim));
         }
-        jobs.push(Job::new("s_loopany", trace).opts("+exitstorm=3 +verify").limits_s("loopany=1"));
-        jobs.push(Job::new("s_loopany", trace).budget(17).limits_s("loopany=1"));
-        jobs.push(Job::new("s_loopany", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("loopany=1"));
-        jobs.push(Job::new("s_loopany", trace).opts("+emurun +verify").limits_s("loopany=1"));
+        jobs.push(
+            Job::new("s_loopany", trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s("loopany=1"),
+        );
+        jobs.push(
+            Job::new("s_loopany", trace)
+                .budget(17)
+                .limits_s("loopany=1"),
+        );
+        jobs.push(
+            Job::new("s_loopany", trace)
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .limits_s("loopany=1"),
+        );
+        jobs.push(
+            Job::new("s_loopany", trace)
+                .opts("+emurun +verify")
+                .limits_s("loopany=1"),
+        );
     }
     jobs.push(Job::new("s_loopany", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "s_loopany" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "s_loopany"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, guard, wide) = (find(trace, "loopany=0"), find(trace, "loopany=1"), find(trace, "loopany=1,loopanymax=100000"));
-        eprintln!("s_loopany [{trace}] off: {} | guard: {} | unguarded: {}", off.line(), guard.line(), wide.line());
-        assert!(wide.side_installed > guard.side_installed, "[{trace}] the guard stops the side traces of the unrolled loop: {} vs {}", guard.line(), wide.line());
+        let (off, guard, wide) = (
+            find(trace, "loopany=0"),
+            find(trace, "loopany=1"),
+            find(trace, "loopany=1,loopanymax=100000"),
+        );
+        eprintln!(
+            "s_loopany [{trace}] off: {} | guard: {} | unguarded: {}",
+            off.line(),
+            guard.line(),
+            wide.line()
+        );
+        assert!(
+            wide.side_installed > guard.side_installed,
+            "[{trace}] the guard stops the side traces of the unrolled loop: {} vs {}",
+            guard.line(),
+            wide.line()
+        );
     }
 }
 
@@ -4543,34 +5788,130 @@ fn p_laprune_programs() {
     let mut jobs = Vec::new();
     for p in ["s_laprune", "s_loopany"] {
         for trace in ["always", "on2"] {
-            for lim in ["loopany=0,nilstore=1,siderooms=1,retf=2", "laprune=0,loopany=1,nilstore=1,siderooms=1,retf=2", "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2", "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=1,retf=2", "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=2,retf=2", "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=3,retf=2", "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=100000,retf=2"] {
+            for lim in [
+                "loopany=0,nilstore=1,siderooms=1,retf=2",
+                "laprune=0,loopany=1,nilstore=1,siderooms=1,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=1,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=2,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=3,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=100000,retf=2",
+            ] {
                 jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
             }
-            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify").limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"));
-            jobs.push(Job::new(p, trace).budget(17).limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"));
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"));
-            jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"));
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .budget(17)
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+emurun +verify")
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+            );
         }
         jobs.push(Job::new(p, "t1"));
     }
     let res = compare(jobs);
     let find = |p: &str, trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == p && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == p
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on) = (find("s_laprune", trace, "laprune=0,loopany=1,nilstore=1,siderooms=1,retf=2"), find("s_laprune", trace, "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"));
-        eprintln!("s_laprune [{trace}] laprune=0: {} guard {}/{}/{}/{} | laprune=1: {} guard {}/{}/{}/{}", off.line(), off.la_fired, off.la_family, off.la_pruned, off.la_self, on.line(), on.la_fired, on.la_family, on.la_pruned, on.la_self);
-        assert!(on.la_fired >= 1 && on.la_pruned >= 1, "[{trace}] the guard fires and prunes side traces: {}", on.line());
-        assert_eq!(on.la_family, 0, "[{trace}] the root unrolled nothing: no family flush: {}", on.line());
-        assert_eq!(on.ineffective, 0, "[{trace}] the root is not flushed: {}", on.line());
-        assert!(on.la_self >= 1, "[{trace}] a pruned side trace raised the guard from its own exit: {}", on.line());
-        assert!(off.la_fired >= 1 && off.la_family >= 1 && off.la_pruned == 0 && off.ineffective >= 1, "[{trace}] laprune=0 flushes the family: {}", off.line());
+        let (off, on) = (
+            find(
+                "s_laprune",
+                trace,
+                "laprune=0,loopany=1,nilstore=1,siderooms=1,retf=2",
+            ),
+            find(
+                "s_laprune",
+                trace,
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2",
+            ),
+        );
+        eprintln!(
+            "s_laprune [{trace}] laprune=0: {} guard {}/{}/{}/{} | laprune=1: {} guard {}/{}/{}/{}",
+            off.line(),
+            off.la_fired,
+            off.la_family,
+            off.la_pruned,
+            off.la_self,
+            on.line(),
+            on.la_fired,
+            on.la_family,
+            on.la_pruned,
+            on.la_self
+        );
+        assert!(
+            on.la_fired >= 1 && on.la_pruned >= 1,
+            "[{trace}] the guard fires and prunes side traces: {}",
+            on.line()
+        );
+        assert_eq!(
+            on.la_family,
+            0,
+            "[{trace}] the root unrolled nothing: no family flush: {}",
+            on.line()
+        );
+        assert_eq!(
+            on.ineffective,
+            0,
+            "[{trace}] the root is not flushed: {}",
+            on.line()
+        );
+        assert!(
+            on.la_self >= 1,
+            "[{trace}] a pruned side trace raised the guard from its own exit: {}",
+            on.line()
+        );
+        assert!(
+            off.la_fired >= 1 && off.la_family >= 1 && off.la_pruned == 0 && off.ineffective >= 1,
+            "[{trace}] laprune=0 flushes the family: {}",
+            off.line()
+        );
         // exits stay bounded: not more than twice those of `loopany=0` (no unrolled loop at all), and about one per entry
-        let none = find("s_laprune", trace, "loopany=0,nilstore=1,siderooms=1,retf=2");
-        assert!(on.exits <= 2 * none.exits && on.exits <= 3 * on.entered, "[{trace}] exits stay bounded: {} (entered {}) vs loopany=0 {}", on.exits, on.entered, none.exits);
+        let none = find(
+            "s_laprune",
+            trace,
+            "loopany=0,nilstore=1,siderooms=1,retf=2",
+        );
+        assert!(
+            on.exits <= 2 * none.exits && on.exits <= 3 * on.entered,
+            "[{trace}] exits stay bounded: {} (entered {}) vs loopany=0 {}",
+            on.exits,
+            on.entered,
+            none.exits
+        );
         // the heapsort shape: the root itself unrolled the callee loop, the whole family goes
-        let h = find("s_loopany", trace, "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2");
-        assert!(h.la_fired >= 1 && h.la_family >= 1 && h.la_pruned == 0, "[{trace}] s_loopany: {}", h.line());
+        let h = find(
+            "s_loopany",
+            trace,
+            "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2",
+        );
+        assert!(
+            h.la_fired >= 1 && h.la_family >= 1 && h.la_pruned == 0,
+            "[{trace}] s_loopany: {}",
+            h.line()
+        );
     }
 }
 
@@ -4584,30 +5925,81 @@ fn c36_cispare_programs() {
     for trace in ["always", "on2"] {
         for lim in ["t1inline=1023,cispare=0", "t1inline=1023,cispare=1"] {
             jobs.push(Job::new("c36_ci", trace).opts("+verify").limits_s(lim));
-            jobs.push(Job::new("c36_ci", trace).opts("+exitstorm=3 +verify").limits_s(lim));
+            jobs.push(
+                Job::new("c36_ci", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
             jobs.push(Job::new("c36_ci", trace).budget(17).limits_s(lim));
-            jobs.push(Job::new("c36_ci", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
-            jobs.push(Job::new("c36_ci", trace).opts("+emurun +verify").limits_s(lim));
+            jobs.push(
+                Job::new("c36_ci", trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("c36_ci", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
         }
-        jobs.push(Job::new("c36_ci", trace).opts("+verify").limits_s("t1inline=1021,cispare=0"));
+        jobs.push(
+            Job::new("c36_ci", trace)
+                .opts("+verify")
+                .limits_s("t1inline=1021,cispare=0"),
+        );
     }
     jobs.push(Job::new("c36_ci", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "c36_ci" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "c36_ci"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on) = (find(trace, "t1inline=1023,cispare=0"), find(trace, "t1inline=1023,cispare=1"));
-        eprintln!("c36_ci [{trace}] cispare=0: {} | cispare=1: {} repaired {}", off.line(), on.line(), on.ci_repaired);
+        let (off, on) = (
+            find(trace, "t1inline=1023,cispare=0"),
+            find(trace, "t1inline=1023,cispare=1"),
+        );
+        eprintln!(
+            "c36_ci [{trace}] cispare=0: {} | cispare=1: {} repaired {}",
+            off.line(),
+            on.line(),
+            on.ci_repaired
+        );
         assert_eq!(off.ci_repaired, 0, "[{trace}] knob off repairs nothing");
-        assert!(on.ci_repaired >= 1, "[{trace}] the chain is extended: {}", on.line());
-        assert!(off.rerecord >= 1, "[{trace}] without cispare the entry-failure rule flushes the root: {}", off.line());
+        assert!(
+            on.ci_repaired >= 1,
+            "[{trace}] the chain is extended: {}",
+            on.line()
+        );
+        assert!(
+            off.rerecord >= 1,
+            "[{trace}] without cispare the entry-failure rule flushes the root: {}",
+            off.line()
+        );
         if cfg!(rustynail_lua54) {
             // 5.4: the repair happens (`ci_repaired` above), but the root of `mul_small` is flushed by the exit-ratio rule anyway after the repair restarted its
             // entry account (`flush Rerec (entries 0, exits 6000)`), in both knob settings: the 5.5 `rerecord == 0` is a 5.5 policy number. Not worse than off.
-            assert!(on.rerecord <= off.rerecord, "[{trace}] cispare must not add re-records: {} vs {}", on.rerecord, off.rerecord);
+            assert!(
+                on.rerecord <= off.rerecord,
+                "[{trace}] cispare must not add re-records: {} vs {}",
+                on.rerecord,
+                off.rerecord
+            );
         } else {
-            assert_eq!(on.rerecord, 0, "[{trace}] with cispare the trace stays: {}", on.line());
+            assert_eq!(
+                on.rerecord,
+                0,
+                "[{trace}] with cispare the trace stays: {}",
+                on.line()
+            );
         }
     }
 }
@@ -4619,31 +6011,81 @@ fn c36_cispare_programs() {
 fn c36_dom_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["ineffcover=1,domtop=0", "ineffcover=1,domtop=75,domn=2000", "ineffcover=1,domtop=75,domn=2000000"] {
+        for lim in [
+            "ineffcover=1,domtop=0",
+            "ineffcover=1,domtop=75,domn=2000",
+            "ineffcover=1,domtop=75,domn=2000000",
+        ] {
             jobs.push(Job::new("c36_dom", trace).opts("+verify").limits_s(lim));
-            jobs.push(Job::new("c36_dom", trace).opts("+exitstorm=3 +verify").limits_s(lim));
+            jobs.push(
+                Job::new("c36_dom", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
             jobs.push(Job::new("c36_dom", trace).budget(17).limits_s(lim));
-            jobs.push(Job::new("c36_dom", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
-            jobs.push(Job::new("c36_dom", trace).opts("+emurun +verify").limits_s(lim));
+            jobs.push(
+                Job::new("c36_dom", trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("c36_dom", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
         }
     }
     jobs.push(Job::new("c36_dom", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "c36_dom" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "c36_dom"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on, big) = (find(trace, "ineffcover=1,domtop=0"), find(trace, "ineffcover=1,domtop=75,domn=2000"), find(trace, "ineffcover=1,domtop=75,domn=2000000"));
-        eprintln!("c36_dom [{trace}] domtop=0: {} | domtop=75: {} dom {} | domn huge: {} dom {}", off.line(), on.line(), on.dom_flushes, big.line(), big.dom_flushes);
+        let (off, on, big) = (
+            find(trace, "ineffcover=1,domtop=0"),
+            find(trace, "ineffcover=1,domtop=75,domn=2000"),
+            find(trace, "ineffcover=1,domtop=75,domn=2000000"),
+        );
+        eprintln!(
+            "c36_dom [{trace}] domtop=0: {} | domtop=75: {} dom {} | domn huge: {} dom {}",
+            off.line(),
+            on.line(),
+            on.dom_flushes,
+            big.line(),
+            big.dom_flushes
+        );
         assert_eq!(off.dom_flushes, 0, "[{trace}] knob off");
         assert_eq!(big.dom_flushes, 0, "[{trace}] too few entries for the rule");
         if trace != "always" {
             // (the `on2` start gate records another iteration: the root is on the dominant path already; only the output is compared)
             continue;
         }
-        assert_eq!(on.dom_flushes, 1, "[{trace}] the root is re-recorded exactly once: {}", on.line());
-        assert_eq!((on.rerecord, on.ineffective), (off.rerecord, off.ineffective), "[{trace}] no penalty account is touched");
-        assert!(on.exits * 3 < off.exits, "[{trace}] the re-recorded root takes the dominant path: exits {} vs {}", on.exits, off.exits);
+        assert_eq!(
+            on.dom_flushes,
+            1,
+            "[{trace}] the root is re-recorded exactly once: {}",
+            on.line()
+        );
+        assert_eq!(
+            (on.rerecord, on.ineffective),
+            (off.rerecord, off.ineffective),
+            "[{trace}] no penalty account is touched"
+        );
+        assert!(
+            on.exits * 3 < off.exits,
+            "[{trace}] the re-recorded root takes the dominant path: exits {} vs {}",
+            on.exits,
+            off.exits
+        );
     }
 }
 
@@ -4660,15 +6102,31 @@ fn p3_chain_programs() {
     for prog in ["p3_chain", "p3_uniform"] {
         for trace in ["always", "on2"] {
             let lims: [&str; 3] = if prog == "p3_chain" {
-                ["chainre=0,ncallee=1,chaindepth=0,maxside=64", "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64", "chainre=95,chainn=1000,ncallee=1"]
+                [
+                    "chainre=0,ncallee=1,chaindepth=0,maxside=64",
+                    "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64",
+                    "chainre=95,chainn=1000,ncallee=1",
+                ]
             } else {
-                ["chainre=0,ncallee=1", "chainre=60,chainn=1000,ncallee=1", "chainre=60,chainn=1000,maxside=64,ncallee=1"]
+                [
+                    "chainre=0,ncallee=1",
+                    "chainre=60,chainn=1000,ncallee=1",
+                    "chainre=60,chainn=1000,maxside=64,ncallee=1",
+                ]
             };
             for lim in lims {
                 jobs.push(Job::new(prog, trace).opts("+verify").limits_s(lim));
-                jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s(lim));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(prog, trace).budget(17).limits_s(lim));
-                jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s(lim));
             }
         }
@@ -4676,19 +6134,78 @@ fn p3_chain_programs() {
     }
     let res = compare(jobs);
     let find = |prog: &str, trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == prog && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on, wide) = (find("p3_chain", trace, "chainre=0,ncallee=1,chaindepth=0,maxside=64"), find("p3_chain", trace, "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64"), find("p3_chain", trace, "chainre=95,chainn=1000,ncallee=1"));
-        eprintln!("p3_chain [{trace}] off: {} | on: {} flushes {} checks {} | wide: {} flushes {}", off.line(), on.line(), on.chain_flushes, on.chain_checks, wide.line(), wide.chain_flushes);
-        assert_eq!((off.chain_flushes, off.chain_checks), (0, 0), "[{trace}] knob off");
+        let (off, on, wide) = (
+            find(
+                "p3_chain",
+                trace,
+                "chainre=0,ncallee=1,chaindepth=0,maxside=64",
+            ),
+            find(
+                "p3_chain",
+                trace,
+                "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64",
+            ),
+            find("p3_chain", trace, "chainre=95,chainn=1000,ncallee=1"),
+        );
+        eprintln!(
+            "p3_chain [{trace}] off: {} | on: {} flushes {} checks {} | wide: {} flushes {}",
+            off.line(),
+            on.line(),
+            on.chain_flushes,
+            on.chain_checks,
+            wide.line(),
+            wide.chain_flushes
+        );
+        assert_eq!(
+            (off.chain_flushes, off.chain_checks),
+            (0, 0),
+            "[{trace}] knob off"
+        );
         // (K3a: 95 / 92 checks without the mutant `chain_no_rebase`, 10 with it: the threshold of 2 no longer told them apart)
-        assert!(on.chain_checks >= 30, "[{trace}] the check is periodic: {}", on.chain_checks);
-        assert!(on.chain_flushes >= 1 && on.chain_flushes <= 12 + 3, "[{trace}] a chain is re-ordered, within the bound: {}", on.chain_flushes);
-        let (u_off, u_on) = (find("p3_uniform", trace, "chainre=0,ncallee=1"), find("p3_uniform", trace, "chainre=60,chainn=1000,ncallee=1"));
-        eprintln!("p3_uniform [{trace}] off: {} | on: {} flushes {} checks {}", u_off.line(), u_on.line(), u_on.chain_flushes, u_on.chain_checks);
-        assert_eq!(u_on.chain_flushes, 0, "[{trace}] a uniform chain is never re-ordered: {}", u_on.line());
-        assert!(u_on.chain_checks >= 30, "[{trace}] but it is checked more than once: {}", u_on.chain_checks);
+        assert!(
+            on.chain_checks >= 30,
+            "[{trace}] the check is periodic: {}",
+            on.chain_checks
+        );
+        assert!(
+            on.chain_flushes >= 1 && on.chain_flushes <= 12 + 3,
+            "[{trace}] a chain is re-ordered, within the bound: {}",
+            on.chain_flushes
+        );
+        let (u_off, u_on) = (
+            find("p3_uniform", trace, "chainre=0,ncallee=1"),
+            find("p3_uniform", trace, "chainre=60,chainn=1000,ncallee=1"),
+        );
+        eprintln!(
+            "p3_uniform [{trace}] off: {} | on: {} flushes {} checks {}",
+            u_off.line(),
+            u_on.line(),
+            u_on.chain_flushes,
+            u_on.chain_checks
+        );
+        assert_eq!(
+            u_on.chain_flushes,
+            0,
+            "[{trace}] a uniform chain is never re-ordered: {}",
+            u_on.line()
+        );
+        assert!(
+            u_on.chain_checks >= 30,
+            "[{trace}] but it is checked more than once: {}",
+            u_on.chain_checks
+        );
     }
 }
 
@@ -4700,12 +6217,23 @@ fn p3_chain_programs() {
 fn bg_chaindepth_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["chaindepth=0,ncallee=1,chainre=95,chainn=1000", "chaindepth=4,ncallee=1,chainre=95,chainn=1000"] {
+        for lim in [
+            "chaindepth=0,ncallee=1,chainre=95,chainn=1000",
+            "chaindepth=4,ncallee=1,chainre=95,chainn=1000",
+        ] {
             for prog in ["bg_wide", "bg_narrow"] {
                 jobs.push(Job::new(prog, trace).opts("+verify").limits_s(lim));
-                jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s(lim));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(prog, trace).budget(17).limits_s(lim));
-                jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s(lim));
             }
         }
@@ -4714,16 +6242,66 @@ fn bg_chaindepth_programs() {
     jobs.push(Job::new("bg_narrow", "t1"));
     let res = compare(jobs);
     let find = |prog: &str, trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == prog && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on) = (find("bg_wide", trace, "chaindepth=0,ncallee=1,chainre=95,chainn=1000"), find("bg_wide", trace, "chaindepth=4,ncallee=1,chainre=95,chainn=1000"));
-        eprintln!("bg_wide [{trace}] off: {} | on: {} deep {}", off.line(), on.line(), on.chain_deep);
+        let (off, on) = (
+            find(
+                "bg_wide",
+                trace,
+                "chaindepth=0,ncallee=1,chainre=95,chainn=1000",
+            ),
+            find(
+                "bg_wide",
+                trace,
+                "chaindepth=4,ncallee=1,chainre=95,chainn=1000",
+            ),
+        );
+        eprintln!(
+            "bg_wide [{trace}] off: {} | on: {} deep {}",
+            off.line(),
+            on.line(),
+            on.chain_deep
+        );
         assert_eq!(off.chain_deep, 0, "[{trace}] knob off");
-        assert!(on.chain_deep >= 1, "[{trace}] the wide chain is cut: {}", on.line());
-        let (noff, non) = (find("bg_narrow", trace, "chaindepth=0,ncallee=1,chainre=95,chainn=1000"), find("bg_narrow", trace, "chaindepth=4,ncallee=1,chainre=95,chainn=1000"));
-        eprintln!("bg_narrow [{trace}] off: {} | on: {} deep {}", noff.line(), non.line(), non.chain_deep);
-        assert_eq!(non.chain_deep, 0, "[{trace}] a narrow dispatch is covered by its first links: {}", non.line());
+        assert!(
+            on.chain_deep >= 1,
+            "[{trace}] the wide chain is cut: {}",
+            on.line()
+        );
+        let (noff, non) = (
+            find(
+                "bg_narrow",
+                trace,
+                "chaindepth=0,ncallee=1,chainre=95,chainn=1000",
+            ),
+            find(
+                "bg_narrow",
+                trace,
+                "chaindepth=4,ncallee=1,chainre=95,chainn=1000",
+            ),
+        );
+        eprintln!(
+            "bg_narrow [{trace}] off: {} | on: {} deep {}",
+            noff.line(),
+            non.line(),
+            non.chain_deep
+        );
+        assert_eq!(
+            non.chain_deep,
+            0,
+            "[{trace}] a narrow dispatch is covered by its first links: {}",
+            non.line()
+        );
     }
 }
 
@@ -4737,29 +6315,74 @@ fn p3_fdisp_programs() {
     for trace in ["always", "on2"] {
         for lim in ["ncallee=0", "ncallee=1"] {
             jobs.push(Job::new("p3_fdisp", trace).opts("+verify").limits_s(lim));
-            jobs.push(Job::new("p3_fdisp", trace).opts("+exitstorm=3 +verify").limits_s(lim));
+            jobs.push(
+                Job::new("p3_fdisp", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
             jobs.push(Job::new("p3_fdisp", trace).budget(17).limits_s(lim));
-            jobs.push(Job::new("p3_fdisp", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
-            jobs.push(Job::new("p3_fdisp", trace).opts("+emurun +verify").limits_s(lim));
+            jobs.push(
+                Job::new("p3_fdisp", trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("p3_fdisp", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
         }
     }
     jobs.push(Job::new("p3_fdisp", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "p3_fdisp" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "p3_fdisp"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
         let (off, on) = (find(trace, "ncallee=0"), find(trace, "ncallee=1"));
-        eprintln!("p3_fdisp [{trace}] ncallee=0: {} | ncallee=1: {} heads {}", off.line(), on.line(), on.ncallee_heads);
+        eprintln!(
+            "p3_fdisp [{trace}] ncallee=0: {} | ncallee=1: {} heads {}",
+            off.line(),
+            on.line(),
+            on.ncallee_heads
+        );
         assert_eq!(off.ncallee_heads, 0, "[{trace}] knob off");
         if cfg!(rustynail_lua54) {
             // 5.4: the callee guard is not in the entry segment of this loop's trace (every exit is an ordinary body exit with a side trace, `entry false` in the
             // exit log), so no entry failure ever happens and the P3 rule has nothing to flag: the loop is not given up in either setting.
-            assert!(on.ncallee_heads <= 1, "[{trace}] flagged at most once: {}", on.line());
-            assert!(on.blacklisted <= off.blacklisted, "[{trace}] the loop is not given up: {} vs {}", on.blacklisted, off.blacklisted);
+            assert!(
+                on.ncallee_heads <= 1,
+                "[{trace}] flagged at most once: {}",
+                on.line()
+            );
+            assert!(
+                on.blacklisted <= off.blacklisted,
+                "[{trace}] the loop is not given up: {} vs {}",
+                on.blacklisted,
+                off.blacklisted
+            );
         } else {
-            assert_eq!(on.ncallee_heads, 1, "[{trace}] the head is flagged once: {}", on.line());
-            assert!(on.blacklisted < off.blacklisted, "[{trace}] the loop is not given up: {} vs {}", on.blacklisted, off.blacklisted);
+            assert_eq!(
+                on.ncallee_heads,
+                1,
+                "[{trace}] the head is flagged once: {}",
+                on.line()
+            );
+            assert!(
+                on.blacklisted < off.blacklisted,
+                "[{trace}] the loop is not given up: {} vs {}",
+                on.blacklisted,
+                off.blacklisted
+            );
         }
     }
 }
@@ -4779,42 +6402,106 @@ fn r1_rearm_programs() {
                 jobs.push(Job::new(prog, trace).opts("+verify").limits_s(lim));
                 jobs.push(Job::new(prog, trace).limits_s(lim));
             }
-            jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s("rearm=16,t1q=1"));
-            jobs.push(Job::new(prog, trace).opts("+exitstorm=7 +verify +randra=5").limits_s("rearm=16,t1q=1"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s("rearm=16,t1q=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+exitstorm=7 +verify +randra=5")
+                    .limits_s("rearm=16,t1q=1"),
+            );
             jobs.push(Job::new(prog, trace).budget(17).limits_s("rearm=16,t1q=1"));
-            jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s("rearm=16,t1q=1"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("rearm=16,t1q=1"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "1").limits_s("rearm=16,t1q=1"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+emurun +verify")
+                    .limits_s("rearm=16,t1q=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("rearm=16,t1q=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .limits_s("rearm=16,t1q=1"),
+            );
         }
         jobs.push(Job::new(prog, "t1"));
     }
     let res = compare(jobs);
     let find = |prog: &str, trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == prog && j.trace == trace && j.limits == lim && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none()).map(|(_, o)| (o.stats.clone(), o.insns)).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+            })
+            .map(|(_, o)| (o.stats.clone(), o.insns))
+            .expect("job")
     };
     for trace in ["always", "on2", "on"] {
         let (off, _) = find("r1_rearm", trace, "rearm=0,t1q=1");
-        assert_eq!((off.rearm_arms, off.rearm_enters, off.rearm_misses), (0, 0, 0), "[{trace}] knob off arms nothing");
+        assert_eq!(
+            (off.rearm_arms, off.rearm_enters, off.rearm_misses),
+            (0, 0, 0),
+            "[{trace}] knob off arms nothing"
+        );
         let (on, _) = find("r1_rearm", trace, "rearm=16,t1q=1");
-        eprintln!("r1_rearm [{trace}] armed {} entered {} missed {}", on.rearm_arms, on.rearm_enters, on.rearm_misses);
+        eprintln!(
+            "r1_rearm [{trace}] armed {} entered {} missed {}",
+            on.rearm_arms, on.rearm_enters, on.rearm_misses
+        );
         if trace == "on" {
             // (span of 32 units: the last back-edges of the `__index` function's 40-iteration loop are plain interpreter back-edges that move the countdown, which the next
             // rearmed tick must find restored, not reset)
             let (one, _) = find("r1_rearm", trace, "rearm=1,t1q=1");
-            assert!(one.rearm_restored > 0, "[{trace}] the rearmed ticks restore the formation countdown: {}", one.rearm_restored);
-            assert!(on.rearm_arms > 0 && on.rearm_enters > 0, "[{trace}] the rearmed tick enters the traced head: {} {} {}", on.rearm_arms, on.rearm_enters, on.rearm_misses);
+            assert!(
+                one.rearm_restored > 0,
+                "[{trace}] the rearmed ticks restore the formation countdown: {}",
+                one.rearm_restored
+            );
+            assert!(
+                on.rearm_arms > 0 && on.rearm_enters > 0,
+                "[{trace}] the rearmed tick enters the traced head: {} {} {}",
+                on.rearm_arms,
+                on.rearm_enters,
+                on.rearm_misses
+            );
         }
         let (h, _) = find("r1_rearm_hook", trace, "rearm=16,t1q=1");
-        assert_eq!((h.rearm_arms, h.rearm_enters, h.rearm_misses), (0, 0, 0), "[{trace}] a hooked thread never arms");
+        assert_eq!(
+            (h.rearm_arms, h.rearm_enters, h.rearm_misses),
+            (0, 0, 0),
+            "[{trace}] a hooked thread never arms"
+        );
         let (c, _) = find("r1_rearm_co", trace, "rearm=16,t1q=1");
-        eprintln!("r1_rearm_co [{trace}] armed {} entered {} missed {}", c.rearm_arms, c.rearm_enters, c.rearm_misses);
+        eprintln!(
+            "r1_rearm_co [{trace}] armed {} entered {} missed {}",
+            c.rearm_arms, c.rearm_enters, c.rearm_misses
+        );
         if trace == "on" {
-            assert!(c.rearm_enters > 0, "[{trace}] a coroutine's loop is re-entered too: {}", c.rearm_enters);
+            assert!(
+                c.rearm_enters > 0,
+                "[{trace}] a coroutine's loop is re-entered too: {}",
+                c.rearm_enters
+            );
         }
         let (w, _) = find("r1_rearm_warm", trace, "rearm=16,t1q=1");
-        eprintln!("r1_rearm_warm [{trace}] armed {} entered {} missed {}", w.rearm_arms, w.rearm_enters, w.rearm_misses);
+        eprintln!(
+            "r1_rearm_warm [{trace}] armed {} entered {} missed {}",
+            w.rearm_arms, w.rearm_enters, w.rearm_misses
+        );
         if trace == "on" {
-            assert_eq!(w.rearm_enters, 0, "[{trace}] a Warm head is never entered by a rearmed tick");
+            assert_eq!(
+                w.rearm_enters, 0,
+                "[{trace}] a Warm head is never entered by a rearmed tick"
+            );
         }
     }
 }
@@ -4827,27 +6514,81 @@ fn r1_rearm_programs() {
 fn c39_inner_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["innerretry=0,retf=2", "innerretry=6,retf=2", "innerretry=1,retf=2"] {
+        for lim in [
+            "innerretry=0,retf=2",
+            "innerretry=6,retf=2",
+            "innerretry=1,retf=2",
+        ] {
             jobs.push(Job::new("c39_inner", trace).opts("+verify").limits_s(lim));
-            jobs.push(Job::new("c39_inner", trace).opts("+exitstorm=3 +verify").limits_s(lim));
+            jobs.push(
+                Job::new("c39_inner", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
             jobs.push(Job::new("c39_inner", trace).budget(17).limits_s(lim));
-            jobs.push(Job::new("c39_inner", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
-            jobs.push(Job::new("c39_inner", trace).opts("+emurun +verify").limits_s(lim));
+            jobs.push(
+                Job::new("c39_inner", trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("c39_inner", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
         }
     }
     jobs.push(Job::new("c39_inner", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "c39_inner" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "c39_inner"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on, one) = (find(trace, "innerretry=0,retf=2"), find(trace, "innerretry=6,retf=2"), find(trace, "innerretry=1,retf=2"));
-        eprintln!("c39_inner [{trace}] off: {} | on: {} rounds {} | one: {} rounds {}", off.line(), on.line(), on.inner_retried, one.line(), one.inner_retried);
+        let (off, on, one) = (
+            find(trace, "innerretry=0,retf=2"),
+            find(trace, "innerretry=6,retf=2"),
+            find(trace, "innerretry=1,retf=2"),
+        );
+        eprintln!(
+            "c39_inner [{trace}] off: {} | on: {} rounds {} | one: {} rounds {}",
+            off.line(),
+            on.line(),
+            on.inner_retried,
+            one.line(),
+            one.inner_retried
+        );
         assert_eq!(off.inner_retried, 0, "[{trace}] knob off");
-        assert!(on.inner_retried >= 1 && on.inner_retried <= 6, "[{trace}] rounds started, bounded by the knob: {}", on.inner_retried);
-        assert!(one.inner_retried <= 1, "[{trace}] one round at most: {}", one.inner_retried);
-        assert!(on.installed > off.installed, "[{trace}] a retry round installs the loop's trace after the swap: {} vs {}", on.installed, off.installed);
-        assert!(on.blacklisted < off.blacklisted, "[{trace}] and the head is no longer blacklisted: {} vs {}", on.blacklisted, off.blacklisted);
+        assert!(
+            on.inner_retried >= 1 && on.inner_retried <= 6,
+            "[{trace}] rounds started, bounded by the knob: {}",
+            on.inner_retried
+        );
+        assert!(
+            one.inner_retried <= 1,
+            "[{trace}] one round at most: {}",
+            one.inner_retried
+        );
+        assert!(
+            on.installed > off.installed,
+            "[{trace}] a retry round installs the loop's trace after the swap: {} vs {}",
+            on.installed,
+            off.installed
+        );
+        assert!(
+            on.blacklisted < off.blacklisted,
+            "[{trace}] and the head is no longer blacklisted: {} vs {}",
+            on.blacklisted,
+            off.blacklisted
+        );
     }
 }
 
@@ -4858,32 +6599,67 @@ fn c39_inner_programs() {
 fn bc_sbump_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=0", "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=1", "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=2"] {
+        for lim in [
+            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=0",
+            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=1",
+            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=2",
+        ] {
             jobs.push(Job::new("bc_sbump", trace).opts("+verify").limits_s(lim));
-            jobs.push(Job::new("bc_sbump", trace).opts("+exitstorm=3 +verify").limits_s(lim));
+            jobs.push(
+                Job::new("bc_sbump", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
             jobs.push(Job::new("bc_sbump", trace).budget(17).limits_s(lim));
-            jobs.push(Job::new("bc_sbump", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
-            jobs.push(Job::new("bc_sbump", trace).opts("+emurun +verify").limits_s(lim));
+            jobs.push(
+                Job::new("bc_sbump", trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("bc_sbump", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
         }
     }
     jobs.push(Job::new("bc_sbump", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "bc_sbump" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "bc_sbump"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     let (mut gained, mut lost) = (false, false);
     for trace in ["always", "on2"] {
         let p = "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4";
-        let (off, on) = (find(trace, &format!("{p},sbump=0")), find(trace, &format!("{p},sbump=1")));
+        let (off, on) = (
+            find(trace, &format!("{p},sbump=0")),
+            find(trace, &format!("{p},sbump=1")),
+        );
         eprintln!("bc_sbump [{trace}] off: {} | on: {}", off.line(), on.line());
         gained |= on.side_installed > off.side_installed;
         lost |= on.side_installed < off.side_installed;
     }
-    assert!(gained && !lost, "the retry with one more unroll installs side traces the plain retry cannot");
+    assert!(
+        gained && !lost,
+        "the retry with one more unroll installs side traces the plain retry cannot"
+    );
 }
 
 /// BUNDLE-D: the limits of the pieces, each explicit (the struct default of the tests is 0 for all of them).
-const BD_LIMITS: [&str; 3] = ["ccalls=0,armm=0,sbump2=0", "ccalls=1", "ccalls=1,armm=1,sbump2=2"];
+const BD_LIMITS: [&str; 3] = [
+    "ccalls=0,armm=0,sbump2=0",
+    "ccalls=1",
+    "ccalls=1,armm=1,sbump2=2",
+];
 
 /// BUNDLE-D `ccalls`: the C-stack check of an inlined metamethod frame / pcall is inline loads and a compare. Recursion through `__index` / `__add` /
 /// `__unm` / `__lt` and `pcall` around every depth near `LUAI_MAXCCALLS` raises the same errors at the same depths as the interpreter, in every trace
@@ -4894,15 +6670,29 @@ fn bd_ccalls_programs() {
     for prog in ["bd_mm_depth", "g2_pcall_depth"] {
         for trace in ["always", "on2", "on"] {
             for lim in BD_LIMITS {
-                for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop", 0)] {
+                for (opts, budget) in [
+                    ("", 0),
+                    ("+verify", 0),
+                    ("+exitstorm=3 +verify", 0),
+                    ("", 17),
+                    ("-loop", 0),
+                ] {
                     let mut j = Job::new(prog, trace).opts(opts).limits_s(lim);
                     if budget != 0 {
                         j = j.budget(budget);
                     }
                     jobs.push(j);
                 }
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_GC_STRESS", "2"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_GC_STRESS", "2"),
+                );
                 jobs.push(Job::new(prog, trace).limits_s(lim).opts("+emurun +verify"));
             }
         }
@@ -4911,13 +6701,25 @@ fn bd_ccalls_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
-            assert!(o.stats.entered >= 1, "{}: traces did not run: {}", j.tag(), o.stats.line());
+            assert!(
+                o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.tag(),
+                o.stats.line()
+            );
         }
     }
     // the inline check answers exactly like the helper: the same entries and exits (an off-by-one admits one depth the helper refuses)
     for (j, o) in &res {
         if j.limits == BD_LIMITS[0] && j.env.is_empty() {
-            let other = res.iter().find(|(k, _)| k.prog == j.prog && k.trace == j.trace && k.opts == j.opts && k.budget == j.budget && k.env == j.env && k.limits == BD_LIMITS[1]);
+            let other = res.iter().find(|(k, _)| {
+                k.prog == j.prog
+                    && k.trace == j.trace
+                    && k.opts == j.opts
+                    && k.budget == j.budget
+                    && k.env == j.env
+                    && k.limits == BD_LIMITS[1]
+            });
             let (_, p) = other.expect("twin job");
             assert!(
                 o.stats.entered == p.stats.entered && o.stats.exits == p.stats.exits,
@@ -4943,18 +6745,47 @@ fn bd_armm_programs() {
     for prog in ["bd_arith_mm", "bd_vec_loop"] {
         for trace in ["always", "on2", "on"] {
             for lim in BD_LIMITS {
-                for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 3), ("", 17), ("-loop", 0)] {
+                for (opts, budget) in [
+                    ("", 0),
+                    ("+verify", 0),
+                    ("+exitstorm=3 +verify", 0),
+                    ("", 3),
+                    ("", 17),
+                    ("-loop", 0),
+                ] {
                     let mut j = Job::new(prog, trace).opts(opts).limits_s(lim);
                     if budget != 0 {
                         j = j.budget(budget);
                     }
                     jobs.push(j);
                 }
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_GC_STRESS", "1"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_GC_STRESS", "2"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("TR_CORE_GCMODE", "inc").env("RUSTYNAIL_GC_STRESS", "2"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("TR_CORE_GCMODE", "gen").env("RUSTYNAIL_GC_STRESS", "2"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_GC_STRESS", "1"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_GC_STRESS", "2"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("TR_CORE_GCMODE", "inc")
+                        .env("RUSTYNAIL_GC_STRESS", "2"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("TR_CORE_GCMODE", "gen")
+                        .env("RUSTYNAIL_GC_STRESS", "2"),
+                );
                 jobs.push(Job::new(prog, trace).limits_s(lim).opts("+emurun +verify"));
             }
         }
@@ -4983,12 +6814,25 @@ fn bd_sbump2_programs() {
     let p = "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4";
     for prog in ["bc_sbump", "bd_vec_loop"] {
         for trace in ["always", "on2"] {
-            for lim in ["sbump=0,sbump2=0", "sbump=1,sbump2=1", "sbump=1,sbump2=3", "sbump=0,sbump2=8"] {
+            for lim in [
+                "sbump=0,sbump2=0",
+                "sbump=1,sbump2=1",
+                "sbump=1,sbump2=3",
+                "sbump=0,sbump2=8",
+            ] {
                 let l = format!("{p},{lim}");
                 jobs.push(Job::new(prog, trace).opts("+verify").limits_s(&l));
-                jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s(&l));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(&l),
+                );
                 jobs.push(Job::new(prog, trace).budget(17).limits_s(&l));
-                jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(&l));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(&l),
+                );
                 jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s(&l));
             }
         }
@@ -5002,26 +6846,70 @@ fn bd_sbump2_programs() {
 fn bc_fnpromo_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["recnat=1,recany=1,nilstore=1,sidemin=4,fnpromo=0", "recnat=1,recany=1,nilstore=1,sidemin=4,fnpromo=1,fnpromow=0", "recnat=1,recany=1,nilstore=1,sidemin=4,fnpromo=6,fnpromow=0"] {
+        for lim in [
+            "recnat=1,recany=1,nilstore=1,sidemin=4,fnpromo=0",
+            "recnat=1,recany=1,nilstore=1,sidemin=4,fnpromo=1,fnpromow=0",
+            "recnat=1,recany=1,nilstore=1,sidemin=4,fnpromo=6,fnpromow=0",
+        ] {
             jobs.push(Job::new("bc_fnpromo", trace).opts("+verify").limits_s(lim));
-            jobs.push(Job::new("bc_fnpromo", trace).opts("+exitstorm=3 +verify").limits_s(lim));
+            jobs.push(
+                Job::new("bc_fnpromo", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
             jobs.push(Job::new("bc_fnpromo", trace).budget(17).limits_s(lim));
-            jobs.push(Job::new("bc_fnpromo", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
-            jobs.push(Job::new("bc_fnpromo", trace).opts("+emurun +verify").limits_s(lim));
+            jobs.push(
+                Job::new("bc_fnpromo", trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("bc_fnpromo", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
         }
     }
     jobs.push(Job::new("bc_fnpromo", "t1"));
     let res = compare(jobs);
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "bc_fnpromo" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "bc_fnpromo"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
         let p = "recnat=1,recany=1,nilstore=1,sidemin=4";
-        let (off, one, six) = (find(trace, &format!("{p},fnpromo=0")), find(trace, &format!("{p},fnpromo=1,fnpromow=0")), find(trace, &format!("{p},fnpromo=6,fnpromow=0")));
-        eprintln!("bc_fnpromo [{trace}] off: {} | one: {} promoted {} | six: {} promoted {}", off.line(), one.line(), one.fn_promoted, six.line(), six.fn_promoted);
+        let (off, one, six) = (
+            find(trace, &format!("{p},fnpromo=0")),
+            find(trace, &format!("{p},fnpromo=1,fnpromow=0")),
+            find(trace, &format!("{p},fnpromo=6,fnpromow=0")),
+        );
+        eprintln!(
+            "bc_fnpromo [{trace}] off: {} | one: {} promoted {} | six: {} promoted {}",
+            off.line(),
+            one.line(),
+            one.fn_promoted,
+            six.line(),
+            six.fn_promoted
+        );
         assert_eq!(off.fn_promoted, 0, "[{trace}] knob off");
-        assert!(one.fn_promoted <= 1, "[{trace}] the cap of one promotion: {}", one.fn_promoted);
-        assert!(six.fn_promoted <= 6, "[{trace}] bounded by the cap: {}", six.fn_promoted);
+        assert!(
+            one.fn_promoted <= 1,
+            "[{trace}] the cap of one promotion: {}",
+            one.fn_promoted
+        );
+        assert!(
+            six.fn_promoted <= 6,
+            "[{trace}] bounded by the cap: {}",
+            six.fn_promoted
+        );
     }
 }
 
@@ -5032,7 +6920,18 @@ fn bc_fnpromo_programs() {
 fn gm_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0), ("-fwd -cse -loop -sink", 0), ("+membudget +verify", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+            ("+membudget +verify", 0),
+        ] {
             let mut j = Job::new("gm_loops", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -5054,15 +6953,28 @@ fn gm_programs() {
     let mut on = 0u64;
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && o.stats.entered >= 1, "traces did not run: {}", o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "traces did not run: {}",
+                o.stats.line()
+            );
         }
         if j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
-            let n = o.stats.aborts.iter().filter(|(k, _)| k.starts_with("CFunc")).map(|(_, v)| *v).sum::<u64>();
+            let n = o
+                .stats
+                .aborts
+                .iter()
+                .filter(|(k, _)| k.starts_with("CFunc"))
+                .map(|(_, v)| *v)
+                .sum::<u64>();
             on += n;
         }
     }
     eprintln!("gm_loops: CFunc aborts {on}");
-    assert!(on <= 200, "the gmatch recorder must remove CFunc aborts: {on}");
+    assert!(
+        on <= 200,
+        "the gmatch recorder must remove CFunc aborts: {on}"
+    );
 }
 
 /// C38 slice 1: `sidenest`. A side recording that reaches a callee loop head with a root trace ends with the frame-linking exit (programs `c38_side`, `c38_side2`).
@@ -5072,11 +6984,24 @@ fn c38_side_programs() {
     let mut jobs = Vec::new();
     for p in ["c38_side", "c38_side2"] {
         for trace in ["always", "on2"] {
-            for lim in ["sidenest=0", "sidenest=1", "sidenest=1,loopany=0", "sidenest=1,nest=2"] {
+            for lim in [
+                "sidenest=0",
+                "sidenest=1",
+                "sidenest=1,loopany=0",
+                "sidenest=1,nest=2",
+            ] {
                 jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
-                jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
             }
         }
@@ -5084,15 +7009,33 @@ fn c38_side_programs() {
     }
     let res = compare(jobs);
     let find = |p: &str, trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == p && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == p
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for p in ["c38_side", "c38_side2"] {
         for trace in ["always", "on2"] {
             let (off, on) = (find(p, trace, "sidenest=0"), find(p, trace, "sidenest=1"));
-            eprintln!("{p} [{trace}] off: {} | on: {} sidelinks {}", off.line(), on.line(), on.side_links);
+            eprintln!(
+                "{p} [{trace}] off: {} | on: {} sidelinks {}",
+                off.line(),
+                on.line(),
+                on.side_links
+            );
             assert_eq!(off.side_links, 0, "{p} [{trace}] knob off");
             if p == "c38_side" {
-                assert!(on.side_links >= 1, "{p} [{trace}]: no side trace ends with a linking exit: {}", on.line());
+                assert!(
+                    on.side_links >= 1,
+                    "{p} [{trace}]: no side trace ends with a linking exit: {}",
+                    on.line()
+                );
             }
         }
     }
@@ -5106,24 +7049,53 @@ fn c38_side_programs() {
 fn po_poly_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["", "maxside=2,polyframes=0,ncallee=0", "maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0", "maxside=2,polyside=6,polywait=3,polyframes=0,ncallee=0", "maxside=1,polyside=2,polywait=2,polyframes=0,ncallee=0", "maxside=2,polyside=0,polyframes=0,ncallee=0"] {
+        for lim in [
+            "",
+            "maxside=2,polyframes=0,ncallee=0",
+            "maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0",
+            "maxside=2,polyside=6,polywait=3,polyframes=0,ncallee=0",
+            "maxside=1,polyside=2,polywait=2,polyframes=0,ncallee=0",
+            "maxside=2,polyside=0,polyframes=0,ncallee=0",
+        ] {
             let mut j = Job::new("po_poly", trace).opts("+verify");
             j.limits = lim.into();
             jobs.push(j);
         }
-        for lim in ["maxside=2,polyside=6,polywait=200,polyframes=0,ncallee=0", "maxside=2,polyside=6,polywait=1,polyframes=9,ncallee=0"] {
+        for lim in [
+            "maxside=2,polyside=6,polywait=200,polyframes=0,ncallee=0",
+            "maxside=2,polyside=6,polywait=1,polyframes=9,ncallee=0",
+        ] {
             let mut j = Job::new("po_poly", trace).opts("+verify");
             j.limits = lim.into();
             jobs.push(j);
         }
-        jobs.push(Job::new("po_poly", trace).opts("+exitstorm=3 +verify").limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"));
-        jobs.push(Job::new("po_poly", trace).budget(17).limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"));
-        jobs.push(Job::new("po_poly", trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"));
-        jobs.push(Job::new("po_poly", trace).opts("+emurun +verify").limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"));
+        jobs.push(
+            Job::new("po_poly", trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"),
+        );
+        jobs.push(
+            Job::new("po_poly", trace)
+                .budget(17)
+                .limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"),
+        );
+        jobs.push(
+            Job::new("po_poly", trace)
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"),
+        );
+        jobs.push(
+            Job::new("po_poly", trace)
+                .opts("+emurun +verify")
+                .limits_s("maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0"),
+        );
     }
     jobs.push(Job::new("po_poly", "t1"));
     for trace in ["always", "on2"] {
-        for lim in ["maxside=2,polyside=0,polyframes=0,ncallee=0", "maxside=2,polyside=6,polywait=1,polyframes=2,ncallee=0"] {
+        for lim in [
+            "maxside=2,polyside=0,polyframes=0,ncallee=0",
+            "maxside=2,polyside=6,polywait=1,polyframes=2,ncallee=0",
+        ] {
             let mut j = Job::new("po_branch", trace).opts("+verify");
             j.limits = lim.into();
             jobs.push(j);
@@ -5131,24 +7103,78 @@ fn po_poly_programs() {
     }
     let res = compare(jobs);
     for trace in ["always", "on2"] {
-        let g = |lim: &str| res.iter().find(|(j, _)| j.prog == "po_branch" && j.trace == trace && j.limits == lim).map(|(_, o)| o.stats.clone()).expect("job");
-        let (hard, poly) = (g("maxside=2,polyside=0,polyframes=0,ncallee=0"), g("maxside=2,polyside=6,polywait=1,polyframes=2,ncallee=0"));
-        assert!(hard.side_installed >= 1, "[{trace}] po_branch: {}", hard.line());
-        assert_eq!(poly.side_installed, hard.side_installed, "[{trace}] branch exits keep the hard cap: {} vs {}", poly.line(), hard.line());
+        let g = |lim: &str| {
+            res.iter()
+                .find(|(j, _)| j.prog == "po_branch" && j.trace == trace && j.limits == lim)
+                .map(|(_, o)| o.stats.clone())
+                .expect("job")
+        };
+        let (hard, poly) = (
+            g("maxside=2,polyside=0,polyframes=0,ncallee=0"),
+            g("maxside=2,polyside=6,polywait=1,polyframes=2,ncallee=0"),
+        );
+        assert!(
+            hard.side_installed >= 1,
+            "[{trace}] po_branch: {}",
+            hard.line()
+        );
+        assert_eq!(
+            poly.side_installed,
+            hard.side_installed,
+            "[{trace}] branch exits keep the hard cap: {} vs {}",
+            poly.line(),
+            hard.line()
+        );
     }
     let find = |trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == "po_poly" && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "po_poly"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for trace in ["always", "on2"] {
         let hard = find(trace, "maxside=2,polyside=0,polyframes=0,ncallee=0");
-        let poly = find(trace, "maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0");
-        let wait = find(trace, "maxside=2,polyside=6,polywait=3,polyframes=0,ncallee=0");
-        assert!(poly.side_installed > hard.side_installed, "[{trace}] polyside raises the cap: {} vs {}", poly.line(), hard.line());
-        let never = find(trace, "maxside=2,polyside=6,polywait=200,polyframes=0,ncallee=0");
+        let poly = find(
+            trace,
+            "maxside=2,polyside=6,polywait=1,polyframes=0,ncallee=0",
+        );
+        let wait = find(
+            trace,
+            "maxside=2,polyside=6,polywait=3,polyframes=0,ncallee=0",
+        );
+        assert!(
+            poly.side_installed > hard.side_installed,
+            "[{trace}] polyside raises the cap: {} vs {}",
+            poly.line(),
+            hard.line()
+        );
+        let never = find(
+            trace,
+            "maxside=2,polyside=6,polywait=200,polyframes=0,ncallee=0",
+        );
         assert!(never.side_installed <= hard.side_installed, "[{trace}] an exit that has not been deferred polywait times gets no side trace beyond the cap: {} vs {}", never.line(), hard.line());
-        let shallow = find(trace, "maxside=2,polyside=6,polywait=1,polyframes=9,ncallee=0");
-        assert!(shallow.side_installed <= hard.side_installed, "[{trace}] no exit lies in 9 inlined frames: {} vs {}", shallow.line(), hard.line());
-        assert!(poly.side_installed >= wait.side_installed, "[{trace}] polywait delays: {} vs {}", poly.line(), wait.line());
+        let shallow = find(
+            trace,
+            "maxside=2,polyside=6,polywait=1,polyframes=9,ncallee=0",
+        );
+        assert!(
+            shallow.side_installed <= hard.side_installed,
+            "[{trace}] no exit lies in 9 inlined frames: {} vs {}",
+            shallow.line(),
+            hard.line()
+        );
+        assert!(
+            poly.side_installed >= wait.side_installed,
+            "[{trace}] polywait delays: {} vs {}",
+            poly.line(),
+            wait.line()
+        );
     }
 }
 
@@ -5160,7 +7186,15 @@ fn po_poly_programs() {
 #[test]
 fn setmt_programs() {
     let mut jobs = Vec::new();
-    for p in ["n3b_setmt", "n3b_setmt_err", "n3b_setmt_gc", "n3b_setmt_co", "n3b_setmt_gc_exit", "n3b_setmt_gc_exit2", "a1_setmt_old"] {
+    for p in [
+        "n3b_setmt",
+        "n3b_setmt_err",
+        "n3b_setmt_gc",
+        "n3b_setmt_co",
+        "n3b_setmt_gc_exit",
+        "n3b_setmt_gc_exit2",
+        "a1_setmt_old",
+    ] {
         for trace in ["always", "on2"] {
             jobs.push(Job::new(p, trace).opts("+verify"));
             jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
@@ -5171,24 +7205,66 @@ fn setmt_programs() {
             jobs.push(Job::new(p, trace).opts("+emurun +verify"));
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
             for gm in ["gen", "inc"] {
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", gm));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1").env("TR_CORE_GCMODE", gm));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
                 // (the invariant check after every step: a black table that points to a white metatable is found at once)
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", gm));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", gm));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("RUSTYNAIL_GC_VERIFY", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_VERIFY", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
             }
         }
         jobs.push(Job::new(p, "t1"));
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "n3b_setmt" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
-            assert!(!o.stats.aborts.contains_key("TailCall") && !o.stats.aborts.contains_key("Diverge"), "{}: {}", j.prog, o.stats.line());
+        if j.prog == "n3b_setmt"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                !o.stats.aborts.contains_key("TailCall") && !o.stats.aborts.contains_key("Diverge"),
+                "{}: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
-        if (j.prog == "n3b_setmt_gc_exit" || j.prog == "n3b_setmt_gc_exit2") && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
+        if (j.prog == "n3b_setmt_gc_exit" || j.prog == "n3b_setmt_gc_exit2")
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
             // the helper refuses a metatable with `__gc`: every iteration after it appeared leaves the trace
-            assert!(o.stats.exits >= 300, "{}: the trace did not leave at the __gc metatable: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.exits >= 300,
+                "{}: the trace did not leave at the __gc metatable: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -5213,7 +7289,12 @@ fn tlen_inline_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -5236,18 +7317,45 @@ fn f1_programs() {
             jobs.push(Job::new(p, trace).opts("+emurun +verify"));
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
             for gm in ["gen", "inc"] {
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", gm));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1").env("TR_CORE_GCMODE", gm));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", gm));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_VERIFY", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
             }
         }
         jobs.push(Job::new(p, "t1"));
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "f1_folds" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
-            assert!(!o.stats.aborts.contains_key("Diverge"), "{}: {}", j.prog, o.stats.line());
+        if j.prog == "f1_folds"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                !o.stats.aborts.contains_key("Diverge"),
+                "{}: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -5271,17 +7379,39 @@ fn a1_inline_newref() {
         jobs.push(Job::new(p, trace).opts("+emurun +verify"));
         jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
         for gm in ["gen", "inc"] {
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", gm));
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1").env("TR_CORE_GCMODE", gm));
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", gm));
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", gm));
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("TR_CORE_GCMODE", gm),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .env("TR_CORE_GCMODE", gm),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .env("TR_CORE_GCMODE", gm),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .env("TR_CORE_GCMODE", gm),
+            );
         }
     }
     jobs.push(Job::new(p, "t1"));
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -5309,12 +7439,32 @@ fn s1_frame_side_programs() {
         jobs.push(Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
         jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
         for gm in ["gen", "inc"] {
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", gm));
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1").env("TR_CORE_GCMODE", gm));
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", gm));
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("TR_CORE_GCMODE", gm),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .env("TR_CORE_GCMODE", gm),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .env("TR_CORE_GCMODE", gm),
+            );
         }
         // (BUNDLE-M: `siderooms=0` is the control where a side trace that needs more room than its parent guarantees is refused; the mutant `fside_room_ignored` still survives, see docs/JIT_TESTING.md)
-        for l in ["maxside=2", "maxdepth=2", "nest=2", "unroll=0", "siderooms=0", "siderooms=0,maxdepth=2"] {
+        for l in [
+            "maxside=2",
+            "maxdepth=2",
+            "nest=2",
+            "unroll=0",
+            "siderooms=0",
+            "siderooms=0,maxdepth=2",
+        ] {
             let mut j = Job::new(p, trace);
             j.limits = l.into();
             jobs.push(j);
@@ -5324,7 +7474,9 @@ fn s1_frame_side_programs() {
     let res = compare(jobs);
     let with = res
         .iter()
-        .find(|(j, _)| j.trace == "always" && j.limits.is_empty() && j.opts == "+verify" && j.env.is_empty())
+        .find(|(j, _)| {
+            j.trace == "always" && j.limits.is_empty() && j.opts == "+verify" && j.env.is_empty()
+        })
         .map(|(_, o)| o.stats.side_installed)
         .expect("job");
     assert!(with >= 6, "s1_frame_sides: the exits inside inlined frames got no side traces: {with} side traces installed");
@@ -5357,7 +7509,15 @@ fn mm_alloc_loop_stays_in_the_trace() {
 #[test]
 fn mm_count_identity() {
     let mut jobs = Vec::new();
-    for p in ["n3_mm_arith", "n3_mm_swap", "n3_mm_err", "n3_mm_exit", "n3_mm_cmp", "n3_mm_idx", "n3_mm_idx2"] {
+    for p in [
+        "n3_mm_arith",
+        "n3_mm_swap",
+        "n3_mm_err",
+        "n3_mm_exit",
+        "n3_mm_cmp",
+        "n3_mm_idx",
+        "n3_mm_idx2",
+    ] {
         for b in [None, Some(3), Some(17)] {
             for (t, o) in [("always", ""), ("always", "+exitstorm=7"), ("on2", "")] {
                 let mut j = Job::new(p, t).opts(o);
@@ -5369,8 +7529,16 @@ fn mm_count_identity() {
     }
     let n = jobs.len();
     let res = run_all(jobs);
-    let bad: Vec<String> = res.iter().filter_map(|(j, o)| ident_check(o).err().map(|e| format!("{}: {e}", j.tag()))).collect();
-    assert!(bad.is_empty(), "{} of {n} identity failures:\n{}", bad.len(), bad.join("\n"));
+    let bad: Vec<String> = res
+        .iter()
+        .filter_map(|(j, o)| ident_check(o).err().map(|e| format!("{}: {e}", j.tag())))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "{} of {n} identity failures:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 /// The nests `for r = 1, N do for i, v in ipairs(t) do ... end end` (and `pairs`) stay in traces: the outer loop records the call of
@@ -5383,9 +7551,24 @@ fn gfor_nest_stays_in_traces() {
     // (K3b: `typesides=0` is the row that detects `tnext_key_site_type`: with the shipped `typesides=1` a type-guard exit gets a side trace and the
     // misclassified traversal end is not observable in these counters)
     // (BUNDLE-H: with `tnextinl` the traversal loop peels and the misclassified end is no longer visible in these counters: the `typesides=0` rows also run without it)
-    for (trace, lim) in [("always", ""), ("on2", ""), ("always", "typesides=0"), ("on2", "typesides=0"), ("always", "typesides=0,tnextinl=0"), ("on2", "typesides=0,tnextinl=0")] {
-        let r = compare(vec![Job::new("n7_nest_hot", trace).opts("+verify").limits_s(lim)]).remove(0).1;
-        assert!(r.stats.aborts.get("CFunc").copied().unwrap_or(0) == 0, "n7_nest_hot [{trace}]: CFunc aborts: {}", r.stats.line());
+    for (trace, lim) in [
+        ("always", ""),
+        ("on2", ""),
+        ("always", "typesides=0"),
+        ("on2", "typesides=0"),
+        ("always", "typesides=0,tnextinl=0"),
+        ("on2", "typesides=0,tnextinl=0"),
+    ] {
+        let r = compare(vec![Job::new("n7_nest_hot", trace)
+            .opts("+verify")
+            .limits_s(lim)])
+        .remove(0)
+        .1;
+        assert!(
+            r.stats.aborts.get("CFunc").copied().unwrap_or(0) == 0,
+            "n7_nest_hot [{trace}]: CFunc aborts: {}",
+            r.stats.line()
+        );
         // (`exits` counts the exits that a side trace takes over: the figure to watch is that no head went `Black`, nothing was flushed
         // for another reason than the end of the run, and every loop end has its side trace)
         assert!(
@@ -5394,7 +7577,11 @@ fn gfor_nest_stays_in_traces() {
             r.stats.line()
         );
         // (5.4 records the call and `TFORPREP` only: the loop ends stay `LeaveLoop` side aborts)
-        assert!(cfg!(rustynail_lua54) || r.stats.side_installed >= 3, "n7_nest_hot [{trace}]: no side trace behind the loop end: {}", r.stats.line());
+        assert!(
+            cfg!(rustynail_lua54) || r.stats.side_installed >= 3,
+            "n7_nest_hot [{trace}]: no side trace behind the loop end: {}",
+            r.stats.line()
+        );
     }
 }
 
@@ -5425,8 +7612,18 @@ fn dynamic_key_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "n6_dynkey_basic" && j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
-            assert!(o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0), "{}: no trace ran: {}", j.prog, o.stats.line());
+        if j.prog == "n6_dynkey_basic"
+            && j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.is_empty()
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -5441,12 +7638,27 @@ fn dynamic_key_loops_do_not_exit_per_key() {
         Job::new("n6_dynkey_hot", "always"),
         Job::new("n6_dynkey_hot", "on2"),
         // (K3b: the lsizenode-guarded form `dynmask=0`, where `hrefv_mask_off_by_one` lives)
-        Job::new("n6_dynkey_hot", "always").opts("+verify").limits_s("dynmask=0"),
+        Job::new("n6_dynkey_hot", "always")
+            .opts("+verify")
+            .limits_s("dynmask=0"),
         Job::new("n6_dynkey_hot", "on2").limits_s("dynmask=0"),
     ]);
     for (j, o) in &res {
-        assert!(o.stats.installed >= 1, "{} {}: {}", j.prog, j.trace, o.stats.line());
-        assert!(o.stats.exits < 60, "{} {} {}: too many exits: {}", j.prog, j.trace, j.opts, o.stats.line());
+        assert!(
+            o.stats.installed >= 1,
+            "{} {}: {}",
+            j.prog,
+            j.trace,
+            o.stats.line()
+        );
+        assert!(
+            o.stats.exits < 60,
+            "{} {} {}: too many exits: {}",
+            j.prog,
+            j.trace,
+            j.opts,
+            o.stats.line()
+        );
     }
 }
 
@@ -5471,7 +7683,11 @@ fn r1_tail_and_call_loops() {
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1"));
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
             for gm in ["gen", "inc"] {
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", gm));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("TR_CORE_GCMODE", gm),
+                );
             }
             for l in ["recnat=1"] {
                 let mut j = Job::new(p, trace);
@@ -5483,8 +7699,19 @@ fn r1_tail_and_call_loops() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "r1_tailcalls" && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.limits.is_empty() && j.budget.is_none() {
-            assert!(o.stats.installed >= 1, "{}: no trace installed: {}", j.prog, o.stats.line());
+        if j.prog == "r1_tailcalls"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.limits.is_empty()
+            && j.budget.is_none()
+        {
+            assert!(
+                o.stats.installed >= 1,
+                "{}: no trace installed: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -5496,61 +7723,141 @@ fn r1_tail_and_call_loops() {
 fn m1_interp_shapes() {
     let mut jobs = Vec::new();
     for p in ["m1_interp", "m1_gfor_inl", "m1_rd", "m1_deep"] {
-    for trace in ["always", "on2", "on"] {
-        jobs.push(Job::new(p, trace));
-        jobs.push(Job::new(p, trace).opts("+verify"));
-        jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
-        jobs.push(Job::new(p, trace).opts("+exitstorm=7 +verify +randra=5"));
-        jobs.push(Job::new(p, trace).budget(3));
-        jobs.push(Job::new(p, trace).budget(17));
-        jobs.push(Job::new(p, trace).opts("-loop"));
-        jobs.push(Job::new(p, trace).opts("+emurun +verify"));
-        jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
-        jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1"));
-        jobs.push(Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-        for gm in ["gen", "inc"] {
-            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", gm));
+        for trace in ["always", "on2", "on"] {
+            jobs.push(Job::new(p, trace));
+            jobs.push(Job::new(p, trace).opts("+verify"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=7 +verify +randra=5"));
+            jobs.push(Job::new(p, trace).budget(3));
+            jobs.push(Job::new(p, trace).budget(17));
+            jobs.push(Job::new(p, trace).opts("-loop"));
+            jobs.push(Job::new(p, trace).opts("+emurun +verify"));
+            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
+            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1"));
+            jobs.push(Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+            for gm in ["gen", "inc"] {
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+            }
+            for l in [
+                "loopany=1",
+                "unroll=1",
+                "unroll=3",
+                "unroll=3,maxdepth=2",
+                "recnat=0",
+                "fnroot=1",
+                "maxside=64",
+            ] {
+                let mut j = Job::new(p, trace);
+                j.limits = l.into();
+                jobs.push(j);
+            }
         }
-        for l in ["loopany=1", "unroll=1", "unroll=3", "unroll=3,maxdepth=2", "recnat=0", "fnroot=1", "maxside=64"] {
-            let mut j = Job::new(p, trace);
-            j.limits = l.into();
-            jobs.push(j);
-        }
-    }
-    jobs.push(Job::new(p, "t1"));
+        jobs.push(Job::new(p, "t1"));
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if (j.prog == "m1_gfor_inl" || j.prog == "m1_rd" || j.prog == "m1_deep") && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.limits.is_empty() && j.budget.is_none() {
-            assert!(o.stats.installed >= 1, "{}: no trace installed: {}", j.prog, o.stats.line());
+        if (j.prog == "m1_gfor_inl" || j.prog == "m1_rd" || j.prog == "m1_deep")
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.limits.is_empty()
+            && j.budget.is_none()
+        {
+            assert!(
+                o.stats.installed >= 1,
+                "{}: no trace installed: {}",
+                j.prog,
+                o.stats.line()
+            );
             // M1: the inlining depth limit stitches (`Depth` aborts otherwise), inlined `ipairs` loops record (`Nyi(Tforprep)` otherwise)
             if j.prog == "m1_deep" {
-                assert!(o.stats.stitches >= 1, "{}: no stitching trace: {}", j.prog, o.stats.line());
+                assert!(
+                    o.stats.stitches >= 1,
+                    "{}: no stitching trace: {}",
+                    j.prog,
+                    o.stats.line()
+                );
             }
             if !cfg!(rustynail_lua54) {
-                assert!(!o.stats.aborts.contains_key("Nyi(Tforprep)"), "{}: TFORPREP aborts: {}", j.prog, o.stats.line());
+                assert!(
+                    !o.stats.aborts.contains_key("Nyi(Tforprep)"),
+                    "{}: TFORPREP aborts: {}",
+                    j.prog,
+                    o.stats.line()
+                );
             }
         }
-        if j.prog == "m1_interp" && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.limits.is_empty() && j.budget.is_none() {
-            assert!(o.stats.installed >= 1, "{}: no trace installed: {}", j.prog, o.stats.line());
+        if j.prog == "m1_interp"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.limits.is_empty()
+            && j.budget.is_none()
+        {
+            assert!(
+                o.stats.installed >= 1,
+                "{}: no trace installed: {}",
+                j.prog,
+                o.stats.line()
+            );
             // (H1: 73 (5.4: 8) before `framemin` refused the one-`RETURN` side traces of inlined frames and `fck` delayed the frame side traces
             // of function-entry / continuation families)
             // M1: side recordings stitch at recursive calls; the `RETURN k`
             // of the evaluators records at all (`Nyi(Return)` otherwise)
             // (K3a: 65 with the old cap `maxside=64`, see the next block; the shipped `maxside=16` installs 37 here)
-            assert!(o.stats.side_installed >= if cfg!(rustynail_lua54) { 4 } else { 30 }, "{}: side traces: {}", j.prog, o.stats.line());
-            assert!(!o.stats.aborts.contains_key("Nyi(Return)"), "{}: RETURN k aborts: {}", j.prog, o.stats.line());
+            assert!(
+                o.stats.side_installed >= if cfg!(rustynail_lua54) { 4 } else { 30 },
+                "{}: side traces: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                !o.stats.aborts.contains_key("Nyi(Return)"),
+                "{}: RETURN k aborts: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
-        if j.prog == "m1_interp" && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.limits == "maxside=64" && j.budget.is_none() {
-            assert!(o.stats.side_installed >= if cfg!(rustynail_lua54) { 4 } else { 65 }, "{}: side traces with maxside=64: {}", j.prog, o.stats.line());
+        if j.prog == "m1_interp"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.limits == "maxside=64"
+            && j.budget.is_none()
+        {
+            assert!(
+                o.stats.side_installed >= if cfg!(rustynail_lua54) { 4 } else { 65 },
+                "{}: side traces with maxside=64: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
     // M1 `sidestitch`: side recordings stitch at recursive calls, which the mutant `side_stitch_never` turns into `Recursion` aborts
     // (C43 runner survivor: nothing compared the two)
-    let pick = |lim: &str| res.iter().find(|(j, _)| j.prog == "m1_interp" && j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && j.limits == lim).map(|(_, o)| o.stats.clone());
+    let pick = |lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "m1_interp"
+                    && j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+                    && j.limits == lim
+            })
+            .map(|(_, o)| o.stats.clone())
+    };
     if let Some(on) = pick("") {
         let rec = |s: &TStats| s.side_aborts.get("Recursion").copied().unwrap_or(0);
-        assert!(rec(&on) <= 4, "side recordings must stitch at recursive calls instead of aborting `Recursion`: {}", on.line());
+        assert!(
+            rec(&on) <= 4,
+            "side recordings must stitch at recursive calls instead of aborting `Recursion`: {}",
+            on.line()
+        );
     }
 }
 
@@ -5561,7 +7868,15 @@ fn b1_jobs(progs: &[&str], limits: &[&str]) -> Vec<Job> {
     for p in progs {
         for l in limits {
             for trace in ["always", "on2", "on"] {
-                for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0)] {
+                for (opts, budget) in [
+                    ("", 0),
+                    ("+verify", 0),
+                    ("+exitstorm=3 +verify", 0),
+                    ("+exitstorm=7 +verify +randra=5", 0),
+                    ("", 3),
+                    ("", 17),
+                    ("-loop", 0),
+                ] {
                     let mut j = Job::new(p, trace).opts(opts);
                     if budget != 0 {
                         j = j.budget(budget);
@@ -5597,8 +7912,17 @@ fn b1_wgate_gate_counts_work() {
         jobs.push(j);
     }
     let res = compare(jobs);
-    assert_eq!(res[0].1.stats.recorded, 0, "a gate beyond the program's work: {}", res[0].1.stats.line());
-    assert!(res[1].1.stats.installed >= 1, "wgate=2 only delays: {}", res[1].1.stats.line());
+    assert_eq!(
+        res[0].1.stats.recorded,
+        0,
+        "a gate beyond the program's work: {}",
+        res[0].1.stats.line()
+    );
+    assert!(
+        res[1].1.stats.installed >= 1,
+        "wgate=2 only delays: {}",
+        res[1].1.stats.line()
+    );
     assert!(res[2].1.stats.installed >= 1);
 }
 
@@ -5607,7 +7931,10 @@ fn b1_wgate_gate_counts_work() {
 /// Mutants `tailhook_ignored`, `tailhook_from_jit_enter`.
 #[test]
 fn b1_tail_programs() {
-    let res = compare(b1_jobs(&["b1_tail"], &["tailhook=1", "tailhook=0", "tailhook=2"]));
+    let res = compare(b1_jobs(
+        &["b1_tail"],
+        &["tailhook=1", "tailhook=0", "tailhook=2"],
+    ));
     assert!(!res.is_empty());
 }
 
@@ -5636,7 +7963,16 @@ fn hs_sub_ring_matrix() {
     let mut jobs = Vec::new();
     for l in ["hdrlib=2", "hdrlib=4", "hdrlib=1"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+            ] {
                 let mut j = Job::new("b8_sub_ring", trace).opts(opts).limits_s(l);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -5645,11 +7981,26 @@ fn hs_sub_ring_matrix() {
             }
             for gc in ["1", "2"] {
                 for mode in ["inc", "gen"] {
-                    jobs.push(Job::new("b8_sub_ring", trace).limits_s(l).env("RUSTYNAIL_GC_STRESS", gc).env("TR_CORE_GCMODE", mode));
+                    jobs.push(
+                        Job::new("b8_sub_ring", trace)
+                            .limits_s(l)
+                            .env("RUSTYNAIL_GC_STRESS", gc)
+                            .env("TR_CORE_GCMODE", mode),
+                    );
                 }
             }
-            jobs.push(Job::new("b8_sub_ring", trace).limits_s(l).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", "gen"));
-            jobs.push(Job::new("b8_sub_ring", trace).limits_s(l).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+            jobs.push(
+                Job::new("b8_sub_ring", trace)
+                    .limits_s(l)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .env("TR_CORE_GCMODE", "gen"),
+            );
+            jobs.push(
+                Job::new("b8_sub_ring", trace)
+                    .limits_s(l)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+            );
         }
     }
     let res = compare(jobs);
@@ -5664,7 +8015,16 @@ fn ba_jobs(prog: &str, lims: &[&str]) -> Vec<Job> {
     let mut jobs = Vec::new();
     for l in lims {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 3), ("", 17), ("-loop", 0), ("+emurun +verify", 0)] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+            ] {
                 let mut j = Job::new(prog, trace).opts(opts).limits_s(l);
                 if budget != 0 {
                     j = j.budget(budget);
@@ -5673,11 +8033,26 @@ fn ba_jobs(prog: &str, lims: &[&str]) -> Vec<Job> {
             }
             for gc in ["1", "2"] {
                 for mode in ["inc", "gen"] {
-                    jobs.push(Job::new(prog, trace).limits_s(l).env("RUSTYNAIL_GC_STRESS", gc).env("TR_CORE_GCMODE", mode));
+                    jobs.push(
+                        Job::new(prog, trace)
+                            .limits_s(l)
+                            .env("RUSTYNAIL_GC_STRESS", gc)
+                            .env("TR_CORE_GCMODE", mode),
+                    );
                 }
             }
-            jobs.push(Job::new(prog, trace).limits_s(l).env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").env("TR_CORE_GCMODE", "gen"));
-            jobs.push(Job::new(prog, trace).limits_s(l).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .limits_s(l)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .env("TR_CORE_GCMODE", "gen"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .limits_s(l)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+            );
         }
     }
     jobs
@@ -5713,25 +8088,60 @@ fn tc_fmt_matrix() {
 /// `libk_lean_char_args`, `libk_type_fn_skip`, `libk_type_index_off`.
 #[test]
 fn bh_lib_matrix() {
-    assert!(!compare(ba_jobs("bh_lib", &["libcall=1", "libcall=7", "libcall=15", "libcall=31", "libcall=0"])).is_empty());
+    assert!(!compare(ba_jobs(
+        "bh_lib",
+        &[
+            "libcall=1",
+            "libcall=7",
+            "libcall=15",
+            "libcall=31",
+            "libcall=0"
+        ]
+    ))
+    .is_empty());
 }
 
 /// BUNDLE-R `libcall` bits 5..: `table.unpack` / `table.move` / failing `tonumber` on trace (`br_lib`), the same matrix; bit 5 alone, with the others, off.
 /// Mutants `tunpack_meta_skip`, `tunpack_len_guard_skip`, `tunpack_off_by_one`.
 #[test]
 fn br_lib_matrix() {
-    assert!(!compare(ba_jobs("br_lib", &["libcall=39", "libcall=71", "libcall=135", "libcall=263", "libcall=511", "libcall=7"])).is_empty());
+    assert!(!compare(ba_jobs(
+        "br_lib",
+        &[
+            "libcall=39",
+            "libcall=71",
+            "libcall=135",
+            "libcall=263",
+            "libcall=511",
+            "libcall=7"
+        ]
+    ))
+    .is_empty());
 }
 
 /// BUNDLE-H: the recorded calls make a loop around `string.char(a, b, c)` / `math.random()` / `s:lower()` install a trace that runs without leaving.
 #[test]
 fn bh_libcall_changes_the_traces() {
-    for (prog, lim) in [("bh_char_hot", "libcall=1"), ("bh_rand_hot", "libcall=1"), ("bh_case_hot", "libcall=1"), ("bh_rep_hot", "libcall=9")] {
+    for (prog, lim) in [
+        ("bh_char_hot", "libcall=1"),
+        ("bh_rand_hot", "libcall=1"),
+        ("bh_case_hot", "libcall=1"),
+        ("bh_rep_hot", "libcall=9"),
+    ] {
         let mk = |l: &str| Job::new(prog, "always").opts("+verify").limits_s(l);
         let r = run_all(vec![mk(lim), mk("libcall=0")]);
         assert!(r[0].1.ok && r[1].1.ok, "{prog}: {}", r[0].1.stderr);
-        assert!(r[0].1.insns != r[1].1.insns, "{prog}: on {} off {}", r[0].1.stats.line(), r[1].1.stats.line());
-        assert!(r[0].1.stats.exits < 300 && r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0, "{prog}: {}", r[0].1.stats.line());
+        assert!(
+            r[0].1.insns != r[1].1.insns,
+            "{prog}: on {} off {}",
+            r[0].1.stats.line(),
+            r[1].1.stats.line()
+        );
+        assert!(
+            r[0].1.stats.exits < 300 && r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0,
+            "{prog}: {}",
+            r[0].1.stats.line()
+        );
     }
 }
 
@@ -5740,34 +8150,64 @@ fn bh_libcall_changes_the_traces() {
 /// Mutant `repcls_guard_skip` (the helper's own check then exits as before: caught by the instruction comparison).
 #[test]
 fn br_rep_class_guard_gets_a_side_trace() {
-    let mk = |l: &str| Job::new("bh_rep_mixed_hot", "always").opts("+verify").limits_s(l);
+    let mk = |l: &str| {
+        Job::new("bh_rep_mixed_hot", "always")
+            .opts("+verify")
+            .limits_s(l)
+    };
     let r = run_all(vec![mk("libcall=25"), mk("libcall=9")]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
-    assert!(r[0].1.insns < r[1].1.insns, "cls {} plain {}", r[0].1.stats.line(), r[1].1.stats.line());
-    assert!(r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0, "{}", r[0].1.stats.line());
+    assert!(
+        r[0].1.insns < r[1].1.insns,
+        "cls {} plain {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
+    assert!(
+        r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0,
+        "{}",
+        r[0].1.stats.line()
+    );
 }
 
 /// BUNDLE-H `tnextinl`: `pairs` / `next` loops with the table modified during the traversal (`bh_next`), the same matrix; the knob on and off.
 /// Mutant `tnext_hdr_never` (the knob is ignored: caught by `bh_tnext_peels`).
 #[test]
 fn bh_next_matrix() {
-    assert!(!compare(ba_jobs("bh_next", &["tnextinl=1", "tnextinl=0", "tnextinl=1,libcall=7"])).is_empty());
+    assert!(!compare(ba_jobs(
+        "bh_next",
+        &["tnextinl=1", "tnextinl=0", "tnextinl=1,libcall=7"]
+    ))
+    .is_empty());
 }
 
 /// BUNDLE-H: with `tnextinl` the loop around a traversal is peeled (a loop trace), without it it is rolled. Mutant `tnext_hdr_never`.
 #[test]
 fn bh_tnext_peels() {
-    let mk = |l: &str| Job::new("bh_next_hot", "always").opts("+verify").limits_s(l);
+    let mk = |l: &str| {
+        Job::new("bh_next_hot", "always")
+            .opts("+verify")
+            .limits_s(l)
+    };
     let r = run_all(vec![mk("tnextinl=1"), mk("tnextinl=0")]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
-    assert!(r[0].1.stats.peeled > r[1].1.stats.peeled, "peeled on {} off {}", r[0].1.stats.line(), r[1].1.stats.line());
+    assert!(
+        r[0].1.stats.peeled > r[1].1.stats.peeled,
+        "peeled on {} off {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
 }
 
 /// BUNDLE-C `t1ccall`: the lean tier-1 call of light C functions (`tc_ccall`), the same matrix (errors through `pcall` / `xpcall`, tracebacks, hooks
 /// set during the run, yields across `pcall`, `coroutine.wrap`, stack growth in C calls).
 #[test]
 fn tc_ccall_matrix() {
-    assert!(!compare(ba_jobs("tc_ccall", &["t1ccall=1", "t1ccall=1,tfmt=1", "t1ccall=0"])).is_empty());
+    assert!(!compare(ba_jobs(
+        "tc_ccall",
+        &["t1ccall=1", "t1ccall=1,tfmt=1", "t1ccall=0"]
+    ))
+    .is_empty());
 }
 
 /// BUNDLE-C: the plain tier-1 modes (`t1` = JIT on, traces off, and `off`) with the knobs named (no effect with traces off: the controls) and with
@@ -5779,8 +8219,17 @@ fn tc_t1_modes() {
         for l in ["t1ccall=1,tfmt=1", "t1ccall=0,tfmt=0"] {
             for trace in ["t1", "off"] {
                 jobs.push(Job::new(prog, trace).limits_s(l));
-                jobs.push(Job::new(prog, trace).limits_s(l).env("RUSTYNAIL_GC_STRESS", "2").env("TR_CORE_GCMODE", "gen"));
-                jobs.push(Job::new(prog, trace).limits_s(l).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(l)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("TR_CORE_GCMODE", "gen"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(l)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+                );
             }
         }
     }
@@ -5794,17 +8243,32 @@ fn tc_fmt_knob_changes_the_traces() {
     let mk = |l: &str| Job::new("tc_fmt_hot", "always").opts("+verify").limits_s(l);
     let r = run_all(vec![mk("tfmt=1"), mk("tfmt=0")]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
-    assert!(r[0].1.insns != r[1].1.insns, "on {} off {}", r[0].1.stats.line(), r[1].1.stats.line());
-    assert!(r[0].1.stats.exits < 300 && r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0, "{}", r[0].1.stats.line());
+    assert!(
+        r[0].1.insns != r[1].1.insns,
+        "on {} off {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
+    assert!(
+        r[0].1.stats.exits < 300 && r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0,
+        "{}",
+        r[0].1.stats.line()
+    );
 }
 
 /// BUNDLE-A `libnum`: float and integer numerals (hex, `1e2`, `2.5`) in a loop do not leave the trace on every iteration. Mutant `tonum_mode_ignored`
 /// (the helper converts like the `for` limit does, floats are "no numeral": the guard exits every time).
 #[test]
 fn ba_num_does_not_exit_on_numerals() {
-    let r = run_all(vec![Job::new("ba_num_floats", "always").opts("+verify").limits_s("")]);
+    let r = run_all(vec![Job::new("ba_num_floats", "always")
+        .opts("+verify")
+        .limits_s("")]);
     assert!(r[0].1.ok, "{}", r[0].1.stderr);
-    assert!(r[0].1.stats.exits < 60 && r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0, "{}", r[0].1.stats.line());
+    assert!(
+        r[0].1.stats.exits < 60 && r[0].1.stats.entered >= 1 && r[0].1.stats.blacklisted == 0,
+        "{}",
+        r[0].1.stats.line()
+    );
 }
 
 /// BUNDLE-A (K3b: `libnum` / `libnext` / `libfind` are hard-wired on): the recorded library calls make the loops of the programs install and enter traces.
@@ -5813,17 +8277,30 @@ fn ba_knobs_change_the_traces() {
     for prog in ["ba_num", "ba_next", "ba_find"] {
         let r = run_all(vec![Job::new(prog, "always").opts("+verify")]);
         assert!(r[0].1.ok, "{prog}: {}", r[0].1.stderr);
-        assert!(r[0].1.stats.installed >= 1 && r[0].1.stats.entered >= 1, "{prog}: {}", r[0].1.stats.line());
+        assert!(
+            r[0].1.stats.installed >= 1 && r[0].1.stats.entered >= 1,
+            "{prog}: {}",
+            r[0].1.stats.line()
+        );
     }
 }
 
 /// HDRSUB: the loop around `string.sub` is peeled with `hdrlib=2` and rolled with `hdrlib=1`. Mutant `hdrlib_sub_always` (peeled at 1).
 #[test]
 fn hs_sub_peels_only_from_level_2() {
-    let mk = |l: &str| Job::new("b8_sub_ring", "always").opts("+verify").limits_s(l);
+    let mk = |l: &str| {
+        Job::new("b8_sub_ring", "always")
+            .opts("+verify")
+            .limits_s(l)
+    };
     let r = run_all(vec![mk("hdrlib=2"), mk("hdrlib=1")]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
-    assert!(r[0].1.stats.peeled > r[1].1.stats.peeled, "peeled on {} off {}", r[0].1.stats.line(), r[1].1.stats.line());
+    assert!(
+        r[0].1.stats.peeled > r[1].1.stats.peeled,
+        "peeled on {} off {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
 }
 
 /// BUNDLE-1 (4): loops with a string `TLEN` / `string.byte` are peeled with the knob and rolled without it. Mutant `hdrlib_never`.
@@ -5835,7 +8312,12 @@ fn b1_hdr_peels_length_loops() {
     off.limits = "hdrlib=0".into();
     let r = run_all(vec![on, off]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
-    assert!(r[0].1.stats.peeled > r[1].1.stats.peeled, "peeled on {} off {}", r[0].1.stats.line(), r[1].1.stats.line());
+    assert!(
+        r[0].1.stats.peeled > r[1].1.stats.peeled,
+        "peeled on {} off {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
 }
 
 /// BUNDLE-1 (2): a function reached only by tail calls is compiled with `tailhook` (the `[jit] compiled` count of the run is higher than
@@ -5843,7 +8325,9 @@ fn b1_hdr_peels_length_loops() {
 #[test]
 fn b1_tail_only_callee_is_compiled() {
     let mk = |l: &str| {
-        let mut j = Job::new("b1_tail_only", "on").opts("+allblack").env("RUSTYNAIL_JIT_VERBOSE", "1");
+        let mut j = Job::new("b1_tail_only", "on")
+            .opts("+allblack")
+            .env("RUSTYNAIL_JIT_VERBOSE", "1");
         j.limits = l.into();
         j
     };
@@ -5857,7 +8341,11 @@ fn b1_tail_only_callee_is_compiled() {
     };
     let (on, off) = (compiled(&r[0].1.stderr), compiled(&r[1].1.stderr));
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
-    assert!(on > off, "compiled with the knob {on}, without {off}: {}", r[0].1.stderr);
+    assert!(
+        on > off,
+        "compiled with the knob {on}, without {off}: {}",
+        r[0].1.stderr
+    );
 }
 
 /// BUNDLE-1 (1): the work gate refuses early firings but keeps the order in which the loops of a nest form their traces: a gate that re-armed
@@ -5875,11 +8363,26 @@ fn b1_wgate_keeps_the_formation_order() {
         assert!(o.ok, "{}", o.stderr);
     }
     let e0 = r[0].1.stats.entered.max(1);
-    eprintln!("b1_nest entered per gate: {:?}", r.iter().map(|(_, o)| o.stats.entered).collect::<Vec<_>>());
+    eprintln!(
+        "b1_nest entered per gate: {:?}",
+        r.iter().map(|(_, o)| o.stats.entered).collect::<Vec<_>>()
+    );
     for (k, (_, o)) in r.iter().enumerate().skip(1) {
-        assert!(o.stats.entered <= 2 * e0 + 100, "gate {k}: entered {} against {} without a gate: {}", o.stats.entered, e0, o.stats.line());
+        assert!(
+            o.stats.entered <= 2 * e0 + 100,
+            "gate {k}: entered {} against {} without a gate: {}",
+            o.stats.entered,
+            e0,
+            o.stats.line()
+        );
         // (K3b: the old bound alone no longer detects `wgate_full_rearm` (entries 381901 / 381344 / 378746 without the mutant, 381901 / 361538 / 378108 with it): the entries stay within 2%)
-        assert!(o.stats.entered * 50 >= e0 * 49, "gate {k}: entered {} against {} without a gate (more than 2% fewer): {}", o.stats.entered, e0, o.stats.line());
+        assert!(
+            o.stats.entered * 50 >= e0 * 49,
+            "gate {k}: entered {} against {} without a gate (more than 2% fewer): {}",
+            o.stats.entered,
+            e0,
+            o.stats.line()
+        );
     }
 }
 
@@ -5916,13 +8419,16 @@ fn h2_frame_materialise() {
     compare(jobs);
 }
 
-
 // ---- BUNDLE-M ---------------------------------------------------------------------------------------------------------------
 
 /// A scratch directory unique to this call (the tests of a binary run on parallel threads of one process).
 fn m_scratch(tag: &str) -> std::path::PathBuf {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let d = std::env::temp_dir().join(format!("tr_core_m_{tag}_{}_{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+    let d = std::env::temp_dir().join(format!(
+        "tr_core_m_{tag}_{}_{}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    ));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).expect("scratch dir");
     d
@@ -5965,7 +8471,10 @@ fn m_dumps_equal(a: &std::path::Path, b: &std::path::Path) -> Result<usize, Stri
         return Err(format!("trace files differ: {} vs {}", la.len(), lb.len()));
     }
     for f in &la {
-        let (x, y) = (std::fs::read(a.join(f)).unwrap(), std::fs::read(b.join(f)).unwrap());
+        let (x, y) = (
+            std::fs::read(a.join(f)).unwrap(),
+            std::fs::read(b.join(f)).unwrap(),
+        );
         if f.ends_with(".txt") {
             if m_norm_txt(&x) != m_norm_txt(&y) {
                 return Err(format!("{f}: text differs"));
@@ -5973,7 +8482,11 @@ fn m_dumps_equal(a: &std::path::Path, b: &std::path::Path) -> Result<usize, Stri
         } else if x.len().abs_diff(y.len()) > 16 + x.len() / 50 {
             // (machine code embeds addresses of the process: the length may differ by an imm8 / imm32 choice, the bytes by the addresses;
             // the instruction-level comparison with those masked is `scripts/m_identity.py`)
-            return Err(format!("{f}: machine code size differs: {} / {}", x.len(), y.len()));
+            return Err(format!(
+                "{f}: machine code size differs: {} / {}",
+                x.len(),
+                y.len()
+            ));
         }
     }
     Ok(la.len())
@@ -5996,11 +8509,16 @@ fn m_lockstep_identity() {
     for p in &progs {
         for trace in ["always", "on2"] {
             // (`TR_CORE_LS_B=1` compares the knob with itself: the control that shows how much two runs of one setting differ)
-            let other: u32 = std::env::var("TR_CORE_LS_B").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let other: u32 = std::env::var("TR_CORE_LS_B")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
             for ls in [1, other] {
                 let d = m_scratch(&format!("{}_{trace}_{ls}", p.name));
                 // (the string hash seed is random per process: node indices of `HREFK` and the like follow it)
-                let mut j = Job::new(p.name, trace).env("TR_CORE_DUMPDIR", d.to_str().unwrap()).env("TR_CORE_SEED", "0");
+                let mut j = Job::new(p.name, trace)
+                    .env("TR_CORE_DUMPDIR", d.to_str().unwrap())
+                    .env("TR_CORE_SEED", "0");
                 j.limits = format!("lockstep={ls},recnat=1,recany=1");
                 jobs.push(j);
                 dirs.push(d);
@@ -6021,18 +8539,37 @@ fn m_lockstep_identity() {
             bad.push(format!("{tag}: output differs"));
         }
         let (a, b) = (&on.1.stats, &off.1.stats);
-        let key = |s: &TStats| (s.recorded, s.installed, s.flushes, s.blacklisted, s.refused, s.side_recorded, s.side_installed, s.aborts.clone(), s.side_aborts.clone());
+        let key = |s: &TStats| {
+            (
+                s.recorded,
+                s.installed,
+                s.flushes,
+                s.blacklisted,
+                s.refused,
+                s.side_recorded,
+                s.side_installed,
+                s.aborts.clone(),
+                s.side_aborts.clone(),
+            )
+        };
         let (da, db) = (&dirs[2 * k], &dirs[2 * k + 1]);
         match m_dumps_equal(da, db) {
             Ok(n) => traces += n,
             Err(e) => bad.push(format!("{tag}: {e}")),
         }
         if key(a) != key(b) {
-            bad.push(format!("{tag}: statistics differ: {} / {}", a.line(), b.line()));
+            bad.push(format!(
+                "{tag}: statistics differ: {} / {}",
+                a.line(),
+                b.line()
+            ));
         }
     }
     if std::env::var_os("TR_CORE_KEEP").is_some() {
-        eprintln!("[m_lockstep_identity] dumps kept under {}", std::env::temp_dir().display());
+        eprintln!(
+            "[m_lockstep_identity] dumps kept under {}",
+            std::env::temp_dir().display()
+        );
     } else {
         for d in &dirs {
             let _ = std::fs::remove_dir_all(d);
@@ -6048,7 +8585,14 @@ fn m_lockstep_identity() {
 fn rawfn_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("+exitstorm=7 +verify +randra=5", 0), ("", 17), ("-loop", 0)] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("", 17),
+            ("-loop", 0),
+        ] {
             let mut j = Job::new("rawfn_loops", trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
@@ -6064,7 +8608,12 @@ fn rawfn_programs() {
     for (j, o) in &res {
         // (5.4: `rawget` / `rawset` / `next` are not recorded as library calls, `CFunc` aborts the recording: only the output is compared there)
         if j.trace == "on2" && j.opts == "+verify" && !cfg!(rustynail_lua54) {
-            assert!(o.stats.installed >= 1 && o.stats.entered >= 1, "{}: traces did not run: {}", j.tag(), o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.tag(),
+                o.stats.line()
+            );
         }
     }
 }
@@ -6087,7 +8636,12 @@ fn random_storm_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "on2" && j.opts == "+exitstorm=7 +verify" && !j.limits.contains("uvsep") {
-            assert!(o.stats.installed >= 1 && o.stats.entered >= 1, "{}: traces did not run: {}", j.tag(), o.stats.line());
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.tag(),
+                o.stats.line()
+            );
         }
     }
 }
@@ -6098,9 +8652,12 @@ fn random_storm_programs() {
 /// harness variables (`TR_CORE_UVSEP`, `TR_CORE_PROCESS`, ...) apply as to every job. Used to minimise miscompiles (docs/JIT_PARKED.md C43).
 #[test]
 fn adhoc_file() {
-    let Ok(file) = std::env::var("TR_ADHOC_FILE") else { return };
+    let Ok(file) = std::env::var("TR_ADHOC_FILE") else {
+        return;
+    };
     let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
-    let mut j = Job::new(&format!("@{file}"), &var("TR_ADHOC_TRACE", "always")).opts(&var("TR_ADHOC_OPTS", ""));
+    let mut j = Job::new(&format!("@{file}"), &var("TR_ADHOC_TRACE", "always"))
+        .opts(&var("TR_ADHOC_OPTS", ""));
     j.limits = var("TR_ADHOC_LIMITS", "");
     compare(vec![j]);
 }
@@ -6113,26 +8670,86 @@ fn bf_stitch0_programs() {
     let mut jobs = Vec::new();
     for lim in ["stitch0=0", "stitch0=1"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop", 0)] {
-                let mut j = Job::new("bf_stitch_chain", trace).opts(opts).limits_s(lim).env("TR_CORE_PROCESS", "1");
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("-loop", 0),
+            ] {
+                let mut j = Job::new("bf_stitch_chain", trace)
+                    .opts(opts)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1");
                 if budget != 0 {
                     j = j.budget(budget);
                 }
                 jobs.push(j);
             }
-            jobs.push(Job::new("bf_stitch_chain", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-            jobs.push(Job::new("bf_stitch_chain", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("RUSTYNAIL_GC_STRESS", "1"));
-            jobs.push(Job::new("bf_stitch_chain", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("TR_CORE_GCMODE", "inc").env("RUSTYNAIL_GC_STRESS", "2"));
-            jobs.push(Job::new("bf_stitch_chain", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("TR_CORE_GCMODE", "gen").env("RUSTYNAIL_GC_STRESS", "2"));
-            jobs.push(Job::new("bf_stitch_chain", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").opts("+emurun +verify"));
+            jobs.push(
+                Job::new("bf_stitch_chain", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+            );
+            jobs.push(
+                Job::new("bf_stitch_chain", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("RUSTYNAIL_GC_STRESS", "1"),
+            );
+            jobs.push(
+                Job::new("bf_stitch_chain", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("TR_CORE_GCMODE", "inc")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new("bf_stitch_chain", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("TR_CORE_GCMODE", "gen")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new("bf_stitch_chain", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .opts("+emurun +verify"),
+            );
         }
     }
     jobs.push(Job::new("bf_stitch_chain", "t1"));
     let res = compare(jobs);
-    let pick = |lim: &str| res.iter().find(|(j, _)| j.prog == "bf_stitch_chain" && j.trace == "on2" && j.opts.is_empty() && j.budget.is_none() && j.env.len() == 1 && j.limits == lim).map(|(_, o)| o);
-    let (off, on) = (pick("stitch0=0").expect("off job"), pick("stitch0=1").expect("on job"));
-    assert!(on.stats.side_installed < off.stats.side_installed, "no empty side traces with the rule on: off {} | on {}", off.stats.line(), on.stats.line());
-    assert!(on.stats.exits < off.stats.exits, "fewer exits with the rule on: off {} | on {}", off.stats.line(), on.stats.line());
+    let pick = |lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "bf_stitch_chain"
+                    && j.trace == "on2"
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.len() == 1
+                    && j.limits == lim
+            })
+            .map(|(_, o)| o)
+    };
+    let (off, on) = (
+        pick("stitch0=0").expect("off job"),
+        pick("stitch0=1").expect("on job"),
+    );
+    assert!(
+        on.stats.side_installed < off.stats.side_installed,
+        "no empty side traces with the rule on: off {} | on {}",
+        off.stats.line(),
+        on.stats.line()
+    );
+    assert!(
+        on.stats.exits < off.stats.exits,
+        "fewer exits with the rule on: off {} | on {}",
+        off.stats.line(),
+        on.stats.line()
+    );
 }
 
 /// BUNDLE-F `fibdiet`: the slimmer native-recursion protocol (room check of the new frame from the register that holds its function index). Tree recursion,
@@ -6144,18 +8761,54 @@ fn bf_fibdiet_programs() {
     let mut jobs = Vec::new();
     for lim in ["fibdiet=0", "fibdiet=1"] {
         for trace in ["always", "on2", "on"] {
-            for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop", 0)] {
-                let mut j = Job::new("bf_rec", trace).opts(opts).limits_s(lim).env("TR_CORE_PROCESS", "1");
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("-loop", 0),
+            ] {
+                let mut j = Job::new("bf_rec", trace)
+                    .opts(opts)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1");
                 if budget != 0 {
                     j = j.budget(budget);
                 }
                 jobs.push(j);
             }
-            jobs.push(Job::new("bf_rec", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-            jobs.push(Job::new("bf_rec", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("RUSTYNAIL_GC_STRESS", "1"));
-            jobs.push(Job::new("bf_rec", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("TR_CORE_GCMODE", "inc").env("RUSTYNAIL_GC_STRESS", "2"));
-            jobs.push(Job::new("bf_rec", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").env("TR_CORE_GCMODE", "gen").env("RUSTYNAIL_GC_STRESS", "2"));
-            jobs.push(Job::new("bf_rec", trace).limits_s(lim).env("TR_CORE_PROCESS", "1").opts("+emurun +verify"));
+            jobs.push(
+                Job::new("bf_rec", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+            );
+            jobs.push(
+                Job::new("bf_rec", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("RUSTYNAIL_GC_STRESS", "1"),
+            );
+            jobs.push(
+                Job::new("bf_rec", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("TR_CORE_GCMODE", "inc")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new("bf_rec", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .env("TR_CORE_GCMODE", "gen")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new("bf_rec", trace)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1")
+                    .opts("+emurun +verify"),
+            );
         }
     }
     jobs.push(Job::new("bf_rec", "t1"));
@@ -6163,7 +8816,10 @@ fn bf_fibdiet_programs() {
     for lim in ["fibdiet=0", "fibdiet=1"] {
         for trace in ["always", "on2", "on"] {
             for (opts, budget) in [("", 0), ("+verify", 0), ("", 17), ("-loop", 0)] {
-                let mut j = Job::new("bf_rec_deep", trace).opts(opts).limits_s(lim).env("TR_CORE_PROCESS", "1");
+                let mut j = Job::new("bf_rec_deep", trace)
+                    .opts(opts)
+                    .limits_s(lim)
+                    .env("TR_CORE_PROCESS", "1");
                 if budget != 0 {
                     j = j.budget(budget);
                 }
@@ -6181,24 +8837,67 @@ fn bf_fibdiet_programs() {
 #[test]
 fn centry_programs_run_on_traces() {
     let mut jobs = Vec::new();
-    for p in ["j1_sort_objects", "j1_callbacks", "j1_errors", "j1_gc_hooks"] {
+    for p in [
+        "j1_sort_objects",
+        "j1_callbacks",
+        "j1_errors",
+        "j1_gc_hooks",
+    ] {
         for trace in ["always", "on2"] {
-            for l in ["centry=2,centrymin=0", "centry=1,centrymin=0", "centry=2", "centry=0"] {
+            for l in [
+                "centry=2,centrymin=0",
+                "centry=1,centrymin=0",
+                "centry=2",
+                "centry=0",
+            ] {
                 jobs.push(Job::new(p, trace).limits_s(l).opts("+verify"));
             }
-            jobs.push(Job::new(p, trace).limits_s("centry=2,centrymin=0").opts("+exitstorm=3 +verify"));
-            jobs.push(Job::new(p, trace).limits_s("centry=2,centrymin=0").opts("+exitstorm=7 +verify +randra=5"));
-            jobs.push(Job::new(p, trace).limits_s("centry=2,centrymin=0").budget(17));
-            jobs.push(Job::new(p, trace).limits_s("centry=2,centrymin=0").opts("+emurun +verify"));
-            jobs.push(Job::new(p, trace).limits_s("centry=2,centrymin=0").env("RUSTYNAIL_GC_STRESS", "2"));
-            jobs.push(Job::new(p, trace).limits_s("centry=2,centrymin=0").env("RUSTYNAIL_GC_STRESS", "1"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("centry=2,centrymin=0")
+                    .opts("+exitstorm=3 +verify"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("centry=2,centrymin=0")
+                    .opts("+exitstorm=7 +verify +randra=5"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("centry=2,centrymin=0")
+                    .budget(17),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("centry=2,centrymin=0")
+                    .opts("+emurun +verify"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("centry=2,centrymin=0")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("centry=2,centrymin=0")
+                    .env("RUSTYNAIL_GC_STRESS", "1"),
+            );
         }
         jobs.push(Job::new(p, "t1"));
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.prog == "j1_sort_objects" && j.trace == "always" && j.limits == "centry=2,centrymin=0" && j.opts == "+verify" {
-            assert!(o.stats.installed >= 1, "{}: no trace installed: {}", j.prog, o.stats.line());
+        if j.prog == "j1_sort_objects"
+            && j.trace == "always"
+            && j.limits == "centry=2,centrymin=0"
+            && j.opts == "+verify"
+        {
+            assert!(
+                o.stats.installed >= 1,
+                "{}: no trace installed: {}",
+                j.prog,
+                o.stats.line()
+            );
         }
     }
 }
@@ -6209,22 +8908,50 @@ fn centry_programs_run_on_traces() {
 #[test]
 fn centry_small_comparator_is_a_root() {
     let res = compare(vec![
-        Job::new("j1_small_cmp", "always").limits_s("centry=2,centrymin=0").opts("+verify"),
-        Job::new("j1_small_cmp", "always").limits_s("centry=2").opts("+verify"),
-        Job::new("j1_small_cmp", "always").limits_s("centry=0").opts("+verify"),
+        Job::new("j1_small_cmp", "always")
+            .limits_s("centry=2,centrymin=0")
+            .opts("+verify"),
+        Job::new("j1_small_cmp", "always")
+            .limits_s("centry=2")
+            .opts("+verify"),
+        Job::new("j1_small_cmp", "always")
+            .limits_s("centry=0")
+            .opts("+verify"),
         Job::new("j1_small_cmp", "on2").limits_s("centry=2,centrymin=0"),
     ]);
     for (j, o) in &res {
         match (j.trace.as_str(), j.limits.as_str()) {
             ("always", "centry=2,centrymin=0") | ("on2", "centry=2,centrymin=0") => {
-                assert!(o.stats.installed >= 1, "{} {}: no C-entered root installed: {}", j.prog, j.limits, o.stats.line());
-                assert!(o.stats.entered >= 1000, "{} {}: the calls from C do not enter the root: {}", j.prog, j.limits, o.stats.line());
+                assert!(
+                    o.stats.installed >= 1,
+                    "{} {}: no C-entered root installed: {}",
+                    j.prog,
+                    j.limits,
+                    o.stats.line()
+                );
+                assert!(
+                    o.stats.entered >= 1000,
+                    "{} {}: the calls from C do not enter the root: {}",
+                    j.prog,
+                    j.limits,
+                    o.stats.line()
+                );
             }
             ("always", "centry=2") => {
-                assert!(o.stats.entered < 500, "{}: the light root is entered from C (weight rule): {}", j.prog, o.stats.line());
+                assert!(
+                    o.stats.entered < 500,
+                    "{}: the light root is entered from C (weight rule): {}",
+                    j.prog,
+                    o.stats.line()
+                );
             }
             ("always", "centry=0") => {
-                assert!(o.stats.entered < 500, "{}: entered from C with centry=0: {}", j.prog, o.stats.line());
+                assert!(
+                    o.stats.entered < 500,
+                    "{}: entered from C with centry=0: {}",
+                    j.prog,
+                    o.stats.line()
+                );
             }
             _ => {}
         }
@@ -6236,15 +8963,36 @@ fn centry_small_comparator_is_a_root() {
 #[test]
 fn centry_blacklisted_comparator_leaves_c_entry() {
     let res = compare(vec![
-        Job::new("j1_loop_cmp", "always").limits_s("centry=2,centrymin=0").opts("+verify"),
+        Job::new("j1_loop_cmp", "always")
+            .limits_s("centry=2,centrymin=0")
+            .opts("+verify"),
         Job::new("j1_loop_cmp", "on2").limits_s("centry=2,centrymin=0"),
         Job::new("j1_loop_cmp", "always").limits_s("centry=0"),
     ]);
     for (j, o) in &res {
         if j.limits.starts_with("centry=2") {
-            assert!(o.stats.c_registered >= 1, "{} {}: no C-entered prototype registered: {}", j.prog, j.trace, o.stats.line());
-            assert!(o.stats.blacklisted >= 1, "{} {}: the comparator head was not blacklisted: {}", j.prog, j.trace, o.stats.line());
-            assert!(o.stats.c_entries < 1500, "{} {}: {} calls from C entered compiled code after the head went black: {}", j.prog, j.trace, o.stats.c_entries, o.stats.line());
+            assert!(
+                o.stats.c_registered >= 1,
+                "{} {}: no C-entered prototype registered: {}",
+                j.prog,
+                j.trace,
+                o.stats.line()
+            );
+            assert!(
+                o.stats.blacklisted >= 1,
+                "{} {}: the comparator head was not blacklisted: {}",
+                j.prog,
+                j.trace,
+                o.stats.line()
+            );
+            assert!(
+                o.stats.c_entries < 1500,
+                "{} {}: {} calls from C entered compiled code after the head went black: {}",
+                j.prog,
+                j.trace,
+                o.stats.c_entries,
+                o.stats.line()
+            );
         }
     }
 }
@@ -6257,8 +9005,18 @@ fn centry_registration_waits_for_hot_calls() {
         Job::new("j1_small_cmp", "always").limits_s("centry=2,centrymin=0,centrywait=0"),
         Job::new("j1_small_cmp", "always").limits_s("centry=2,centrymin=0,centrywait=400"),
     ]);
-    let ent = |w: &str| res.iter().find(|(j, _)| j.limits.ends_with(w)).map(|(_, o)| o.stats.entered).unwrap();
-    assert!(ent("centrywait=0") >= ent("centrywait=400") + 300, "a long wait does not delay the registration: {} vs {}", ent("centrywait=0"), ent("centrywait=400"));
+    let ent = |w: &str| {
+        res.iter()
+            .find(|(j, _)| j.limits.ends_with(w))
+            .map(|(_, o)| o.stats.entered)
+            .unwrap()
+    };
+    assert!(
+        ent("centrywait=0") >= ent("centrywait=400") + 300,
+        "a long wait does not delay the registration: {} vs {}",
+        ent("centrywait=0"),
+        ent("centrywait=400")
+    );
 }
 
 /// BUNDLE-P P2 `f2ifl`: the `F2I` guard behind a `FFLOOR` is `cvttsd2si; cmp r, 1; jo`. Floor / ceil of floats at the edges of the integer range (NaN, +-inf, +-2^63,
@@ -6273,15 +9031,29 @@ fn bp_f2ifl_programs() {
     for prog in ["bp_floor", "bp_floor_minint"] {
         for trace in ["always", "on2", "on"] {
             for lim in LIMS {
-                for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop", 0)] {
+                for (opts, budget) in [
+                    ("", 0),
+                    ("+verify", 0),
+                    ("+exitstorm=3 +verify", 0),
+                    ("", 17),
+                    ("-loop", 0),
+                ] {
                     let mut j = Job::new(prog, trace).opts(opts).limits_s(lim);
                     if budget != 0 {
                         j = j.budget(budget);
                     }
                     jobs.push(j);
                 }
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_GC_STRESS", "2"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_GC_STRESS", "2"),
+                );
                 jobs.push(Job::new(prog, trace).limits_s(lim).opts("+emurun +verify"));
             }
         }
@@ -6290,13 +9062,24 @@ fn bp_f2ifl_programs() {
     let res = compare(jobs);
     for (j, o) in &res {
         if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
-            assert!(o.stats.entered >= 1, "{}: traces did not run: {}", j.tag(), o.stats.line());
+            assert!(
+                o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.tag(),
+                o.stats.line()
+            );
         }
     }
     // the conservative exit: the floor of exactly -2^63 leaves the trace with the knob, and only with it
     let find = |lim: &str| {
         res.iter()
-            .find(|(k, _)| k.prog == "bp_floor_minint" && k.trace == "always" && k.opts == "+verify" && k.limits == lim && k.env.is_empty())
+            .find(|(k, _)| {
+                k.prog == "bp_floor_minint"
+                    && k.trace == "always"
+                    && k.opts == "+verify"
+                    && k.limits == lim
+                    && k.env.is_empty()
+            })
             .map(|(_, o)| o.stats.exits)
             .expect("job")
     };
@@ -6323,28 +9106,64 @@ fn bq_t1q_programs() {
                 }
             }
             if trace != "t1" {
-                jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s("t1q=3"));
-                jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s("t1q=3"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s("t1q=3"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+emurun +verify")
+                        .limits_s("t1q=3"),
+                );
                 jobs.push(Job::new(prog, trace).budget(17).limits_s("t1q=3"));
             }
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("t1q=3"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "1").limits_s("t1q=3"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove").limits_s("t1q=3"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("t1q=3"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .limits_s("t1q=3"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s("t1q=3"),
+            );
         }
         jobs.push(Job::new(prog, "t1"));
         jobs.push(Job::new(prog, "on"));
     }
     let res = compare(jobs);
     let find = |prog: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == prog && j.trace == "t1" && j.limits == lim && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none()).map(|(_, o)| o.insns).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == "t1"
+                    && j.limits == lim
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+            })
+            .map(|(_, o)| o.insns)
+            .expect("job")
     };
     // (`Out::insns` = bytecodes executed by compiled code: the answered cases and the float modulo no longer leave tier 1 to the interpreter)
     for (prog, bit) in [("bq_eq", "t1q=1"), ("bq_mod", "t1q=2")] {
         let (off, on) = (find(prog, "t1q=0"), find(prog, bit));
         eprintln!("{prog} [t1] compiled-code instructions: t1q=0 {off}, {bit} {on}");
-        assert!(on > off, "{prog}: {bit} runs {on} compiled-code instructions, t1q=0 runs {off}");
+        assert!(
+            on > off,
+            "{prog}: {bit} runs {on} compiled-code instructions, t1q=0 runs {off}"
+        );
     }
-    assert!(find("bq_eq", "t1q=3") >= find("bq_eq", "t1q=1") && find("bq_mod", "t1q=3") >= find("bq_mod", "t1q=2"));
+    assert!(
+        find("bq_eq", "t1q=3") >= find("bq_eq", "t1q=1")
+            && find("bq_mod", "t1q=3") >= find("bq_mod", "t1q=2")
+    );
 }
 
 /// BUNDLE-S S2 `amt`: array reads / stores of tables that have a metatable are recorded (a non-nil element: raw access; a nil element: the flag guard of `__index` /
@@ -6359,16 +9178,34 @@ fn bs_amt_programs() {
     for prog in ["bs_amt"] {
         for trace in ["always", "on2", "on"] {
             for lim in ["amt=0", "amt=1"] {
-                for (opts, budget) in [("", 0), ("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17), ("-loop +verify", 0)] {
+                for (opts, budget) in [
+                    ("", 0),
+                    ("+verify", 0),
+                    ("+exitstorm=3 +verify", 0),
+                    ("", 17),
+                    ("-loop +verify", 0),
+                ] {
                     let mut j = Job::new(prog, trace).opts(opts).limits_s(lim);
                     if budget != 0 {
                         j = j.budget(budget);
                     }
                     jobs.push(j);
                 }
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_GC_STRESS", "2"));
-                jobs.push(Job::new(prog, trace).limits_s(lim).env("RUSTYNAIL_GC_STRESS", "1"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_GC_STRESS", "2"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .limits_s(lim)
+                        .env("RUSTYNAIL_GC_STRESS", "1"),
+                );
                 jobs.push(Job::new(prog, trace).limits_s(lim).opts("+emurun +verify"));
             }
         }
@@ -6378,13 +9215,22 @@ fn bs_amt_programs() {
     let res = compare(jobs);
     let find = |lim: &str| {
         res.iter()
-            .find(|(k, _)| k.prog == "bs_amt" && k.trace == "always" && k.opts == "+verify" && k.limits == lim && k.env.is_empty())
+            .find(|(k, _)| {
+                k.prog == "bs_amt"
+                    && k.trace == "always"
+                    && k.opts == "+verify"
+                    && k.limits == lim
+                    && k.env.is_empty()
+            })
             .map(|(_, o)| o.stats.aborts.get("MetaTable").copied().unwrap_or(0))
             .expect("job")
     };
     let (off, on) = (find("amt=0"), find("amt=1"));
     eprintln!("bs_amt MetaTable aborts: amt=0 {off}, amt=1 {on}");
-    assert!(off > on, "amt=1 MetaTable aborts {on} not below amt=0 aborts {off}");
+    assert!(
+        off > on,
+        "amt=1 MetaTable aborts {on} not below amt=0 aborts {off}"
+    );
 }
 
 /// BUNDLE-S S1 `t1q` bits 2 / 3: tier-1 table reads whose `__index` is a Lua function and stores whose `__newindex` is a Lua function run the handler as an in-place frame
@@ -6406,14 +9252,34 @@ fn bs_ixmm_programs() {
                 }
             }
             if trace != "t1" {
-                jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s("t1q=13"));
-                jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s("t1q=13"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s("t1q=13"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+emurun +verify")
+                        .limits_s("t1q=13"),
+                );
             }
             jobs.push(Job::new(prog, trace).budget(17).limits_s("t1q=13"));
             jobs.push(Job::new(prog, trace).budget(1000).limits_s("t1q=13"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("t1q=13"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "1").limits_s("t1q=13"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove").limits_s("t1q=13"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("t1q=13"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .limits_s("t1q=13"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s("t1q=13"),
+            );
         }
         jobs.push(Job::new(prog, "t1"));
         jobs.push(Job::new(prog, "on"));
@@ -6433,7 +9299,14 @@ fn bs_ixmm_programs() {
     let res = compare(jobs);
     let find = |lim: &str| {
         res.iter()
-            .find(|(j, _)| j.prog == "bs_ixmm" && j.trace == "t1" && j.limits == lim && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none())
+            .find(|(j, _)| {
+                j.prog == "bs_ixmm"
+                    && j.trace == "t1"
+                    && j.limits == lim
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+            })
             .map(|(_, o)| o.insns)
             .expect("job")
     };
@@ -6442,7 +9315,10 @@ fn bs_ixmm_programs() {
     for lim in ["t1q=5", "t1q=9", "t1q=13"] {
         let on = find(lim);
         eprintln!("bs_ixmm [t1] compiled-code instructions: t1q=1 {base}, {lim} {on}");
-        assert!(on > base, "{lim} runs {on} compiled-code instructions, t1q=1 runs {base}");
+        assert!(
+            on > base,
+            "{lim} runs {on} compiled-code instructions, t1q=1 runs {base}"
+        );
     }
 }
 
@@ -6458,21 +9334,43 @@ fn bv_mm_programs() {
     let mut jobs = Vec::new();
     for prog in ["bv_mm"] {
         for trace in ["t1", "always", "on2", "on"] {
-            for lim in ["t1q=13", "t1q=29", "t1q=45", "t1q=77", "t1q=125", "t1q=112", "t1q=1"] {
+            for lim in [
+                "t1q=13", "t1q=29", "t1q=45", "t1q=77", "t1q=125", "t1q=112", "t1q=1",
+            ] {
                 jobs.push(Job::new(prog, trace).limits_s(lim));
                 if trace != "t1" {
                     jobs.push(Job::new(prog, trace).opts("+verify").limits_s(lim));
                 }
             }
             if trace != "t1" {
-                jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s("t1q=125"));
-                jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s("t1q=125"));
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s("t1q=125"),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+emurun +verify")
+                        .limits_s("t1q=125"),
+                );
             }
             jobs.push(Job::new(prog, trace).budget(17).limits_s("t1q=125"));
             jobs.push(Job::new(prog, trace).budget(1000).limits_s("t1q=125"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("t1q=125"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "1").limits_s("t1q=125"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove").limits_s("t1q=125"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("t1q=125"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .limits_s("t1q=125"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s("t1q=125"),
+            );
         }
         jobs.push(Job::new(prog, "t1"));
         jobs.push(Job::new(prog, "on"));
@@ -6491,7 +9389,14 @@ fn bv_mm_programs() {
     let res = compare(jobs);
     let find = |lim: &str| {
         res.iter()
-            .find(|(j, _)| j.prog == "bv_mm" && j.trace == "t1" && j.limits == lim && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none())
+            .find(|(j, _)| {
+                j.prog == "bv_mm"
+                    && j.trace == "t1"
+                    && j.limits == lim
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+            })
             .map(|(_, o)| o.insns)
             .expect("job")
     };
@@ -6500,7 +9405,10 @@ fn bv_mm_programs() {
     for lim in ["t1q=29", "t1q=125"] {
         let on = find(lim);
         eprintln!("bv_mm [t1] compiled-code instructions: t1q=13 {base}, {lim} {on}");
-        assert!(on > base, "{lim} runs {on} compiled-code instructions, t1q=13 runs {base}");
+        assert!(
+            on > base,
+            "{lim} runs {on} compiled-code instructions, t1q=13 runs {base}"
+        );
     }
 }
 
@@ -6517,17 +9425,59 @@ fn bv_upbar_programs() {
                 jobs.push(Job::new(prog, trace).limits_s(lim));
                 jobs.push(Job::new(prog, trace).opts("+verify").limits_s(lim));
             }
-            jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s("upbar=1"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+emurun +verify")
+                    .limits_s("upbar=1"),
+            );
             jobs.push(Job::new(prog, trace).budget(17).limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "1").limits_s("upbar=1"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .limits_s("upbar=1"),
+            );
             // (`Heap::verify` after every step: a black upvalue that holds a white value, the missing barrier, is reported at once)
-            jobs.push(Job::new(prog, trace).env("TR_CORE_GCMODE", "inc").env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).env("TR_CORE_GCMODE", "gen").env("RUSTYNAIL_GC_STRESS", "2").env("RUSTYNAIL_GC_VERIFY", "1").limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).env("TR_CORE_GCMODE", "inc").env("RUSTYNAIL_GC_STRESS", "2").limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).env("TR_CORE_GCMODE", "gen").env("RUSTYNAIL_GC_STRESS", "2").limits_s("upbar=1"));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove").limits_s("upbar=1"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("TR_CORE_GCMODE", "inc")
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("TR_CORE_GCMODE", "gen")
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("TR_CORE_GCMODE", "inc")
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("TR_CORE_GCMODE", "gen")
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s("upbar=1"),
+            );
         }
         jobs.push(Job::new(prog, "t1"));
         jobs.push(Job::new(prog, "on"));
@@ -6535,11 +9485,29 @@ fn bv_upbar_programs() {
     let res = compare(jobs);
     let setupval_aborts = |lim: &str| -> usize {
         res.iter()
-            .find(|(j, _)| j.prog == "bv_upbar" && j.trace == "always" && j.limits == lim && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none())
-            .map(|(_, o)| o.stats.aborts.iter().filter(|(k, _)| k.starts_with("Nyi")).map(|(_, n)| *n as usize).sum())
+            .find(|(j, _)| {
+                j.prog == "bv_upbar"
+                    && j.trace == "always"
+                    && j.limits == lim
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+            })
+            .map(|(_, o)| {
+                o.stats
+                    .aborts
+                    .iter()
+                    .filter(|(k, _)| k.starts_with("Nyi"))
+                    .map(|(_, n)| *n as usize)
+                    .sum()
+            })
             .expect("job")
     };
-    eprintln!("bv_upbar Nyi(Setupval) aborts: upbar=0 {}, upbar=1 {}", setupval_aborts("upbar=0"), setupval_aborts("upbar=1"));
+    eprintln!(
+        "bv_upbar Nyi(Setupval) aborts: upbar=0 {}, upbar=1 {}",
+        setupval_aborts("upbar=0"),
+        setupval_aborts("upbar=1")
+    );
 }
 
 /// Y5: the forward barrier of an upvalue store (`upbar`: `USTORE` + `TBAR` aux 1, helper `jit_tr_barrier` with `b` = 1) in real runs. The inline test calls the
@@ -6553,26 +9521,68 @@ fn y5_upbar_black_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
         for gm in ["inc", "gen"] {
-            jobs.push(Job::new("y5_upbar_black", trace).env("TR_CORE_GCMODE", gm).limits_s("upbar=1"));
-            jobs.push(Job::new("y5_upbar_black", trace).env("TR_CORE_GCMODE", gm).opts("+verify").limits_s("upbar=1"));
-            jobs.push(Job::new("y5_upbar_black", trace).env("TR_CORE_GCMODE", gm).limits_s("upbar=0"));
+            jobs.push(
+                Job::new("y5_upbar_black", trace)
+                    .env("TR_CORE_GCMODE", gm)
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new("y5_upbar_black", trace)
+                    .env("TR_CORE_GCMODE", gm)
+                    .opts("+verify")
+                    .limits_s("upbar=1"),
+            );
+            jobs.push(
+                Job::new("y5_upbar_black", trace)
+                    .env("TR_CORE_GCMODE", gm)
+                    .limits_s("upbar=0"),
+            );
             for stress in ["1", "2"] {
-                jobs.push(Job::new("y5_upbar_black_small", trace).env("TR_CORE_GCMODE", gm).env("RUSTYNAIL_GC_STRESS", stress).env("RUSTYNAIL_GC_VERIFY", "1").limits_s("upbar=1"));
+                jobs.push(
+                    Job::new("y5_upbar_black_small", trace)
+                        .env("TR_CORE_GCMODE", gm)
+                        .env("RUSTYNAIL_GC_STRESS", stress)
+                        .env("RUSTYNAIL_GC_VERIFY", "1")
+                        .limits_s("upbar=1"),
+                );
             }
-            jobs.push(Job::new("y5_upbar_black_small", trace).env("TR_CORE_GCMODE", gm).env("RUSTYNAIL_GC_VERIFY", "1").limits_s("upbar=1"));
+            jobs.push(
+                Job::new("y5_upbar_black_small", trace)
+                    .env("TR_CORE_GCMODE", gm)
+                    .env("RUSTYNAIL_GC_VERIFY", "1")
+                    .limits_s("upbar=1"),
+            );
         }
-        jobs.push(Job::new("y5_upbar_black", trace).budget(17).limits_s("upbar=1"));
-        jobs.push(Job::new("y5_upbar_black", trace).opts("+exitstorm=3 +verify").limits_s("upbar=1"));
+        jobs.push(
+            Job::new("y5_upbar_black", trace)
+                .budget(17)
+                .limits_s("upbar=1"),
+        );
+        jobs.push(
+            Job::new("y5_upbar_black", trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s("upbar=1"),
+        );
     }
     jobs.push(Job::new("y5_upbar_black", "t1"));
     let res = compare(jobs);
     for gm in ["inc", "gen"] {
         let o = res
             .iter()
-            .find(|(j, _)| j.prog == "y5_upbar_black" && j.trace == "always" && j.limits == "upbar=1" && j.opts.is_empty() && j.budget.is_none() && j.env.iter().any(|(k, v)| k == "TR_CORE_GCMODE" && v == gm))
+            .find(|(j, _)| {
+                j.prog == "y5_upbar_black"
+                    && j.trace == "always"
+                    && j.limits == "upbar=1"
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.iter().any(|(k, v)| k == "TR_CORE_GCMODE" && v == gm)
+            })
             .map(|(_, o)| o)
             .expect("job");
-        eprintln!("y5_upbar_black [{gm}] barrier helper calls: table {} upvalue {}", o.stats.barrier_table, o.stats.barrier_upvalue);
+        eprintln!(
+            "y5_upbar_black [{gm}] barrier helper calls: table {} upvalue {}",
+            o.stats.barrier_table, o.stats.barrier_upvalue
+        );
         assert!(o.stats.barrier_upvalue > 0, "y5_upbar_black [{gm}]: no real run reached the upvalue barrier (black upvalue, white value): {}", o.stats.line());
     }
 }
@@ -6585,7 +9595,14 @@ fn y5_upbar_black_programs() {
 fn y2_tset_storm_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for opts in ["+exitstorm=7 +randra=5", "+exitstorm=7", "+exitstorm=3 +verify", "+exitstorm=5 +randra=5 +verify", "+exitstorm=11 +randra=5", "+exitstorm=2 +randra=9 -loop"] {
+        for opts in [
+            "+exitstorm=7 +randra=5",
+            "+exitstorm=7",
+            "+exitstorm=3 +verify",
+            "+exitstorm=5 +randra=5 +verify",
+            "+exitstorm=11 +randra=5",
+            "+exitstorm=2 +randra=9 -loop",
+        ] {
             jobs.push(Job::new("y2_insert_storm", trace).opts(opts));
         }
     }
@@ -6601,7 +9618,14 @@ fn y2_tset_storm_programs() {
 fn va_tmove_overlap_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for opts in ["", "+verify", "-fwd -cse", "+exitstorm=7", "-fold -cse +exitstorm=7", "+exitstorm=3 +verify"] {
+        for opts in [
+            "",
+            "+verify",
+            "-fwd -cse",
+            "+exitstorm=7",
+            "-fold -cse +exitstorm=7",
+            "+exitstorm=3 +verify",
+        ] {
             jobs.push(Job::new("va_tmove_overlap", trace).opts(opts));
         }
     }
@@ -6619,57 +9643,180 @@ fn va_tmove_overlap_programs() {
 fn bp_rearmside_programs() {
     let mut jobs = Vec::new();
     // the `while` loop of `bp_rearm_young_la` is only unrolled into the caller's trace (not traced as a root of its own first) behind the start gate of a process (`wgate`)
-    let lim_of = |prog: &str, l: &str| if prog == "bp_rearm_young_la" { format!("{l},wgate=30000") } else { l.to_string() };
-    for prog in ["bp_rearm_young_clean", "bp_rearm_young_dirty", "bp_rearm_young_la"] {
+    let lim_of = |prog: &str, l: &str| {
+        if prog == "bp_rearm_young_la" {
+            format!("{l},wgate=30000")
+        } else {
+            l.to_string()
+        }
+    };
+    for prog in [
+        "bp_rearm_young_clean",
+        "bp_rearm_young_dirty",
+        "bp_rearm_young_la",
+    ] {
         for trace in ["always", "on2", "on"] {
-            for lim in ["rearmside=0", "rearmside=1", "rearmside=2", "rearmside=2,rearmclean=0", "rearmside=64"] {
-                jobs.push(Job::new(prog, trace).opts("+verify").limits_s(&lim_of(prog, lim)));
+            for lim in [
+                "rearmside=0",
+                "rearmside=1",
+                "rearmside=2",
+                "rearmside=2,rearmclean=0",
+                "rearmside=64",
+            ] {
+                jobs.push(
+                    Job::new(prog, trace)
+                        .opts("+verify")
+                        .limits_s(&lim_of(prog, lim)),
+                );
                 jobs.push(Job::new(prog, trace).limits_s(&lim_of(prog, lim)));
             }
-            jobs.push(Job::new(prog, trace).opts("+exitstorm=3 +verify").limits_s(&lim_of(prog, "rearmside=2")));
-            jobs.push(Job::new(prog, trace).opts("+exitstorm=7 +verify +randra=5").limits_s(&lim_of(prog, "rearmside=1,rearmclean=0")));
-            jobs.push(Job::new(prog, trace).budget(17).limits_s(&lim_of(prog, "rearmside=2")));
-            jobs.push(Job::new(prog, trace).opts("+emurun +verify").limits_s(&lim_of(prog, "rearmside=2")));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(&lim_of(prog, "rearmside=2")));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_GC_STRESS", "1").limits_s(&lim_of(prog, "rearmside=2")));
-            jobs.push(Job::new(prog, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove").limits_s(&lim_of(prog, "rearmside=2")));
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(&lim_of(prog, "rearmside=2")),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+exitstorm=7 +verify +randra=5")
+                    .limits_s(&lim_of(prog, "rearmside=1,rearmclean=0")),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .budget(17)
+                    .limits_s(&lim_of(prog, "rearmside=2")),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+emurun +verify")
+                    .limits_s(&lim_of(prog, "rearmside=2")),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(&lim_of(prog, "rearmside=2")),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .limits_s(&lim_of(prog, "rearmside=2")),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s(&lim_of(prog, "rearmside=2")),
+            );
         }
         jobs.push(Job::new(prog, "t1"));
     }
     let res = compare(jobs);
     let find = |prog: &str, lim: &str| {
         let lim = lim_of(prog, lim);
-        res.iter().find(|(j, _)| j.prog == prog && j.trace == "on" && j.limits == lim && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == "on"
+                    && j.limits == lim
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     // the clean twin: the production default (rearmside=2, rearmclean=1) enters the young head
-    let (off, on, plain) = (find("bp_rearm_young_clean", "rearmside=0"), find("bp_rearm_young_clean", "rearmside=2"), find("bp_rearm_young_clean", "rearmside=2,rearmclean=0"));
+    let (off, on, plain) = (
+        find("bp_rearm_young_clean", "rearmside=0"),
+        find("bp_rearm_young_clean", "rearmside=2"),
+        find("bp_rearm_young_clean", "rearmside=2,rearmclean=0"),
+    );
     eprintln!("bp_rearm_young_clean [on] rearmside=0: armed {} entered {} | rearmside=2: armed {} entered {} | rearmclean=0: entered {}", off.rearm_arms, off.rearm_enters, on.rearm_arms, on.rearm_enters, plain.rearm_enters);
-    assert!(on.rearm_enters > off.rearm_enters, "rearmside=2 enters the clean young head: {} vs {}", on.rearm_enters, off.rearm_enters);
-    assert_eq!(on.side_failed, 0, "the clean twin has no failed side recording");
+    assert!(
+        on.rearm_enters > off.rearm_enters,
+        "rearmside=2 enters the clean young head: {} vs {}",
+        on.rearm_enters,
+        off.rearm_enters
+    );
+    assert_eq!(
+        on.side_failed, 0,
+        "the clean twin has no failed side recording"
+    );
     assert_eq!(on.rearm_unclean, (0, 0), "the clean twin is never refused");
     // the faulty twin: kept out by the clean test, entered without it
-    let (off, on, plain) = (find("bp_rearm_young_dirty", "rearmside=0"), find("bp_rearm_young_dirty", "rearmside=2"), find("bp_rearm_young_dirty", "rearmside=2,rearmclean=0"));
+    let (off, on, plain) = (
+        find("bp_rearm_young_dirty", "rearmside=0"),
+        find("bp_rearm_young_dirty", "rearmside=2"),
+        find("bp_rearm_young_dirty", "rearmside=2,rearmclean=0"),
+    );
     eprintln!("bp_rearm_young_dirty [on] rearmside=0: entered {} | rearmside=2: entered {} | rearmclean=0: entered {} (failed side recordings {})", off.rearm_enters, on.rearm_enters, plain.rearm_enters, on.side_failed);
-    assert!(on.side_failed > 0, "the faulty twin has a failed side recording");
-    assert_eq!(on.rearm_enters, off.rearm_enters, "a family with a failed side recording is not entered young: {} vs {}", on.rearm_enters, off.rearm_enters);
-    assert!(plain.rearm_enters > off.rearm_enters, "without the clean test the faulty family is entered: {} vs {}", plain.rearm_enters, off.rearm_enters);
-    assert!(on.rearm_unclean.0 > 0, "the refusals are counted: {:?}", on.rearm_unclean);
+    assert!(
+        on.side_failed > 0,
+        "the faulty twin has a failed side recording"
+    );
+    assert_eq!(
+        on.rearm_enters, off.rearm_enters,
+        "a family with a failed side recording is not entered young: {} vs {}",
+        on.rearm_enters, off.rearm_enters
+    );
+    assert!(
+        plain.rearm_enters > off.rearm_enters,
+        "without the clean test the faulty family is entered: {} vs {}",
+        plain.rearm_enters,
+        off.rearm_enters
+    );
+    assert!(
+        on.rearm_unclean.0 > 0,
+        "the refusals are counted: {:?}",
+        on.rearm_unclean
+    );
     assert_eq!(plain.rearm_unclean, (0, 0), "rearmclean=0 refuses nothing");
     // the loopany twin: refused for the unrolled callee loop (mutant `rearmclean_ignores_la`)
-    let (on, plain) = (find("bp_rearm_young_la", "rearmside=2"), find("bp_rearm_young_la", "rearmside=2,rearmclean=0"));
-    eprintln!("bp_rearm_young_la [on] rearmside=2: entered {} unclean {:?} | rearmclean=0: entered {}", on.rearm_enters, on.rearm_unclean, plain.rearm_enters);
-    assert!(on.rearm_unclean.1 > 0, "a family that unrolled a callee loop is refused: {:?}", on.rearm_unclean);
+    let (on, plain) = (
+        find("bp_rearm_young_la", "rearmside=2"),
+        find("bp_rearm_young_la", "rearmside=2,rearmclean=0"),
+    );
+    eprintln!(
+        "bp_rearm_young_la [on] rearmside=2: entered {} unclean {:?} | rearmclean=0: entered {}",
+        on.rearm_enters, on.rearm_unclean, plain.rearm_enters
+    );
+    assert!(
+        on.rearm_unclean.1 > 0,
+        "a family that unrolled a callee loop is refused: {:?}",
+        on.rearm_unclean
+    );
     assert_eq!(plain.rearm_unclean, (0, 0), "rearmclean=0 refuses nothing");
 }
-
 
 // ---- BUNDLE-N: RETF (docs/JIT_PARKED.md C38) ------------------------------------------------------------------------------------------------
 
 const NR_PROGNAMES: &[&str] = &[
-    "n_retf_basic", "n_retf_tail", "n_retf_multret", "n_retf_ccaller", "n_retf_two_sites", "n_retf_mm", "n_retf_getlocal", "n_retf_hook",
-    "n_retf_vararg_caller", "n_retf_closeret", "n_retf_coro", "n_retf_deep", "n_retf_gc", "n_retf_results", "n_retf_upvalue_alias", "n_retf_mr_hot",
-    "n_retf_continue", "n_retf_untraced", "n_retf_relink", "n_retf_recursion", "n_retf_two_levels", "n_retf_after_exits",
-    "n_retf_types", "n_retf_upvals", "n_retf_poly", "n_retf_swap", "n_retf_failafter", "n_retf_relink2",
+    "n_retf_basic",
+    "n_retf_tail",
+    "n_retf_multret",
+    "n_retf_ccaller",
+    "n_retf_two_sites",
+    "n_retf_mm",
+    "n_retf_getlocal",
+    "n_retf_hook",
+    "n_retf_vararg_caller",
+    "n_retf_closeret",
+    "n_retf_coro",
+    "n_retf_deep",
+    "n_retf_gc",
+    "n_retf_results",
+    "n_retf_upvalue_alias",
+    "n_retf_mr_hot",
+    "n_retf_continue",
+    "n_retf_untraced",
+    "n_retf_relink",
+    "n_retf_recursion",
+    "n_retf_two_levels",
+    "n_retf_after_exits",
+    "n_retf_types",
+    "n_retf_upvals",
+    "n_retf_poly",
+    "n_retf_swap",
+    "n_retf_failafter",
+    "n_retf_relink2",
 ];
 
 /// BUNDLE-N: every `n_retf_*` program in the whole matrix (trace modes, exit storms, random allocation, budgets, GC stress 1 / 2 in both collector
@@ -6677,8 +9824,22 @@ const NR_PROGNAMES: &[&str] = &[
 #[test]
 fn nr_matrix() {
     let only = std::env::var("TR_CORE_ONLY").ok();
-    for p in NR_PROGNAMES.iter().filter(|p| only.as_ref().is_none_or(|o| p.contains(o.as_str()))) {
-        assert!(!compare(ba_jobs(p, &["retf=1,retfmax=1", "retf=1,retfmax=2", "retf=3,retfmax=2", "retf=7,retfmax=3", "retf=0", ""])).is_empty());
+    for p in NR_PROGNAMES
+        .iter()
+        .filter(|p| only.as_ref().is_none_or(|o| p.contains(o.as_str())))
+    {
+        assert!(!compare(ba_jobs(
+            p,
+            &[
+                "retf=1,retfmax=1",
+                "retf=1,retfmax=2",
+                "retf=3,retfmax=2",
+                "retf=7,retfmax=3",
+                "retf=0",
+                ""
+            ]
+        ))
+        .is_empty());
     }
 }
 
@@ -6694,19 +9855,46 @@ fn nr_retf_traces_are_installed() {
     // RETF is inert under the 5.4 build (by design): no RETF trace is ever installed, the output is the same
     let inert = cfg!(rustynail_lua54);
     if inert {
-        assert_eq!(r[0].1.stats.retf, 0, "RETF is inert on 5.4: {}", r[0].1.stats.line());
+        assert_eq!(
+            r[0].1.stats.retf,
+            0,
+            "RETF is inert on 5.4: {}",
+            r[0].1.stats.line()
+        );
     } else {
-        assert!(r[0].1.stats.retf >= 1, "no RETF trace installed: {}", r[0].1.stats.line());
+        assert!(
+            r[0].1.stats.retf >= 1,
+            "no RETF trace installed: {}",
+            r[0].1.stats.line()
+        );
     }
     assert_eq!(r[1].1.stats.retf, 0);
     assert_eq!(r[0].1.result, r[1].1.result);
-    for p in ["n_retf_basic", "n_retf_tail", "n_retf_two_sites", "n_retf_mr_hot", "n_retf_continue", "n_retf_two_levels"] {
-        let r = run_all(vec![Job::new(p, "always").opts("+verify").limits_s("retf=1,retfmax=1")]);
+    for p in [
+        "n_retf_basic",
+        "n_retf_tail",
+        "n_retf_two_sites",
+        "n_retf_mr_hot",
+        "n_retf_continue",
+        "n_retf_two_levels",
+    ] {
+        let r = run_all(vec![Job::new(p, "always")
+            .opts("+verify")
+            .limits_s("retf=1,retfmax=1")]);
         assert!(r[0].1.ok, "{p}: {}", r[0].1.stderr);
         if inert {
-            assert_eq!(r[0].1.stats.retf, 0, "{p}: RETF is inert on 5.4: {}", r[0].1.stats.line());
+            assert_eq!(
+                r[0].1.stats.retf,
+                0,
+                "{p}: RETF is inert on 5.4: {}",
+                r[0].1.stats.line()
+            );
         } else {
-            assert!(r[0].1.stats.retf >= 1, "{p}: no RETF trace installed: {}", r[0].1.stats.line());
+            assert!(
+                r[0].1.stats.retf >= 1,
+                "{p}: no RETF trace installed: {}",
+                r[0].1.stats.line()
+            );
         }
     }
 }
@@ -6718,11 +9906,28 @@ fn nr_retf_traces_are_installed() {
 #[test]
 fn nr_n3_programs() {
     let lim = "retf=7,retfmax=3";
-    for p in ["n_retf_types", "n_retf_upvals", "n_retf_continue", "n_retf_two_levels", "n_retf_relink", "n_retf_untraced", "n_retf_upvalue_alias", "n_retf_recursion", "n_retf_poly", "n_retf_swap", "n_retf_failafter", "n_retf_relink2"] {
+    for p in [
+        "n_retf_types",
+        "n_retf_upvals",
+        "n_retf_continue",
+        "n_retf_two_levels",
+        "n_retf_relink",
+        "n_retf_untraced",
+        "n_retf_upvalue_alias",
+        "n_retf_recursion",
+        "n_retf_poly",
+        "n_retf_swap",
+        "n_retf_failafter",
+        "n_retf_relink2",
+    ] {
         let jobs = vec![
             Job::new(p, "always").opts("+verify").limits_s(lim),
-            Job::new(p, "always").opts("+exitstorm=3 +verify").limits_s(lim),
-            Job::new(p, "always").opts("+exitstorm=7 +randra=5 +verify").limits_s(lim),
+            Job::new(p, "always")
+                .opts("+exitstorm=3 +verify")
+                .limits_s(lim),
+            Job::new(p, "always")
+                .opts("+exitstorm=7 +randra=5 +verify")
+                .limits_s(lim),
             Job::new(p, "always").opts("+verify").limits_s("retf=0"),
         ];
         let r = run_all(jobs);
@@ -6730,13 +9935,29 @@ fn nr_n3_programs() {
         assert!(off.ok, "{p}: {}", off.stderr);
         for (j, o) in &r[..3] {
             assert!(o.ok, "{p} [{}]: {}", j.opts, o.stderr);
-            assert_eq!(o.result, off.result, "{p} [{}]: output differs from the knob-off run", j.opts);
+            assert_eq!(
+                o.result, off.result,
+                "{p} [{}]: output differs from the knob-off run",
+                j.opts
+            );
         }
         if cfg!(rustynail_lua54) {
             // RETF is inert on 5.4 (by design): none installed, output equal to the knob-off run (checked above)
-            assert_eq!(r[0].1.stats.retf, 0, "{p}: RETF is inert on 5.4: {}", r[0].1.stats.line());
-        } else if !matches!(p, "n_retf_upvalue_alias" | "n_retf_recursion" | "n_retf_relink2" | "n_retf_failafter") {
-            assert!(r[0].1.stats.retf >= 1, "{p}: no RETF trace installed: {}", r[0].1.stats.line());
+            assert_eq!(
+                r[0].1.stats.retf,
+                0,
+                "{p}: RETF is inert on 5.4: {}",
+                r[0].1.stats.line()
+            );
+        } else if !matches!(
+            p,
+            "n_retf_upvalue_alias" | "n_retf_recursion" | "n_retf_relink2" | "n_retf_failafter"
+        ) {
+            assert!(
+                r[0].1.stats.retf >= 1,
+                "{p}: no RETF trace installed: {}",
+                r[0].1.stats.line()
+            );
         }
     }
 }
@@ -6752,24 +9973,53 @@ fn n3b_relink_stub_programs() {
         for trace in ["always", "on2"] {
             for lim in ["sidenest=1,retf=0", "sidenest=1,retf=2"] {
                 jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
-                jobs.push(Job::new(p, trace).opts("+exitstorm=3 +randra=5").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +randra=5")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
-                jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
                 jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
             }
         }
     }
     let res = compare(jobs);
     let find = |p: &str, trace: &str, lim: &str| {
-        res.iter().find(|(j, _)| j.prog == p && j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()).map(|(_, o)| o.stats.clone()).expect("job")
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == p
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
     };
     for p in ["c38_side", "c38_side2"] {
         for trace in ["always", "on2"] {
-            let (h, st) = (find(p, trace, "sidenest=1,retf=0"), find(p, trace, "sidenest=1,retf=2"));
+            let (h, st) = (
+                find(p, trace, "sidenest=1,retf=0"),
+                find(p, trace, "sidenest=1,retf=2"),
+            );
             eprintln!("{p} [{trace}] handler: {} | stub: {}", h.line(), st.line());
             if p == "c38_side" {
-                assert!(st.side_links >= 1, "{p} [{trace}]: no linking side trace: {}", st.line());
-                assert!(20 * st.entered >= 19 * h.entered, "{p} [{trace}]: the loop trace is entered less through the stub: {} vs {}", st.entered, h.entered);
+                assert!(
+                    st.side_links >= 1,
+                    "{p} [{trace}]: no linking side trace: {}",
+                    st.line()
+                );
+                assert!(
+                    20 * st.entered >= 19 * h.entered,
+                    "{p} [{trace}]: the loop trace is entered less through the stub: {} vs {}",
+                    st.entered,
+                    h.entered
+                );
             }
         }
     }

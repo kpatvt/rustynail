@@ -13,8 +13,9 @@ use crate::host::CompilerHost;
 use crate::meta::{TM_N, TM_NAMES};
 use crate::status::{LuaResult, Status};
 use crate::string::{
-    alloc_size, counted_size, mut_hash, short_key_hash, short_key_hash_fresh, LAZY_HASH, MUT_CHAIN_CMP_HASH_ONLY, ExtFixedString, ExtFree, ExtString, LuaString, StrKind,
-    StrRef, StrU, MAX_SHORT_LEN,
+    alloc_size, counted_size, mut_hash, short_key_hash, short_key_hash_fresh, ExtFixedString,
+    ExtFree, ExtString, LuaString, StrKind, StrRef, StrU, LAZY_HASH, MAX_SHORT_LEN,
+    MUT_CHAIN_CMP_HASH_ONLY,
 };
 use crate::value::{Value, LUA_VLNGSTR, LUA_VSHRSTR};
 use std::ffi::c_void;
@@ -226,7 +227,11 @@ impl Heap {
         unsafe {
             let mut p = *self.strt.hash.as_ptr().add(idx);
             while !p.is_null() {
-                if ((*p).hdr.hash.get() == h || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY))) && (*p).len() == s.len() && LuaString::bytes_raw(p) == s {
+                if ((*p).hdr.hash.get() == h
+                    || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY)))
+                    && (*p).len() == s.len()
+                    && LuaString::bytes_raw(p) == s
+                {
                     return Some(0);
                 }
                 p = LuaString::hnext(p);
@@ -253,7 +258,10 @@ impl Heap {
     }
 
     #[inline(always)]
-    fn jit_str_probe_impl<const FRESH: bool>(&self, s: &[u8]) -> (u32, *mut LuaString, Option<usize>) {
+    fn jit_str_probe_impl<const FRESH: bool>(
+        &self,
+        s: &[u8],
+    ) -> (u32, *mut LuaString, Option<usize>) {
         debug_assert!(s.len() <= MAX_SHORT_LEN);
         if s.len() == 1 {
             // B3-6: fixed, always present (the commit of a found string only returns it)
@@ -262,13 +270,21 @@ impl Heap {
                 return (0, p, Some(0));
             }
         }
-        let h = if FRESH { short_key_hash_fresh(s, self.seed) } else { short_key_hash(s, self.seed) };
+        let h = if FRESH {
+            short_key_hash_fresh(s, self.seed)
+        } else {
+            short_key_hash(s, self.seed)
+        };
         let idx = (h as usize) & (self.strt.size - 1);
         // SAFETY: H2 -- bucket heads and `hnext` links are null or live short strings (a read, as in `intern_short`).
         unsafe {
             let mut p = *self.strt.hash.as_ptr().add(idx);
             while !p.is_null() {
-                if ((*p).hdr.hash.get() == h || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY))) && (*p).len() == s.len() && LuaString::bytes_raw(p) == s {
+                if ((*p).hdr.hash.get() == h
+                    || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY)))
+                    && (*p).len() == s.len()
+                    && LuaString::bytes_raw(p) == s
+                {
                     return (h, p, Some(0));
                 }
                 p = LuaString::hnext(p);
@@ -287,7 +303,12 @@ impl Heap {
     /// # Safety
     /// `(hash, found)` come from `jit_str_probe(s)` on this heap with no allocation, collection or string-table change in between,
     /// and the probe said that no table growth is needed.
-    pub unsafe fn jit_str_commit(&mut self, s: &[u8], hash: u32, found: *mut LuaString) -> Option<StrRef> {
+    pub unsafe fn jit_str_commit(
+        &mut self,
+        s: &[u8],
+        hash: u32,
+        found: *mut LuaString,
+    ) -> Option<StrRef> {
         // SAFETY: per the contract (H2: `found` is a live string of the chain; the bucket index is within the table).
         unsafe {
             if !found.is_null() {
@@ -320,13 +341,20 @@ impl Heap {
 
     #[inline(always)]
     fn intern_short_impl<const FRESH: bool>(&mut self, s: &[u8]) -> LuaResult<NonNull<LuaString>> {
-        let h = if FRESH { short_key_hash_fresh(s, self.seed) } else { short_key_hash(s, self.seed) };
+        let h = if FRESH {
+            short_key_hash_fresh(s, self.seed)
+        } else {
+            short_key_hash(s, self.seed)
+        };
         let idx = (h as usize) & (self.strt.size - 1);
         // SAFETY: H2 — bucket heads and `hnext` links are null or live short strings.
         unsafe {
             let mut p = *self.strt.hash.as_ptr().add(idx);
             while !p.is_null() {
-                if ((*p).hdr.hash.get() == h || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY))) && (*p).len() == s.len() && LuaString::bytes_raw(p) == s
+                if ((*p).hdr.hash.get() == h
+                    || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY)))
+                    && (*p).len() == s.len()
+                    && LuaString::bytes_raw(p) == s
                 {
                     // resurrect if dead-but-unswept (`isdead` -> `changewhite`)
                     if (*p).hdr.marked & (self.current_white ^ WHITEBITS) != 0 {

@@ -233,7 +233,10 @@ fn run_shard(shard: usize, mode: Mode) {
                 continue;
             }
         }
-        eprintln!("[shard {shard}] script {}", p.file_name().unwrap().to_string_lossy());
+        eprintln!(
+            "[shard {shard}] script {}",
+            p.file_name().unwrap().to_string_lossy()
+        );
         let out = run_script(p, mode);
         assert!(
             !out.contains("<error>"),

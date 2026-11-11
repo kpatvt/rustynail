@@ -63,7 +63,8 @@ fn names() -> Vec<String> {
             // (`rn_buffer_ext.expected` was produced by the 5.5 build: it prints floats with `lua_Number2str`'s shortest round-trip form
             // (`1.8446744073709552e+19`), the 5.4 `%.14g` gives `1.844674407371e+19`; the number formatting of the two versions is not what the
             // test is about, and the LuaJIT-derived `buf_*` / `tbl_*` programs run under both)
-            (!stem.starts_with('_') && !(cfg!(rustynail_lua54) && stem == "rn_buffer_ext")).then_some(stem)
+            (!stem.starts_with('_') && !(cfg!(rustynail_lua54) && stem == "rn_buffer_ext"))
+                .then_some(stem)
         })
         .collect();
     v.sort();

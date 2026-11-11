@@ -244,7 +244,10 @@ fn trace_off_is_byte_identical_to_plain_lowering() {
     IDENT.with(|i| {
         let i = i.borrow();
         let (actual, expected) = &i[&6];
-        assert_ne!(actual, expected, "TRACE=on with fnroot emitted no entry dispatch for a function that calls");
+        assert_ne!(
+            actual, expected,
+            "TRACE=on with fnroot emitted no entry dispatch for a function that calls"
+        );
     });
 }
 
@@ -264,12 +267,29 @@ fn entry_heads_exist_for_loop_free_functions_that_call() {
                nocall(1) withcall(1) vacall(1) loopcall(2) tbc(1) \
                pref(nocall, 1) pref(withcall, 2) pref(vacall, 3) pref(loopcall, 4) pref(tbc, 5) return 1";
     assert_eq!(exec(&mut st, src), "1");
-    let pcs = |st: &mut LuaState, k: i64| c::head_infos(st, grabbed(k)).iter().map(|h| h.pc).collect::<Vec<_>>();
+    let pcs = |st: &mut LuaState, k: i64| {
+        c::head_infos(st, grabbed(k))
+            .iter()
+            .map(|h| h.pc)
+            .collect::<Vec<_>>()
+    };
     assert_eq!(pcs(&mut st, 1), Vec::<u32>::new(), "no call: no entry head");
     assert_eq!(pcs(&mut st, 2), vec![0], "a call: the entry head at pc 0");
-    assert_eq!(pcs(&mut st, 3), Vec::<u32>::new(), "a vararg function has none");
-    assert_ne!(pcs(&mut st, 4), vec![0], "a function with a loop keeps its loop heads only");
-    assert_eq!(pcs(&mut st, 5), Vec::<u32>::new(), "a to-be-closed variable: none");
+    assert_eq!(
+        pcs(&mut st, 3),
+        Vec::<u32>::new(),
+        "a vararg function has none"
+    );
+    assert_ne!(
+        pcs(&mut st, 4),
+        vec![0],
+        "a function with a loop keeps its loop heads only"
+    );
+    assert_eq!(
+        pcs(&mut st, 5),
+        Vec::<u32>::new(),
+        "a to-be-closed variable: none"
+    );
 }
 
 #[test]
@@ -769,7 +789,11 @@ fn config_parsing() {
         ("", TrMode::On),
         ("true", TrMode::On),
     ] {
-        assert_eq!(TrConfig::parse(Some(v), None, None, None, None).mode, m, "{v:?}");
+        assert_eq!(
+            TrConfig::parse(Some(v), None, None, None, None).mode,
+            m,
+            "{v:?}"
+        );
     }
     assert!(!c3.opts.fold && c3.opts.verify);
     assert_eq!(c3.warnings.len(), 9, "{:?}", c3.warnings);

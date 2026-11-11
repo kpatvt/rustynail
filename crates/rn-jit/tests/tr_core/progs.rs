@@ -14885,7 +14885,9 @@ pub const Y_PROGS: &[Prog] = &[
     Prog {
         name: "y5_upbar_black",
         small: false,
-        src: concat!("local KEEP, N, ROUNDS = 40000, 2000, 40\n", r####"-- Y5: a trace stores a fresh (white) table into a closed upvalue cell that the collector has already marked (black).
+        src: concat!(
+            "local KEEP, N, ROUNDS = 40000, 2000, 40\n",
+            r####"-- Y5: a trace stores a fresh (white) table into a closed upvalue cell that the collector has already marked (black).
 -- Incremental: the heap is large, so the mark phase spans many steps (each loop iteration allocates and pays debt).
 -- Generational: the cell and its closure become old; the stored table is young (the forward barrier of OP_SETUPVAL).
 local function mk()
@@ -14914,12 +14916,15 @@ for r = 1, ROUNDS do
   if r % 10 == 0 then keep[(r * 7) % KEEP + 1] = { r } end
 end
 print(acc, get()[1], get2()[2], #keep)
-"####),
+"####
+        ),
     },
     Prog {
         name: "y5_upbar_black_small",
         small: true,
-        src: concat!("local KEEP, N, ROUNDS = 300, 60, 16\n", r####"-- Y5: a trace stores a fresh (white) table into a closed upvalue cell that the collector has already marked (black).
+        src: concat!(
+            "local KEEP, N, ROUNDS = 300, 60, 16\n",
+            r####"-- Y5: a trace stores a fresh (white) table into a closed upvalue cell that the collector has already marked (black).
 -- Incremental: the heap is large, so the mark phase spans many steps (each loop iteration allocates and pays debt).
 -- Generational: the cell and its closure become old; the stored table is young (the forward barrier of OP_SETUPVAL).
 local function mk()
@@ -14948,7 +14953,8 @@ for r = 1, ROUNDS do
   if r % 10 == 0 then keep[(r * 7) % KEEP + 1] = { r } end
 end
 print(acc, get()[1], get2()[2], #keep)
-"####),
+"####
+        ),
     },
     Prog {
         name: "y2_insert_storm",

@@ -358,8 +358,7 @@ impl Heap {
     /// alive after the last major collection.
     fn set_minor_debt(&mut self) {
         self.jit_uncharge_all();
-        self.gc.threshold =
-            self.mem.total_bytes() + self.minor_debt_bytes();
+        self.gc.threshold = self.mem.total_bytes() + self.minor_debt_bytes();
     }
 
     /// Bytes allocated between two young collections: `minormul`% of the bytes alive after the last major collection (`d`).
@@ -380,7 +379,8 @@ impl Heap {
         if self.gc.params.minormul_user {
             d
         } else {
-            d.saturating_mul(20).min(d.saturating_mul(5).max(NURSERY_CAP))
+            d.saturating_mul(20)
+                .min(d.saturating_mul(5).max(NURSERY_CAP))
         }
     }
 

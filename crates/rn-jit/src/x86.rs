@@ -251,7 +251,12 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
             }
             Op::AddM { w, m, imm } => {
                 debug_assert!(matches!(w, W::B4 | W::B8));
-                a.alu_mi(Alu::Add, if w == W::B4 { Size::S32 } else { Size::S64 }, mem(&m), imm)
+                a.alu_mi(
+                    Alu::Add,
+                    if w == W::B4 { Size::S32 } else { Size::S64 },
+                    mem(&m),
+                    imm,
+                )
             }
             Op::BrMi { cc, w, m, imm, to } => {
                 cmp_mem_imm(&mut a, w, memi(&m), imm);

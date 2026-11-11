@@ -106,25 +106,35 @@ fn new_state(tr: TrConfig, t15: T15Config) -> LuaState {
     let g = st.globals();
     st.raw_set_str(g, b"grab", Value::native(n_grab)).unwrap();
     st.raw_set_str(g, b"black", Value::native(n_black)).unwrap();
-    st.raw_set_str(g, b"blackn", Value::native(n_blackn)).unwrap();
-    st.raw_set_str(g, b"respec", Value::native(n_respec)).unwrap();
+    st.raw_set_str(g, b"blackn", Value::native(n_blackn))
+        .unwrap();
+    st.raw_set_str(g, b"respec", Value::native(n_respec))
+        .unwrap();
     st
 }
 
 fn exec(st: &mut LuaState, src: &str) -> String {
     let base = st.top();
-    assert_eq!(st.load_buffer(src.as_bytes(), b"=snippet", None), Status::Ok, "load");
+    assert_eq!(
+        st.load_buffer(src.as_bytes(), b"=snippet", None),
+        Status::Ok,
+        "load"
+    );
     let func = st.top() - 1;
     let status = st.pcall(func, LUA_MULTRET, 0);
     let v = st.get(func);
     let out = if status == Status::Ok {
         match (v.as_string(), v.as_number()) {
             (Some(s), _) => String::from_utf8_lossy(s.as_bytes()).into_owned(),
-            (None, Some(n)) => String::from_utf8_lossy(rn_core::number::tostring(n).as_bytes()).into_owned(),
+            (None, Some(n)) => {
+                String::from_utf8_lossy(rn_core::number::tostring(n).as_bytes()).into_owned()
+            }
             _ => "nil".to_string(),
         }
     } else {
-        let msg = v.as_string().map_or_else(String::new, |s| String::from_utf8_lossy(s.as_bytes()).into_owned());
+        let msg = v.as_string().map_or_else(String::new, |s| {
+            String::from_utf8_lossy(s.as_bytes()).into_owned()
+        });
         format!("ERROR {status:?} {msg}")
     };
     st.set_top(base);
@@ -196,17 +206,26 @@ end";
     // outer head blacklisted while the inner one is still cold: the nest is eligible (W_H)
     let before = heads(&mut st, 2);
     assert_eq!(before.len(), 2);
-    let outer = before.iter().position(|h| h.pc == before.iter().map(|x| x.pc).min().unwrap()).unwrap();
+    let outer = before
+        .iter()
+        .position(|h| h.pc == before.iter().map(|x| x.pc).min().unwrap())
+        .unwrap();
     let inner = 1 - outer;
     c::with_tr(&mut st, p, |tp| tp.blacklist(outer)).unwrap();
     let h = heads(&mut st, 2);
-    assert!(h[outer].region_wait && h[outer].cell == h[outer].w_addr, "{h:?}");
+    assert!(
+        h[outer].region_wait && h[outer].cell == h[outer].w_addr,
+        "{h:?}"
+    );
     // the inner loop gets hot and is traced: the nest is not eligible any more, the outer cell must fall back
     assert_eq!(exec(&mut st, "return g(50, 20)"), "10500");
     let h = heads(&mut st, 2);
     assert_eq!(h[inner].state, HeadState::Traced, "{h:?}");
     assert_eq!(h[outer].state, HeadState::Black);
-    assert!(!h[outer].region_wait, "a Traced sibling revokes the eligibility: {h:?}");
+    assert!(
+        !h[outer].region_wait,
+        "a Traced sibling revokes the eligibility: {h:?}"
+    );
     assert_eq!(h[outer].cell, h[outer].pcl_addr, "{h:?}");
 }
 
@@ -216,25 +235,44 @@ fn j4_respecialisation_rewrites_every_non_trace_cell() {
     assert_eq!(exec(&mut st, &format!("{THREE} return f(2, 1)")), "10");
     let v0 = heads(&mut st, 1);
     // L2 is the tracer's blacklisted head; L1 gets its trace; L3 stays cold
-    assert_eq!(exec(&mut st, "return f(2000, 3, true)"), expected(2000, 3).to_string());
+    assert_eq!(
+        exec(&mut st, "return f(2000, 3, true)"),
+        expected(2000, 3).to_string()
+    );
     let after = heads(&mut st, 1);
     assert_eq!(after[0].state, HeadState::Traced, "{after:?}");
     assert_eq!(after[1].state, HeadState::Black, "{after:?}");
-    assert_eq!(after[2].state, HeadState::Warm, "a cold head stays Warm: {after:?}");
+    assert_eq!(
+        after[2].state,
+        HeadState::Warm,
+        "a cold head stays Warm: {after:?}"
+    );
     // the respecialisation installed a new version of the tier-1 code: every label moved ...
     for (a, b) in v0.iter().zip(&after) {
-        assert_ne!(a.pcl_addr, b.pcl_addr, "pcl[H] was not rewritten: {a:?} / {b:?}");
+        assert_ne!(
+            a.pcl_addr, b.pcl_addr,
+            "pcl[H] was not rewritten: {a:?} / {b:?}"
+        );
     }
-    assert_ne!(v0[2].c_addr, after[2].c_addr, "C_H of the cold head was not rewritten");
+    assert_ne!(
+        v0[2].c_addr, after[2].c_addr,
+        "C_H of the cold head was not rewritten"
+    );
     // ... and the cells point at the new ones, except the Traced one which keeps its trace
     assert_eq!(after[0].cell, after[0].entry, "Traced: the trace entry");
     assert_ne!(after[0].entry, 0);
     assert_eq!(after[2].cell, after[2].c_addr, "Warm: the new C_H");
     // L2's nest is a region now: no counting stub, the cell enters the region through pcl[H]
-    assert_eq!(after[1].cell, after[1].pcl_addr, "Black promoted: pcl[H] (the region entry)");
+    assert_eq!(
+        after[1].cell, after[1].pcl_addr,
+        "Black promoted: pcl[H] (the region entry)"
+    );
     assert!(!after[1].region_wait);
     // the traced loop still runs (its exits land in the retired version's code) and the results stay right
-    assert_eq!(exec(&mut st, "return f(500, 5, true)"), expected(500, 5).to_string());
+    assert_eq!(
+        exec(&mut st, "return f(500, 5, true)"),
+        expected(500, 5).to_string()
+    );
     let s = c::tr_stats(&mut st);
     assert!(s.installed >= 1);
 }
@@ -259,7 +297,10 @@ end
     assert_eq!(exec(&mut st, "return h(500, true)"), "125250");
     let h = heads(&mut st, 3);
     assert_eq!(h.len(), 2);
-    assert!(h.iter().all(|x| x.state == HeadState::Black), "the nest is promoted as a whole: {h:?}");
+    assert!(
+        h.iter().all(|x| x.state == HeadState::Black),
+        "the nest is promoted as a whole: {h:?}"
+    );
     assert!(h.iter().all(|x| !x.region_wait), "{h:?}");
     assert_eq!(exec(&mut st, "return h(500)"), "125250");
 }
@@ -286,9 +327,18 @@ end";
     let h = heads(&mut st, 4);
     let s = c::tr_stats(&mut st);
     assert_eq!(s.nest_rule, 1, "the nest rule fired once: {s:?}");
-    assert_eq!(s.installed, 1, "only the inner trace was ever installed: {s:?}");
-    assert!(h.iter().all(|x| x.state == HeadState::Black), "every head of the nest is Black: {h:?}");
-    assert!(h.iter().all(|x| x.trace.is_none() && !x.region_wait), "{h:?}");
+    assert_eq!(
+        s.installed, 1,
+        "only the inner trace was ever installed: {s:?}"
+    );
+    assert!(
+        h.iter().all(|x| x.state == HeadState::Black),
+        "every head of the nest is Black: {h:?}"
+    );
+    assert!(
+        h.iter().all(|x| x.trace.is_none() && !x.region_wait),
+        "{h:?}"
+    );
     assert_eq!(exec(&mut st, "return k(3000)"), want(3000));
 }
 
@@ -312,7 +362,10 @@ end";
     assert_eq!(s.nest_rule, 0, "{s:?}");
     assert_eq!(s.nest_rule_kept, 1, "{s:?}");
     let h = heads(&mut st, 6);
-    assert!(h.iter().any(|x| x.state == HeadState::Traced), "the inner trace stays: {h:?}");
+    assert!(
+        h.iter().any(|x| x.state == HeadState::Traced),
+        "the inner trace stays: {h:?}"
+    );
 }
 
 #[test]
@@ -325,7 +378,11 @@ function r(n) local s = 0 for i = 1, n do s = s + i end grab(5) return s end";
     assert_eq!(exec(&mut st, &format!("{src} return r(1000)")), "500500");
     let h = heads(&mut st, 5);
     assert_eq!(h[0].state, HeadState::Black, "{h:?}");
-    assert_eq!(c::tr_stats(&mut st).installed, 0, "the tracer never recorded: {h:?}");
+    assert_eq!(
+        c::tr_stats(&mut st).installed,
+        0,
+        "the tracer never recorded: {h:?}"
+    );
     assert_eq!(exec(&mut st, "return r(100000)"), "5000050000");
 }
 
@@ -351,7 +408,10 @@ fn programs_compute_the_same_under_every_ownership_order() {
          return table.concat(t, ',') .. '|' .. f(1000, 7, true)"
     );
     let want = {
-        let mut st = new_state(TrConfig::for_mode(TrMode::Off), T15Config::for_mode(T15Mode::Off));
+        let mut st = new_state(
+            TrConfig::for_mode(TrMode::Off),
+            T15Config::for_mode(T15Mode::Off),
+        );
         exec(&mut st, &prog)
     };
     assert!(!want.starts_with("ERROR"), "{want}");
@@ -372,8 +432,18 @@ fn programs_compute_the_same_under_every_ownership_order() {
 fn pm4_process_default_recnat() {
     use rn_jit::tr::cache::{TrConfig, TrMode, RECNAT_PROCESS};
     assert_eq!(RECNAT_PROCESS, 1);
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.recnat, RECNAT_PROCESS, "struct default (tests) = shipped");
-    for (env, want) in [(None, 1), (Some(""), 1), (Some("nest=2"), 1), (Some("recnat=0"), 0), (Some("maxside=9,recnat=1"), 1)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.recnat,
+        RECNAT_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (None, 1),
+        (Some(""), 1),
+        (Some("nest=2"), 1),
+        (Some("recnat=0"), 0),
+        (Some("maxside=9,recnat=1"), 1),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.recnat, want, "limits env {env:?}");
@@ -386,8 +456,19 @@ fn pm4_process_default_recnat() {
 fn t3_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, T3IDX_PROCESS};
     assert_eq!(T3IDX_PROCESS, 2);
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.t3idx, T3IDX_PROCESS, "struct default (tests) = shipped");
-    for (env, want) in [(None, 2), (Some(""), 2), (Some("nest=2"), 2), (Some("t3idx=0"), 0), (Some("maxside=9,t3idx=1"), 1), (Some("t3idx=3"), 3)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.t3idx,
+        T3IDX_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (None, 2),
+        (Some(""), 2),
+        (Some("nest=2"), 2),
+        (Some("t3idx=0"), 0),
+        (Some("maxside=9,t3idx=1"), 1),
+        (Some("t3idx=3"), 3),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.t3idx, want, "limits env {env:?}");
@@ -400,8 +481,20 @@ fn t3_process_default() {
 fn t1i_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, T1INLINE_PROCESS};
     assert_eq!(T1INLINE_PROCESS, 1023);
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.t1inline, T1INLINE_PROCESS, "struct default (tests) = shipped");
-    for (env, want) in [(None, T1INLINE_PROCESS), (Some(""), T1INLINE_PROCESS), (Some("nest=2"), T1INLINE_PROCESS), (Some("t1inline=0"), 0), (Some("maxside=9,t1inline=65"), 65), (Some("t1inline=1021"), 1021), (Some("t1inline=4096"), 1023)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.t1inline,
+        T1INLINE_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (None, T1INLINE_PROCESS),
+        (Some(""), T1INLINE_PROCESS),
+        (Some("nest=2"), T1INLINE_PROCESS),
+        (Some("t1inline=0"), 0),
+        (Some("maxside=9,t1inline=65"), 65),
+        (Some("t1inline=1021"), 1021),
+        (Some("t1inline=4096"), 1023),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.t1inline, want, "limits env {env:?}");
@@ -413,11 +506,27 @@ fn t1i_process_default() {
 /// `second_retry_never`, `second_retry_repeats`, `second_identical_never`, `second_identical_repeats`.
 #[test]
 fn c36_policy() {
-    use rn_jit::tr::cache::{dom_due, ident_keep_due, second_retry_due, Penalty, TrConfig, TrMode, TrProto, CISPARE_PROCESS, DOMN_PROCESS, DOMTOP_PROCESS, MAX_ABORTS, SECOND_PROCESS};
-    let (c0, d0, n0, s0) = (CISPARE_PROCESS, DOMTOP_PROCESS, DOMN_PROCESS, SECOND_PROCESS);
-    assert_eq!((c0, d0, n0, s0), (1, 82, 65536, 3), "the shipped process defaults");
+    use rn_jit::tr::cache::{
+        dom_due, ident_keep_due, second_retry_due, Penalty, TrConfig, TrMode, TrProto,
+        CISPARE_PROCESS, DOMN_PROCESS, DOMTOP_PROCESS, MAX_ABORTS, SECOND_PROCESS,
+    };
+    let (c0, d0, n0, s0) = (
+        CISPARE_PROCESS,
+        DOMTOP_PROCESS,
+        DOMN_PROCESS,
+        SECOND_PROCESS,
+    );
+    assert_eq!(
+        (c0, d0, n0, s0),
+        (1, 82, 65536, 3),
+        "the shipped process defaults"
+    );
     let z = TrConfig::for_mode(TrMode::On).limits;
-    assert_eq!((z.cispare, z.domtop, z.domn, z.second), (c0, d0, n0, s0), "struct defaults (tests) = shipped");
+    assert_eq!(
+        (z.cispare, z.domtop, z.domn, z.second),
+        (c0, d0, n0, s0),
+        "struct defaults (tests) = shipped"
+    );
     for (env, want) in [
         (None, (c0, d0, n0, s0)),
         (Some(""), (c0, d0, n0, s0)),
@@ -434,22 +543,44 @@ fn c36_policy() {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         let l = c.limits;
-        assert_eq!((l.cispare, l.domtop, l.domn, l.second), want, "limits env {env:?}");
+        assert_eq!(
+            (l.cispare, l.domtop, l.domn, l.second),
+            want,
+            "limits env {env:?}"
+        );
     }
     // dom_due: off at 0; share and entry thresholds; once per head
     assert!(!dom_due(0, 10, 100, 100, false));
     assert!(dom_due(75, 1000, 800, 1000, false));
-    assert!(!dom_due(75, 1000, 749, 1000, false), "share below the percent");
+    assert!(
+        !dom_due(75, 1000, 749, 1000, false),
+        "share below the percent"
+    );
     assert!(!dom_due(75, 1000, 800, 999, false), "too few entries");
     assert!(!dom_due(75, 1000, 800, 1000, true), "once per head");
     // second_retry_due: a changeable LeaveFrame abort that blacklisted, bit 0 only
     assert!(second_retry_due(1, true, false, "LeaveFrame"));
     assert!(second_retry_due(3, true, false, "LeaveFrame"));
     assert!(!second_retry_due(0, true, false, "LeaveFrame"));
-    assert!(!second_retry_due(2, true, false, "LeaveFrame"), "bit 1 is the identical-compile chance");
-    assert!(!second_retry_due(1, false, false, "LeaveFrame"), "not blacklisted");
-    assert!(!second_retry_due(1, true, true, "LeaveFrame"), "an unchangeable cause stays blacklisted");
-    for r in ["IntMiss", "LeaveLoop", "StartRefused", "InnerLoop", "SideShort"] {
+    assert!(
+        !second_retry_due(2, true, false, "LeaveFrame"),
+        "bit 1 is the identical-compile chance"
+    );
+    assert!(
+        !second_retry_due(1, false, false, "LeaveFrame"),
+        "not blacklisted"
+    );
+    assert!(
+        !second_retry_due(1, true, true, "LeaveFrame"),
+        "an unchangeable cause stays blacklisted"
+    );
+    for r in [
+        "IntMiss",
+        "LeaveLoop",
+        "StartRefused",
+        "InnerLoop",
+        "SideShort",
+    ] {
         assert!(!second_retry_due(3, true, false, r), "{r}");
     }
     // ident_keep_due: bit 1, the first time only
@@ -461,17 +592,30 @@ fn c36_policy() {
     // TrProto: MAX_ABORTS changeable aborts blacklist; the second chance waits, allows two more attempts, and exists once
     let tp = TrProto::new(10, &[3, 7], 256, true, 77, 1);
     for _ in 0..MAX_ABORTS - 1 {
-        assert!(matches!(tp.on_abort(0, "LeaveFrame", false), Penalty::Wait(_)));
+        assert!(matches!(
+            tp.on_abort(0, "LeaveFrame", false),
+            Penalty::Wait(_)
+        ));
     }
     assert_eq!(tp.on_abort(0, "LeaveFrame", false), Penalty::Black);
     match tp.second_chance(0) {
         Some(Penalty::Wait(w)) => assert!(w >= 64 << MAX_ABORTS, "a long wait: {w}"),
         o => panic!("first second chance: {o:?}"),
     }
-    assert!(matches!(tp.on_abort(0, "LeaveFrame", false), Penalty::Wait(_)), "attempt 1 of 2");
-    assert_eq!(tp.on_abort(0, "LeaveFrame", false), Penalty::Black, "attempt 2 of 2 blacklists again");
+    assert!(
+        matches!(tp.on_abort(0, "LeaveFrame", false), Penalty::Wait(_)),
+        "attempt 1 of 2"
+    );
+    assert_eq!(
+        tp.on_abort(0, "LeaveFrame", false),
+        Penalty::Black,
+        "attempt 2 of 2 blacklists again"
+    );
     assert_eq!(tp.second_chance(0), None, "once per head");
-    assert!(matches!(tp.second_chance(1), Some(Penalty::Wait(_))), "the other head has its own chance");
+    assert!(
+        matches!(tp.second_chance(1), Some(Penalty::Wait(_))),
+        "the other head has its own chance"
+    );
 }
 
 /// P3: process defaults of `ncallee` / `chainre` / `chainn` (struct defaults 0, an explicit value wins), the pure `ncallee_due` and `chain_due` rules. `chain_due`: the entry
@@ -479,10 +623,21 @@ fn c36_policy() {
 /// per-family bounds. Mutants `ncallee_never`, `ncallee_without_entry_guard`, `chain_never`, `chain_unbounded`, `chain_pass_ignored`, `chain_gain_ignored`.
 #[test]
 fn p3_policy() {
-    use rn_jit::tr::cache::{chain_due, ncallee_due, TrConfig, TrMode, CHAINN_PROCESS, CHAINRE_PROCESS, CHAIN_MAX_EXIT, CHAIN_MAX_FAMILY, NCALLEE_PROCESS};
-    assert_eq!((NCALLEE_PROCESS, CHAINRE_PROCESS, CHAINN_PROCESS), (1, 95, 65536), "the shipped process defaults");
+    use rn_jit::tr::cache::{
+        chain_due, ncallee_due, TrConfig, TrMode, CHAINN_PROCESS, CHAINRE_PROCESS, CHAIN_MAX_EXIT,
+        CHAIN_MAX_FAMILY, NCALLEE_PROCESS,
+    };
+    assert_eq!(
+        (NCALLEE_PROCESS, CHAINRE_PROCESS, CHAINN_PROCESS),
+        (1, 95, 65536),
+        "the shipped process defaults"
+    );
     let z = TrConfig::for_mode(TrMode::On).limits;
-    assert_eq!((z.ncallee, z.chainre, z.chainn), (NCALLEE_PROCESS, CHAINRE_PROCESS, CHAINN_PROCESS), "struct defaults (tests) = shipped");
+    assert_eq!(
+        (z.ncallee, z.chainre, z.chainn),
+        (NCALLEE_PROCESS, CHAINRE_PROCESS, CHAINN_PROCESS),
+        "struct defaults (tests) = shipped"
+    );
     let (n0, c0, m0) = (NCALLEE_PROCESS, CHAINRE_PROCESS, CHAINN_PROCESS);
     for (env, want) in [
         (None, (n0, c0, m0)),
@@ -503,41 +658,96 @@ fn p3_policy() {
     // ncallee_due: the knob and a callee guard in the entry segment of the flushed trace
     assert!(ncallee_due(1, true));
     assert!(!ncallee_due(0, true), "knob off");
-    assert!(!ncallee_due(1, false), "no callee guard in the entry segment: nothing to move");
+    assert!(
+        !ncallee_due(1, false),
+        "no callee guard in the entry segment: nothing to move"
+    );
     // chain_due. v = [entries of link 0, calls leaving link 0, calls leaving link 1, ...]
     // the forth_vm shape: 10 links, the four hot ones behind links that carry a few calls
-    let forth = [8_667_000u64, 8_666_600, 6_560_000, 6_464_000, 6_406_000, 4_305_000, 4_280_000, 2_179_000, 2_159_000, 30_000, 0];
-    assert!(chain_due(95, 65536, &forth, 0, 0), "the hot callees sit behind pass-through links");
+    let forth = [
+        8_667_000u64,
+        8_666_600,
+        6_560_000,
+        6_464_000,
+        6_406_000,
+        4_305_000,
+        4_280_000,
+        2_179_000,
+        2_159_000,
+        30_000,
+        0,
+    ];
+    assert!(
+        chain_due(95, 65536, &forth, 0, 0),
+        "the hot callees sit behind pass-through links"
+    );
     assert!(!chain_due(0, 65536, &forth, 0, 0), "knob off");
     assert!(!chain_due(95, 9_000_000, &forth, 0, 0), "too few entries");
     // in hotness order already: the hot link first, then the cold ones (gain 0)
     let sorted = [1_000_000u64, 400_000, 200_000, 100_000, 50_000, 10_000, 0];
-    assert!(!chain_due(30, 1000, &sorted, 0, 0), "a chain in hotness order is never re-ordered");
+    assert!(
+        !chain_due(30, 1000, &sorted, 0, 0),
+        "a chain in hotness order is never re-ordered"
+    );
     // uniform: 16 equal shares; the first link passes 94 % through, the order cannot be improved
     let mut uni = vec![1_600_000u64];
     for i in 1..=16u64 {
         uni.push(1_600_000 - i * 100_000);
     }
-    assert!(!chain_due(90, 1000, &uni, 0, 0), "a uniform chain (94 % pass-through at the first link) is not re-ordered");
+    assert!(
+        !chain_due(90, 1000, &uni, 0, 0),
+        "a uniform chain (94 % pass-through at the first link) is not re-ordered"
+    );
     // the pass-through test: link 0 carries 40 % of its entries
     let mut half = forth;
     half[1] = 5_000_000;
-    assert!(!chain_due(95, 65536, &half, 0, 0), "link 0 is not a pass-through");
+    assert!(
+        !chain_due(95, 65536, &half, 0, 0),
+        "link 0 is not a pass-through"
+    );
     // two links only: the gain is too small
-    assert!(!chain_due(95, 10, &[1000, 990, 0], 0, 0), "two links: the gain is below one link visit per entry");
+    assert!(
+        !chain_due(95, 10, &[1000, 990, 0], 0, 0),
+        "two links: the gain is below one link visit per entry"
+    );
     // bounds
-    assert!(chain_due(95, 65536, &forth, CHAIN_MAX_EXIT - 1, CHAIN_MAX_FAMILY - 1));
-    assert!(!chain_due(95, 65536, &forth, CHAIN_MAX_EXIT, 0), "per-exit bound");
-    assert!(!chain_due(95, 65536, &forth, 0, CHAIN_MAX_FAMILY), "per-family bound");
+    assert!(chain_due(
+        95,
+        65536,
+        &forth,
+        CHAIN_MAX_EXIT - 1,
+        CHAIN_MAX_FAMILY - 1
+    ));
+    assert!(
+        !chain_due(95, 65536, &forth, CHAIN_MAX_EXIT, 0),
+        "per-exit bound"
+    );
+    assert!(
+        !chain_due(95, 65536, &forth, 0, CHAIN_MAX_FAMILY),
+        "per-family bound"
+    );
 }
 
 /// BUNDLE-G `chaindepth`: process default, parsing and the pure refusal rule (`chain_refuse_rule`: `c[0]` calls reached the chain, `c[i]` left link `i`).
 #[test]
 fn bg_policy() {
-    use rn_jit::tr::cache::{chain_refuse_rule, TrConfig, TrMode, CHAINDEPTH_PROCESS, CHAIN_COVER_PCT};
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.chaindepth, CHAINDEPTH_PROCESS, "struct default (tests) = shipped");
+    use rn_jit::tr::cache::{
+        chain_refuse_rule, TrConfig, TrMode, CHAINDEPTH_PROCESS, CHAIN_COVER_PCT,
+    };
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.chaindepth,
+        CHAINDEPTH_PROCESS,
+        "struct default (tests) = shipped"
+    );
     let p0 = CHAINDEPTH_PROCESS;
-    for (env, want) in [(None, p0), (Some(""), p0), (Some("nest=2"), p0), (Some("chaindepth=0"), 0), (Some("chaindepth=4"), 4), (Some("chaindepth=9999"), 256)] {
+    for (env, want) in [
+        (None, p0),
+        (Some(""), p0),
+        (Some("nest=2"), p0),
+        (Some("chaindepth=0"), 0),
+        (Some("chaindepth=4"), 4),
+        (Some("chaindepth=9999"), 256),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.chaindepth, want, "limits env {env:?}");
@@ -549,18 +759,34 @@ fn bg_policy() {
         let rest = wide[i as usize].saturating_sub(hot);
         wide.push(rest * (23 - i) / (24 - i));
     }
-    assert!(chain_refuse_rule(4, &wide, hot), "a flat chain of 4 links serves {} % only", 100 - wide[4] * 100 / wide[0]);
+    assert!(
+        chain_refuse_rule(4, &wide, hot),
+        "a flat chain of 4 links serves {} % only",
+        100 - wide[4] * 100 / wide[0]
+    );
     assert!(!chain_refuse_rule(0, &wide, hot), "knob off");
-    assert!(!chain_refuse_rule(5, &wide, hot), "the chain is shorter than the cap");
+    assert!(
+        !chain_refuse_rule(5, &wide, hot),
+        "the chain is shorter than the cap"
+    );
     // 4 uniform callees: the four links serve everything (nothing is left) and 8 callees: half
     let narrow = [1_000_000u64, 750_000, 500_000, 250_000, 60_000];
-    assert!(!chain_refuse_rule(4, &narrow, hot), "a narrow dispatch is covered by its links");
+    assert!(
+        !chain_refuse_rule(4, &narrow, hot),
+        "a narrow dispatch is covered by its links"
+    );
     let eight = [1_000_000u64, 875_000, 750_000, 625_000, 500_000];
-    assert!(!chain_refuse_rule(4, &eight, hot), "8 callees: 50 % served, the chain grows on");
+    assert!(
+        !chain_refuse_rule(4, &eight, hot),
+        "8 callees: 50 % served, the chain grows on"
+    );
     // the boundary of the coverage test
     let edge_lo = [1_000_000u64, 900_000, 800_000, 750_000, 701_000];
     let edge_hi = [1_000_000u64, 900_000, 800_000, 750_000, 699_000];
-    assert!(chain_refuse_rule(4, &edge_lo, 0), "just under {CHAIN_COVER_PCT} % served");
+    assert!(
+        chain_refuse_rule(4, &edge_lo, 0),
+        "just under {CHAIN_COVER_PCT} % served"
+    );
     assert!(!chain_refuse_rule(4, &edge_hi, 0), "just over");
     // no chain / single counter
     assert!(!chain_refuse_rule(4, &[], hot));
@@ -572,9 +798,23 @@ fn bg_policy() {
 fn c38_policy() {
     use rn_jit::tr::cache::{TrConfig, TrMode, SIDENEST_PROCESS};
     let p0 = SIDENEST_PROCESS;
-    assert_eq!(p0, 1, "the shipped process default (BUNDLE-N-B: on, with the inline re-push stub `retf` bit 1)");
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.sidenest, p0, "struct default (tests) = shipped");
-    for (env, want) in [(None, p0), (Some(""), p0), (Some("nest=2"), p0), (Some("sidenest=0"), 0), (Some("sidenest=1"), 1), (Some("sidenest=9"), 1)] {
+    assert_eq!(
+        p0, 1,
+        "the shipped process default (BUNDLE-N-B: on, with the inline re-push stub `retf` bit 1)"
+    );
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.sidenest,
+        p0,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (None, p0),
+        (Some(""), p0),
+        (Some("nest=2"), p0),
+        (Some("sidenest=0"), 0),
+        (Some("sidenest=1"), 1),
+        (Some("sidenest=9"), 1),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.sidenest, want, "limits env {env:?}");
@@ -585,11 +825,25 @@ fn c38_policy() {
 /// the reason, `TrProto::inner_chance` gives rounds with growing waits and one attempt each (the next `InnerLoop` abort blacklists again), a different head has its own count.
 #[test]
 fn c39_policy() {
-    use rn_jit::tr::cache::{inner_retry_due, Penalty, TrConfig, TrMode, TrProto, INNERRETRY_PROCESS, INNERRETRY_WAIT_SHIFT, MAX_ABORTS};
+    use rn_jit::tr::cache::{
+        inner_retry_due, Penalty, TrConfig, TrMode, TrProto, INNERRETRY_PROCESS,
+        INNERRETRY_WAIT_SHIFT, MAX_ABORTS,
+    };
     let p0 = INNERRETRY_PROCESS;
     assert_eq!(p0, 6, "the shipped process default");
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.innerretry, INNERRETRY_PROCESS, "struct default (tests) = shipped");
-    for (env, want) in [(None, p0), (Some(""), p0), (Some("nest=2"), p0), (Some("innerretry=0"), 0), (Some("innerretry=3"), 3), (Some("innerretry=99"), 16)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.innerretry,
+        INNERRETRY_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (None, p0),
+        (Some(""), p0),
+        (Some("nest=2"), p0),
+        (Some("innerretry=0"), 0),
+        (Some("innerretry=3"), 3),
+        (Some("innerretry=99"), 16),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.innerretry, want, "limits env {env:?}");
@@ -597,47 +851,89 @@ fn c39_policy() {
     // the pure rule
     assert!(inner_retry_due(6, true, "InnerLoop", 0));
     assert!(inner_retry_due(6, true, "InnerLoop", 5));
-    assert!(!inner_retry_due(6, true, "InnerLoop", 6), "bounded by the knob");
+    assert!(
+        !inner_retry_due(6, true, "InnerLoop", 6),
+        "bounded by the knob"
+    );
     assert!(!inner_retry_due(0, true, "InnerLoop", 0), "off");
-    assert!(!inner_retry_due(6, false, "InnerLoop", 0), "only a blacklisting abort");
-    for r in ["LeaveFrame", "IntMiss", "LeaveLoop", "StartRefused", "TooLong", "Nyi", "SideShort"] {
+    assert!(
+        !inner_retry_due(6, false, "InnerLoop", 0),
+        "only a blacklisting abort"
+    );
+    for r in [
+        "LeaveFrame",
+        "IntMiss",
+        "LeaveLoop",
+        "StartRefused",
+        "TooLong",
+        "Nyi",
+        "SideShort",
+    ] {
         assert!(!inner_retry_due(6, true, r, 0), "{r}");
     }
     // TrProto: two InnerLoop aborts blacklist, then `max` rounds of one attempt with growing waits
     let tp = TrProto::new(10, &[3, 7], 256, true, 77, 1);
-    assert!(matches!(tp.on_abort(0, "InnerLoop", true), Penalty::Wait(_)));
+    assert!(matches!(
+        tp.on_abort(0, "InnerLoop", true),
+        Penalty::Wait(_)
+    ));
     assert_eq!(tp.on_abort(0, "InnerLoop", true), Penalty::Black);
     let mut last = 0;
     for round in 0..3u32 {
         match tp.inner_chance(0, 3) {
             Some(Penalty::Wait(w)) => {
-                assert!(i64::from(w) >= 64 << (MAX_ABORTS + INNERRETRY_WAIT_SHIFT + round as u8), "round {round} waits {w}");
+                assert!(
+                    i64::from(w) >= 64 << (MAX_ABORTS + INNERRETRY_WAIT_SHIFT + round as u8),
+                    "round {round} waits {w}"
+                );
                 assert!(i64::from(w) > last, "waits grow: {w} after {last}");
                 last = i64::from(w);
             }
             o => panic!("round {round}: {o:?}"),
         }
-        assert_eq!(tp.on_abort(0, "InnerLoop", true), Penalty::Black, "one attempt per round: the next InnerLoop abort blacklists");
+        assert_eq!(
+            tp.on_abort(0, "InnerLoop", true),
+            Penalty::Black,
+            "one attempt per round: the next InnerLoop abort blacklists"
+        );
     }
     assert_eq!(tp.inner_chance(0, 3), None, "bounded by the knob");
-    assert!(matches!(tp.inner_chance(1, 3), Some(Penalty::Wait(_))), "the other head has its own count");
+    assert!(
+        matches!(tp.inner_chance(1, 3), Some(Penalty::Wait(_))),
+        "the other head has its own count"
+    );
     assert_eq!(tp.inner_chance(1, 0), None, "knob 0");
     // follow-up: an ineffective flush of a trace installed after retry rounds blacklists at once (no re-record); without rounds the first one re-records
     let tq = TrProto::new(10, &[3, 7], 256, true, 77, 1);
-    assert!(!matches!(tq.on_ineffective(0), Penalty::Black), "first ineffective flush without retry rounds: re-record");
-    assert!(matches!(tq.on_abort(1, "InnerLoop", true), Penalty::Wait(_)));
+    assert!(
+        !matches!(tq.on_ineffective(0), Penalty::Black),
+        "first ineffective flush without retry rounds: re-record"
+    );
+    assert!(matches!(
+        tq.on_abort(1, "InnerLoop", true),
+        Penalty::Wait(_)
+    ));
     assert_eq!(tq.on_abort(1, "InnerLoop", true), Penalty::Black);
     assert!(matches!(tq.inner_chance(1, 3), Some(Penalty::Wait(_))));
-    assert_eq!(tq.on_ineffective(1), Penalty::Black, "ineffective after a retry round: blacklisted for good");
+    assert_eq!(
+        tq.on_ineffective(1),
+        Penalty::Black,
+        "ineffective after a retry round: blacklisted for good"
+    );
 }
 
 /// BUNDLE-O: the process defaults of `polyside` / `polywait` are the shipped values, the struct defaults (tests) are off and an explicit value wins.
 /// Mutant `polyside_default_ignored`.
 #[test]
 fn o_polyside_process_default() {
-    use rn_jit::tr::cache::{TrConfig, TrMode, POLYFRAMES_PROCESS, POLYSIDE_PROCESS, POLYWAIT_PROCESS};
+    use rn_jit::tr::cache::{
+        TrConfig, TrMode, POLYFRAMES_PROCESS, POLYSIDE_PROCESS, POLYWAIT_PROCESS,
+    };
     let c0 = TrConfig::for_mode(TrMode::On);
-    assert_eq!((c0.limits.polyside, c0.limits.polywait, c0.limits.polyframes), (POLYSIDE_PROCESS, POLYWAIT_PROCESS, POLYFRAMES_PROCESS));
+    assert_eq!(
+        (c0.limits.polyside, c0.limits.polywait, c0.limits.polyframes),
+        (POLYSIDE_PROCESS, POLYWAIT_PROCESS, POLYFRAMES_PROCESS)
+    );
     let mut c = TrConfig::parse(None, None, None, None, None);
     c.apply_process_limits(None);
     assert_eq!(c.limits.polyframes, POLYFRAMES_PROCESS);
@@ -650,7 +946,11 @@ fn o_polyside_process_default() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.polyside, c.limits.polywait), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.polyside, c.limits.polywait),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -661,11 +961,25 @@ fn s_loopany_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, LOOPANY_PROCESS};
     assert_eq!(LOOPANY_PROCESS, 1);
     let c0 = TrConfig::for_mode(TrMode::On);
-    assert_eq!((c0.limits.loopany, c0.limits.loopanymax), (LOOPANY_PROCESS, 4));
-    for (env, want) in [(None, (1, 4)), (Some(""), (1, 4)), (Some("nest=2"), (1, 4)), (Some("loopany=0"), (0, 4)), (Some("loopany=1,loopanymax=9"), (1, 9)), (Some("loopanymax=5"), (1, 5))] {
+    assert_eq!(
+        (c0.limits.loopany, c0.limits.loopanymax),
+        (LOOPANY_PROCESS, 4)
+    );
+    for (env, want) in [
+        (None, (1, 4)),
+        (Some(""), (1, 4)),
+        (Some("nest=2"), (1, 4)),
+        (Some("loopany=0"), (0, 4)),
+        (Some("loopany=1,loopanymax=9"), (1, 9)),
+        (Some("loopanymax=5"), (1, 5)),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.loopany, c.limits.loopanymax), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.loopany, c.limits.loopanymax),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -676,8 +990,17 @@ fn s_loopany_process_default() {
 fn p_laprune_policy() {
     use rn_jit::tr::cache::{la_is_victim, la_plan, LaPlan, TrConfig, TrMode, LAPRUNE_PROCESS};
     assert_eq!(LAPRUNE_PROCESS, 1);
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.laprune, LAPRUNE_PROCESS);
-    for (env, want) in [(None, 1), (Some(""), 1), (Some("loopany=1"), 1), (Some("laprune=0"), 0), (Some("laprune=1,loopanymax=2"), 1)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.laprune,
+        LAPRUNE_PROCESS
+    );
+    for (env, want) in [
+        (None, 1),
+        (Some(""), 1),
+        (Some("loopany=1"), 1),
+        (Some("laprune=0"), 0),
+        (Some("laprune=1,loopanymax=2"), 1),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.laprune, want, "limits env {env:?}");
@@ -691,15 +1014,27 @@ fn p_laprune_policy() {
     assert!(la_is_victim(true, true, true));
     assert!(!la_is_victim(true, false, true), "the root stays");
     assert!(!la_is_victim(false, true, true), "other families stay");
-    assert!(!la_is_victim(true, true, false), "sides that unrolled nothing stay");
+    assert!(
+        !la_is_victim(true, true, false),
+        "sides that unrolled nothing stay"
+    );
 }
 
 /// DYNMASK: the process default of `dynmask` is the shipped value, the struct default (tests) is off and an explicit value wins.
 #[test]
 fn dynmask_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, DYNMASK_PROCESS};
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.dynmask, DYNMASK_PROCESS);
-    for (env, want) in [(None, DYNMASK_PROCESS), (Some("nest=2"), DYNMASK_PROCESS), (Some("dynmask=1"), 1), (Some("dynmask=0"), 0), (Some("dynmask=7"), 1)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.dynmask,
+        DYNMASK_PROCESS
+    );
+    for (env, want) in [
+        (None, DYNMASK_PROCESS),
+        (Some("nest=2"), DYNMASK_PROCESS),
+        (Some("dynmask=1"), 1),
+        (Some("dynmask=0"), 0),
+        (Some("dynmask=7"), 1),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.dynmask, want, "limits env {env:?}");
@@ -713,7 +1048,10 @@ fn p2_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, INEFFCOVER_PROCESS, TYPESIDES_PROCESS};
     assert_eq!((INEFFCOVER_PROCESS, TYPESIDES_PROCESS), (1, 1));
     let c = TrConfig::for_mode(TrMode::On);
-    assert_eq!((c.limits.ineffcover, c.limits.typesides), (INEFFCOVER_PROCESS, TYPESIDES_PROCESS));
+    assert_eq!(
+        (c.limits.ineffcover, c.limits.typesides),
+        (INEFFCOVER_PROCESS, TYPESIDES_PROCESS)
+    );
     for (env, want) in [
         (None, (1, 1)),
         (Some(""), (1, 1)),
@@ -725,7 +1063,11 @@ fn p2_process_default() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.ineffcover, c.limits.typesides), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.ineffcover, c.limits.typesides),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -735,7 +1077,14 @@ fn p2_process_default() {
 fn r2_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode};
     let c = TrConfig::for_mode(TrMode::On);
-    assert_eq!((c.limits.recany, c.limits.siderooms, c.limits.nilstore), (rn_jit::tr::cache::RECANY_PROCESS, rn_jit::tr::cache::SIDEROOMS_PROCESS, rn_jit::tr::cache::NILSTORE_PROCESS));
+    assert_eq!(
+        (c.limits.recany, c.limits.siderooms, c.limits.nilstore),
+        (
+            rn_jit::tr::cache::RECANY_PROCESS,
+            rn_jit::tr::cache::SIDEROOMS_PROCESS,
+            rn_jit::tr::cache::NILSTORE_PROCESS
+        )
+    );
     for (env, want) in [
         (None, (1, 1, 1)),
         (Some(""), (1, 1, 1)),
@@ -746,7 +1095,11 @@ fn r2_process_defaults() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.recany, c.limits.siderooms, c.limits.nilstore), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.recany, c.limits.siderooms, c.limits.nilstore),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -757,11 +1110,19 @@ fn b5_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode};
     use rn_jit::tr::cache::{HOPTOP_PROCESS, SINKMT_PROCESS, SINKSIDE_PROCESS};
     let get = |l: &rn_jit::tr::cache::TrLimits| (l.sinkmt, l.sinkside);
-    assert_eq!(get(&TrConfig::for_mode(TrMode::On).limits), (SINKMT_PROCESS, SINKSIDE_PROCESS));
+    assert_eq!(
+        get(&TrConfig::for_mode(TrMode::On).limits),
+        (SINKMT_PROCESS, SINKSIDE_PROCESS)
+    );
     // BUNDLE-P: no clock in the default policy; the counting rule `hoptop` is the process default
     assert_eq!(HOPTOP_PROCESS, 98);
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.hoptop, HOPTOP_PROCESS);
-    for (env, want) in [(None, HOPTOP_PROCESS), (Some("nest=2"), HOPTOP_PROCESS), (Some("hoptop=0"), 0), (Some("hoptop=90,maxside=9"), 90)] {
+    for (env, want) in [
+        (None, HOPTOP_PROCESS),
+        (Some("nest=2"), HOPTOP_PROCESS),
+        (Some("hoptop=0"), 0),
+        (Some("hoptop=90,maxside=9"), 90),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.hoptop, want, "limits env {env:?}");
@@ -786,7 +1147,10 @@ fn b5_process_defaults() {
 fn j1_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode, SINKSTUB_PROCESS};
     let get = |l: &rn_jit::tr::cache::TrLimits| l.sinkstub;
-    assert_eq!(get(&TrConfig::for_mode(TrMode::On).limits), SINKSTUB_PROCESS);
+    assert_eq!(
+        get(&TrConfig::for_mode(TrMode::On).limits),
+        SINKSTUB_PROCESS
+    );
     for (env, want) in [
         (None, SINKSTUB_PROCESS),
         (Some("warm=0"), SINKSTUB_PROCESS),
@@ -804,8 +1168,18 @@ fn j1_process_defaults() {
 #[test]
 fn sinkroot_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode, SINKROOT_PROCESS};
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.sinkroot, SINKROOT_PROCESS);
-    for (env, want) in [(None, SINKROOT_PROCESS), (Some("warm=0"), SINKROOT_PROCESS), (Some("sinkroot=0"), 0), (Some("sinkroot=1"), 1), (Some("sinkroot=2"), 2), (Some("sinkroot=9"), 2)] {
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.sinkroot,
+        SINKROOT_PROCESS
+    );
+    for (env, want) in [
+        (None, SINKROOT_PROCESS),
+        (Some("warm=0"), SINKROOT_PROCESS),
+        (Some("sinkroot=0"), 0),
+        (Some("sinkroot=1"), 1),
+        (Some("sinkroot=2"), 2),
+        (Some("sinkroot=9"), 2),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.sinkroot, want, "limits env {env:?}");
@@ -819,9 +1193,19 @@ fn bb_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode, MAXSIDE_PROCESS, TSET_PROCESS};
     assert_eq!(MAXSIDE_PROCESS, 16);
     assert_eq!(TSET_PROCESS, 15);
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.maxside, MAXSIDE_PROCESS);
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.maxside,
+        MAXSIDE_PROCESS
+    );
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.tset, TSET_PROCESS);
-    for (env, want) in [(None, 15), (Some("warm=0"), 15), (Some("tset=0"), 0), (Some("tset=3,maxside=9"), 3), (Some("tset=9"), 9), (Some("tset=99"), 15)] {
+    for (env, want) in [
+        (None, 15),
+        (Some("warm=0"), 15),
+        (Some("tset=0"), 0),
+        (Some("tset=3,maxside=9"), 3),
+        (Some("tset=9"), 9),
+        (Some("tset=99"), 15),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.tset, want, "limits env {env:?}");
@@ -847,7 +1231,13 @@ fn p2_loopdiet_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode};
     let c = TrConfig::for_mode(TrMode::On);
     assert_eq!(c.limits.pollr15, rn_jit::tr::cache::POLLR15_PROCESS);
-    for (env, want) in [(None, 2), (Some(""), 2), (Some("nest=2"), 2), (Some("pollr15=1,maxside=9"), 1), (Some("pollr15=0"), 0)] {
+    for (env, want) in [
+        (None, 2),
+        (Some(""), 2),
+        (Some("nest=2"), 2),
+        (Some("pollr15=1,maxside=9"), 1),
+        (Some("pollr15=0"), 0),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.pollr15, want, "limits env {env:?}");
@@ -860,7 +1250,16 @@ fn p2_xregs_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, XREGS_PROCESS};
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.xregs, 0);
     let d = XREGS_PROCESS;
-    for (env, want) in [(None, d), (Some(""), d), (Some("nest=2"), d), (Some("xregs=0"), 0), (Some("maxside=9,xregs=1"), 1), (Some("xregs=2"), 2), (Some("xregs=3"), 3), (Some("xregs=9"), 3)] {
+    for (env, want) in [
+        (None, d),
+        (Some(""), d),
+        (Some("nest=2"), d),
+        (Some("xregs=0"), 0),
+        (Some("maxside=9,xregs=1"), 1),
+        (Some("xregs=2"), 2),
+        (Some("xregs=3"), 3),
+        (Some("xregs=9"), 3),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.xregs, want, "limits env {env:?}");
@@ -871,9 +1270,20 @@ fn p2_xregs_process_default() {
 #[test]
 fn bh_libcall_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, LIBCALL_PROCESS};
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.libcall, LIBCALL_PROCESS);
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.libcall,
+        LIBCALL_PROCESS
+    );
     let d = LIBCALL_PROCESS;
-    for (env, want) in [(None, d), (Some(""), d), (Some("nest=2"), d), (Some("libcall=0"), 0), (Some("maxside=9,libcall=1"), 1), (Some("libcall=7"), 7), (Some("libcall=9999"), 1023)] {
+    for (env, want) in [
+        (None, d),
+        (Some(""), d),
+        (Some("nest=2"), d),
+        (Some("libcall=0"), 0),
+        (Some("maxside=9,libcall=1"), 1),
+        (Some("libcall=7"), 7),
+        (Some("libcall=9999"), 1023),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.libcall, want, "limits env {env:?}");
@@ -886,10 +1296,19 @@ fn bn_retf_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, RETFMAX_PROCESS, RETF_PROCESS};
     assert_eq!(RETF_PROCESS, 3, "side RETF recording (bit 0) and the inline re-push stub (bit 1) ship on; function-entry families (bit 2) stay off");
     assert_eq!(RETFMAX_PROCESS, 1);
-    for (env, want, wmax) in [(None, RETF_PROCESS, RETFMAX_PROCESS), (Some("retf=1"), 1, RETFMAX_PROCESS), (Some("retf=99,retfmax=2"), 15, 2), (Some("retfmax=99"), RETF_PROCESS, 8)] {
+    for (env, want, wmax) in [
+        (None, RETF_PROCESS, RETFMAX_PROCESS),
+        (Some("retf=1"), 1, RETFMAX_PROCESS),
+        (Some("retf=99,retfmax=2"), 15, 2),
+        (Some("retfmax=99"), RETF_PROCESS, 8),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.retf, c.limits.retfmax), (want, wmax), "limits env {env:?}");
+        assert_eq!(
+            (c.limits.retf, c.limits.retfmax),
+            (want, wmax),
+            "limits env {env:?}"
+        );
         let _ = TrMode::On;
     }
 }
@@ -899,19 +1318,36 @@ fn bn_retf_process_default() {
 #[test]
 fn n3a_child_room_is_translated_by_the_segment() {
     use rn_jit::tr::cache::child_room;
-    assert_eq!(child_room(40, 2, 0, 0), (40, 2), "segment 0 is the entry frame");
+    assert_eq!(
+        child_room(40, 2, 0, 0),
+        (40, 2),
+        "segment 0 is the entry frame"
+    );
     assert_eq!(child_room(40, 2, 7, 1), (47, 3));
     assert_eq!(child_room(40, 2, 19, 2), (59, 4));
-    assert_eq!(child_room(u16::MAX - 1, 254, 9, 3), (u16::MAX, 255), "saturates");
+    assert_eq!(
+        child_room(u16::MAX - 1, 254, 9, 3),
+        (u16::MAX, 255),
+        "saturates"
+    );
 }
 
 /// BUNDLE-H: the process default of `tnextinl` (`TNEXTINL_PROCESS`); an explicit value wins and is clamped to 1.
 #[test]
 fn bh_tnextinl_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, TNEXTINL_PROCESS};
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.tnextinl, TNEXTINL_PROCESS);
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.tnextinl,
+        TNEXTINL_PROCESS
+    );
     let d = TNEXTINL_PROCESS;
-    for (env, want) in [(None, d), (Some(""), d), (Some("tnextinl=0"), 0), (Some("maxside=9,tnextinl=1"), 1), (Some("tnextinl=5"), 1)] {
+    for (env, want) in [
+        (None, d),
+        (Some(""), d),
+        (Some("tnextinl=0"), 0),
+        (Some("maxside=9,tnextinl=1"), 1),
+        (Some("tnextinl=5"), 1),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.tnextinl, want, "limits env {env:?}");
@@ -923,9 +1359,19 @@ fn bh_tnextinl_process_default() {
 fn bj_centry_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, CENTRY_MIN_IR, CENTRY_PROCESS};
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.centry, CENTRY_PROCESS);
-    assert_eq!(TrConfig::for_mode(TrMode::On).limits.centrymin, CENTRY_MIN_IR);
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.centrymin,
+        CENTRY_MIN_IR
+    );
     let d = CENTRY_PROCESS;
-    for (env, want) in [(None, d), (Some(""), d), (Some("centry=0"), 0), (Some("maxside=9,centry=1"), 1), (Some("centry=2"), 2), (Some("centry=9"), 2)] {
+    for (env, want) in [
+        (None, d),
+        (Some(""), d),
+        (Some("centry=0"), 0),
+        (Some("maxside=9,centry=1"), 1),
+        (Some("centry=2"), 2),
+        (Some("centry=9"), 2),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.centry, want, "limits env {env:?}");
@@ -940,7 +1386,15 @@ fn r1_rearm_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, REARM_PROCESS};
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.rearm, REARM_PROCESS);
     let d = REARM_PROCESS;
-    for (env, want) in [(None, d), (Some(""), d), (Some("nest=2"), d), (Some("rearm=0"), 0), (Some("maxside=9,rearm=1"), 1), (Some("rearm=16"), 16), (Some("rearm=999"), 64)] {
+    for (env, want) in [
+        (None, d),
+        (Some(""), d),
+        (Some("nest=2"), d),
+        (Some("rearm=0"), 0),
+        (Some("maxside=9,rearm=1"), 1),
+        (Some("rearm=16"), 16),
+        (Some("rearm=999"), 64),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.rearm, want, "limits env {env:?}");
@@ -955,7 +1409,13 @@ fn pf_process_default_sidemin() {
     use rn_jit::tr::cache::{TrConfig, TrMode, SIDEMIN_PROCESS};
     assert_eq!(SIDEMIN_PROCESS, 4);
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.sidemin, 0);
-    for (env, want) in [(None, 4), (Some(""), 4), (Some("nest=2"), 4), (Some("sidemin=0"), 0), (Some("maxside=9,sidemin=7"), 7)] {
+    for (env, want) in [
+        (None, 4),
+        (Some(""), 4),
+        (Some("nest=2"), 4),
+        (Some("sidemin=0"), 0),
+        (Some("maxside=9,sidemin=7"), 7),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.sidemin, want, "limits env {env:?}");
@@ -968,11 +1428,18 @@ fn pf_process_default_sidemin() {
 fn b1_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode, HDRLIB_PROCESS, TAILHOOK_PROCESS, WGATE_PROCESS};
     let c = TrConfig::for_mode(TrMode::On);
-    assert_eq!((c.limits.wgate, c.limits.tailhook, c.limits.hdrlib), (0, TAILHOOK_PROCESS, HDRLIB_PROCESS), "the work gate is a start gate: off in tests, WGATE_PROCESS in a process");
+    assert_eq!(
+        (c.limits.wgate, c.limits.tailhook, c.limits.hdrlib),
+        (0, TAILHOOK_PROCESS, HDRLIB_PROCESS),
+        "the work gate is a start gate: off in tests, WGATE_PROCESS in a process"
+    );
     for (env, want) in [
         (None, (WGATE_PROCESS, TAILHOOK_PROCESS, HDRLIB_PROCESS)),
         (Some(""), (WGATE_PROCESS, TAILHOOK_PROCESS, HDRLIB_PROCESS)),
-        (Some("nest=2"), (WGATE_PROCESS, TAILHOOK_PROCESS, HDRLIB_PROCESS)),
+        (
+            Some("nest=2"),
+            (WGATE_PROCESS, TAILHOOK_PROCESS, HDRLIB_PROCESS),
+        ),
         (Some("warm=0"), (0, TAILHOOK_PROCESS, HDRLIB_PROCESS)),
         (Some("warm=5"), (0, TAILHOOK_PROCESS, HDRLIB_PROCESS)),
         (Some("wgate=7"), (7, TAILHOOK_PROCESS, HDRLIB_PROCESS)),
@@ -981,7 +1448,11 @@ fn b1_process_defaults() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.wgate, c.limits.tailhook, c.limits.hdrlib), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.wgate, c.limits.tailhook, c.limits.hdrlib),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -991,7 +1462,10 @@ fn b1_process_defaults() {
 fn bc_process_defaults() {
     use rn_jit::tr::cache::{T1CCALL_PROCESS, TFMT_PROCESS};
     let d = TrConfig::for_mode(rn_jit::tr::cache::TrMode::On);
-    assert_eq!((d.limits.t1ccall, d.limits.tfmt), (T1CCALL_PROCESS, TFMT_PROCESS));
+    assert_eq!(
+        (d.limits.t1ccall, d.limits.tfmt),
+        (T1CCALL_PROCESS, TFMT_PROCESS)
+    );
     for (env, want) in [
         (None, (T1CCALL_PROCESS, TFMT_PROCESS)),
         (Some("hdrlib=1"), (T1CCALL_PROCESS, TFMT_PROCESS)),
@@ -1002,7 +1476,11 @@ fn bc_process_defaults() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.t1ccall, c.limits.tfmt), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.t1ccall, c.limits.tfmt),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -1012,19 +1490,54 @@ fn bc_process_defaults() {
 fn bd_process_defaults() {
     use rn_jit::tr::cache::{ARMM_PROCESS, CCALLS_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS};
     let d = TrConfig::for_mode(rn_jit::tr::cache::TrMode::On);
-    assert_eq!((d.limits.ccalls, d.limits.armm, d.limits.sbump2, d.limits.sbump), (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS));
+    assert_eq!(
+        (
+            d.limits.ccalls,
+            d.limits.armm,
+            d.limits.sbump2,
+            d.limits.sbump
+        ),
+        (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS)
+    );
     for (env, want) in [
-        (None, (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS)),
-        (Some("hdrlib=1"), (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS)),
-        (Some("ccalls=1"), (1, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS)),
-        (Some("armm=1"), (CCALLS_PROCESS, 1, SBUMP2_PROCESS, SBUMP_PROCESS)),
-        (Some("sbump2=2"), (CCALLS_PROCESS, ARMM_PROCESS, 2, SBUMP_PROCESS)),
-        (Some("sbump=3"), (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, 3)),
+        (
+            None,
+            (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS),
+        ),
+        (
+            Some("hdrlib=1"),
+            (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS),
+        ),
+        (
+            Some("ccalls=1"),
+            (1, ARMM_PROCESS, SBUMP2_PROCESS, SBUMP_PROCESS),
+        ),
+        (
+            Some("armm=1"),
+            (CCALLS_PROCESS, 1, SBUMP2_PROCESS, SBUMP_PROCESS),
+        ),
+        (
+            Some("sbump2=2"),
+            (CCALLS_PROCESS, ARMM_PROCESS, 2, SBUMP_PROCESS),
+        ),
+        (
+            Some("sbump=3"),
+            (CCALLS_PROCESS, ARMM_PROCESS, SBUMP2_PROCESS, 3),
+        ),
         (Some("ccalls=0,armm=0,sbump2=0"), (0, 0, 0, SBUMP_PROCESS)),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.ccalls, c.limits.armm, c.limits.sbump2, c.limits.sbump), want, "limits env {env:?}");
+        assert_eq!(
+            (
+                c.limits.ccalls,
+                c.limits.armm,
+                c.limits.sbump2,
+                c.limits.sbump
+            ),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -1057,13 +1570,26 @@ fn j2_process_defaults() {
 /// the name (`deepins=` used to switch `deep` off, `monwarm=` (a K2-removed knob) counted as `warm`, `loopanymax=` as `loopany`, `fnpromow=` as `fnpromo`).
 #[test]
 fn k1_names_limit_is_an_exact_key() {
-    use rn_jit::tr::cache::{names_limit, TrConfig, TrMode, DEEP_PROCESS, FNPROMO_PROCESS, LOOPANY_PROCESS, WGATE_PROCESS};
+    use rn_jit::tr::cache::{
+        names_limit, TrConfig, TrMode, DEEP_PROCESS, FNPROMO_PROCESS, LOOPANY_PROCESS,
+        WGATE_PROCESS,
+    };
     assert!(!names_limit(None, "deep"));
     assert!(names_limit(Some("deep=3"), "deep"));
     assert!(names_limit(Some("maxside=9,deep=3"), "deep"));
     assert!(names_limit(Some("maxside=9 deep=3"), "deep"));
-    assert!(names_limit(Some("deep"), "deep"), "a bare item is the key too (the parser reports it as bad, the default is still skipped)");
-    for s in ["deepins=300", "deephop=0", "xdeep=1", "deepx=1", "maxside=9,deepins=1", "xwarm=1"] {
+    assert!(
+        names_limit(Some("deep"), "deep"),
+        "a bare item is the key too (the parser reports it as bad, the default is still skipped)"
+    );
+    for s in [
+        "deepins=300",
+        "deephop=0",
+        "xdeep=1",
+        "deepx=1",
+        "maxside=9,deepins=1",
+        "xwarm=1",
+    ] {
         assert!(!names_limit(Some(s), "deep"), "{s}");
     }
     assert!(!names_limit(Some("xwarm=1"), "warm"));
@@ -1076,8 +1602,16 @@ fn k1_names_limit_is_an_exact_key() {
     assert_eq!(process("deepins=200").deep, DEEP_PROCESS);
     assert_eq!(process("deephop=0").deep, DEEP_PROCESS);
     assert_eq!(process("deep=2").deep, 2);
-    assert_eq!(process("xwarm=1").wgate, WGATE_PROCESS, "xwarm does not name warm");
-    assert_eq!(process("warm=5").wgate, 0, "warm named, wgate not: the work gate is off");
+    assert_eq!(
+        process("xwarm=1").wgate,
+        WGATE_PROCESS,
+        "xwarm does not name warm"
+    );
+    assert_eq!(
+        process("warm=5").wgate,
+        0,
+        "warm named, wgate not: the work gate is off"
+    );
     assert_eq!(process("warm=5,wgate=77").wgate, 77);
     assert_eq!(process("loopanymax=2").loopany, LOOPANY_PROCESS);
     assert_eq!(process("loopany=0,loopanymax=2").loopany, 0);
@@ -1098,12 +1632,18 @@ fn j2_deep_site_state() {
     for i in 0..2 {
         assert!(!tp.head_deep(i));
     }
-    assert!(tp.on_deep(0), "the first limit abort of a site earns the deeper re-record");
+    assert!(
+        tp.on_deep(0),
+        "the first limit abort of a site earns the deeper re-record"
+    );
     assert!(tp.head_deep(0) && !tp.head_deep(1), "only the site itself");
     assert!(!tp.on_deep(0), "the second one does not: no re-record loop");
     assert!(!tp.on_deep(0));
     // the normal penalty path is untouched for a deep site: a repeated unchangeable abort blacklists
-    assert!(matches!(tp.on_abort(0, "Recursion", true), Penalty::Wait(_)));
+    assert!(matches!(
+        tp.on_abort(0, "Recursion", true),
+        Penalty::Wait(_)
+    ));
     assert_eq!(tp.on_abort(0, "Recursion", true), Penalty::Black);
     assert!(tp.on_deep(1) && !tp.on_deep(1));
 }
@@ -1134,10 +1674,21 @@ fn m_process_defaults() {
 /// Mutants `fnpromo_never` (the live program `tr_core::bc_fnpromo_programs`), `fnpromo_repeats`.
 #[test]
 fn bc_policy() {
-    use rn_jit::tr::cache::{Penalty, TrConfig, TrMode, TrProto, FNPROMOW_PROCESS, FNPROMO_PROCESS, MAX_ABORTS, SBUMP_PROCESS};
-    assert_eq!((SBUMP_PROCESS, FNPROMO_PROCESS, FNPROMOW_PROCESS), (1, 6, 3), "the shipped process defaults");
+    use rn_jit::tr::cache::{
+        Penalty, TrConfig, TrMode, TrProto, FNPROMOW_PROCESS, FNPROMO_PROCESS, MAX_ABORTS,
+        SBUMP_PROCESS,
+    };
+    assert_eq!(
+        (SBUMP_PROCESS, FNPROMO_PROCESS, FNPROMOW_PROCESS),
+        (1, 6, 3),
+        "the shipped process defaults"
+    );
     let z = TrConfig::for_mode(TrMode::On).limits;
-    assert_eq!((z.sbump, z.fnpromo, z.fnpromow), (SBUMP_PROCESS, FNPROMO_PROCESS, FNPROMOW_PROCESS), "struct defaults (tests) = shipped");
+    assert_eq!(
+        (z.sbump, z.fnpromo, z.fnpromow),
+        (SBUMP_PROCESS, FNPROMO_PROCESS, FNPROMOW_PROCESS),
+        "struct defaults (tests) = shipped"
+    );
     for (env, want) in [
         (None, (1, 6, 3)),
         (Some(""), (1, 6, 3)),
@@ -1166,7 +1717,10 @@ fn bc_policy() {
     assert_eq!(tp.promote_fn(0, 3), None, "once per prototype");
     assert_eq!(tp.promote_fn(1, 3), None, "the flag is the prototype's");
     for _ in 0..MAX_ABORTS - 1 {
-        assert!(matches!(tp.on_abort(0, "LeaveFrame", false), Penalty::Wait(_)), "fresh abort budget after the promotion");
+        assert!(
+            matches!(tp.on_abort(0, "LeaveFrame", false), Penalty::Wait(_)),
+            "fresh abort budget after the promotion"
+        );
     }
 }
 
@@ -1176,7 +1730,10 @@ fn bc_policy() {
 fn bf_process_defaults() {
     use rn_jit::tr::cache::{FIBDIET_PROCESS, STITCH0_PROCESS};
     let d = TrConfig::for_mode(TrMode::On);
-    assert_eq!((d.limits.stitch0, d.limits.fibdiet), (STITCH0_PROCESS, FIBDIET_PROCESS));
+    assert_eq!(
+        (d.limits.stitch0, d.limits.fibdiet),
+        (STITCH0_PROCESS, FIBDIET_PROCESS)
+    );
     for (env, want) in [
         (None, (STITCH0_PROCESS, FIBDIET_PROCESS)),
         (Some("hdrlib=1"), (STITCH0_PROCESS, FIBDIET_PROCESS)),
@@ -1187,7 +1744,11 @@ fn bf_process_defaults() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.stitch0, c.limits.fibdiet), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.stitch0, c.limits.fibdiet),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -1195,14 +1756,25 @@ fn bf_process_defaults() {
 /// them (K3a), a named value wins (`rearmside` is clamped to 64, `f2ifl` and `rearmclean` to 1). Mutant `rearmclean_default_ignored`.
 #[test]
 fn bp_process_defaults() {
-    use rn_jit::tr::cache::{TrConfig, TrMode, F2IFL_PROCESS, REARMCLEAN_PROCESS, REARMSIDE_PROCESS};
+    use rn_jit::tr::cache::{
+        TrConfig, TrMode, F2IFL_PROCESS, REARMCLEAN_PROCESS, REARMSIDE_PROCESS,
+    };
     assert_eq!((REARMSIDE_PROCESS, REARMCLEAN_PROCESS), (2, 1));
     let c = TrConfig::for_mode(TrMode::On);
-    assert_eq!((c.limits.f2ifl, c.limits.rearmside, c.limits.rearmclean), (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS));
+    assert_eq!(
+        (c.limits.f2ifl, c.limits.rearmside, c.limits.rearmclean),
+        (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS)
+    );
     for (env, want) in [
         (None, (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS)),
-        (Some(""), (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS)),
-        (Some("nest=2"), (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS)),
+        (
+            Some(""),
+            (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS),
+        ),
+        (
+            Some("nest=2"),
+            (F2IFL_PROCESS, REARMSIDE_PROCESS, REARMCLEAN_PROCESS),
+        ),
         (Some("f2ifl=0"), (0, REARMSIDE_PROCESS, REARMCLEAN_PROCESS)),
         (Some("rearmside=0"), (F2IFL_PROCESS, 0, REARMCLEAN_PROCESS)),
         (Some("rearmclean=0"), (F2IFL_PROCESS, REARMSIDE_PROCESS, 0)),
@@ -1211,7 +1783,11 @@ fn bp_process_defaults() {
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
-        assert_eq!((c.limits.f2ifl, c.limits.rearmside, c.limits.rearmclean), want, "limits env {env:?}");
+        assert_eq!(
+            (c.limits.f2ifl, c.limits.rearmside, c.limits.rearmclean),
+            want,
+            "limits env {env:?}"
+        );
     }
 }
 
@@ -1221,7 +1797,16 @@ fn bp_process_defaults() {
 fn bq_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, T1Q_PROCESS};
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.t1q, T1Q_PROCESS);
-    for (env, want) in [(None, T1Q_PROCESS), (Some("nest=2"), T1Q_PROCESS), (Some("t1q=0"), 0x80), (Some("t1q=2"), 0x82), (Some("t1q=9"), 0x89), (Some("t1q=99"), 0xE3), (Some("t1q=125"), 0xFD), (Some("t1q=255"), 0xFF)] {
+    for (env, want) in [
+        (None, T1Q_PROCESS),
+        (Some("nest=2"), T1Q_PROCESS),
+        (Some("t1q=0"), 0x80),
+        (Some("t1q=2"), 0x82),
+        (Some("t1q=9"), 0x89),
+        (Some("t1q=99"), 0xE3),
+        (Some("t1q=125"), 0xFD),
+        (Some("t1q=255"), 0xFF),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.t1q, want, "limits env {env:?}");
@@ -1237,7 +1822,13 @@ fn bs_process_defaults() {
     assert_eq!(rn_jit::tr::cache::UPBAR_PROCESS, 1);
     assert_eq!(AMT_PROCESS, 1);
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.amt, AMT_PROCESS);
-    for (env, want) in [(None, AMT_PROCESS), (Some("nest=2"), AMT_PROCESS), (Some("amt=0"), 0), (Some("amt=1"), 1), (Some("amt=7"), 1)] {
+    for (env, want) in [
+        (None, AMT_PROCESS),
+        (Some("nest=2"), AMT_PROCESS),
+        (Some("amt=0"), 0),
+        (Some("amt=1"), 1),
+        (Some("amt=7"), 1),
+    ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
         assert_eq!(c.limits.amt, want, "limits env {env:?}");
@@ -1252,7 +1843,10 @@ fn bp_rearmside_rule() {
     use rn_jit::tr::cache::{rearm_young_ok as ok, REARM_MIN_ENTRIES as M};
     for clean in [false, true] {
         for rc in [0, 1] {
-            assert!(ok(M, 0, clean, 0, rc), "an old head is entered whatever the knob and the family");
+            assert!(
+                ok(M, 0, clean, 0, rc),
+                "an old head is entered whatever the knob and the family"
+            );
             assert!(ok(M + 5, 0, clean, 3, rc));
             assert!(!ok(M - 1, 9, clean, 0, rc), "knob off: the R1 rule");
             assert!(!ok(0, 2, clean, 3, rc), "two sides of three");
@@ -1265,7 +1859,10 @@ fn bp_rearmside_rule() {
     assert!(ok(M - 1, 1, true, 1, 1));
     assert!(ok(0, 2, true, 2, 1), "the shipped default: two sides");
     // unclean family: only the plain rule (rearmclean=0) enters it
-    assert!(!ok(0, 3, false, 3, 1), "a family with a failed side recording or an unrolled callee loop is not entered young");
+    assert!(
+        !ok(0, 3, false, 3, 1),
+        "a family with a failed side recording or an unrolled callee loop is not entered young"
+    );
     assert!(!ok(M - 1, 64, false, 2, 1));
     assert!(ok(0, 3, false, 3, 0), "rearmclean=0: the BUNDLE-P rule");
     assert!(ok(M - 1, 1, false, 1, 0));

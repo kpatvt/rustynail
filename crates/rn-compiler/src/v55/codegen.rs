@@ -485,8 +485,7 @@ impl<H: CompilerHost> Parser<'_, H> {
 
     fn fix_jump(&mut self, pc: i32, dest: i32) -> R<()> {
         let offset = dest - (pc + 1);
-        if !(-OFFSET_SJ <= offset
-            && offset <= (rn_core::instruction::MAXARG_SJ as i32) - OFFSET_SJ)
+        if !(-OFFSET_SJ <= offset && offset <= (rn_core::instruction::MAXARG_SJ as i32) - OFFSET_SJ)
         {
             return Err(self.ls.syntax_error("control structure too long"));
         }

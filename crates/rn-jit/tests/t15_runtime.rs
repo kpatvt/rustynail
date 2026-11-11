@@ -567,7 +567,10 @@ fn memory_limit_refuses_a_promotion_and_the_nest_retries_later() {
     assert_eq!(r, "20100 0");
     let s = rn_jit::stats(&mut st);
     assert!(s.t15_refused >= 1 && s.t15_recompiled == 0, "{s:?}");
-    assert_eq!(test, ctl, "the refused promotion changed the charged extension memory");
+    assert_eq!(
+        test, ctl,
+        "the refused promotion changed the charged extension memory"
+    );
     st.heap().mem_mut().set_limit(usize::MAX);
     // with room again the backed-off counter fires and the promotion happens
     let mut v = String::new();
@@ -667,9 +670,16 @@ fn a_failed_recompile_refunds_its_version_bytes() {
     exec(&mut st, "N = 300 return R()");
     let m2 = st.heap().mem_mut().ext_bytes();
     let s = rn_jit::stats(&mut st);
-    assert!(s.t15_refused >= 1 && s.t15_recompiled == 0, "the recompile must be attempted and fail: {s:?}");
+    assert!(
+        s.t15_refused >= 1 && s.t15_recompiled == 0,
+        "the recompile must be attempted and fail: {s:?}"
+    );
     rn_jit::set_code_cap(&mut st, usize::MAX / 2);
-    assert_eq!(m2 - m1, m1 - m0, "the version bytes of a failed recompile are not refunded");
+    assert_eq!(
+        m2 - m1,
+        m1 - m0,
+        "the version bytes of a failed recompile are not refunded"
+    );
 }
 
 #[test]

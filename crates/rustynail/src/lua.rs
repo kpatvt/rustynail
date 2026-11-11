@@ -395,7 +395,10 @@ impl Lua {
             }
         }
         for (flag, open) in [
-            (StdLib::EXT, rn_std::lib_ext::open_ext as fn(&mut State) -> rn_core::status::LuaResult<()>),
+            (
+                StdLib::EXT,
+                rn_std::lib_ext::open_ext as fn(&mut State) -> rn_core::status::LuaResult<()>,
+            ),
             (StdLib::JIT, rn_std::lib_ext::open_jit),
         ] {
             if libs.contains(flag) {

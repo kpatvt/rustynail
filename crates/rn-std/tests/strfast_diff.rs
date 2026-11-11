@@ -22,10 +22,66 @@ impl Rng {
 }
 
 const ITEMS: &[&str] = &[
-    "a", "b", ".", "%a", "%A", "%d", "%D", "%s", "%S", "%w", "%W", "%x", "%l", "%u", "%p", "%c", "%g", "%z", "%$", "%.",
-    "%%", "%(", "%-", "%Z", "%q", "[abc]", "[^abc]", "[a-c]", "[^a-c]", "[%a_]", "[^%s]", "[%d%.]", "[^\n]", "[]]",
-    "[^]]", "[a-]", "[%]", "[a", "[", "%", "%b()", "%f[%w]", "%1", "$", "^", "*", "+", "-", "?", "(", ")", "()", "[a-%a]",
-    "[%a-z]", "[z-a]", "[\u{ff}-\u{fe}]", "\u{ff}", "\0", "[%z]", "[^%z]",
+    "a",
+    "b",
+    ".",
+    "%a",
+    "%A",
+    "%d",
+    "%D",
+    "%s",
+    "%S",
+    "%w",
+    "%W",
+    "%x",
+    "%l",
+    "%u",
+    "%p",
+    "%c",
+    "%g",
+    "%z",
+    "%$",
+    "%.",
+    "%%",
+    "%(",
+    "%-",
+    "%Z",
+    "%q",
+    "[abc]",
+    "[^abc]",
+    "[a-c]",
+    "[^a-c]",
+    "[%a_]",
+    "[^%s]",
+    "[%d%.]",
+    "[^\n]",
+    "[]]",
+    "[^]]",
+    "[a-]",
+    "[%]",
+    "[a",
+    "[",
+    "%",
+    "%b()",
+    "%f[%w]",
+    "%1",
+    "$",
+    "^",
+    "*",
+    "+",
+    "-",
+    "?",
+    "(",
+    ")",
+    "()",
+    "[a-%a]",
+    "[%a-z]",
+    "[z-a]",
+    "[\u{ff}-\u{fe}]",
+    "\u{ff}",
+    "\0",
+    "[%z]",
+    "[^%z]",
 ];
 const QUANT: &[&str] = &["", "", "+", "*", "-", "?"];
 const SUBJ: &[u8] = b"abcabc  12 3x()(a(b)c))_-.\n\t\0AZ\xff[]^$%";
@@ -89,7 +145,9 @@ fn observe(s: &[u8], p: &[u8], init: i64) -> Vec<String> {
     for find in [true, false] {
         match find_aux(s, p, init, find, false) {
             Ok(FindResult::NotFound) => out.push("nf".into()),
-            Ok(FindResult::Found { start, end, caps }) => out.push(format!("{start} {end} {}", caps_repr(&caps))),
+            Ok(FindResult::Found { start, end, caps }) => {
+                out.push(format!("{start} {end} {}", caps_repr(&caps)))
+            }
             Err(e) => out.push(format!("err {}", String::from_utf8_lossy(&e))),
         }
     }
@@ -115,7 +173,9 @@ fn observe(s: &[u8], p: &[u8], init: i64) -> Vec<String> {
     }
     let mut cb = |m: &Matched<'_, '_>| -> PResult<ReplValue> {
         let all = m.all()?;
-        Ok(ReplValue::Bytes(format!("[{}:{}]", all.len(), caps_repr(&all)).into_bytes()))
+        Ok(ReplValue::Bytes(
+            format!("[{}:{}]", all.len(), caps_repr(&all)).into_bytes(),
+        ))
     };
     match gsub(s, p, Replacement::Callback(&mut cb), 1000) {
         Ok((o, n)) => out.push(format!("{:?} {n}", o)),
@@ -163,7 +223,19 @@ fn one_item_examples() {
     let saved = strfast::mask();
     strfast::set_mask(strfast::PAT1);
     let s = b"hello, world 42\nsecond line $x";
-    let cases: &[&[u8]] = &[b"%a+", b"[^\n]+", b"%S+", b".", b"%$", b"[WDQMXYFG]", b"(%a+)", b"(%d*)", b"x?", b"%s-", b"^%a+"];
+    let cases: &[&[u8]] = &[
+        b"%a+",
+        b"[^\n]+",
+        b"%S+",
+        b".",
+        b"%$",
+        b"[WDQMXYFG]",
+        b"(%a+)",
+        b"(%d*)",
+        b"x?",
+        b"%s-",
+        b"^%a+",
+    ];
     for p in cases {
         strfast::set_mask(0);
         let slow = observe(s, p, 1);
@@ -211,7 +283,9 @@ fn observe_light(s: &[u8], p: &[u8]) -> Vec<String> {
     for find in [true, false] {
         match find_aux(s, p, 1, find, false) {
             Ok(FindResult::NotFound) => out.push("nf".into()),
-            Ok(FindResult::Found { start, end, caps }) => out.push(format!("{start} {end} {}", caps_repr(&caps))),
+            Ok(FindResult::Found { start, end, caps }) => {
+                out.push(format!("{start} {end} {}", caps_repr(&caps)))
+            }
             Err(e) => out.push(format!("err {}", String::from_utf8_lossy(&e))),
         }
     }
@@ -237,7 +311,11 @@ fn patc_matches_the_general_matcher() {
     let mut r = Rng(0xC0FF_EE00_1234_5678);
     let iters = if cfg!(miri) { 200 } else { 40_000 };
     for i in 0..iters {
-        let p = if i % 2 == 0 { gen_pattern(&mut r) } else { gen_pattern_long(&mut r) };
+        let p = if i % 2 == 0 {
+            gen_pattern(&mut r)
+        } else {
+            gen_pattern_long(&mut r)
+        };
         let mut s = gen_subject(&mut r, i % 3 == 0);
         s.truncate(48);
         let init = match r.below(6) {
@@ -273,7 +351,10 @@ fn patc_matches_the_general_matcher() {
 fn patc_malformed_errors_are_lazy_and_positional() {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let saved = strfast::mask();
-    let bads: &[&str] = &["%", "[a", "[", "[^", "%b", "%bx", "%f", "%fa", "%f[a", "%2", "%0", "(", "((a)", "a)", "(a))"];
+    let bads: &[&str] = &[
+        "%", "[a", "[", "[^", "%b", "%bx", "%f", "%fa", "%f[a", "%2", "%0", "(", "((a)", "a)",
+        "(a))",
+    ];
     let subjects: &[&[u8]] = &[b"", b"a", b"xyz", b"abab", b"aaa)", b"((a)"];
     for bad in bads {
         for pre in ["", "a", "a*", "x?", "(a)", "%a+", "[ab]*", "a-", "^"] {
@@ -308,19 +389,37 @@ fn patc_depth_and_capture_limits() {
     let saved = strfast::mask();
     let subject = vec![b'a'; 300];
     // (Miri: the boundary values only)
-    let ns: Vec<usize> = if cfg!(miri) { vec![199, 200, 201, 250] } else { (185..215).chain([250, 400]).collect() };
-    let units: &[&str] = if cfg!(miri) { &["a?", "(a)"] } else { &["a?", "a-", "(a)", "(a*)", ".-b?", "a*b?", "%a?", "[ab]?", "()a"] };
+    let ns: Vec<usize> = if cfg!(miri) {
+        vec![199, 200, 201, 250]
+    } else {
+        (185..215).chain([250, 400]).collect()
+    };
+    let units: &[&str] = if cfg!(miri) {
+        &["a?", "(a)"]
+    } else {
+        &[
+            "a?", "a-", "(a)", "(a*)", ".-b?", "a*b?", "%a?", "[ab]?", "()a",
+        ]
+    };
     for n in ns {
         for &unit in units {
             // below the limit a failing tail would backtrack exponentially (in the reference too)
-            for tail in if n >= 205 { vec!["", "$", "c"] } else { vec![""] } {
+            for tail in if n >= 205 {
+                vec!["", "$", "c"]
+            } else {
+                vec![""]
+            } {
                 let p = format!("{}{}", unit.repeat(n), tail).into_bytes();
                 strfast::set_mask(0);
                 let slow = observe_light(&subject, &p);
                 for m in PATC_MASKS {
                     strfast::set_mask(m);
                     for round in 0..3 {
-                        assert_eq!(slow, observe_light(&subject, &p), "mask {m} round {round} {unit} x {n} {tail}");
+                        assert_eq!(
+                            slow,
+                            observe_light(&subject, &p),
+                            "mask {m} round {round} {unit} x {n} {tail}"
+                        );
                     }
                 }
             }
@@ -351,7 +450,11 @@ fn patc_depth_and_capture_limits() {
             for m in PATC_MASKS {
                 strfast::set_mask(m);
                 for _ in 0..3 {
-                    assert_eq!(slow, observe_light(&subject, &p), "mask {m} a? x {k} then {item}");
+                    assert_eq!(
+                        slow,
+                        observe_light(&subject, &p),
+                        "mask {m} a? x {k} then {item}"
+                    );
                 }
             }
         }
@@ -369,7 +472,11 @@ fn patc_depth_and_capture_limits() {
                     for m in PATC_MASKS {
                         strfast::set_mask(m);
                         for _ in 0..3 {
-                            assert_eq!(slow, observe_light(subj, &pat), "mask {m} openers {n} tail {tail:?}");
+                            assert_eq!(
+                                slow,
+                                observe_light(subj, &pat),
+                                "mask {m} openers {n} tail {tail:?}"
+                            );
                         }
                     }
                 }
@@ -432,8 +539,13 @@ impl FormatSource for Src<'_> {
         match &self.args[arg - 2] {
             A::I(i) => Ok(*i),
             A::F(f) if f.fract() == 0.0 && f.abs() < 1e18 => Ok(*f as i64),
-            A::F(_) => Err(format!("bad argument #{arg} (number has no integer representation)")),
-            A::S(s) => match std::str::from_utf8(s).ok().and_then(|x| x.trim().parse::<i64>().ok()) {
+            A::F(_) => Err(format!(
+                "bad argument #{arg} (number has no integer representation)"
+            )),
+            A::S(s) => match std::str::from_utf8(s)
+                .ok()
+                .and_then(|x| x.trim().parse::<i64>().ok())
+            {
                 Some(i) => Ok(i),
                 None => Err(format!("bad argument #{arg} (number expected, got string)")),
             },
@@ -445,7 +557,10 @@ impl FormatSource for Src<'_> {
         match &self.args[arg - 2] {
             A::I(i) => Ok(*i as f64),
             A::F(f) => Ok(*f),
-            A::S(s) => match std::str::from_utf8(s).ok().and_then(|x| x.trim().parse::<f64>().ok()) {
+            A::S(s) => match std::str::from_utf8(s)
+                .ok()
+                .and_then(|x| x.trim().parse::<f64>().ok())
+            {
                 Some(i) => Ok(i),
                 None => Err(format!("bad argument #{arg} (number expected, got string)")),
             },
@@ -478,13 +593,83 @@ impl FormatSource for Src<'_> {
 }
 
 const FSPECS: &[&str] = &[
-    "%d", "%i", "%5d", "%-5d", "%05d", "%+d", "% d", "%.3d", "%5.3d", "%x", "%X", "%08x", "%5x", "%-8X", "%#x", "%#o", "%o",
-    "%u", "%5u", "%c", "%5c", "%-5c", "%s", "%10s", "%-10s", "%.2s", "%10.2s", "%.s", "%f", "%.2f", "%10.3f", "%-10.1f",
-    "%+.0f", "%e", "%E", "%g", "%G", "%.14g", "%a", "%A", "%q", "%p", "%%", "%5%", "%y", "%", "%5", "%ld", "%.123d",
-    "%123d", "%0-5d", "%+5s", "%#5s", "%-+d", "%.30f", "%--5d", "%1234567890123456789012345678901234567890d",
-    "%.f", "%i0", "%5.f", "%5.1s", "%#.3x", "%-#8x", "%099d", "%.99f",
+    "%d",
+    "%i",
+    "%5d",
+    "%-5d",
+    "%05d",
+    "%+d",
+    "% d",
+    "%.3d",
+    "%5.3d",
+    "%x",
+    "%X",
+    "%08x",
+    "%5x",
+    "%-8X",
+    "%#x",
+    "%#o",
+    "%o",
+    "%u",
+    "%5u",
+    "%c",
+    "%5c",
+    "%-5c",
+    "%s",
+    "%10s",
+    "%-10s",
+    "%.2s",
+    "%10.2s",
+    "%.s",
+    "%f",
+    "%.2f",
+    "%10.3f",
+    "%-10.1f",
+    "%+.0f",
+    "%e",
+    "%E",
+    "%g",
+    "%G",
+    "%.14g",
+    "%a",
+    "%A",
+    "%q",
+    "%p",
+    "%%",
+    "%5%",
+    "%y",
+    "%",
+    "%5",
+    "%ld",
+    "%.123d",
+    "%123d",
+    "%0-5d",
+    "%+5s",
+    "%#5s",
+    "%-+d",
+    "%.30f",
+    "%--5d",
+    "%1234567890123456789012345678901234567890d",
+    "%.f",
+    "%i0",
+    "%5.f",
+    "%5.1s",
+    "%#.3x",
+    "%-#8x",
+    "%099d",
+    "%.99f",
 ];
-const LITS: &[&str] = &["", "x", " = ", "\n", "a%%b", "\t", "(", ")", "long literal run here: "];
+const LITS: &[&str] = &[
+    "",
+    "x",
+    " = ",
+    "\n",
+    "a%%b",
+    "\t",
+    "(",
+    ")",
+    "long literal run here: ",
+];
 
 fn gen_args(r: &mut Rng, n: usize) -> Vec<A> {
     (0..n)
@@ -497,7 +682,11 @@ fn gen_args(r: &mut Rng, n: usize) -> Vec<A> {
             5 => A::S(b"a\0b".to_vec()),
             6 => A::S(b"12".to_vec()),
             7 => A::Nil,
-            _ => A::F(if r.below(2) == 0 { f64::INFINITY } else { f64::NAN }),
+            _ => A::F(if r.below(2) == 0 {
+                f64::INFINITY
+            } else {
+                f64::NAN
+            }),
         })
         .collect()
 }
@@ -533,8 +722,20 @@ fn format_cache_matches_uncached() {
         // first call: seen only; second: compiled; third: hit
         for round in 0..3 {
             let got = run_fmt(&fmt, &args);
-            assert_eq!(want.0, got.0, "fmt {:?} args {:?} round {round}", String::from_utf8_lossy(&fmt), args);
-            assert_eq!(want.1, got.1, "arg access order: fmt {:?} args {:?}", String::from_utf8_lossy(&fmt), args);
+            assert_eq!(
+                want.0,
+                got.0,
+                "fmt {:?} args {:?} round {round}",
+                String::from_utf8_lossy(&fmt),
+                args
+            );
+            assert_eq!(
+                want.1,
+                got.1,
+                "arg access order: fmt {:?} args {:?}",
+                String::from_utf8_lossy(&fmt),
+                args
+            );
         }
     }
     strfast::set_mask(saved);

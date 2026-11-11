@@ -19,7 +19,10 @@ use crate::ir::{Base, Cc, Op, Src, L, M, W};
 use crate::lower::{ciw, fr, thw, Cx, Kind, Ty};
 use rn_core::jit_layout::table;
 fn rm(v: u8, off: i32) -> M {
-    M { base: Base::Reg(v), off }
+    M {
+        base: Base::Reg(v),
+        off,
+    }
 }
 const TAG_TABLE: i32 = rn_core::value::ctb(rn_core::value::LUA_VTABLE) as i32;
 use rn_core::instruction::Instruction;
@@ -61,15 +64,41 @@ pub(crate) enum Cold {
     /// `__index` field, if a table, is probed for the key; a non-nil value rejoins at `back` with `V2` = its node, everything else
     /// (no metatable, `__index` absent or not a table) goes to the helper at `x`. A key that is absent (or nil) in an `__index` table
     /// without a metatable of its own is a final nil: `R[a] = nil` (and `R[a+1] = R[selfb]` for `SELF`, `selfb != u32::MAX`), continue at `fin`.
-    Chain { l: L, back: L, x: L, fin: L, kidx: u32, a: u32, selfb: u32 },
+    Chain {
+        l: L,
+        back: L,
+        x: L,
+        fin: L,
+        kidx: u32,
+        a: u32,
+        selfb: u32,
+    },
     /// BUNDLE-K item B: `SELF` whose receiver register `b` is not a table: if it is a string, probe the string metatable's `__index` table
     /// (`CallEnv::str_mt`) for the constant key `kidx` inline, store `R[a+1] = R[b]`, `R[a] = method` and rejoin at `done`; anything else
     /// (not a string, no metatable, `__index` not a table, key absent or nil) goes to the helper at `x`.
-    StrSelf { l: L, x: L, done: L, kidx: u32, a: u32, b: u32 },
+    StrSelf {
+        l: L,
+        x: L,
+        done: L,
+        kidx: u32,
+        a: u32,
+        b: u32,
+    },
     /// BUNDLE-A item 2: store to a node whose key exists but whose value is nil (`V0` = table, `V2` = node), rejoining at `back` (the store).
-    SetNil { l: L, back: L, x: L, v: crate::templates_table::Vop },
+    SetNil {
+        l: L,
+        back: L,
+        x: L,
+        v: crate::templates_table::Vop,
+    },
     /// C2: out-of-line comparison of two non-numbers (`jit_cmp`): `H_TRUE` jumps to `lt`, `H_FALSE` to `lf`, `H_EXIT` leaves at `pc`.
-    Cmp { l: L, pc: u32, instr: u32, lt: L, lf: L },
+    Cmp {
+        l: L,
+        pc: u32,
+        instr: u32,
+        lt: L,
+        lf: L,
+    },
     /// BUNDLE-B: `RETURN0` / `RETURN1` of a metamethod frame (`CIST_MMRET`): `jit_mm_ret` finishes the caller's comparison when it is
     /// one that tier 1 started (else the instruction is left to the interpreter at `pc`).
     MmRet { l: L, pc: u32, instr: u32 },
@@ -77,7 +106,15 @@ pub(crate) enum Cold {
     /// helper pushes the Lua metamethod frame (`savedpc` = `next`), compiled code enters it, and its return ([`Cold::MmRet`]) lands at `next` with the result
     /// stored in the destination register. `extra` = 1 for the `MMBIN*` the interpreter would count, `r` = the pre-paid instructions of the block after `next`
     /// (refunded while the metamethod runs, paid again at the continuation), `x` = the exit at `pc` refunding the pre-paid count plus `extra`.
-    ArithMm { l: L, pc: u32, instr: u32, next: u32, extra: u32, r: u32, x: L },
+    ArithMm {
+        l: L,
+        pc: u32,
+        instr: u32,
+        next: u32,
+        extra: u32,
+        r: u32,
+        x: L,
+    },
     /// Non-`H_DONE` result in `V0`: `H_EXIT` leaves at the instruction, everything else is an error exit.
     Fail { l: L, pc: u32 },
     /// A hook appeared: leave at `next` with `trap = 1`, refunding `refund` pre-paid instructions.
@@ -133,9 +170,24 @@ impl Cx<'_> {
         // BUNDLE-S S1 (`t1q` bits 2 / 3): reads and stores whose `__index` / `__newindex` is a Lua function continue in compiled code (not in the region fallbacks of
         // tier 1.5, whose slow paths rejoin through captured labels)
         let (mm_bits, mutants) = self.s1_bits();
-        let mm = !self.capture_rejoin && if gc { mm_bits & 8 != 0 } else { mm_bits & 4 != 0 };
-        let extra = if mm { (if gc { 2 } else { 1 }) | mutants } else { 0 };
-        let saved = if mm && mutants & 0x400 != 0 { None } else if gc || mm { Some(pc + 1) } else { None };
+        let mm = !self.capture_rejoin
+            && if gc {
+                mm_bits & 8 != 0
+            } else {
+                mm_bits & 4 != 0
+            };
+        let extra = if mm {
+            (if gc { 2 } else { 1 }) | mutants
+        } else {
+            0
+        };
+        let saved = if mm && mutants & 0x400 != 0 {
+            None
+        } else if gc || mm {
+            Some(pc + 1)
+        } else {
+            None
+        };
         let call = HCall {
             f,
             instr: i.0,
@@ -155,7 +207,13 @@ impl Cx<'_> {
     pub(crate) fn mm_ret_flags(&self) -> u32 {
         let (bits, _) = self.s1_bits();
         let w = self.cfg.calls.map_or(0, |e| e.t1q);
-        u32::from(self.cfg.calls.is_some_and(|e| e.armm)) | bits >> 1 | (w >> 6 & 1) << 3 | (w >> 15 & 1) << 8 | (w >> 21 & 1) << 9 | (w >> 22 & 1) << 10 | (w >> 23 & 1) << 11
+        u32::from(self.cfg.calls.is_some_and(|e| e.armm))
+            | bits >> 1
+            | (w >> 6 & 1) << 3
+            | (w >> 15 & 1) << 8
+            | (w >> 21 & 1) << 9
+            | (w >> 22 & 1) << 10
+            | (w >> 23 & 1) << 11
     }
 
     /// BUNDLE-S S1: `(t1q & 12, helper mutant bits)` of this lowering: 0x100 `s1_self_skip`, 0x200 `s1_obj_orig`, 0x400 `s1_savedpc_skip`.
@@ -164,14 +222,23 @@ impl Cx<'_> {
             return (0, 0);
         };
         let w = env.t1q;
-        (w & 12, (w >> 14 & 1) << 8 | (w >> 20 & 1) << 9 | (w >> 16 & 1) << 10)
+        (
+            w & 12,
+            (w >> 14 & 1) << 8 | (w >> 20 & 1) << 9 | (w >> 16 & 1) << 10,
+        )
     }
 
     /// C2: the label a register-register comparison (`LT` / `LE` / `EQ`) at `pc` jumps to for operands the inline number paths do
     /// not take: a call of `jit_cmp` that continues at `lt` / `lf` (the instruction's two targets) instead of leaving tier 1.
     pub(crate) fn cmp_slow_label(&mut self, pc: u32, i: Instruction, lt: L, lf: L) -> L {
         let l = self.p.label();
-        self.cold.push(Cold::Cmp { l, pc, instr: i.0, lt, lf });
+        self.cold.push(Cold::Cmp {
+            l,
+            pc,
+            instr: i.0,
+            lt,
+            lf,
+        });
         l
     }
 
@@ -180,7 +247,8 @@ impl Cx<'_> {
         let instr = self.code[pc as usize];
         let op = Instruction(instr).opcode();
         // (BUNDLE-S S1: the general `RETURN` too, when the frame may be the handler of a table read / store)
-        let s1 = (self.s1_bits().0 != 0 || self.cfg.calls.is_some_and(|e| e.t1q & 64 != 0)) && op == Some(OpCode::Return);
+        let s1 = (self.s1_bits().0 != 0 || self.cfg.calls.is_some_and(|e| e.t1q & 64 != 0))
+            && op == Some(OpCode::Return);
         if !self.calls_on() || !(matches!(op, Some(OpCode::Return0 | OpCode::Return1)) || s1) {
             return x;
         }
@@ -206,7 +274,14 @@ impl Cx<'_> {
         let op = Instruction(self.code[pc as usize]).opcode();
         let (instr, next, extra) = match op {
             Some(OpCode::Unm | OpCode::Bnot) => (self.code[pc as usize], pc + 1, 0),
-            Some(_) if self.code.get(pc as usize + 1).is_some_and(|&w| matches!(Instruction(w).opcode(), Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink))) => {
+            Some(_)
+                if self.code.get(pc as usize + 1).is_some_and(|&w| {
+                    matches!(
+                        Instruction(w).opcode(),
+                        Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink)
+                    )
+                }) =>
+            {
                 (self.code[pc as usize + 1], pc + 2, 1)
             }
             _ => return x,
@@ -214,10 +289,22 @@ impl Cx<'_> {
         if next as usize >= self.code.len() || !self.armm_next[next as usize] {
             return x;
         }
-        let r = if self.is_head[next as usize] { 0 } else { self.rem[next as usize] };
+        let r = if self.is_head[next as usize] {
+            0
+        } else {
+            self.rem[next as usize]
+        };
         let l = self.p.label();
         let xe = self.exit_rx(pc, extra);
-        self.cold.push(Cold::ArithMm { l, pc, instr, next, extra, r, x: xe });
+        self.cold.push(Cold::ArithMm {
+            l,
+            pc,
+            instr,
+            next,
+            extra,
+            r,
+            x: xe,
+        });
         l
     }
 
@@ -281,11 +368,23 @@ impl Cx<'_> {
         #[cfg(feature = "trace")]
         let (m_prev, m_next, m_dummy, m_mt, m_hint, m_zero) = crate::tr::tlen_mut();
         #[cfg(not(feature = "trace"))]
-        let (m_prev, m_next, m_dummy, m_mt, m_hint, m_zero) = (false, false, false, false, false, false);
+        let (m_prev, m_next, m_dummy, m_mt, m_hint, m_zero) =
+            (false, false, false, false, false, false);
         let (a, b) = (i.a(), i.b());
         let slow = self.p.label();
-        let (full, empty, store, pop, push) = (self.p.label(), self.p.label(), self.p.label(), self.p.label(), self.p.label());
-        let (zero, pscan, pend, pnil) = (self.p.label(), self.p.label(), self.p.label(), self.p.label());
+        let (full, empty, store, pop, push) = (
+            self.p.label(),
+            self.p.label(),
+            self.p.label(),
+            self.p.label(),
+            self.p.label(),
+        );
+        let (zero, pscan, pend, pnil) = (
+            self.p.label(),
+            self.p.label(),
+            self.p.label(),
+            self.p.label(),
+        );
         // V4 = type nibble of array slot `V3 + k` (0 = nil)
         let tag = |c: &mut Self, k: i32| {
             c.op(Op::MovR(4, 2));
@@ -425,11 +524,18 @@ impl Cx<'_> {
     /// `R[A]`) continues at the resume entry of `next`, which pays the rest of the block again and lands on the tag-checking label of `next` (as `Cold::ArithMm`).
     fn emit_s1_push(&mut self, next: u32, pushed: L) {
         let m = self.cfg.calls.map_or(0, |e| e.t1q);
-        let r = if self.is_head[next as usize] { 0 } else { self.rem[next as usize] };
+        let r = if self.is_head[next as usize] {
+            0
+        } else {
+            self.rem[next as usize]
+        };
         let enter = self.l_enter();
         self.op(Op::Bind(pushed));
         if r > 0 && m & (1 << 17) == 0 {
-            let cm = M { base: Base::Cnt, off: 0 };
+            let cm = M {
+                base: Base::Cnt,
+                off: 0,
+            };
             self.ld(1, W::B4, cm);
             self.op(Op::Add(1, Src::Imm(r as i32)));
             self.st(W::B4, cm, 1);
@@ -441,7 +547,14 @@ impl Cx<'_> {
             let xr = self.exit_ref_pub(next, r);
             self.op(Op::CountSub { n: r, exit: xr });
         }
-        let target = if m & (1 << 19) != 0 { self.pcl[next as usize] } else { self.land_of.get(&next).copied().unwrap_or(self.pcl[next as usize]) };
+        let target = if m & (1 << 19) != 0 {
+            self.pcl[next as usize]
+        } else {
+            self.land_of
+                .get(&next)
+                .copied()
+                .unwrap_or(self.pcl[next as usize])
+        };
         self.op(Op::Jmp(target));
         self.s1_resume.push((next, cont));
     }
@@ -464,10 +577,31 @@ impl Cx<'_> {
                         self.emit_s1_push(call.next, pushed);
                     }
                 }
-                Cold::Chain { l, back, x, fin, kidx, a, selfb } => self.emit_chain(l, back, x, fin, kidx, a, selfb),
-                Cold::StrSelf { l, x, done, kidx, a, b } => self.emit_str_self(l, x, done, kidx, a, b),
+                Cold::Chain {
+                    l,
+                    back,
+                    x,
+                    fin,
+                    kidx,
+                    a,
+                    selfb,
+                } => self.emit_chain(l, back, x, fin, kidx, a, selfb),
+                Cold::StrSelf {
+                    l,
+                    x,
+                    done,
+                    kidx,
+                    a,
+                    b,
+                } => self.emit_str_self(l, x, done, kidx, a, b),
                 Cold::SetNil { l, back, x, v } => self.emit_set_nil(l, back, x, v),
-                Cold::Cmp { l, pc, instr, lt, lf } => {
+                Cold::Cmp {
+                    l,
+                    pc,
+                    instr,
+                    lt,
+                    lf,
+                } => {
                     self.op(Op::Bind(l));
                     // (mutant `c2cmp_swap`: the two outcomes are exchanged; `c2cmp_exit_skip`: an instruction the helper leaves to the
                     // interpreter counts as "false")
@@ -509,12 +643,24 @@ impl Cx<'_> {
                     self.op(Op::Shl(0, 4));
                     self.ld(1, W::B8, thw(self.env().stack_off as usize));
                     self.op(Op::Add(1, Src::V(0)));
-                    self.ld(2, W::B1, M { base: Base::Reg(1), off: 0 });
+                    self.ld(
+                        2,
+                        W::B1,
+                        M {
+                            base: Base::Reg(1),
+                            off: 0,
+                        },
+                    );
                     // (the interpreter fetches the `JMP` as an instruction of its own after a metamethod comparison, whose condition holds:
                     // count it here, and leave at the `JMP` when the budget is out; the inline `donextjump` is not counted)
                     let k = Instruction(instr).k() != 0;
                     let lt_true = self.p.label();
-                    self.br(Cc::Eq, 2, Src::Imm(i32::from(rn_core::value::LUA_VTRUE)), lt_true);
+                    self.br(
+                        Cc::Eq,
+                        2,
+                        Src::Imm(i32::from(rn_core::value::LUA_VTRUE)),
+                        lt_true,
+                    );
                     if !k {
                         let xj = self.exit_cnt(pc + 1, 1);
                         self.op(Op::CountSub { n: 1, exit: xj });
@@ -528,7 +674,15 @@ impl Cx<'_> {
                     self.op(Op::Jmp(lt));
                     self.mm_resume.push((pc + 1, cont));
                 }
-                Cold::ArithMm { l, pc, instr, next, extra, r, x } => {
+                Cold::ArithMm {
+                    l,
+                    pc,
+                    instr,
+                    next,
+                    extra,
+                    r,
+                    x,
+                } => {
                     #[cfg(feature = "trace")]
                     let mm = crate::tr::armm_mut();
                     #[cfg(not(feature = "trace"))]
@@ -554,7 +708,10 @@ impl Cx<'_> {
                     // the rest of the block was pre-paid: give it back while the metamethod runs (the continuation pays it again,
                     // whoever pushed the frame: the interpreter counts what it executed)
                     if r > 0 && mm & 4 == 0 {
-                        let m = M { base: Base::Cnt, off: 0 };
+                        let m = M {
+                            base: Base::Cnt,
+                            off: 0,
+                        };
                         self.ld(1, W::B4, m);
                         self.op(Op::Add(1, Src::Imm(r as i32)));
                         self.st(W::B4, m, 1);
@@ -567,7 +724,14 @@ impl Cx<'_> {
                         let xr = self.exit_ref_pub(next, r);
                         self.op(Op::CountSub { n: r, exit: xr });
                     }
-                    let target = if mm & 2 != 0 { self.pcl[next as usize] } else { self.land_of.get(&next).copied().unwrap_or(self.pcl[next as usize]) };
+                    let target = if mm & 2 != 0 {
+                        self.pcl[next as usize]
+                    } else {
+                        self.land_of
+                            .get(&next)
+                            .copied()
+                            .unwrap_or(self.pcl[next as usize])
+                    };
                     self.op(Op::Jmp(target));
                     // (BUNDLE-V: with `t1q` bit 4 the continuation is an entry only `ret_mm` uses, as for the table reads / stores of BUNDLE-S)
                     if self.cfg.calls.is_some_and(|e| e.t1q & 16 != 0) {

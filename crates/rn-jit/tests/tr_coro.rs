@@ -59,7 +59,11 @@ fn run(name: &str, src: &str) -> String {
     let prologue = PRE.replace('\n', " ");
     let text = format!("{prologue}{src}{POST}");
     let chunk = format!("@{name}");
-    assert_eq!(st.load_buffer(text.as_bytes(), chunk.as_bytes(), None), Status::Ok, "load");
+    assert_eq!(
+        st.load_buffer(text.as_bytes(), chunk.as_bytes(), None),
+        Status::Ok,
+        "load"
+    );
     let func = st.top() - 1;
     let status = st.pcall(func, LUA_MULTRET, 0);
     let v = st.get(func);

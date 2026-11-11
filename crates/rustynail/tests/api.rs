@@ -829,11 +829,23 @@ fn luajit_extensions() {
     let mut l = Lua::new().unwrap();
     assert_eq!(eval(&mut l, "type(table.new) .. type(jit)"), "nilnil");
     let mut e = Lua::with_libs(StdLib::ALL | StdLib::EXT).unwrap();
-    assert_eq!(eval(&mut e, "type(table.new) .. type(table.clear) .. type(jit)"), "functionfunctionnil");
-    assert_eq!(eval(&mut e, "#require('string.buffer').encode({1, 2, x = 3}) > 0 and 'ok'"), "ok");
+    assert_eq!(
+        eval(&mut e, "type(table.new) .. type(table.clear) .. type(jit)"),
+        "functionfunctionnil"
+    );
+    assert_eq!(
+        eval(
+            &mut e,
+            "#require('string.buffer').encode({1, 2, x = 3}) > 0 and 'ok'"
+        ),
+        "ok"
+    );
     assert_eq!(eval(&mut e, "type(string.buffer)"), "nil");
     let mut j = Lua::with_libs(StdLib::ALL | StdLib::EXT | StdLib::JIT).unwrap();
-    assert_eq!(eval(&mut j, "type(jit.status()) .. type(jit.version)"), "booleanstring");
+    assert_eq!(
+        eval(&mut j, "type(jit.status()) .. type(jit.version)"),
+        "booleanstring"
+    );
     assert_eq!(eval(&mut j, "jit.off() or jit.status() == false"), "true");
     assert_eq!(eval(&mut j, "jit.on() or true"), "true");
     // a script cannot enable a compiler its host left off; `jit.on()` returns to the mode the host chose
@@ -852,7 +864,10 @@ fn luajit_extensions() {
     let mut s = Lua::builder().sandbox().build().unwrap();
     assert_eq!(eval(&mut s, "type(jit) .. type(table.new)"), "nilnil");
     s.open_libs(StdLib::EXT).unwrap();
-    assert_eq!(eval(&mut s, "type(table.new) .. type(table.clear)"), "functionfunction");
+    assert_eq!(
+        eval(&mut s, "type(table.new) .. type(table.clear)"),
+        "functionfunction"
+    );
     let t = eval(&mut s, "(function() local t = table.new(8, 8) t.a = 1 t[1] = 2 table.clear(t) return next(t) == nil end)()");
     assert_eq!(t, "true");
 }

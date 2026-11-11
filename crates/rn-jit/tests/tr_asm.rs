@@ -41,7 +41,9 @@ thread_local! {
 /// LeakSanitizer (scripts/asan-jit.sh) does not report it.
 static KEPT: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
 fn keep<T: ?Sized>(r: &'static T) -> &'static T {
-    KEPT.lock().unwrap_or_else(|e| e.into_inner()).push((r as *const T).cast::<u8>() as usize);
+    KEPT.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((r as *const T).cast::<u8>() as usize);
     r
 }
 
@@ -589,7 +591,10 @@ impl Helpers for Hlp<'_> {
                 let mut l = self.log.borrow_mut();
                 let words: Vec<u64> = area.gpr.iter().chain(area.xmm.iter()).copied().collect();
                 l.mat_calls.push((a, _b, words));
-                return HelperOut { result: u32::from(l.mat_fail), new_frame: None };
+                return HelperOut {
+                    result: u32::from(l.mat_fail),
+                    new_frame: None,
+                };
             }
             f => panic!("unexpected helper {f:#x}"),
         }
@@ -628,7 +633,10 @@ impl Resolver for TestRes {
 
 /// P2 bundle 1: the allocatable extra registers of the tests (`rbp` = bit 0, `r14` = bit 1): both on; `TR_ASM_XREGS=0` runs the old register file (control).
 fn xregs() -> u8 {
-    std::env::var("TR_ASM_XREGS").ok().and_then(|s| s.parse().ok()).unwrap_or(3)
+    std::env::var("TR_ASM_XREGS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3)
 }
 
 /// Assembles `ir` with the allocation of seed `ra_seed` (`None`: the default allocator).
@@ -688,9 +696,9 @@ fn base_env(w: &mut World) -> AsmEnv {
         no_room_checks: false,
         side_room: false,
         frame_cells: false,
-            lazy: false,
-            prelude: false,
-            lazy_leave_fn: 0,
+        lazy: false,
+        prelude: false,
+        lazy_leave_fn: 0,
         chain: false,
         root_code: 0,
         lazy_cs: None,
@@ -715,7 +723,11 @@ fn base_env(w: &mut World) -> AsmEnv {
         budget_sub: ld_knobs(),
         poll_off: ld_knobs().then(|| (w.irq.as_ptr() as i64 - w.bud as i64) as i32),
         // SAFETY: only the address of the field of the live `Bud` is formed.
-        fpool: if ld_knobs() { unsafe { std::ptr::addr_of_mut!((*w.bud).fpool) as u64 } } else { 0 },
+        fpool: if ld_knobs() {
+            unsafe { std::ptr::addr_of_mut!((*w.bud).fpool) as u64 }
+        } else {
+            0
+        },
         fpool_off: (exit_area::FROM_R15 as usize + exit_area::SIZE + 8) as i32,
     }
 }
@@ -1545,9 +1557,16 @@ fn hand_poll_trap_and_interrupt() {
         let s1 = b.snap(0, &[]);
         b.poll(s0);
         b.budget(5, s1); // the world's budget is 0: reaching it exits at snapshot 1
-        // P-L: the poll tests ONE word (`irq`); `ci.trap` is announced through it (set_hook raises the word), so a trap value
-        // alone no longer exits at the poll: the budget (0) does, at snapshot 1
-        for (trap, irq, want) in [(0, 0, 1), (1, 0, 1), (0, 1, 0), (1, 1, 0), (7, 0, 1), (0, 255, 0)] {
+                         // P-L: the poll tests ONE word (`irq`); `ci.trap` is announced through it (set_hook raises the word), so a trap value
+                         // alone no longer exits at the poll: the budget (0) does, at snapshot 1
+        for (trap, irq, want) in [
+            (0, 0, 1),
+            (1, 0, 1),
+            (0, 1, 0),
+            (1, 1, 0),
+            (7, 0, 1),
+            (0, 255, 0),
+        ] {
             let mut w = World::new(&model_ints(&[1]));
             w.load(&model_ints(&[1]));
             w.setup_ci(trap);
@@ -1556,11 +1575,16 @@ fn hand_poll_trap_and_interrupt() {
             let log = RefCell::new(Log::default());
             let res = TestRes::linear(b.ir.snaps.len().max(1));
             let env = base_env(&mut w);
-            let (a, _al, snaps) = compile(&b.ir, &[], None, &env, &res).unwrap_or_else(|e| panic!("{e}"));
+            let (a, _al, snaps) =
+                compile(&b.ir, &[], None, &env, &res).unwrap_or_else(|e| panic!("{e}"));
             let t = run_emu(&a, &snaps, &mut w, &log);
             assert_eq!(snap_of(t), Some(want), "trap {trap} irq {irq}");
             // the poll exit is the generic exit tagged EXIT_POLL, counted by nobody
-            assert_eq!(log.borrow().exit_poll_calls, u32::from(irq != 0), "trap {trap} irq {irq}");
+            assert_eq!(
+                log.borrow().exit_poll_calls,
+                u32::from(irq != 0),
+                "trap {trap} irq {irq}"
+            );
         }
     });
 }
@@ -1595,10 +1619,17 @@ fn hand_side_trace_link_polls_stores_the_budget_and_jumps_through_the_head_cell(
                 assert_eq!(snap_of(t), Some(s0), "the budget check of the start");
                 assert_eq!(w.cnt(), cnt, "uncharged: nothing refunded");
             } else if irq != 0 {
-                assert_eq!(snap_of(t), Some(s1), "trap {trap} irq {irq}: the poll of the link");
+                assert_eq!(
+                    snap_of(t),
+                    Some(s1),
+                    "trap {trap} irq {irq}: the poll of the link"
+                );
                 assert_eq!(w.cnt(), cnt - 3, "the exit stores the charged budget");
             } else {
-                assert_eq!(t, TARGET as u64, "the link continues where the head's cell says");
+                assert_eq!(
+                    t, TARGET as u64,
+                    "the link continues where the head's cell says"
+                );
                 assert_eq!(w.cnt(), cnt - 3, "the link stores the budget register");
             }
         }
@@ -1884,7 +1915,7 @@ fn new_head() -> Box<rn_jit::tr::cache::HeadData> {
         pre: Cell::new(0),
         rec_inner: Cell::new(0),
         rec: Cell::new(0),
-            lazy: Cell::new(false),
+        lazy: Cell::new(false),
         deep: Cell::new(false),
     })
 }
@@ -2200,9 +2231,20 @@ fn hand_upvalue_tbar_calls_the_barrier_exactly_for_black_upvalues_and_white_valu
         b.ins(TOp::Ustore, Ty::I64, 0, uref, v, 0);
         b.ins(TOp::Tbar, Ty::I64, 0, uref, v, 1);
         b.budget(1000, s0);
-        for (umark, vmark, want) in [(0u8, 0u8, 0usize), (BLACKBIT, 0, 0), (0, WHITEBITS, 0), (BLACKBIT, WHITEBITS, 1), (BLACKBIT | 3, 1 << 3, 1), (BLACKBIT, 1 << 4, 1), (BLACKBIT, 1 << 5, 0)] {
+        for (umark, vmark, want) in [
+            (0u8, 0u8, 0usize),
+            (BLACKBIT, 0, 0),
+            (0, WHITEBITS, 0),
+            (BLACKBIT, WHITEBITS, 1),
+            (BLACKBIT | 3, 1 << 3, 1),
+            (BLACKBIT, 1 << 4, 1),
+            (BLACKBIT, 1 << 5, 0),
+        ] {
             let mut m = model_ints(&[]);
-            m.slots.push(Val { t: Ty::Tab, bits: 1 });
+            m.slots.push(Val {
+                t: Ty::Tab,
+                bits: 1,
+            });
             let mut w = World::new(&m);
             w.load(&m);
             w.setup_ci(0);
@@ -2397,7 +2439,12 @@ fn hand_fused_hrefk_hload_keeps_both_exits() {
         let bits = hmiss_bits(1, 1).expect("small index");
         b.ins(TOp::Hmiss, Ty::I64, F_GUARD, node, kc, guard_aux(sm, bits));
         b.budget(1000, s0);
-        let nd = |key: u64, v: Val, next: i32| interp::MNode { key, val: v, next, int: false };
+        let nd = |key: u64, v: Val, next: i32| interp::MNode {
+            key,
+            val: v,
+            next,
+            int: false,
+        };
         // (key of node 0, value of node 0, key of node 1, expected exit snapshot)
         let cases: [(u64, Val, u64, u32); 8] = [
             (want, Val::int(5), 0x2000, s0),
@@ -2411,7 +2458,10 @@ fn hand_fused_hrefk_hload_keeps_both_exits() {
         ];
         for (k0, v0, k1, want_exit) in cases {
             let mut m = model_ints(&[]);
-            m.slots.push(Val { t: Ty::Tab, bits: 1 });
+            m.slots.push(Val {
+                t: Ty::Tab,
+                bits: 1,
+            });
             m.tables[0].lsizenode = 2;
             m.tables[0].nodes.insert(0, nd(k0, v0, 0));
             m.tables[0].nodes.insert(1, nd(k1, Val::int(0), 1));
@@ -2422,11 +2472,20 @@ fn hand_fused_hrefk_hload_keeps_both_exits() {
             let mut fused = 0;
             let (_, _, _, a) = exec(&b.ir, &mut w, |e| e.hk_fuse = true);
             fused += a.hk_fused;
-            let counted: Vec<u32> = [s0, sa, sb, sm].iter().map(|&x| w.counters[x as usize]).collect();
-            let exits: Vec<u32> = [s0, sa, sb, sm].iter().map(|&x| u32::from(x == want_exit)).collect();
+            let counted: Vec<u32> = [s0, sa, sb, sm]
+                .iter()
+                .map(|&x| w.counters[x as usize])
+                .collect();
+            let exits: Vec<u32> = [s0, sa, sb, sm]
+                .iter()
+                .map(|&x| u32::from(x == want_exit))
+                .collect();
             assert_eq!(counted, exits, "node0 key {k0:#x} val {v0:?} node1 key {k1:#x}: expected the exit of snapshot {want_exit}");
             if b4_knobs() {
-                assert_eq!(fused, 1, "the HREFK+HLOAD pair with two snapshots was not fused");
+                assert_eq!(
+                    fused, 1,
+                    "the HREFK+HLOAD pair with two snapshots was not fused"
+                );
             }
         }
     });
@@ -2447,12 +2506,36 @@ fn hand_sunk_exit_stub_calls_the_materialising_helper() {
         let key2 = b.ir.konst(KVal::Ptr(0x2018, PtrKind::Raw));
         let hdr = b.kint(2); // NEWTABLE B = 2 (two hash slots), C = 0
         let entries = [
-            SnapEntry { slot: 3, r: hdr, flags: SNAP_SUNK },
-            SnapEntry { slot: SNAP_PSEUDO, r: key, flags: SNAP_SFKEY },
-            SnapEntry { slot: SNAP_PSEUDO, r: v, flags: SNAP_SFVAL },
-            SnapEntry { slot: SNAP_PSEUDO, r: key2, flags: SNAP_SFKEY },
-            SnapEntry { slot: SNAP_PSEUDO, r: w2, flags: SNAP_SFVAL },
-            SnapEntry { slot: 4, r: v, flags: 0 },
+            SnapEntry {
+                slot: 3,
+                r: hdr,
+                flags: SNAP_SUNK,
+            },
+            SnapEntry {
+                slot: SNAP_PSEUDO,
+                r: key,
+                flags: SNAP_SFKEY,
+            },
+            SnapEntry {
+                slot: SNAP_PSEUDO,
+                r: v,
+                flags: SNAP_SFVAL,
+            },
+            SnapEntry {
+                slot: SNAP_PSEUDO,
+                r: key2,
+                flags: SNAP_SFKEY,
+            },
+            SnapEntry {
+                slot: SNAP_PSEUDO,
+                r: w2,
+                flags: SNAP_SFVAL,
+            },
+            SnapEntry {
+                slot: 4,
+                r: v,
+                flags: 0,
+            },
         ];
         let s1 = b.snap(0, &entries);
         b.budget(1000, s1);
@@ -2471,8 +2554,12 @@ fn hand_sunk_exit_stub_calls_the_materialising_helper() {
             let mut env = base_env(&mut w);
             env.sink_stub = true;
             let res = TestRes::linear(b.ir.snaps.len());
-            let (a, _al, snaps) = compile(&b.ir, &[], None, &env, &res).unwrap_or_else(|e| panic!("{e}"));
-            let log = RefCell::new(Log { mat_fail: fail, ..Log::default() });
+            let (a, _al, snaps) =
+                compile(&b.ir, &[], None, &env, &res).unwrap_or_else(|e| panic!("{e}"));
+            let log = RefCell::new(Log {
+                mat_fail: fail,
+                ..Log::default()
+            });
             let envr = w.env();
             let mut hl = Hlp {
                 snaps: &snaps,
@@ -2490,17 +2577,29 @@ fn hand_sunk_exit_stub_calls_the_materialising_helper() {
             assert_eq!(l.mat_calls.len(), 1, "the helper was not called once");
             let (snap, trace, words) = &l.mat_calls[0];
             assert_eq!((*snap, *trace), (s1, 0));
-            assert!(words.contains(&0x1111_2222_3333), "the register of the first field value was not saved: {words:x?}");
-            assert!(words.contains(&0x4444_5555_6666), "the register of the second field value was not saved: {words:x?}");
+            assert!(
+                words.contains(&0x1111_2222_3333),
+                "the register of the first field value was not saved: {words:x?}"
+            );
+            assert!(
+                words.contains(&0x4444_5555_6666),
+                "the register of the second field value was not saved: {words:x?}"
+            );
             if fail {
-                assert!(matches!(u, Until::Stop(Stop::Ret(3))), "a failing helper must return JitExit::Error: {u:?}");
+                assert!(
+                    matches!(u, Until::Stop(Stop::Ret(3))),
+                    "a failing helper must return JitExit::Error: {u:?}"
+                );
             } else {
                 assert!(matches!(u, Until::Stop(Stop::Unsupported)), "{u:?}");
                 assert_eq!(snap_of(emu.jmp_target().expect("a JmpR target")), Some(s1));
                 // the stub stored the plain slot and counted the exit
                 assert_eq!(w.counters[s1 as usize], 1);
                 let (tag, bits) = (w.frame[(PRE + 4) * 2], w.frame[(PRE + 4) * 2 + 1]);
-                assert_eq!((tag, bits), (tp(Val::int(0x1111_2222_3333)).0, 0x1111_2222_3333));
+                assert_eq!(
+                    (tag, bits),
+                    (tp(Val::int(0x1111_2222_3333)).0, 0x1111_2222_3333)
+                );
             }
         }
         // the knob off: the generic stub and the exit handler
@@ -2781,38 +2880,38 @@ mod e2e {
             rec_sites: [(0, 0, 0); 6],
             rec_nsites: 0,
             rec_link_cell: 0,
-        root_maxstack: 0,
-        no_room_checks: false,
-        side_room: false,
-        frame_cells: false,
+            root_maxstack: 0,
+            no_room_checks: false,
+            side_room: false,
+            frame_cells: false,
             lazy: false,
             prelude: false,
             lazy_leave_fn: 0,
-        chain: false,
-        root_code: 0,
-        lazy_cs: None,
-        lazy_nparams: 0,
-        frame_link_snap: u32::MAX,
-        setmt_inline: true,
-        b2_arr: b2_knobs(),
-        b2_tag: b2_knobs(),
-        b2_hk: b2_knobs(),
-        nopay: b4_knobs(),
-        divmagic: b4_knobs(),
-        hk_fuse: b4_knobs(),
-        hk_key64: b4_knobs(),
-        f2_byte: true,
-        ccalls_inline: false,
-        f2ifl: true,
-        fibdiet: 0,
-        lean_sub: true,
-        libcall: 0,
-        sink_stub: true,
-        mat_fn: rn_jit::tr::exit::jit_tr_mat as *const () as usize as u64,
-        budget_sub: false,
-        poll_off: None,
-        fpool: 0,
-        fpool_off: 0,
+            chain: false,
+            root_code: 0,
+            lazy_cs: None,
+            lazy_nparams: 0,
+            frame_link_snap: u32::MAX,
+            setmt_inline: true,
+            b2_arr: b2_knobs(),
+            b2_tag: b2_knobs(),
+            b2_hk: b2_knobs(),
+            nopay: b4_knobs(),
+            divmagic: b4_knobs(),
+            hk_fuse: b4_knobs(),
+            hk_key64: b4_knobs(),
+            f2_byte: true,
+            ccalls_inline: false,
+            f2ifl: true,
+            fibdiet: 0,
+            lean_sub: true,
+            libcall: 0,
+            sink_stub: true,
+            mat_fn: rn_jit::tr::exit::jit_tr_mat as *const () as usize as u64,
+            budget_sub: false,
+            poll_off: None,
+            fpool: 0,
+            fpool_off: 0,
         };
         let a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env)
             .map_err(|e| format!("asm: {e:?}"))?;
@@ -4196,7 +4295,13 @@ fn hand_budget_sub_refunds_on_exit() {
                 w.set_cnt(cnt);
                 let (t, _, _, a) = exec(&b.ir, &mut w, |e| e.budget_sub = sub);
                 if sub && vb_reg().is_some() {
-                    assert!(a.prog.ops.iter().any(|o| matches!(o, rn_jit::ir::Op::SubJl { .. })), "the fused form is emitted");
+                    assert!(
+                        a.prog
+                            .ops
+                            .iter()
+                            .any(|o| matches!(o, rn_jit::ir::Op::SubJl { .. })),
+                        "the fused form is emitted"
+                    );
                 }
                 // cnt < 3: exit 0, word unchanged (refund 0); 3 <= cnt < 6: 3 charged, exit 1, word = cnt - 3 + 4
                 let (snap, word) = if cnt < 3 { (0, cnt) } else { (1, cnt - 3 + 4) };
@@ -4227,7 +4332,10 @@ fn hand_poll_from_r15() {
             let irq_addr = w.irq.as_ptr() as u64;
             let (t, _, _, a) = exec(&b.ir, &mut w, |e| e.poll_off = Some(off));
             assert!(
-                !a.prog.ops.iter().any(|o| matches!(o, rn_jit::ir::Op::Mov(7, x) if *x == irq_addr)),
+                !a.prog
+                    .ops
+                    .iter()
+                    .any(|o| matches!(o, rn_jit::ir::Op::Mov(7, x) if *x == irq_addr)),
                 "no address in a register"
             );
             assert_eq!(snap_of(t), Some(want), "irq {irq}");
@@ -4266,7 +4374,11 @@ fn hand_f2ifl_floor_guard() {
                     let s0 = b.snap(0, &[]);
                     let s1 = b.snap(0, &[]);
                     let v = b.sload(0, Ty::Num, s0);
-                    let f = if floor_first { b.ins(TOp::Ffloor, Ty::Num, 0, v, NOREF, 0) } else { v };
+                    let f = if floor_first {
+                        b.ins(TOp::Ffloor, Ty::Num, 0, v, NOREF, 0)
+                    } else {
+                        v
+                    };
                     b.ins(TOp::F2iExact, Ty::Int, F_GUARD, f, NOREF, guard_aux(s0, 0));
                     b.budget(1000, s1);
                     let mut m = model_ints(&[1]);
@@ -4278,12 +4390,27 @@ fn hand_f2ifl_floor_guard() {
                     let (t, _, _, _) = exec(&b.ir, &mut w, |e| e.f2ifl = f2ifl);
                     let fl = if floor_first { x.floor() } else { x };
                     // exact: the (floored) value is an integer in [-2^63, 2^63)
-                    let exact = fl.is_finite() && fl >= -9223372036854775808.0 && fl < 9223372036854775808.0 && fl == fl.trunc();
+                    let exact = fl.is_finite()
+                        && fl >= -9223372036854775808.0
+                        && fl < 9223372036854775808.0
+                        && fl == fl.trunc();
                     let cheap = f2ifl && floor_first;
-                    let exits = if cheap { !exact || (fl == -9223372036854775808.0) } else { !exact };
-                    assert_eq!(snap_of(t), Some(u32::from(!exits)), "x {x:e} floor_first {floor_first} f2ifl {f2ifl}");
+                    let exits = if cheap {
+                        !exact || (fl == -9223372036854775808.0)
+                    } else {
+                        !exact
+                    };
+                    assert_eq!(
+                        snap_of(t),
+                        Some(u32::from(!exits)),
+                        "x {x:e} floor_first {floor_first} f2ifl {f2ifl}"
+                    );
                     if cheap && conservative && fl == -9223372036854775808.0 {
-                        assert_eq!(snap_of(t), Some(0), "the floor of -2^63 leaves through the cheap guard");
+                        assert_eq!(
+                            snap_of(t),
+                            Some(0),
+                            "the floor of -2^63 leaves through the cheap guard"
+                        );
                     }
                 }
             }
@@ -4358,13 +4485,36 @@ fn retf_ir(k_flag: bool, nres1: u32) -> TraceIr {
     let c0 = b.sload(0, Ty::Int, s1);
     let k = b.kint(1000);
     let sum = b.ins(TOp::Add, Ty::Int, 0, c0, k, 0);
-    let s2 = b.snap(0, &[SnapEntry { slot: 2, r: sum, flags: 0 }]);
+    let s2 = b.snap(
+        0,
+        &[SnapEntry {
+            slot: 2,
+            r: sum,
+            flags: 0,
+        }],
+    );
     b.ir.snaps[s2 as usize].seg = 1;
     let big = b.kint(1 << 40);
     b.ins(TOp::Lt, Ty::Int, 0, big, sum, guard_aux(s2, 0));
     b.ir.segs = vec![
-        Seg { proto: ProtoKey(1), code: 0, shift: 0, pops: 0, call_pc: 0, a: 0, retf_ins: NOREF },
-        Seg { proto: ProtoKey(1), code: 0, shift: RETF_B, pops: 1, call_pc: 0, a: 1, retf_ins: NOREF },
+        Seg {
+            proto: ProtoKey(1),
+            code: 0,
+            shift: 0,
+            pops: 0,
+            call_pc: 0,
+            a: 0,
+            retf_ins: NOREF,
+        },
+        Seg {
+            proto: ProtoKey(1),
+            code: 0,
+            shift: RETF_B,
+            pops: 1,
+            call_pc: 0,
+            a: 1,
+            retf_ins: NOREF,
+        },
     ];
     b.ir
 }
@@ -4388,7 +4538,11 @@ fn run_retf_seed(rw: &mut RetfWorld, ir: &TraceIr, seed: Option<u64>) -> RetfRun
     let (a, _al, snaps) = compile(ir, &[], seed, &env, &res).unwrap_or_else(|e| panic!("{e}"));
     let log = RefCell::new(Log::default());
     let e = rw.w.env();
-    if std::env::var("RETF_DUMP").is_ok() { for (n, o) in a.prog.ops.iter().enumerate() { eprintln!("{n}: {o:?}"); } }
+    if std::env::var("RETF_DUMP").is_ok() {
+        for (n, o) in a.prog.ops.iter().enumerate() {
+            eprintln!("{n}: {o:?}");
+        }
+    }
     let mut hl = Hlp {
         snaps: &snaps,
         stack_size: PRE + NSLOT,
@@ -4401,7 +4555,9 @@ fn run_retf_seed(rw: &mut RetfWorld, ir: &TraceIr, seed: Option<u64>) -> RetfRun
     // SAFETY: the buffers of the world cover every offset the trace uses (frame, ci, thread, area, the caller node).
     let u = unsafe { emu.run(&a.prog, &[], &e, 3_000_000, &mut hl) };
     assert!(matches!(u, Until::Stop(Stop::Unsupported)), "{u:?}");
-    if std::env::var("RETF_DUMP").is_ok() { eprintln!("regs {:x?}", emu.r); }
+    if std::env::var("RETF_DUMP").is_ok() {
+        eprintln!("regs {:x?}", emu.r);
+    }
     RetfRun {
         target: emu.jmp_target().expect("a JmpR target"),
         ci: emu.ci(&e),
@@ -4420,13 +4576,29 @@ fn hand_retf_pops_natively_and_exits_in_the_caller() {
         let c_ci = rw.caller.as_ptr() as usize;
         let r = run_retf(&mut rw, &ir);
         // the third guard fails (segment 1): the caller's frame is the running one, the exit stored the sum into its register 2
-        assert_eq!(snap_of(r.target), Some(2), "exit through the caller-segment snapshot");
+        assert_eq!(
+            snap_of(r.target),
+            Some(2),
+            "exit through the caller-segment snapshot"
+        );
         assert_eq!(r.ci as usize, c_ci, "r13 = the caller");
         assert_eq!(r.th_ci, c_ci, "thread.ci = the caller (retf_no_ci_store)");
-        assert_eq!(r.frame as usize, rbx - 16 * usize::from(RETF_B), "rbx moved A + 1 = 2 slots down (retf_shift_off)");
-        assert_eq!(r.k as usize, rw.kc.as_ptr() as usize, "r14 = the caller's kcache (retf_no_reloadk)");
+        assert_eq!(
+            r.frame as usize,
+            rbx - 16 * usize::from(RETF_B),
+            "rbx moved A + 1 = 2 slots down (retf_shift_off)"
+        );
+        assert_eq!(
+            r.k as usize,
+            rw.kc.as_ptr() as usize,
+            "r14 = the caller's kcache (retf_no_reloadk)"
+        );
         // register 2 of the caller = slot 0 of F's frame: tag int, payload 7 + 1000
-        assert_eq!((rw.w.frame[4], rw.w.frame[5]), (u64::from(LUA_VNUMINT), 1007), "exit store relative to the new base");
+        assert_eq!(
+            (rw.w.frame[4], rw.w.frame[5]),
+            (u64::from(LUA_VNUMINT), 1007),
+            "exit store relative to the new base"
+        );
     });
 }
 
@@ -4436,14 +4608,28 @@ fn hand_retf_guards_exit_before_the_pop() {
         type Tw = fn(&mut RetfWorld);
         let cases: &[(&str, Tw)] = &[
             // returning frame called from C (`CIST_FRESH`): the return would leave the interpreter loop (retf_callstatus_unchecked)
-            ("fresh", |rw| put(&mut rw.w.ci, ci::CALLSTATUS, 2u32 | ci::CIST_FRESH)),
-            ("mmret", |rw| put(&mut rw.w.ci, ci::CALLSTATUS, 2u32 | ci::CIST_MMRET)),
-            ("hooked", |rw| put(&mut rw.w.ci, ci::CALLSTATUS, 2u32 | rn_core::state::CIST_HOOKED)),
+            ("fresh", |rw| {
+                put(&mut rw.w.ci, ci::CALLSTATUS, 2u32 | ci::CIST_FRESH)
+            }),
+            ("mmret", |rw| {
+                put(&mut rw.w.ci, ci::CALLSTATUS, 2u32 | ci::CIST_MMRET)
+            }),
+            ("hooked", |rw| {
+                put(
+                    &mut rw.w.ci,
+                    ci::CALLSTATUS,
+                    2u32 | rn_core::state::CIST_HOOKED,
+                )
+            }),
             ("nresults", |rw| put(&mut rw.w.ci, ci::CALLSTATUS, 3u32)),
             // the caller is a C frame (retf_cframe_unchecked)
-            ("cframe", |rw| put(&mut rw.caller, ci::CALLSTATUS, ci::CIST_C)),
+            ("cframe", |rw| {
+                put(&mut rw.caller, ci::CALLSTATUS, ci::CIST_C)
+            }),
             // the caller is suspended elsewhere (retf_site_unchecked)
-            ("site", |rw| put(&mut rw.caller, ci::SAVEDPC, (RETF_SITE + 4) as usize)),
+            ("site", |rw| {
+                put(&mut rw.caller, ci::SAVEDPC, (RETF_SITE + 4) as usize)
+            }),
         ];
         for (name, tw) in cases {
             let ir = retf_ir(false, 2);
@@ -4452,8 +4638,16 @@ fn hand_retf_guards_exit_before_the_pop() {
             let f_ci = rw.w.ci.as_ptr() as usize;
             let rbx = rw.w.rbx() as usize;
             let r = run_retf(&mut rw, &ir);
-            assert_eq!(snap_of(r.target), Some(0), "{name}: the guard exits through the RETURN's snapshot");
-            assert_eq!((r.ci as usize, r.th_ci, r.frame as usize), (f_ci, f_ci, rbx), "{name}: nothing popped");
+            assert_eq!(
+                snap_of(r.target),
+                Some(0),
+                "{name}: the guard exits through the RETURN's snapshot"
+            );
+            assert_eq!(
+                (r.ci as usize, r.th_ci, r.frame as usize),
+                (f_ci, f_ci, rbx),
+                "{name}: nothing popped"
+            );
         }
         // bits that are NOT compared: CIST_TAIL (a callee entered by a tail call returns like any other) and CIST_JIT
         for extra in [rn_core::state::CIST_TAIL, 1u32 << 27] {
@@ -4461,7 +4655,11 @@ fn hand_retf_guards_exit_before_the_pop() {
             let mut rw = RetfWorld::new(2 | extra);
             let c_ci = rw.caller.as_ptr() as usize;
             let r = run_retf(&mut rw, &ir);
-            assert_eq!((snap_of(r.target), r.ci as usize), (Some(2), c_ci), "callstatus bit {extra:#x} is not compared");
+            assert_eq!(
+                (snap_of(r.target), r.ci as usize),
+                (Some(2), c_ci),
+                "callstatus bit {extra:#x} is not compared"
+            );
         }
     });
 }
@@ -4492,8 +4690,16 @@ fn hand_retf_k_checks_tbc_and_open_upvalues() {
             let f_ci = rw.w.ci.as_ptr() as usize;
             let c_ci = rw.caller.as_ptr() as usize;
             let r = run_retf(&mut rw, &ir);
-            let want = if pops { (Some(2), c_ci) } else { (Some(0), f_ci) };
-            assert_eq!((snap_of(r.target), r.ci as usize), want, "k-RETF {name} (retf_k_unchecked)");
+            let want = if pops {
+                (Some(2), c_ci)
+            } else {
+                (Some(0), f_ci)
+            };
+            assert_eq!(
+                (snap_of(r.target), r.ci as usize),
+                want,
+                "k-RETF {name} (retf_k_unchecked)"
+            );
         }
         // without the k flag the same states do not matter (the RETURN would not close anything)
         let ir = retf_ir(false, 2);
@@ -4515,8 +4721,16 @@ fn hand_retf_random_allocation_keeps_the_scratch_free() {
             let mut rw = RetfWorld::new(2);
             let c_ci = rw.caller.as_ptr() as usize;
             let r = run_retf_seed(&mut rw, &ir, Some(seed));
-            assert_eq!((snap_of(r.target), r.ci as usize), (Some(2), c_ci), "seed {seed}");
-            assert_eq!((rw.w.frame[4], rw.w.frame[5]), (u64::from(LUA_VNUMINT), 1007), "seed {seed}");
+            assert_eq!(
+                (snap_of(r.target), r.ci as usize),
+                (Some(2), c_ci),
+                "seed {seed}"
+            );
+            assert_eq!(
+                (rw.w.frame[4], rw.w.frame[5]),
+                (u64::from(LUA_VNUMINT), 1007),
+                "seed {seed}"
+            );
         }
     });
 }

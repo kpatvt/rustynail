@@ -595,7 +595,15 @@ impl Assembler {
 
     /// `cmp word [m], imm16` (`66 81 /7 iw`).
     pub fn cmp_m16_i(&mut self, m: Mem, imm: u16) {
-        self.rm_op(Some(0x66), false, &[0x81], Alu::Cmp as u8, Rm::Mem(m), false, 2);
+        self.rm_op(
+            Some(0x66),
+            false,
+            &[0x81],
+            Alu::Cmp as u8,
+            Rm::Mem(m),
+            false,
+            2,
+        );
         self.b(imm as u8);
         self.b((imm >> 8) as u8);
     }

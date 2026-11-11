@@ -749,24 +749,54 @@ fn forwarding_preserves_the_interpreter_result() {
 fn optimize_keeps_retf_and_segments() {
     let mut b = Builder::new(false, false);
     let s0 = b.ir.snapshot(Snap::default(), &[]);
-    let x = b.emit_flags(TOp::Sload, Ty::Int, F_GUARD, 0, NOREF, guard_aux(s0, 1)).unwrap();
+    let x = b
+        .emit_flags(TOp::Sload, Ty::Int, F_GUARD, 0, NOREF, guard_aux(s0, 1))
+        .unwrap();
     let k = b.ir.kint(3);
     let _dead = b.emit(TOp::Add, Ty::Int, x, k, 0).unwrap();
     let site = b.ir.konst(KVal::Ptr(0x1000, PtrKind::Raw));
     b.emit_retf(site, 2, guard_aux(s0, 2)).unwrap();
-    let s1 = b.ir.snapshot(Snap { seg: 1, ..Snap::default() }, &[]);
-    let y = b.emit_flags(TOp::Sload, Ty::Int, F_GUARD, 0, NOREF, guard_aux(s1, 1)).unwrap();
+    let s1 = b.ir.snapshot(
+        Snap {
+            seg: 1,
+            ..Snap::default()
+        },
+        &[],
+    );
+    let y = b
+        .emit_flags(TOp::Sload, Ty::Int, F_GUARD, 0, NOREF, guard_aux(s1, 1))
+        .unwrap();
     let cl = b.ir.konst(KVal::Ptr(1, PtrKind::LClosure));
     let z = b.ir.kint(0);
     let u = b.emit(TOp::Uref, Ty::P64, cl, z, 0).unwrap();
     b.emit(TOp::Ustore, Ty::Nil, u, y, 0).unwrap();
     let mut ir = b.finish();
     ir.segs = vec![
-        Seg { proto: ProtoKey(1), code: 0, shift: 0, pops: 0, call_pc: 0, a: 0, retf_ins: NOREF },
-        Seg { proto: ProtoKey(2), code: 0, shift: 2, pops: 1, call_pc: 5, a: 1, retf_ins: NOREF },
+        Seg {
+            proto: ProtoKey(1),
+            code: 0,
+            shift: 0,
+            pops: 0,
+            call_pc: 0,
+            a: 0,
+            retf_ins: NOREF,
+        },
+        Seg {
+            proto: ProtoKey(2),
+            code: 0,
+            shift: 2,
+            pops: 1,
+            call_pc: 5,
+            a: 1,
+            retf_ins: NOREF,
+        },
     ];
     let opt = optimize(&ir, true, true).unwrap();
-    assert_eq!(opt.ins.iter().filter(|i| i.op == TOp::Retf).count(), 1, "RETF survives");
+    assert_eq!(
+        opt.ins.iter().filter(|i| i.op == TOp::Retf).count(),
+        1,
+        "RETF survives"
+    );
     assert_eq!(opt.segs, ir.segs, "segment table survives");
     assert_eq!(opt.snaps[1].seg, 1, "snapshot segment survives");
     let mk = || {
@@ -777,5 +807,9 @@ fn optimize_keeps_retf_and_segments() {
     let (mut a, mut c) = (mk(), mk());
     assert_eq!(run(&ir, &mut a), run(&opt, &mut c));
     assert_eq!(a.closures, c.closures);
-    assert_eq!(c.closures[0][0], Val::int(1), "the SLOAD after the pop reads the caller's register 0");
+    assert_eq!(
+        c.closures[0][0],
+        Val::int(1),
+        "the SLOAD after the pop reads the caller's register 0"
+    );
 }

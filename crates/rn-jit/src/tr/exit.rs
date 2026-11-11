@@ -262,7 +262,10 @@ impl ExitSnap {
 
     /// [`ExitSnap::frame_side_ok`] without the "no link" condition: plain or tail Lua frames, no vararg frame, no `top`.
     pub fn frames_plain(&self) -> bool {
-        self.usable && !self.frames.is_empty() && self.frames.iter().all(|f| f.nextra < 0) && self.top.is_none()
+        self.usable
+            && !self.frames.is_empty()
+            && self.frames.iter().all(|f| f.nextra < 0)
+            && self.top.is_none()
     }
 }
 
@@ -348,14 +351,19 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
         // build the same trace), the exit gets a side trace that continues behind the loop
         let ty_check = matches!(i.op, TOp::Sload | TOp::Aload | TOp::Uload | TOp::Hload)
             && aux_bits(i.aux) & 1 != 0
-            && !(i.op == TOp::Hload && aux_bits(i.aux) & 2 != 0 && !mutants::active("tnext_key_site_type"));
+            && !(i.op == TOp::Hload
+                && aux_bits(i.aux) & 2 != 0
+                && !mutants::active("tnext_key_site_type"));
         if !ty_check {
             all_type[s] = false;
         }
         // P-B: the guard `NE %alloc, 0` behind a class-A allocation
         let alloc_guard = i.op == TOp::Ne
             && TraceIr::is_ins(i.a)
-            && matches!(ir.at(i.a).op, TOp::Tnew | TOp::Snew | TOp::Concat | TOp::Lib);
+            && matches!(
+                ir.at(i.a).op,
+                TOp::Tnew | TOp::Snew | TOp::Concat | TOp::Lib
+            );
         if !alloc_guard {
             all_alloc[s] = false;
         }
@@ -510,7 +518,9 @@ fn slot_value(
     let t = ir.ty_of(r);
     let mut tag = tag_of(t).ok_or_else(|| format!("snapshot {si}: raw type {t:?} in a slot"))?;
     if ir.at(r).flags & super::ir::F_ANYSTR != 0 {
-        if !matches!(t, Ty::ShrStr | Ty::LngStr) || src_of(loc).is_none_or(|s| !matches!(s, ValSrc::Reg(_) | ValSrc::Spill(_))) {
+        if !matches!(t, Ty::ShrStr | Ty::LngStr)
+            || src_of(loc).is_none_or(|s| !matches!(s, ValSrc::Reg(_) | ValSrc::Spill(_)))
+        {
             // (an unplaced value is "never used by a guard": the `usable` rule below)
             if loc != Loc::None {
                 return Err(format!("snapshot {si}: dynamic string tag at {loc:?}"));
@@ -534,7 +544,6 @@ fn slot_value(
         _ => Err(format!("snapshot {si}: bad location {loc:?}")),
     }
 }
-
 
 /// Resolves every snapshot of `ir` with the locations of `al` (P5a's `snap_locs`). `Err` names the first problem
 /// (an unresolvable prototype or label, a slot of a raw machine type, an inconsistent frame count).
@@ -614,7 +623,8 @@ pub fn build_exits(
                         .ok_or_else(|| format!("snapshot {si}: sunk metatable without table"))?
                         .mt = Some((tag, src));
                 } else if e.flags & SNAP_SALIAS != 0 {
-                    let first = int_of(e.r).ok_or_else(|| format!("snapshot {si}: bad sunk alias"))?;
+                    let first =
+                        int_of(e.r).ok_or_else(|| format!("snapshot {si}: bad sunk alias"))?;
                     let t = sunk
                         .iter_mut()
                         .find(|t| i64::from(t.slot) == first)
@@ -967,7 +977,11 @@ pub fn frame_link_mat_ok(s: &ExitSnap) -> bool {
 
 /// N3b: the `savedpc` the innermost frame of a linking snapshot resumes at (input `V5` of the shared frame rebuild).
 pub fn frame_link_innermost_pc(s: &ExitSnap, root_code: u64) -> u64 {
-    frame_mat_innermost_pc(s, root_code).wrapping_add(if mutants::active("relink_savedpc_off") { 4 } else { 0 })
+    frame_mat_innermost_pc(s, root_code).wrapping_add(if mutants::active("relink_savedpc_off") {
+        4
+    } else {
+        0
+    })
 }
 
 /// N3b: where the stub of a linking snapshot continues after the rebuild: `(address, through)`; `through`: the address is a dispatch cell holding the target
@@ -986,23 +1000,55 @@ pub fn frame_link_target(s: &ExitSnap) -> (u64, bool) {
 /// `func` + 1 (the stack index of slot 0), `V2` = the previous node, `V3` = the next node, `V4` = scratch; ends with `SetCi(V2)`
 /// (the innermost node), the caller adds the frame / constants reload and the jump. Snapshots with the same chain share one copy.
 pub fn frame_mat_shared_ops(frames: &[FrameRestore], root_code: u64) -> Vec<Op> {
-    let ld8 = |dst, base, off: usize| Op::Ld { dst, w: W::B8, m: M { base, off: off as i32 } };
-    let st = |w, base, off: usize, src| Op::St { w, m: M { base, off: off as i32 }, src };
+    let ld8 = |dst, base, off: usize| Op::Ld {
+        dst,
+        w: W::B8,
+        m: M {
+            base,
+            off: off as i32,
+        },
+    };
+    let st = |w, base, off: usize, src| Op::St {
+        w,
+        m: M {
+            base,
+            off: off as i32,
+        },
+        src,
+    };
     let mut v = vec![ld8(1, Base::Ci, ci::FUNC), Op::Add(1, Src::Imm(1))];
     let mut prev = Base::Ci;
     let mut prev_code = root_code;
     for f in frames {
-        let after = if mutants::active("fmat_savedpc_caller_off") { f.call_pc } else { f.call_pc + 1 };
+        let after = if mutants::active("fmat_savedpc_caller_off") {
+            f.call_pc
+        } else {
+            f.call_pc + 1
+        };
         v.push(ld8(3, prev, ci::NEXT));
         v.push(Op::Mov(4, prev_code.wrapping_add(4 * u64::from(after))));
         v.push(st(W::B8, prev, ci::SAVEDPC, Src::V(4)));
         v.push(Op::MovR(4, 1));
         v.push(Op::Add(4, Src::Imm(i32::from(f.func_slot))));
         v.push(st(W::B8, Base::Reg(3), ci::FUNC, Src::V(4)));
-        v.push(Op::Add(4, Src::Imm(1 + i32::from(f.maxstack) + i32::from(mutants::active("fmat_top_off_by_one")))));
+        v.push(Op::Add(
+            4,
+            Src::Imm(1 + i32::from(f.maxstack) + i32::from(mutants::active("fmat_top_off_by_one"))),
+        ));
         v.push(st(W::B8, Base::Reg(3), ci::TOP, Src::V(4)));
-        let nres = f.nresults as i32 + 1 + if mutants::active("fmat_nresults_off") { 1 } else { 0 };
-        let cs = nres as u32 | if f.tail && !mutants::active("fmat_tail_flag_skip") { CIST_TAIL } else { 0 };
+        let nres = f.nresults as i32
+            + 1
+            + if mutants::active("fmat_nresults_off") {
+                1
+            } else {
+                0
+            };
+        let cs = nres as u32
+            | if f.tail && !mutants::active("fmat_tail_flag_skip") {
+                CIST_TAIL
+            } else {
+                0
+            };
         v.push(st(W::B4, Base::Reg(3), ci::CALLSTATUS, Src::Imm(cs as i32)));
         if !mutants::active("fmat_trap_skip") {
             v.push(st(W::B4, Base::Reg(3), ci::TRAP, Src::Imm(0)));
@@ -1101,7 +1147,10 @@ pub unsafe fn restore_chain(ctx: &RestoreCtx, s: &ExitSnap, root_code: *const u3
     let mut prev_code = root_code;
     // N3: the C-stack depth the next metamethod frame starts from (`mm_frame` stores it in `ctx` and counts the frame)
     let mut mm_nc = if s.frames.iter().any(|f| f.mm) {
-        assert!(!ctx.ncalls.is_null(), "a metamethod frame without the thread's nCcalls");
+        assert!(
+            !ctx.ncalls.is_null(),
+            "a metamethod frame without the thread's nCcalls"
+        );
         // SAFETY: `ncalls` is `&thread.ncalls` of the live thread (contract).
         unsafe { ctx.ncalls.read() }
     } else {
@@ -1139,10 +1188,15 @@ pub unsafe fn restore_chain(ctx: &RestoreCtx, s: &ExitSnap, root_code: *const u3
             } else {
                 0
             };
-            let mmf = if f.mm && !mutants::active("mm_flag_skip") { CIST_MMRET } else { 0 };
+            let mmf = if f.mm && !mutants::active("mm_flag_skip") {
+                CIST_MMRET
+            } else {
+                0
+            };
             std::ptr::addr_of_mut!((*next).callstatus).write(nres as u32 | tail | mmf);
             if f.mm {
-                std::ptr::addr_of_mut!((*next).ctx).write(mm_nc as isize + isize::from(mutants::active("mm_ctx_off")));
+                std::ptr::addr_of_mut!((*next).ctx)
+                    .write(mm_nc as isize + isize::from(mutants::active("mm_ctx_off")));
                 mm_nc += 1;
                 if !mutants::active("mm_ncalls_skip") {
                     ctx.ncalls.write(mm_nc);
@@ -1157,7 +1211,11 @@ pub unsafe fn restore_chain(ctx: &RestoreCtx, s: &ExitSnap, root_code: *const u3
             std::ptr::addr_of_mut!((*next).kcache).write(k.cast());
             std::ptr::addr_of_mut!((*next).savedpc).write(f.code);
             if f.nextra >= 0 {
-                let n = if mutants::active("vararg_nextra_off") { f.nextra + 1 } else { f.nextra };
+                let n = if mutants::active("vararg_nextra_off") {
+                    f.nextra + 1
+                } else {
+                    f.nextra
+                };
                 std::ptr::addr_of_mut!((*next).nextraargs).write(n);
             }
         }
@@ -1174,7 +1232,9 @@ pub unsafe fn restore_chain(ctx: &RestoreCtx, s: &ExitSnap, root_code: *const u3
             // F4: a consumer of a multiple-result sequence re-executes with the interpreter's `top` (TR22b relaxed)
             match s.top {
                 Some(t) if !mutants::active("exit_top_ignored") => {
-                    let at = base + usize::from(t) + usize::from(mutants::active("exit_top_off_by_one_slot"));
+                    let at = base
+                        + usize::from(t)
+                        + usize::from(mutants::active("exit_top_off_by_one_slot"));
                     assert!(at <= ctx.stack_size, "snapshot top beyond the stack");
                     ctx.th_top.write(at);
                 }
@@ -1219,7 +1279,9 @@ pub unsafe fn restore(
             let p = ctx.stack0.wrapping_add(idx * 16);
             let tag = if e.tag == TAG_DYN_STR {
                 // N5: the string's variant, from its header (`v` is a live `LuaString`)
-                u64::from(*(v as *const u8).add(rn_core::jit_layout::string::TT) | BIT_ISCOLLECTABLE)
+                u64::from(
+                    *(v as *const u8).add(rn_core::jit_layout::string::TT) | BIT_ISCOLLECTABLE,
+                )
             } else {
                 u64::from(e.tag)
             };
@@ -1270,12 +1332,19 @@ pub fn sunk_save_ops(s: &ExitSnap) -> Vec<Op> {
     let mut v = Vec::new();
     for (r, used) in gpr.iter().enumerate() {
         if *used && !mutants::active("sinkstub_save_skip") {
-            v.push(Op::St { w: W::B8, m: area_m(exit_area::GPR + 8 * r), src: Src::V(r as u8) });
+            v.push(Op::St {
+                w: W::B8,
+                m: area_m(exit_area::GPR + 8 * r),
+                src: Src::V(r as u8),
+            });
         }
     }
     for (x, used) in xmm.iter().enumerate() {
         if *used && !mutants::active("sinkstub_save_skip") {
-            v.push(Op::StF { m: area_m(exit_area::XMM + 8 * x), src: x as u8 });
+            v.push(Op::StF {
+                m: area_m(exit_area::XMM + 8 * x),
+                src: x as u8,
+            });
         }
     }
     v
@@ -1360,7 +1429,10 @@ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area: 
             let (kv, v) = unsafe {
                 (
                     std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VSHRSTR)), f.key]),
-                    std::mem::transmute::<[u64; 2], Value>([u64::from(f.tag), read_src(area, f.src)]),
+                    std::mem::transmute::<[u64; 2], Value>([
+                        u64::from(f.tag),
+                        read_src(area, f.src),
+                    ]),
                 )
             };
             let key = kv.as_strref().expect("short string key");
@@ -1373,7 +1445,9 @@ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area: 
         if let Some((mtag, msrc)) = t.mt {
             // BUNDLE-2: the `setmetatable` of the sunk table (the trace guarded that the metatable has no `__gc`: no finalizer to register)
             // SAFETY: `Value` is `repr(C)` `{ tag word, payload }`; the metatable is a live table (a value of the trace).
-            let mv = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(mtag), read_src(area, msrc)]) };
+            let mv = unsafe {
+                std::mem::transmute::<[u64; 2], Value>([u64::from(mtag), read_src(area, msrc)])
+            };
             if let Some(m) = mv.as_table() {
                 if !mutants::active("sinkmt_no_mt_materialise") {
                     tab.set_metatable(Some(m));
@@ -1477,7 +1551,13 @@ unsafe fn seg_oracle_entry_func(meta: &ExitMeta, area: &ExitArea) -> usize {
 /// `ctx.root` is the live `CallInfo` the exit runs in; the entry `CallInfo` stored at the trace's entry is live (as a node: only its `previous` chain is read).
 #[cold]
 #[inline(never)]
-unsafe fn seg_oracle_check(meta: &ExitMeta, snap: &ExitSnap, ctx: &RestoreCtx, area: &ExitArea, entry_func: usize) {
+unsafe fn seg_oracle_check(
+    meta: &ExitMeta,
+    snap: &ExitSnap,
+    ctx: &RestoreCtx,
+    area: &ExitArea,
+    entry_func: usize,
+) {
     let slot = usize::from(meta.seg_oracle - 1);
     let entry = area.spill[slot] as usize as *mut CallInfo;
     // SAFETY: each `previous` of a live Lua frame is a live node.
@@ -1487,8 +1567,16 @@ unsafe fn seg_oracle_check(meta: &ExitMeta, snap: &ExitSnap, ctx: &RestoreCtx, a
             c = (*c).previous;
         }
         let want_func = entry_func - usize::from(snap.seg_shift);
-        assert_eq!(c, ctx.root, "segment oracle: r13 is not the entry frame popped {} times", snap.seg_pops);
-        assert_eq!((*ctx.root).func.0, want_func, "segment oracle: the function slot of the caller frame");
+        assert_eq!(
+            c, ctx.root,
+            "segment oracle: r13 is not the entry frame popped {} times",
+            snap.seg_pops
+        );
+        assert_eq!(
+            (*ctx.root).func.0,
+            want_func,
+            "segment oracle: the function slot of the caller frame"
+        );
     }
 }
 
@@ -1514,7 +1602,11 @@ pub unsafe fn exit_core(meta: &ExitMeta, ctx: &RestoreCtx, area: &mut ExitArea) 
     let snap = &meta.snaps[ex.snap as usize];
     let oracle = snap.seg_pops != 0 && meta.seg_oracle != 0;
     // SAFETY: contract of this function (the entry node is live until the restore).
-    let entry_func = if oracle { unsafe { seg_oracle_entry_func(meta, area) } } else { 0 };
+    let entry_func = if oracle {
+        unsafe { seg_oracle_entry_func(meta, area) }
+    } else {
+        0
+    };
     // SAFETY: contract of this function.
     let land = unsafe { restore(ctx, snap, snap.code_or(meta.root_code), meta.vb, area) };
     if oracle {
@@ -1523,7 +1615,8 @@ pub unsafe fn exit_core(meta: &ExitMeta, ctx: &RestoreCtx, area: &mut ExitArea) 
     }
     // F2a: a frameless exit continues where its cell says (the tier-1 label, or the entry of a side trace)
     let mut diverted = false;
-    let via_cell = !meta.cells.is_null() && snap.frames.is_empty() && !mutants::active("exit_cell_ignored");
+    let via_cell =
+        !meta.cells.is_null() && snap.frames.is_empty() && !mutants::active("exit_cell_ignored");
     let linked = snap.link_cell != 0 && !mutants::active("frame_link_cell_ignored");
     let land = if linked {
         // F2b: a linking exit continues at the dispatch cell of the head it links to
@@ -1659,10 +1752,15 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
             }
         }
     }
-    if out.site == ExitSite::Other && cache::exit_is_black(&mut st, id, out.exitno as usize) && !out.entry && !out.pre && {
-        let sn = &meta.snaps[meta.exits[out.exitno as usize].snap as usize];
-        !sn.frames.is_empty() && sn.sunk.is_empty()
-    } {
+    if out.site == ExitSite::Other
+        && cache::exit_is_black(&mut st, id, out.exitno as usize)
+        && !out.entry
+        && !out.pre
+        && {
+            let sn = &meta.snaps[meta.exits[out.exitno as usize].snap as usize];
+            !sn.frames.is_empty() && sn.sunk.is_empty()
+        }
+    {
         // SAFETY: the per-state data is live.
         unsafe { (*crate::rt::data_ptr(&mut st)).tr.stats.black_handled += 1 };
     }
@@ -1683,7 +1781,10 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         let hot = unsafe { (*crate::rt::data_ptr(&mut st)).tr.cfg.hot_exit };
         // a side trace is tried at exactly `hot` (the inline counter diverts once per arming); the prototype's flush
         // rule of type-guard exits keeps reporting from the threshold on
-        if is_hot(out.site, out.count, hot) || out.count == hot || (out.count > hot && out.count % hot == 0 && out.count / hot <= 1024) {
+        if is_hot(out.site, out.count, hot)
+            || out.count == hot
+            || (out.count > hot && out.count % hot == 0 && out.count / hot <= 1024)
+        {
             // SAFETY: `ci` is the running Lua frame of the exiting trace (contract).
             let ci = unsafe { Ci::from_raw(ci) };
             match cache::exit_hot_policy(&mut st, ci, id, &out, meta) {
@@ -1696,12 +1797,24 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
             }
         }
     }
-    if !flushed && !side_started && out.pre && !out.entry && out.count > 0 && out.count % INEFF_EXITS == 0 {
+    if !flushed
+        && !side_started
+        && out.pre
+        && !out.entry
+        && out.count > 0
+        && out.count % INEFF_EXITS == 0
+    {
         // Q2: a pre-roll site took another INEFF_EXITS exits: do most entries of the head leave before one iteration?
         // SAFETY: `ci` is the running Lua frame of the exiting trace (contract).
         flushed = cache::pre_exit_check(&mut st, unsafe { Ci::from_raw(ci) }, id, meta);
     }
-    if !flushed && !side_started && !out.entry && out.count > 0 && out.count % CHAIN_EXITS == 0 && out.site == ExitSite::Other {
+    if !flushed
+        && !side_started
+        && !out.entry
+        && out.count > 0
+        && out.count % CHAIN_EXITS == 0
+        && out.site == ExitSite::Other
+    {
         // P3: a callee-guard exit with a side trace attached took another CHAIN_EXITS exits: is its chain in a bad order? (flushes the child subtree of the exit only: the
         // continuation cell is re-read below, like after any policy flush)
         flushed = cache::chain_check(&mut st, id, meta.exits[out.exitno as usize].snap as usize);
@@ -1730,11 +1843,15 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         }
         area.args[0] = 0;
     }
-    if !side_started && meta.snaps[meta.exits[out.exitno as usize].snap as usize].link_cell != 0 && !mutants::active("frame_link_cell_ignored") {
+    if !side_started
+        && meta.snaps[meta.exits[out.exitno as usize].snap as usize].link_cell != 0
+        && !mutants::active("frame_link_cell_ignored")
+    {
         // F2b: the policy above may have flushed the target of the link: continue where its cell says *now*
         // SAFETY: as in `exit_core`.
         area.args[0] = unsafe {
-            &*(meta.snaps[meta.exits[out.exitno as usize].snap as usize].link_cell as *const Cell<usize>)
+            &*(meta.snaps[meta.exits[out.exitno as usize].snap as usize].link_cell
+                as *const Cell<usize>)
         }
         .get() as u64;
     } else if !side_started
@@ -1854,14 +1971,25 @@ unsafe fn poll_exit(
 ///
 /// # Safety
 /// Called only from such a stub with the running thread and its root Lua frame; `snap` is a frameless snapshot of the live trace `trace_slot`.
-pub unsafe extern "C" fn jit_tr_mat(th: *mut Thread, ci: *mut CallInfo, snap: u32, trace_slot: u32) -> u32 {
+pub unsafe extern "C" fn jit_tr_mat(
+    th: *mut Thread,
+    ci: *mut CallInfo,
+    snap: u32,
+    trace_slot: u32,
+) -> u32 {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: `th` is the live thread pinned in `r12`.
         let mut st = unsafe { jit_hooks::state_from_thread(th.cast()) };
         let budget = crate::rt::cnt_ptr(&mut st);
         // SAFETY: the area follows the budget word in the per-state data; nothing else accesses it.
-        let area = unsafe { &*budget.cast::<u8>().add(exit_area::FROM_R15 as usize).cast::<ExitArea>() };
-        let (_, meta) = cache::exit_meta_ptr(&mut st, trace_slot).expect("inline sunk stub of a trace without metadata");
+        let area = unsafe {
+            &*budget
+                .cast::<u8>()
+                .add(exit_area::FROM_R15 as usize)
+                .cast::<ExitArea>()
+        };
+        let (_, meta) = cache::exit_meta_ptr(&mut st, trace_slot)
+            .expect("inline sunk stub of a trace without metadata");
         // SAFETY: the trace is running (its stub called us), so it is live; flushes of it are deferred while it runs.
         let meta: &ExitMeta = unsafe { &*meta };
         let s = &meta.snaps[snap as usize];
@@ -1929,7 +2057,11 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
     let root = area.lazy_root as *mut CallInfo;
     // every frame is complete from here on: the running frame is the new root (a side trace the exit continues in is lazy-aware and runs
     // with a root; a root that is 0 would mean `no region` to the fill)
-    area.lazy_root = if mutants::active("lazy_leave_root_zero") { 0 } else { inner as u64 };
+    area.lazy_root = if mutants::active("lazy_leave_root_zero") {
+        0
+    } else {
+        inner as u64
+    };
     // SAFETY: `th` is the live running thread (contract).
     let st = unsafe { jit_hooks::state_from_thread(th.cast()) };
     let th8 = th.cast::<u8>();
@@ -1939,22 +2071,41 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
         // those of the innermost frame's closure; only `callstatus` depends on the call site (the caller's CALL).
         // SAFETY: the chain from the innermost frame down to the root consists of live nodes of this thread (contract).
         unsafe {
-            let cl = st.get((*inner).func).as_lclosure().expect("a lazy frame runs a Lua closure");
+            let cl = st
+                .get((*inner).func)
+                .as_lclosure()
+                .expect("a lazy frame runs a Lua closure");
             let p = cl.proto();
             let (maxstack, kptr, code) = (usize::from(p.maxstacksize), p.k_ptr(), p.code_ptr());
-            let top_extra = if mutants::active("lazy_fill_top_off") { 0 } else { 1 };
+            let top_extra = if mutants::active("lazy_fill_top_off") {
+                0
+            } else {
+                1
+            };
             while !c.is_null() && c != root {
                 let prev = (*c).previous;
-                debug_assert!(st.get((*c).func).as_lclosure().is_some_and(|k| std::ptr::eq(k.proto().code_ptr(), code)), "lazy frames are of one prototype");
+                debug_assert!(
+                    st.get((*c).func)
+                        .as_lclosure()
+                        .is_some_and(|k| std::ptr::eq(k.proto().code_ptr(), code)),
+                    "lazy frames are of one prototype"
+                );
                 (*c).top = StkId((*c).func.0 + top_extra + maxstack);
                 (*c).kcache = kptr;
                 if !mutants::active("lazy_fill_trap_skip") {
                     (*c).trap = 0;
                 }
                 let call = rn_core::instruction::Instruction(*(*prev).savedpc.sub(1));
-                let cs = if mutants::active("lazy_fill_cs_off") { call.c() + 1 } else { call.c() };
+                let cs = if mutants::active("lazy_fill_cs_off") {
+                    call.c() + 1
+                } else {
+                    call.c()
+                };
                 (*c).callstatus = cs;
-                if c == inner && flags & LAZY_NEW_FRAME != 0 && !mutants::active("lazy_fill_newframe_skip") {
+                if c == inner
+                    && flags & LAZY_NEW_FRAME != 0
+                    && !mutants::active("lazy_fill_newframe_skip")
+                {
                     (*c).savedpc = code;
                 }
                 c = prev;
@@ -1982,12 +2133,22 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
 ///
 /// # Safety
 /// As [`lazy_leave`]; called from generated code with the running thread.
-pub unsafe extern "C" fn jit_tr_lazy_leave(th: *mut Thread, ci: *mut CallInfo, flags: u32, _b: u32) -> u32 {
+pub unsafe extern "C" fn jit_tr_lazy_leave(
+    th: *mut Thread,
+    ci: *mut CallInfo,
+    flags: u32,
+    _b: u32,
+) -> u32 {
     // SAFETY: `th` is the live thread pinned in `r12`.
     let mut st = unsafe { jit_hooks::state_from_thread(th.cast()) };
     let budget = crate::rt::cnt_ptr(&mut st);
     // SAFETY: the area follows the budget word in the per-state data (contract of `jit_tr_exit`).
-    let area = unsafe { &mut *budget.cast::<u8>().add(exit_area::FROM_R15 as usize).cast::<ExitArea>() };
+    let area = unsafe {
+        &mut *budget
+            .cast::<u8>()
+            .add(exit_area::FROM_R15 as usize)
+            .cast::<ExitArea>()
+    };
     // SAFETY: contract of this function.
     unsafe { lazy_leave(th, ci, area, flags) };
     0

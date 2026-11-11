@@ -237,11 +237,15 @@ impl State {
     /// Byte-identical to the `get_info_ci(ci, "Sl")` formulation it replaces (only Lua functions have a current line).
     #[inline(never)]
     pub fn where_buf(&self, level: usize, buf: &mut [u8; WHERE_BUF]) -> usize {
-        let Some(ci) = self.get_stack(level) else { return 0 };
+        let Some(ci) = self.get_stack(level) else {
+            return 0;
+        };
         if !ci.r().is_lua() {
             return 0;
         }
-        let Some(cl) = self.ci_lclosure(ci) else { return 0 };
+        let Some(cl) = self.ci_lclosure(ci) else {
+            return 0;
+        };
         let p = cl.proto();
         let line = p.line_at(self.current_pc(ci));
         if line <= 0 {
@@ -871,7 +875,11 @@ impl State {
         let mt = self.metatable_of(&v);
         if let Some(mt) = mt {
             let f = mt.get_str(self.g().tostring_key);
-            let called = if f.is_nil() { None } else { Some(self.call_value1(f, &[v])?) };
+            let called = if f.is_nil() {
+                None
+            } else {
+                Some(self.call_value1(f, &[v])?)
+            };
             if let Some(r) = called {
                 if let Some(s) = r.as_strref() {
                     self.push(r);

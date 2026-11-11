@@ -292,9 +292,19 @@ fn fast_hash_impl<const FRESH: bool>(s: &[u8]) -> u32 {
             // The words are the same values.
             let (a, b) = if FRESH {
                 let a = read_le_bytes4(p);
-                (if mut_hash(MUT_BYTETAIL_SKIP) { a & 0x00FF_FFFF } else { a }, read_le_bytes4(p.add(n - 4)))
+                (
+                    if mut_hash(MUT_BYTETAIL_SKIP) {
+                        a & 0x00FF_FFFF
+                    } else {
+                        a
+                    },
+                    read_le_bytes4(p.add(n - 4)),
+                )
             } else {
-                ((p as *const u32).read_unaligned() as u64, (p.add(n - 4) as *const u32).read_unaligned() as u64)
+                (
+                    (p as *const u32).read_unaligned() as u64,
+                    (p.add(n - 4) as *const u32).read_unaligned() as u64,
+                )
             };
             last = b >> 24;
             h = mix(h ^ (a | ((b & 0xFF_FFFF) << 32)), K);
@@ -321,7 +331,11 @@ const TAGGED: bool = cfg!(all(target_arch = "x86_64", target_pointer_width = "64
 /// Number of hash bits kept in the `hnext` word.
 pub(crate) const TAG_BITS: u32 = if TAGGED { 19 } else { 0 };
 const TAG_MASK: usize = (1usize << TAG_BITS) - 1;
-const PTR_MASK: usize = if TAGGED { 0x0000_FFFF_FFFF_FFF8 } else { usize::MAX };
+const PTR_MASK: usize = if TAGGED {
+    0x0000_FFFF_FFFF_FFF8
+} else {
+    usize::MAX
+};
 
 impl LuaString {
     /// Chain link of a short string (the tag bits cleared).
@@ -343,7 +357,10 @@ impl LuaString {
         // SAFETY: per the contract.
         unsafe {
             let slot = Self::hnext_slot(p);
-            debug_assert!(n.addr() & !PTR_MASK == 0, "string address does not fit the tagged link");
+            debug_assert!(
+                n.addr() & !PTR_MASK == 0,
+                "string address does not fit the tagged link"
+            );
             *slot = n.map_addr(|a| a | ((*slot).addr() & !PTR_MASK));
         }
     }
@@ -356,7 +373,10 @@ impl LuaString {
     pub(crate) unsafe fn init_hnext(p: *mut LuaString, n: *mut LuaString) {
         // SAFETY: per the contract.
         unsafe {
-            debug_assert!(n.addr() & !PTR_MASK == 0, "string address does not fit the tagged link");
+            debug_assert!(
+                n.addr() & !PTR_MASK == 0,
+                "string address does not fit the tagged link"
+            );
             *Self::hnext_slot(p) = n;
         }
     }
@@ -394,7 +414,11 @@ impl LuaString {
                 (*p).hdr.hash.get() as usize & (size - 1)
             } else if TAGGED && (size <= 1usize << TAG_BITS || mut_hash(MUT_STRTAG_WIDE)) {
                 let t = Self::strtab_tag(p);
-                (if mut_hash(MUT_STRTAG_SHIFT) { t >> 1 } else { t }) & (size - 1)
+                (if mut_hash(MUT_STRTAG_SHIFT) {
+                    t >> 1
+                } else {
+                    t
+                }) & (size - 1)
             } else {
                 (fast_hash(Self::bytes_raw(p)) ^ seed) as usize & (size - 1)
             }
@@ -739,7 +763,11 @@ mod tests {
                     let s = &buf[off..off + n];
                     let want = fast_hash_reference(s);
                     assert_eq!(fast_hash(s), want, "len {n} off {off} round {round}");
-                    assert_eq!(fast_hash_fresh(s), want, "fresh: len {n} off {off} round {round}");
+                    assert_eq!(
+                        fast_hash_fresh(s),
+                        want,
+                        "fresh: len {n} off {off} round {round}"
+                    );
                     for seed in [0u32, 1, 0x9E37_79B9, 0xFFFF_FFFF, rnd() as u32] {
                         assert_eq!(short_key_hash(s, seed), want ^ seed);
                         assert_eq!(short_key_hash_fresh(s, seed), want ^ seed);

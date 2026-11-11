@@ -344,7 +344,12 @@ impl State {
     /// The body of [`State::pre_call_native_fast`] for a known native function `f` (BUNDLE-C `t1ccall`: the lean tier-1 helper
     /// `jit_ccall` calls it with a constant `nresults`, so the result move below specialises).
     #[inline(always)]
-    pub(crate) fn native_fast_with(&mut self, func: StkId, f: NativeFn, nresults: i32) -> LuaResult<bool> {
+    pub(crate) fn native_fast_with(
+        &mut self,
+        func: StkId,
+        f: NativeFn,
+        nresults: i32,
+    ) -> LuaResult<bool> {
         let top = self.top();
         let caller = self.ci();
         let next = caller.r().next;

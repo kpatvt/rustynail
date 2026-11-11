@@ -226,10 +226,20 @@ impl<'a> Em<'a> {
         let split = match ui.op {
             // (a body copy may split only an index made in the body: a pre-roll ref used by the body is renamed to its PHI as a whole, its operands are the
             // pre-roll iteration's values, not the previous iteration's)
-            TOp::Add | TOp::Sub if ui.t == Ty::Int && TraceIr::is_ins(ui.a) && (!self.body || u > self.loop_ref) => self.b.ir.as_int(ui.b).and_then(|c| {
-                let d = if ui.op == TOp::Add { c.wrapping_neg().wrapping_sub(1) } else { c.wrapping_sub(1) };
-                i16::try_from(d).ok().map(|d| (ui.a, d))
-            }),
+            TOp::Add | TOp::Sub
+                if ui.t == Ty::Int
+                    && TraceIr::is_ins(ui.a)
+                    && (!self.body || u > self.loop_ref) =>
+            {
+                self.b.ir.as_int(ui.b).and_then(|c| {
+                    let d = if ui.op == TOp::Add {
+                        c.wrapping_neg().wrapping_sub(1)
+                    } else {
+                        c.wrapping_sub(1)
+                    };
+                    i16::try_from(d).ok().map(|d| (ui.a, d))
+                })
+            }
             _ => None,
         };
         if mutants::active("aidx_body_reuse") && self.body {
@@ -254,7 +264,6 @@ impl<'a> Em<'a> {
         Ok(x)
     }
 
-
     /// BUNDLE-L B (`bhoist`): after the pre-roll copy of a counted `for` loop, emits the guards that make the body's bounds checks of the
     /// induction index redundant, and remembers which `src` checks they cover (`hoisted_ult`).
     ///
@@ -269,14 +278,20 @@ impl<'a> Em<'a> {
         // the loop-continue guard
         let mut cnt0: Option<Ref> = None;
         for i in src.ins.iter() {
-            if i.op != TOp::Ne || i.flags & F_GUARD == 0 || src.as_int(i.b) != Some(0) || !TraceIr::is_ins(i.a) {
+            if i.op != TOp::Ne
+                || i.flags & F_GUARD == 0
+                || src.as_int(i.b) != Some(0)
+                || !TraceIr::is_ins(i.a)
+            {
                 continue;
             }
             let sl = src.ins[usize::from(i.a - REF_BIAS)];
             if sl.op != TOp::Sload || sl.t != Ty::Int {
                 continue;
             }
-            let Some(&(r0, _)) = self.loop_state.get(&sl.a) else { continue };
+            let Some(&(r0, _)) = self.loop_state.get(&sl.a) else {
+                continue;
+            };
             if !TraceIr::is_ins(r0) {
                 continue;
             }
@@ -291,7 +306,11 @@ impl<'a> Em<'a> {
         // the bounds guards
         let mut found: Vec<(usize, Ref, Ref, i64)> = Vec::new();
         for (n, i) in src.ins.iter().enumerate() {
-            if i.op != TOp::Ult || i.flags & F_GUARD == 0 || !TraceIr::is_ins(i.a) || !TraceIr::is_ins(i.b) {
+            if i.op != TOp::Ult
+                || i.flags & F_GUARD == 0
+                || !TraceIr::is_ins(i.a)
+                || !TraceIr::is_ins(i.b)
+            {
                 continue;
             }
             let bd = src.ins[usize::from(i.b - REF_BIAS)];
@@ -312,12 +331,20 @@ impl<'a> Em<'a> {
             if sl.op != TOp::Sload || sl.t != Ty::Int {
                 continue;
             }
-            let Some(&(k0, _)) = self.loop_state.get(&sl.a) else { continue };
+            let Some(&(k0, _)) = self.loop_state.get(&sl.a) else {
+                continue;
+            };
             if !TraceIr::is_ins(k0) {
                 continue;
             }
             let f = *self.b.ir.at(k0);
-            if f.op == TOp::Add && f.a == self.sub[usize::from(sref - REF_BIAS)] && (self.b.ir.as_int(f.b) == Some(1) || (mutants::active("bhoist_step_any") && self.b.ir.as_int(f.b).is_some_and(|x| x > 1))) && i16::try_from(c).is_ok() {
+            if f.op == TOp::Add
+                && f.a == self.sub[usize::from(sref - REF_BIAS)]
+                && (self.b.ir.as_int(f.b) == Some(1)
+                    || (mutants::active("bhoist_step_any")
+                        && self.b.ir.as_int(f.b).is_some_and(|x| x > 1)))
+                && i16::try_from(c).is_ok()
+            {
                 found.push((n, i.b, k0, c));
             }
         }
@@ -346,7 +373,8 @@ impl<'a> Em<'a> {
             if !done_cnt.contains(&bound) {
                 done_cnt.push(bound);
                 if !mutants::active("bhoist_no_count_guard") {
-                    self.b.emit_flags(TOp::Ult, Ty::I64, F_GUARD, cnt0, bound, aux)?;
+                    self.b
+                        .emit_flags(TOp::Ult, Ty::I64, F_GUARD, cnt0, bound, aux)?;
                 }
             }
             if !done_ult.contains(&(bound, k0, c)) {
@@ -354,14 +382,20 @@ impl<'a> Em<'a> {
                 let kc = self.b.ir.kint(c);
                 let first = self.b.emit_flags(TOp::Add, Ty::Int, 0, k0, kc, 0)?;
                 if !mutants::active("bhoist_no_first_guard") {
-                    self.b.emit_flags(TOp::Ult, Ty::I64, F_GUARD, first, bound, aux)?;
+                    self.b
+                        .emit_flags(TOp::Ult, Ty::I64, F_GUARD, first, bound, aux)?;
                 }
                 let sum = self.b.emit_flags(TOp::Add, Ty::Int, 0, k0, cnt0, 0)?;
-                let c2 = if mutants::active("bhoist_last_c_off") { c - 1 } else { c };
+                let c2 = if mutants::active("bhoist_last_c_off") {
+                    c - 1
+                } else {
+                    c
+                };
                 let kc2 = self.b.ir.kint(c2);
                 let last = self.b.emit_flags(TOp::Add, Ty::Int, 0, sum, kc2, 0)?;
                 if !mutants::active("bhoist_no_last_guard") {
-                    self.b.emit_flags(TOp::Ult, Ty::I64, F_GUARD, last, bound, aux)?;
+                    self.b
+                        .emit_flags(TOp::Ult, Ty::I64, F_GUARD, last, bound, aux)?;
                 }
             }
             self.hoisted_ult.insert(n, (bsrc, k0, c));
@@ -373,7 +407,9 @@ impl<'a> Em<'a> {
     /// `k0 + c` as planned (`k0` the pre-roll's final value of the induction slot, the same ref the body's `SLOAD` stands for) and the bound the very
     /// SSA value of the pre-roll (loop invariant).
     fn bhoist_covers(&self, n: usize, a: Ref, bb: Ref) -> bool {
-        let Some(&(bsrc, k0, c)) = self.hoisted_ult.get(&n) else { return false };
+        let Some(&(bsrc, k0, c)) = self.hoisted_ult.get(&n) else {
+            return false;
+        };
         if !self.body || !TraceIr::is_ins(bb) {
             return false;
         }
@@ -676,7 +712,8 @@ impl<'a> Em<'a> {
                                 let typed = li.flags & F_GUARD != 0 && aux_bits(li.aux) & 1 != 0;
                                 if typed && li.t == i.t {
                                     self.stats.load_cse += 1;
-                                    self.b.ir.ins[usize::from(l - REF_BIAS)].flags |= i.flags & F_OBS;
+                                    self.b.ir.ins[usize::from(l - REF_BIAS)].flags |=
+                                        i.flags & F_OBS;
                                     hit = Some(l);
                                 }
                             }
@@ -686,7 +723,9 @@ impl<'a> Em<'a> {
                 }
                 if hit.is_some() && !sep.is_empty() {
                     for (k, (us, ul)) in sep.into_iter().enumerate() {
-                        if mutants::active("uvsep_no_guard") || (k > 0 && mutants::active("uvsep_first_guard_only")) {
+                        if mutants::active("uvsep_no_guard")
+                            || (k > 0 && mutants::active("uvsep_first_guard_only"))
+                        {
                             break;
                         }
                         let aux = self.copy_guard_aux(&i)?;
@@ -783,16 +822,32 @@ impl<'a> Em<'a> {
             // BUNDLE-G2: the C-stack guard of an inlined `pcall` (`LIB CCALLS k`) reads `nCcalls`, which nothing on a trace changes (the
             // class-A helpers and the stitching calls leave it as they found it, and a new entry re-runs the pre-roll copy): the body
             // copy is the pre-roll copy (and its `NE` guard, a CSE of the hoisted one, disappears with it).
-            TOp::Lib if self.body && i.aux & 0xFF == lib::CCALLS && !mutants::active("g2_ccalls_no_hoist") => {
+            TOp::Lib
+                if self.body
+                    && i.aux & 0xFF == lib::CCALLS
+                    && !mutants::active("g2_ccalls_no_hoist") =>
+            {
                 let a = self.operand(i.a);
                 let bb = self.operand(i.b);
-                let probe = Ins { a, b: bb, prev: NOREF, ..i };
+                let probe = Ins {
+                    a,
+                    b: bb,
+                    prev: NOREF,
+                    ..i
+                };
                 match self.b.find(&probe) {
                     Some(r) => r,
-                    None => self.b.emit_flags(i.op, i.t, i.flags & F_GUARD, a, bb, i.aux)?,
+                    None => self
+                        .b
+                        .emit_flags(i.op, i.t, i.flags & F_GUARD, a, bb, i.aux)?,
                 }
             }
-            TOp::Aref if self.aidx && self.peeling && self.aref_loaded[n] && !TraceIr::is_const(self.operand(i.b)) => {
+            TOp::Aref
+                if self.aidx
+                    && self.peeling
+                    && self.aref_loaded[n]
+                    && !TraceIr::is_const(self.operand(i.b)) =>
+            {
                 let a = self.operand(i.a);
                 let u = self.operand(i.b);
                 let aux = self.aidx_aux(u, n)?;
@@ -803,7 +858,13 @@ impl<'a> Em<'a> {
                 let a = if ra { self.operand(i.a) } else { i.a };
                 let bb = if rb { self.operand(i.b) } else { i.b };
                 let guard = i.flags & F_GUARD != 0 || op.always_guard();
-                if op == TOp::Eq && guard && TraceIr::is_const(a) && TraceIr::is_const(bb) && a != bb && !mutants::active("end_exit_folded") {
+                if op == TOp::Eq
+                    && guard
+                    && TraceIr::is_const(a)
+                    && TraceIr::is_const(bb)
+                    && a != bb
+                    && !mutants::active("end_exit_folded")
+                {
                     // H1: the always-taken exit that ends a side / stitched recording (`EQ #0 #1`): copied, not folded (a guard proven
                     // false is `ConstGuard`)
                     let aux = self.copy_guard_aux(&i)?;
@@ -841,7 +902,9 @@ impl<'a> Em<'a> {
                 let bb = if rb { self.operand(i.b) } else { i.b };
                 // BUNDLE-1: a third operand (`CONCAT` of three, `LIB` random) is renumbered like the others
                 let aux = match i.third() {
-                    Some(r) if !mutants::active("hdrlib_third_stale") => i.aux_with_third(self.operand(r)),
+                    Some(r) if !mutants::active("hdrlib_third_stale") => {
+                        i.aux_with_third(self.operand(r))
+                    }
                     _ => i.aux,
                 };
                 self.b
@@ -871,7 +934,12 @@ struct Out {
     keep_all: bool,
 }
 
-fn transform(rec: &mut Recorded, opts: &TraceOpts, peel: bool, keep_snaps: bool) -> Result<(), Gave> {
+fn transform(
+    rec: &mut Recorded,
+    opts: &TraceOpts,
+    peel: bool,
+    keep_snaps: bool,
+) -> Result<(), Gave> {
     let out = if peel {
         peel_loop(rec, opts)?
     } else {
@@ -926,7 +994,10 @@ fn roll(rec: &Recorded, opts: &TraceOpts, keep_snaps: bool) -> Result<Out, Gave>
                 .snap_entries(old)
                 .to_vec()
                 .into_iter()
-                .map(|e| SnapEntry { r: em.operand(e.r), ..e })
+                .map(|e| SnapEntry {
+                    r: em.operand(e.r),
+                    ..e
+                })
                 .collect();
             let links = snap::frame_links(&rec.ir, old).to_vec();
             let n = em.new_snap(sn, &ents, &links, rec.snap_step[old as usize])?;
@@ -1140,7 +1211,8 @@ fn peel_loop(rec: &Recorded, opts: &TraceOpts) -> Result<Out, Gave> {
             return up(format!("phi type mismatch {t:?} / {tb:?}"));
         }
         // MUTANT `hdrlib_sub_phi_stale`: the PHI of a string made by an allocating `LIB` takes the pre-loop value (not the body's)
-        let stale = mutants::active("hdrlib_sub_phi_stale") && src_ins[usize::from(e - REF_BIAS)].op == TOp::Lib;
+        let stale = mutants::active("hdrlib_sub_phi_stale")
+            && src_ins[usize::from(e - REF_BIAS)].op == TOp::Lib;
         ins.push(Ins {
             op: TOp::Phi,
             t,
@@ -1543,10 +1615,12 @@ pub fn check(ir: &TraceIr) -> Result<(), String> {
                             "snapshot {s} ref %{o} not defined before guard %{x}"
                         ));
                     }
-                    if o < n && matches!(
+                    if o < n
+                        && matches!(
                             ir.ins[o].op,
                             TOp::Aref | TOp::Uref | TOp::Hrefk | TOp::Hrefv | TOp::Loop
-                        ) {
+                        )
+                    {
                         return Err(format!("snapshot {s} holds an address ref"));
                     }
                 }

@@ -479,5 +479,9 @@ pub fn open(st: &mut State) -> LuaResult<usize> {
 /// P-B: the addresses of `math.type`, `math.fmod` and `math.tointeger`.
 #[cfg(feature = "jit")]
 pub fn jit_libfns() -> [usize; 3] {
-    [math_type as *const () as usize, math_fmod as *const () as usize, math_toint as *const () as usize]
+    [
+        math_type as *const () as usize,
+        math_fmod as *const () as usize,
+        math_toint as *const () as usize,
+    ]
 }

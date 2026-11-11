@@ -88,13 +88,24 @@ fn run_rearm(limits: &'static str) -> (String, TrStats) {
         tr.apply_process_limits(Some(limits));
         let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
         rn_jit::set_mode(&mut st, Mode::On);
-        rn_jit::set_t15(&mut st, rn_jit::t15::runtime::T15Config::for_mode(rn_jit::t15::runtime::T15Mode::On));
+        rn_jit::set_t15(
+            &mut st,
+            rn_jit::t15::runtime::T15Config::for_mode(rn_jit::t15::runtime::T15Mode::On),
+        );
         set_trace(&mut st, tr);
         let base = st.top();
-        assert_eq!(st.load_buffer(REARM_PROG.as_bytes(), b"=prog", None), Status::Ok, "load");
+        assert_eq!(
+            st.load_buffer(REARM_PROG.as_bytes(), b"=prog", None),
+            Status::Ok,
+            "load"
+        );
         let func = st.top() - 1;
         assert_eq!(st.pcall(func, LUA_MULTRET, 0), Status::Ok, "run");
-        let out = st.get(func).as_string().map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned()).unwrap_or_default();
+        let out = st
+            .get(func)
+            .as_string()
+            .map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned())
+            .unwrap_or_default();
         st.set_top(base);
         (out, c::tr_stats(&mut st))
     })
@@ -112,10 +123,23 @@ fn rearm_leaves_formation_alone() {
     let (o1, s1) = run_rearm("rearm=16,rearmside=0");
     assert_eq!(o0, o1);
     assert!(s0.installed >= 1, "the first loop must be traced: {s0:?}");
-    assert_eq!((s0.rearm_arms, s0.rearm_enters, s0.rearm_misses), (0, 0, 0), "{s0:?}");
-    eprintln!("rearm=16: armed {} entered {} missed {}", s1.rearm_arms, s1.rearm_enters, s1.rearm_misses);
-    assert!(s1.rearm_arms >= 1, "the exits of the second loop arm the tick: {s1:?}");
-    assert_eq!(s1.rearm_enters, 0, "a rearmed tick entered a head without a root trace: {s1:?}");
+    assert_eq!(
+        (s0.rearm_arms, s0.rearm_enters, s0.rearm_misses),
+        (0, 0, 0),
+        "{s0:?}"
+    );
+    eprintln!(
+        "rearm=16: armed {} entered {} missed {}",
+        s1.rearm_arms, s1.rearm_enters, s1.rearm_misses
+    );
+    assert!(
+        s1.rearm_arms >= 1,
+        "the exits of the second loop arm the tick: {s1:?}"
+    );
+    assert_eq!(
+        s1.rearm_enters, 0,
+        "a rearmed tick entered a head without a root trace: {s1:?}"
+    );
     let mut s1 = s1;
     (s1.rearm_arms, s1.rearm_misses, s1.rearm_restored) = (0, 0, 0);
     assert_eq!(s0, s1, "rearm changed the trace statistics");
@@ -130,13 +154,24 @@ fn run(extra: Option<&'static str>) -> (String, TrStats) {
         tr.apply_process_limits(extra);
         let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
         rn_jit::set_mode(&mut st, Mode::Always);
-        rn_jit::set_t15(&mut st, rn_jit::t15::runtime::T15Config::for_mode(rn_jit::t15::runtime::T15Mode::On));
+        rn_jit::set_t15(
+            &mut st,
+            rn_jit::t15::runtime::T15Config::for_mode(rn_jit::t15::runtime::T15Mode::On),
+        );
         set_trace(&mut st, tr);
         let base = st.top();
-        assert_eq!(st.load_buffer(PROG.as_bytes(), b"=prog", None), Status::Ok, "load");
+        assert_eq!(
+            st.load_buffer(PROG.as_bytes(), b"=prog", None),
+            Status::Ok,
+            "load"
+        );
         let func = st.top() - 1;
         assert_eq!(st.pcall(func, LUA_MULTRET, 0), Status::Ok, "run");
-        let out = st.get(func).as_string().map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned()).unwrap_or_default();
+        let out = st
+            .get(func)
+            .as_string()
+            .map(|s| String::from_utf8_lossy(s.as_bytes()).into_owned())
+            .unwrap_or_default();
         st.set_top(base);
         (out, c::tr_stats(&mut st))
     })
@@ -148,7 +183,11 @@ fn run(extra: Option<&'static str>) -> (String, TrStats) {
 fn default_policy_reads_no_clock_and_repeats() {
     let before = c::clock_reads();
     let runs: Vec<(String, TrStats)> = (0..6).map(|_| run(None)).collect();
-    assert_eq!(c::clock_reads(), before, "a policy decision read a clock under the default limits");
+    assert_eq!(
+        c::clock_reads(),
+        before,
+        "a policy decision read a clock under the default limits"
+    );
     let (out0, st0) = &runs[0];
     assert!(out0.split(' ').count() == 2, "result {out0:?}");
     assert!(st0.installed >= 1, "the program must be traced: {st0:?}");
@@ -160,5 +199,8 @@ fn default_policy_reads_no_clock_and_repeats() {
     assert!(st0.ineffective >= 1, "the hop rule did not fire: {st0:?}");
     // the opt-in time start gate does read it (the counter is live)
     let _ = run(Some("warm=1"));
-    assert!(c::clock_reads() > before, "warm=1 must read the time-stamp counter");
+    assert!(
+        c::clock_reads() > before,
+        "warm=1 must read the time-stamp counter"
+    );
 }

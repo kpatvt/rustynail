@@ -978,7 +978,8 @@ fn gen_brm(rng: &mut Rng) -> Case {
 /// B4-3: `BrM16` (a 16-bit compare of memory, `Eq` / `Ne`).
 fn gen_brm16(rng: &mut Rng) -> Case {
     let cc = [Cc::Eq, Cc::Ne][rng.below(2)];
-    let imm = [0u16, 0x4403, 0x4504, 0xFFFF, 0x8000, 0x0100][rng.below(6)] ^ if rng.chance(2) { 0 } else { rng.next() as u16 };
+    let imm = [0u16, 0x4403, 0x4504, 0xFFFF, 0x8000, 0x0100][rng.below(6)]
+        ^ if rng.chance(2) { 0 } else { rng.next() as u16 };
     let mut ptr = Vec::new();
     let (m, abs) = mem_operand(rng, 8, &mut ptr);
     let (prog, l0) = program(|p| branchy(p, |to| Op::BrM16 { cc, m, imm, to }));
@@ -1012,7 +1013,12 @@ fn gen_brmr(rng: &mut Rng) -> Case {
         tweak: Box::new(move |st, rng| {
             if rng.chance(2) {
                 // equal, or different in one bit (high half included)
-                let v = st.vin[src as usize] ^ if rng.chance(2) { 0 } else { 1u64 << rng.below(64) };
+                let v = st.vin[src as usize]
+                    ^ if rng.chance(2) {
+                        0
+                    } else {
+                        1u64 << rng.below(64)
+                    };
                 st.patch(abs, &v.to_le_bytes());
             }
         }),
@@ -1743,8 +1749,8 @@ fn random_emulator_against_models() {
             (case.model)(&st, &b.frame);
         }
         for gen in [
-            gen_fbinm, gen_fsqrt, gen_ffloor, gen_f2i, gen_fbrx, gen_br, gen_setpin, gen_brm, gen_brmi,
-            gen_i2fx,
+            gen_fbinm, gen_fsqrt, gen_ffloor, gen_f2i, gen_fbrx, gen_br, gen_setpin, gen_brm,
+            gen_brmi, gen_i2fx,
         ] {
             let case = gen(&mut rng);
             for _ in 0..6 {

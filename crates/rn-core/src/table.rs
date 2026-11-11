@@ -175,7 +175,8 @@ pub struct TableRef(NonNull<Table>);
 
 /// Test-only mutant `tbl_move_meta_skip` (N2): `arr_move` ignores the metatable guard.
 #[cfg(feature = "jit_trace_mut")]
-static MUT_TBL_MOVE_META_SKIP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static MUT_TBL_MOVE_META_SKIP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Select the mutant `tbl_move_meta_skip` (feature `jit_trace_mut`).
 #[cfg(feature = "jit_trace_mut")]
@@ -395,7 +396,10 @@ const fn fm_magic(l: u32) -> u64 {
 const FM: [u64; 32] = {
     let mut a = [0u64; 32];
     let mut i = 0;
-    while i < 32 { a[i] = fm_magic(i as u32); i += 1; }
+    while i < 32 {
+        a[i] = fm_magic(i as u32);
+        i += 1;
+    }
     a
 };
 /// `n % ((2^l - 1) | 1)` (Lemire fastmod, exact for every u32 `n`).
@@ -1003,10 +1007,16 @@ unsafe fn alloc_array(heap: &mut Heap, asize: u32) -> Result<*mut u8, Status> {
     unsafe {
         if arrcap(asize) != asize {
             // spare capacity (asize 1 or 2: a 4-slot block)
-            let blk = heap.mem.alloc_counted(concretesize(arrcap(asize)), concretesize(asize))?;
+            let blk = heap
+                .mem
+                .alloc_counted(concretesize(arrcap(asize)), concretesize(asize))?;
             Ok(blk.as_ptr().add(arrcap(asize) as usize * 8))
         } else {
-            Ok(heap.mem.alloc(concretesize(asize))?.as_ptr().add(asize as usize * 8))
+            Ok(heap
+                .mem
+                .alloc(concretesize(asize))?
+                .as_ptr()
+                .add(asize as usize * 8))
         }
     }
 }
@@ -1018,9 +1028,14 @@ unsafe fn free_array_block(heap: &mut Heap, array: *mut u8, asize: u32) {
     unsafe {
         if arrcap(asize) != asize {
             let oc = arrcap(asize);
-            heap.mem.free_counted(array.sub(oc as usize * 8), concretesize(oc), concretesize(asize));
+            heap.mem.free_counted(
+                array.sub(oc as usize * 8),
+                concretesize(oc),
+                concretesize(asize),
+            );
         } else {
-            heap.mem.free(array.sub(asize as usize * 8), concretesize(asize));
+            heap.mem
+                .free(array.sub(asize as usize * 8), concretesize(asize));
         }
     }
 }
@@ -1057,7 +1072,8 @@ unsafe fn resizearray(
         if oldasize > 0 && nc == oc {
             // C22-E: the block already has room for the new size (growth 1 -> 2 -> 4, or the matching shrink): only the
             // accounted size changes
-            heap.mem.recount(concretesize(oldasize), concretesize(newasize))?;
+            heap.mem
+                .recount(concretesize(oldasize), concretesize(newasize))?;
             return Ok((*t).array);
         }
         let newb = concretesize(nc as u32);
@@ -1170,10 +1186,19 @@ unsafe fn resize_empty(
 /// `set_int` outside the array part, kept out of line so that the array fast path of `set_int` stays small enough to
 /// inline into its callers (`jit_setlist`, the library). A table without a hash part has nothing to look up.
 #[inline(never)]
-unsafe fn set_int_hash(heap: &mut Heap, t: *mut Table, key: i64, value: &Value) -> Result<(), TableError> {
+unsafe fn set_int_hash(
+    heap: &mut Heap,
+    t: *mut Table,
+    key: i64,
+    value: &Value,
+) -> Result<(), TableError> {
     // SAFETY: valid table.
     unsafe {
-        let n = if isdummy(t) { std::ptr::null_mut() } else { getintfromhash(t, key) };
+        let n = if isdummy(t) {
+            std::ptr::null_mut()
+        } else {
+            getintfromhash(t, key)
+        };
         if !n.is_null() {
             set_nval(n, value);
             Ok(())
@@ -1235,7 +1260,8 @@ unsafe fn resize_hash(heap: &mut Heap, t: *mut Table, nhsize: u32) -> Result<(),
                 }
             }
             let extra = if sized_haslastfree(oldl) { LIMBOX } else { 0 };
-            heap.mem.free(oldnode.cast::<u8>().sub(extra), sizehash_bytes(oldl));
+            heap.mem
+                .free(oldnode.cast::<u8>().sub(extra), sizehash_bytes(oldl));
         }
         Ok(())
     }
@@ -1352,7 +1378,12 @@ unsafe fn rehash(heap: &mut Heap, t: *mut Table, ek: &Value) -> Result<(), Table
 unsafe fn rehash_dummy_int(heap: &mut Heap, t: *mut Table, k: u32) -> Result<(), TableError> {
     // SAFETY: valid table with the dummy node.
     unsafe {
-        let mut ct = Counters { total: 1, na: 0, deleted: true, nums: [0; MAXABITS as usize + 1] };
+        let mut ct = Counters {
+            total: 1,
+            na: 0,
+            deleted: true,
+            nums: [0; MAXABITS as usize + 1],
+        };
         let asize = (*t).asize;
         let mut ause = 0u32;
         let mut i = 1u32;
@@ -1753,20 +1784,35 @@ impl TableRef {
                 if othern != mp {
                     return None; // the colliding node is out of its main position: it would be moved
                 }
-                let node_next = if (*mp).next != 0 { mp.offset((*mp).next as isize).offset_from(f) as i32 } else { 0 };
+                let node_next = if (*mp).next != 0 {
+                    mp.offset((*mp).next as isize).offset_from(f) as i32
+                } else {
+                    0
+                };
                 return Some(InsertPlan {
                     node: fi as u8,
                     main: mpi,
                     main_next: f.offset_from(mp) as i32,
                     node_next,
-                    lastfree: if haslastfree(t) { Some(last as u8) } else { None },
+                    lastfree: if haslastfree(t) {
+                        Some(last as u8)
+                    } else {
+                        None
+                    },
                     flags,
                 });
             }
             if !key_is_nil(mp) {
                 return None; // an empty value behind a key (not canonical)
             }
-            Some(InsertPlan { node: mpi, main: mpi, main_next: (*mp).next, node_next: (*mp).next, lastfree: None, flags })
+            Some(InsertPlan {
+                node: mpi,
+                main: mpi,
+                main_next: (*mp).next,
+                node_next: (*mp).next,
+                lastfree: None,
+                flags,
+            })
         }
     }
     /// A1: the hash part as the trace recorder compares it to the state it expects: per node `(key tag, key payload, chain
@@ -1781,10 +1827,19 @@ impl TableRef {
             let img = (0..n)
                 .map(|i| {
                     let nd = gnode(t, i);
-                    ((*nd).key_tt, (*nd).key.addr() as u64, (*nd).next, nval_empty(nd))
+                    (
+                        (*nd).key_tt,
+                        (*nd).key.addr() as u64,
+                        (*nd).next,
+                        nval_empty(nd),
+                    )
                 })
                 .collect();
-            let last = if n > 0 && haslastfree(t) { (*lastfree_slot(t)).offset_from((*t).node) as usize } else { 0 };
+            let last = if n > 0 && haslastfree(t) {
+                (*lastfree_slot(t)).offset_from((*t).node) as usize
+            } else {
+                0
+            };
             (img, last)
         }
     }
@@ -2045,7 +2100,9 @@ impl TableRef {
     pub fn arr_move(self, src: i64, dst: i64, count: usize, backward: bool) -> bool {
         let t = self.as_ptr();
         let mt = self.metatable();
-        if !mut_tbl_move_meta_skip() && !(TableRef::no_tm(mt, Tm::Index) && TableRef::no_tm(mt, Tm::NewIndex)) {
+        if !mut_tbl_move_meta_skip()
+            && !(TableRef::no_tm(mt, Tm::Index) && TableRef::no_tm(mt, Tm::NewIndex))
+        {
             return false;
         }
         if src < 1 || dst < 1 {
@@ -2098,20 +2155,30 @@ impl TableRef {
     /// GC: `dst` gains children, so a black `dst` is handled like the per-element `raw_set_int`
     /// barrier would (`barrier_back` for every collectable value; the first white one turns the
     /// table gray, the rest are no-ops).
-    pub fn arr_copy_to(self, heap: &mut Heap, dst: TableRef, spos: i64, dpos: i64, count: usize) -> bool {
+    pub fn arr_copy_to(
+        self,
+        heap: &mut Heap,
+        dst: TableRef,
+        spos: i64,
+        dpos: i64,
+        count: usize,
+    ) -> bool {
         let (s, d) = (self.as_ptr(), dst.as_ptr());
         if s == d || spos < 1 || dpos < 1 {
             return false;
         }
         if !mut_tbl_move_meta_skip()
-            && !(TableRef::no_tm(self.metatable(), Tm::Index) && TableRef::no_tm(dst.metatable(), Tm::NewIndex))
+            && !(TableRef::no_tm(self.metatable(), Tm::Index)
+                && TableRef::no_tm(dst.metatable(), Tm::NewIndex))
         {
             return false;
         }
         // SAFETY: handle invariants; both ranges are checked against the array sizes before any access.
         unsafe {
             let n = count as u64;
-            if (spos as u64 - 1) + n > (*s).asize as u64 || (dpos as u64 - 1) + n > (*d).asize as u64 {
+            if (spos as u64 - 1) + n > (*s).asize as u64
+                || (dpos as u64 - 1) + n > (*d).asize as u64
+            {
                 return false;
             }
             if n == 0 {
@@ -2124,7 +2191,11 @@ impl TableRef {
                 alimit_touch(d, (di + j) as u64);
             }
             std::ptr::copy_nonoverlapping(arr_tag(s, si), arr_tag(d, di), count);
-            std::ptr::copy_nonoverlapping(arr_val(s, si + count - 1), arr_val(d, di + count - 1), count);
+            std::ptr::copy_nonoverlapping(
+                arr_val(s, si + count - 1),
+                arr_val(d, di + count - 1),
+                count,
+            );
             if (*d).marked & BLACKBIT != 0 {
                 for j in 0..count {
                     let v = arr_get(d, di + j);
@@ -2559,7 +2630,11 @@ impl TableRef {
     /// the chain walk of `findindex`; any mismatch (another table, a rehash, a collected key) falls back to the lookup, so the
     /// result is always that of `luaH_next`. `*hint` is updated to the position of the returned hash entry.
     #[inline]
-    pub fn next_hinted(self, key: &Value, hint: &mut u32) -> Result<Option<(Value, Value)>, TableError> {
+    pub fn next_hinted(
+        self,
+        key: &Value,
+        hint: &mut u32,
+    ) -> Result<Option<(Value, Value)>, TableError> {
         let t = self.as_ptr();
         // SAFETY: T1/T2.
         unsafe {
@@ -2846,7 +2921,16 @@ mod fastmod_tests {
         let mut x: u64 = 0x9E3779B97F4A7C15;
         for l in 0..32u8 {
             let d = (((1u64 << l) - 1) | 1) as u32;
-            let mut edges = vec![0u32, 1, 2, 3, u32::MAX, u32::MAX - 1, i32::MAX as u32, i32::MAX as u32 + 1];
+            let mut edges = vec![
+                0u32,
+                1,
+                2,
+                3,
+                u32::MAX,
+                u32::MAX - 1,
+                i32::MAX as u32,
+                i32::MAX as u32 + 1,
+            ];
             for m in [1u64, 2, 3, 7, 1000, 65535, 65536] {
                 let b = (d as u64).wrapping_mul(m);
                 for off in [-1i64, 0, 1] {

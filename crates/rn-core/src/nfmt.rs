@@ -94,7 +94,11 @@ fn scaled(x: f64, k: u32) -> Option<u128> {
     let bits = x.to_bits();
     let be = ((bits >> 52) & 0x7ff) as i32;
     let frac = bits & ((1u64 << 52) - 1);
-    let (m, e) = if be == 0 { (frac, -1074) } else { (frac | (1u64 << 52), be - 1075) };
+    let (m, e) = if be == 0 {
+        (frac, -1074)
+    } else {
+        (frac | (1u64 << 52), be - 1075)
+    };
     let prod = (m as u128) * (POW10[k as usize] as u128);
     if e >= 0 {
         return if e > 10 { None } else { Some(prod << e) };
@@ -107,7 +111,11 @@ fn scaled(x: f64, k: u32) -> Option<u128> {
     let q = prod >> s;
     let rem = prod & ((1u128 << s) - 1);
     let half = 1u128 << (s - 1);
-    Some(if rem > half || (rem == half && q & 1 == 1) { q + 1 } else { q })
+    Some(if rem > half || (rem == half && q & 1 == 1) {
+        q + 1
+    } else {
+        q
+    })
 }
 
 /// Write the decimal digits of `v` into `d[..p]` (zero-padded on the left; `v < 10^p`).
@@ -190,7 +198,11 @@ pub fn digits2(x: f64, p: usize, d: &mut [u8; 128]) -> Option<(i32, bool)> {
         write!(t, "{:e}", x).ok()?;
         let s = t.bytes();
         let epos = s.iter().position(|&c| c == b'e')?;
-        let nd = if s[..epos].contains(&b'.') { epos - 1 } else { epos };
+        let nd = if s[..epos].contains(&b'.') {
+            epos - 1
+        } else {
+            epos
+        };
         if nd <= p {
             let mut k = 0;
             for &c in &s[..epos] {
@@ -254,7 +266,15 @@ pub fn parse_spec(form: &[u8]) -> Option<Spec> {
     if form.first() != Some(&b'%') {
         return None;
     }
-    let mut sp = Spec { minus: false, plus: false, space: false, zero: false, width: 0, prec: None, conv: 0 };
+    let mut sp = Spec {
+        minus: false,
+        plus: false,
+        space: false,
+        zero: false,
+        width: 0,
+        prec: None,
+        conv: 0,
+    };
     let mut i = 1;
     while i < form.len() {
         match form[i] {
@@ -294,7 +314,10 @@ pub fn parse_spec(form: &[u8]) -> Option<Spec> {
         return None;
     }
     sp.conv = form[i];
-    if !matches!(sp.conv, b'd' | b'i' | b'u' | b'x' | b'X' | b'o' | b'f' | b'F' | b'e' | b'E' | b'g' | b'G') {
+    if !matches!(
+        sp.conv,
+        b'd' | b'i' | b'u' | b'x' | b'X' | b'o' | b'f' | b'F' | b'e' | b'E' | b'g' | b'G'
+    ) {
         return None;
     }
     Some(sp)
@@ -351,7 +374,11 @@ pub fn format_int(out: &mut Vec<u8>, sp: &Spec, v: i64) -> bool {
                 }
             },
             c => {
-                let tab: &[u8; 16] = if c == b'x' { b"0123456789abcdef" } else { b"0123456789ABCDEF" };
+                let tab: &[u8; 16] = if c == b'x' {
+                    b"0123456789abcdef"
+                } else {
+                    b"0123456789ABCDEF"
+                };
                 loop {
                     pos -= 1;
                     digs[pos] = tab[(u & 15) as usize];
@@ -467,13 +494,21 @@ pub fn format_float(out: &mut Vec<u8>, sp: &Spec, x: f64) -> bool {
             if prec > MAX_PREC {
                 return false;
             }
-            let fast = if prec <= 19 { scaled(ax, prec as u32).filter(|&n| n <= u64::MAX as u128) } else { None };
+            let fast = if prec <= 19 {
+                scaled(ax, prec as u32).filter(|&n| n <= u64::MAX as u128)
+            } else {
+                None
+            };
             if let Some(n) = fast {
                 // `n = round(ax * 10^prec)`: integer digits, the point, `prec` fraction digits
                 let mut buf = [b'0'; 40];
                 let nu = n as u64;
                 let t = (64 - nu.leading_zeros() as usize) * 1233 >> 12;
-                let nd = if nu == 0 { 1 } else { t + (nu >= POW10[t]) as usize };
+                let nd = if nu == 0 {
+                    1
+                } else {
+                    t + (nu >= POW10[t]) as usize
+                };
                 let total = nd.max(prec + 1);
                 put_digits(nu, &mut buf[..total], total);
                 let ip = total - prec;
@@ -494,7 +529,9 @@ pub fn format_float(out: &mut Vec<u8>, sp: &Spec, x: f64) -> bool {
                 return false;
             }
             let mut d = [0u8; 128];
-            let Some(x10) = digits(ax, prec + 1, &mut d) else { return false };
+            let Some(x10) = digits(ax, prec + 1, &mut d) else {
+                return false;
+            };
             let mut ok = b.push(d[0]);
             if prec > 0 {
                 ok &= b.push(b'.') && b.push_all(&d[1..=prec]);
@@ -519,7 +556,9 @@ pub fn format_float(out: &mut Vec<u8>, sp: &Spec, x: f64) -> bool {
                 return false;
             }
             let mut d = [0u8; 128];
-            let Some(x10) = digits(ax, p, &mut d) else { return false };
+            let Some(x10) = digits(ax, p, &mut d) else {
+                return false;
+            };
             if !g_body(&mut b, &d, p, x10, upper) {
                 return false;
             }

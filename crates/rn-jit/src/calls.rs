@@ -401,13 +401,21 @@ impl Cx<'_> {
                 let nc = self.p.label();
                 self.ld(4, W::B8, thw(thr::OPENUPVAL));
                 self.br(Cc::Eq, 4, Src::Imm(0), nc);
-                self.ld(4, W::B8, Self::m_reg(4, rn_core::jit_layout::upval::V as i32));
+                self.ld(
+                    4,
+                    W::B8,
+                    Self::m_reg(4, rn_core::jit_layout::upval::V as i32),
+                );
                 self.op(Op::Lea(6, fr(0, 0)));
                 self.br(Cc::Ge, 4, Src::V(6), slow);
                 self.op(Op::Bind(nc));
             }
             // ---- commit: V0 = fsize, V2 = proto, V3 = descriptor
-            let n = if env.tail_mut & TM_COPY != 0 { b - 1 } else { b };
+            let n = if env.tail_mut & TM_COPY != 0 {
+                b - 1
+            } else {
+                b
+            };
             for j in 0..n {
                 self.copy_value(fr(0, -16 + 16 * j as i32), fr(a + j, 0));
             }
@@ -434,7 +442,11 @@ impl Cx<'_> {
         self.op(Op::CallH {
             f: env.tail_helper,
             a: i.0,
-            b: if env.t1q & 32 != 0 { self.mm_ret_flags() } else { 0 },
+            b: if env.t1q & 32 != 0 {
+                self.mm_ret_flags()
+            } else {
+                0
+            },
         });
         let enter = self.l_enter();
         let err = self.l_exit(1);
@@ -445,7 +457,12 @@ impl Cx<'_> {
         if env.t1q & 32 != 0 {
             // (BUNDLE-V: the helper refused (nothing changed: leave at the instruction, giving back its count) or a native tail callee of a metamethod frame; `thread.ci` = the caller, whose instruction is finished like after `jit_mm_ret`)
             let mmret = self.l_ret_mm();
-            self.br(Cc::Eq, 0, Src::Imm(rn_core::jit_helpers::H_MMPOP as i32), mmret);
+            self.br(
+                Cc::Eq,
+                0,
+                Src::Imm(rn_core::jit_helpers::H_MMPOP as i32),
+                mmret,
+            );
             self.br(Cc::Eq, 0, Src::Imm(rn_core::jit_helpers::H_MMFC as i32), fc);
             self.br(Cc::Eq, 0, Src::Imm(rn_core::jit_helpers::H_EXIT as i32), xc);
         }
@@ -496,7 +513,11 @@ impl Cx<'_> {
                 self.br(Cc::Ne, 4, Src::Imm(0), noskip);
                 self.ld(4, W::B8, thw(thr::OPENUPVAL));
                 self.br(Cc::Eq, 4, Src::Imm(0), skip);
-                self.ld(4, W::B8, Self::m_reg(4, rn_core::jit_layout::upval::V as i32));
+                self.ld(
+                    4,
+                    W::B8,
+                    Self::m_reg(4, rn_core::jit_layout::upval::V as i32),
+                );
                 self.op(Op::Lea(6, fr(0, 0)));
                 self.br(Cc::Lt, 4, Src::V(6), skip);
             }

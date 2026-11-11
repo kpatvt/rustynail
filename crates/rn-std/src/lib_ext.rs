@@ -138,8 +138,14 @@ fn jit_flush(st: &mut State) -> LuaResult<usize> {
 }
 
 fn version_num() -> i64 {
-    let mut it = env!("CARGO_PKG_VERSION").split('.').map(|x| x.parse::<i64>().unwrap_or(0));
-    let (a, b, c) = (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0));
+    let mut it = env!("CARGO_PKG_VERSION")
+        .split('.')
+        .map(|x| x.parse::<i64>().unwrap_or(0));
+    let (a, b, c) = (
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+    );
     a * 10000 + b * 100 + c
 }
 
@@ -150,7 +156,12 @@ pub fn open_jit(st: &mut State) -> LuaResult<()> {
     st.push(Value::table(t));
     st.set_funcs(
         t,
-        &[("on", Some(jit_on)), ("off", Some(jit_off)), ("flush", Some(jit_flush)), ("status", Some(jit_status))],
+        &[
+            ("on", Some(jit_on)),
+            ("off", Some(jit_off)),
+            ("flush", Some(jit_flush)),
+            ("status", Some(jit_status)),
+        ],
     )?;
     let v = st.new_str_value(format!("rustynail {} JIT", env!("CARGO_PKG_VERSION")).as_bytes())?;
     st.raw_set_str(t, b"version", v)?;

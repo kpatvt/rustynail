@@ -15,7 +15,9 @@ use std::sync::Once;
 fn init() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        assert!(rn_jit::register_with_trace_pinned_off(Config::for_mode(Mode::Always)));
+        assert!(rn_jit::register_with_trace_pinned_off(Config::for_mode(
+            Mode::Always
+        )));
     });
 }
 

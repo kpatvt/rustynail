@@ -632,7 +632,12 @@ impl Emu {
                     }
                     // SAFETY: per the function contract.
                     // (N2b: the pinned registers a `SetCi` / `SetFrame` / `SetK` changed are the helper's `ci` / frame / constants: an exit after a `RETF` hands the caller's frame to the handler)
-                    let live = Env { frame: frame.get(), ci: ci.get(), k: kp.get(), ..*env };
+                    let live = Env {
+                        frame: frame.get(),
+                        ci: ci.get(),
+                        k: kp.get(),
+                        ..*env
+                    };
                     let out = unsafe { helpers.call(f, a, b, &live, frame.get()) };
                     let keep = [r[9], r[10]]; // V9 / V10 (rbp, r14): callee-saved, survive the call
                     r = [POISON; NV];

@@ -54,7 +54,14 @@ pub(super) struct Item {
 
 impl Item {
     const fn new(kind: u8) -> Item {
-        Item { kind, q: 0, cls: 0, b: 0, x: 0, y: 0 }
+        Item {
+            kind,
+            q: 0,
+            cls: 0,
+            b: 0,
+            x: 0,
+            y: 0,
+        }
     }
 }
 
@@ -373,7 +380,9 @@ pub(super) fn compile(pat: &[u8]) -> Prog {
     // at `s` needs the first consuming item to match at `s`, and a failing position has no side effects (the depth
     // stays far below the limit and `level` stays far below 32, so no error can be hidden by skipping a position).
     let mut lead = 0;
-    while lead < 8 && matches!(items.get(lead), Some(it) if it.kind == I_OPEN || it.kind == I_OPENPOS) {
+    while lead < 8
+        && matches!(items.get(lead), Some(it) if it.kind == I_OPEN || it.kind == I_OPENPOS)
+    {
         lead += 1;
     }
     let start = match items.get(lead) {
@@ -393,7 +402,11 @@ pub(super) fn compile(pat: &[u8]) -> Prog {
     pg.key[..n].copy_from_slice(&pat[..n]);
     pg.len = pat.len();
     pg.state = S_NOFIT;
-    if pat.len() <= MAX_KEY && items.len() <= MAX_ITEMS && sets.len() <= MAX_SETS && lits.len() <= MAX_LITS {
+    if pat.len() <= MAX_KEY
+        && items.len() <= MAX_ITEMS
+        && sets.len() <= MAX_SETS
+        && lits.len() <= MAX_LITS
+    {
         pg.items[..items.len()].copy_from_slice(&items);
         pg.sets[..sets.len()].copy_from_slice(&sets);
         pg.lits[..lits.len()].copy_from_slice(&lits);
@@ -506,10 +519,12 @@ fn miss(pat: &[u8], set: usize) -> Option<&'static Prog> {
         }
     }
     // first sight: prefer an empty or `Seen` slot; never evict both compiled forms of a set
-    let w = (0..2).find(|&w| c.slots[set + w].state <= S_SEEN).unwrap_or_else(|| {
-        c.rr = c.rr.wrapping_add(1);
-        c.rr & 1
-    });
+    let w = (0..2)
+        .find(|&w| c.slots[set + w].state <= S_SEEN)
+        .unwrap_or_else(|| {
+            c.rr = c.rr.wrapping_add(1);
+            c.rr & 1
+        });
     let sl = &mut c.slots[set + w];
     sl.addr = addr;
     sl.len = len;

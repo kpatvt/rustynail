@@ -950,7 +950,12 @@ pub fn jit_len_addr() -> usize {
 /// BUNDLE-H (`libcall`): the addresses of `string.lower`, `string.upper`, `string.reverse` and `string.rep`.
 #[cfg(feature = "jit")]
 pub fn jit_str_fns() -> [usize; 4] {
-    [str_lower as *const () as usize, str_upper as *const () as usize, str_reverse as *const () as usize, str_rep as *const () as usize]
+    [
+        str_lower as *const () as usize,
+        str_upper as *const () as usize,
+        str_reverse as *const () as usize,
+        str_rep as *const () as usize,
+    ]
 }
 
 /// BUNDLE-A: the address of `string.find`.
@@ -1014,7 +1019,8 @@ pub fn jit_fmt_shape(fmt: &[u8]) -> Option<Vec<u8>> {
 #[cfg(feature = "jit")]
 pub const JIT_FMT_MAX: usize = 64;
 #[cfg(feature = "jit")]
-static JIT_FMT: [std::sync::OnceLock<&'static [u8]>; JIT_FMT_MAX] = [const { std::sync::OnceLock::new() }; JIT_FMT_MAX];
+static JIT_FMT: [std::sync::OnceLock<&'static [u8]>; JIT_FMT_MAX] =
+    [const { std::sync::OnceLock::new() }; JIT_FMT_MAX];
 #[cfg(feature = "jit")]
 static JIT_FMT_N: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
 

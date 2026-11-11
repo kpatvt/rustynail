@@ -24,10 +24,7 @@ fn base_print(st: &mut State) -> LuaResult<usize> {
             out.push(b'\t');
         }
         // (`luaL_tolstring` honours a `__tostring` in the string metatable too)
-        if let Some(s) = a
-            .as_string()
-            .filter(|_| st.tostring_metafield(&a).is_nil())
-        {
+        if let Some(s) = a.as_string().filter(|_| st.tostring_metafield(&a).is_nil()) {
             out.extend_from_slice(s.as_bytes());
         } else if let Some(n) = a.as_number().filter(|_| st.metatable_of(&a).is_none()) {
             rn_core::number::with_tostring(n, |b| out.extend_from_slice(b));
@@ -157,7 +154,10 @@ fn base_type(st: &mut State) -> LuaResult<usize> {
 
 fn do_error(st: &mut State, level: i64, msg: Value) -> Status {
     if msg.is_string() && level > 0 {
-        match st.new_where_str(level as usize, msg.as_string().map_or(&[][..], |s| s.as_bytes())) {
+        match st.new_where_str(
+            level as usize,
+            msg.as_string().map_or(&[][..], |s| s.as_bytes()),
+        ) {
             Ok(v) => st.throw_value(v),
             Err(e) => e,
         }

@@ -151,7 +151,18 @@ fn gen_i64(r: &mut Rng) -> i64 {
         0 => r.next() as i64,
         1 => (r.next() >> r.below(64)) as i64,
         2 => r.below(2000) as i64 - 1000,
-        3 => [0, 1, -1, i64::MAX, i64::MIN, i64::MIN + 1, 255, 256, 4095, -4096][r.below(10) as usize],
+        3 => [
+            0,
+            1,
+            -1,
+            i64::MAX,
+            i64::MIN,
+            i64::MIN + 1,
+            255,
+            256,
+            4095,
+            -4096,
+        ][r.below(10) as usize],
         4 => 1i64 << r.below(63),
         _ => -((r.next() >> r.below(64)) as i64),
     }
@@ -165,11 +176,19 @@ fn gen_spec(r: &mut Rng, convs: &[u8], maxprec: u64) -> Vec<u8> {
         }
     }
     if r.chance(2) {
-        let w = if r.chance(8) { r.below(100) } else { r.below(20) };
+        let w = if r.chance(8) {
+            r.below(100)
+        } else {
+            r.below(20)
+        };
         f.extend_from_slice(w.to_string().as_bytes());
     }
     if r.chance(2) {
-        let p = if r.chance(10) { r.below(maxprec + 1) } else { r.below(20) };
+        let p = if r.chance(10) {
+            r.below(maxprec + 1)
+        } else {
+            r.below(20)
+        };
         f.push(b'.');
         if !r.chance(20) {
             f.extend_from_slice(p.to_string().as_bytes());
@@ -181,7 +200,11 @@ fn gen_spec(r: &mut Rng, convs: &[u8], maxprec: u64) -> Vec<u8> {
 
 fn c_f64(form: &[u8], x: f64) -> Vec<u8> {
     let mut v = Vec::new();
-    assert!(cfmt::fmt_f64(&mut v, form, x), "snprintf form {:?}", String::from_utf8_lossy(form));
+    assert!(
+        cfmt::fmt_f64(&mut v, form, x),
+        "snprintf form {:?}",
+        String::from_utf8_lossy(form)
+    );
     v
 }
 
@@ -233,7 +256,10 @@ impl Fails {
 
 fn run(seed: u64, cases: u64) -> Fails {
     let mut r = Rng(seed);
-    let mut fails = Fails { n: 0, msgs: Vec::new() };
+    let mut fails = Fails {
+        n: 0,
+        msgs: Vec::new(),
+    };
     let mut out = Vec::new();
     for _ in 0..cases {
         match r.below(8) {
@@ -243,13 +269,23 @@ fn run(seed: u64, cases: u64) -> Fails {
                 let want = ref_tostring(x);
                 let got = number::tostring_float(x);
                 if got.as_bytes() != want.as_slice() {
-                    fails.add(format!("tostring {:#018x} {x:e}: got {:?} want {:?}", x.to_bits(), got, String::from_utf8_lossy(&want)));
+                    fails.add(format!(
+                        "tostring {:#018x} {x:e}: got {:?} want {:?}",
+                        x.to_bits(),
+                        got,
+                        String::from_utf8_lossy(&want)
+                    ));
                 }
                 for p in [14usize, 15, 17] {
                     let want = c_f64(format!("%.{p}g").as_bytes(), x);
                     let got = number::fmt_g(x, p);
                     if got.as_bytes() != want.as_slice() {
-                        fails.add(format!("fmt_g {p} {:#018x}: got {:?} want {:?}", x.to_bits(), got, String::from_utf8_lossy(&want)));
+                        fails.add(format!(
+                            "fmt_g {p} {:#018x}: got {:?} want {:?}",
+                            x.to_bits(),
+                            got,
+                            String::from_utf8_lossy(&want)
+                        ));
                     }
                 }
             }
@@ -260,7 +296,11 @@ fn run(seed: u64, cases: u64) -> Fails {
                 out.clear();
                 let want = c_f64(&form, x);
                 if !nfmt::format_float(&mut out, &sp, x) {
-                    fails.add(format!("float unhandled {} {:#018x}", String::from_utf8_lossy(&form), x.to_bits()));
+                    fails.add(format!(
+                        "float unhandled {} {:#018x}",
+                        String::from_utf8_lossy(&form),
+                        x.to_bits()
+                    ));
                 } else if out != want {
                     fails.add(format!(
                         "float {} {:#018x}: got {:?} want {:?}",
@@ -278,7 +318,10 @@ fn run(seed: u64, cases: u64) -> Fails {
                 out.clear();
                 let want = c_i64(&form, x);
                 if !nfmt::format_int(&mut out, &sp, x) {
-                    fails.add(format!("int unhandled {} {x}", String::from_utf8_lossy(&form)));
+                    fails.add(format!(
+                        "int unhandled {} {x}",
+                        String::from_utf8_lossy(&form)
+                    ));
                 } else if out != want {
                     fails.add(format!(
                         "int {} {x}: got {:?} want {:?}",
@@ -295,12 +338,23 @@ fn run(seed: u64, cases: u64) -> Fails {
 
 #[test]
 fn native_number_formatting_matches_snprintf() {
-    let cases: u64 = std::env::var("NFMT_CASES").ok().and_then(|s| s.parse().ok()).unwrap_or(400_000);
-    let threads: u64 = std::env::var("NFMT_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
-    let seed: u64 = std::env::var("NFMT_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let cases: u64 = std::env::var("NFMT_CASES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400_000);
+    let threads: u64 = std::env::var("NFMT_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
+    let seed: u64 = std::env::var("NFMT_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
     let per = cases.div_ceil(threads);
     let results: Vec<Fails> = std::thread::scope(|sc| {
-        let hs: Vec<_> = (0..threads).map(|t| sc.spawn(move || run(seed * 1000 + t, per))).collect();
+        let hs: Vec<_> = (0..threads)
+            .map(|t| sc.spawn(move || run(seed * 1000 + t, per)))
+            .collect();
         hs.into_iter().map(|h| h.join().unwrap()).collect()
     });
     let n: usize = results.iter().map(|f| f.n).sum();
@@ -316,14 +370,37 @@ fn native_number_formatting_matches_snprintf() {
 #[test]
 fn nfmt_edge_cases() {
     // fixed spot checks of round-half-even, zero padding, signs and special values
-    let xs = [0.5, 1.5, 2.5, 0.125, 0.375, 1e300, -0.0, f64::NAN, f64::INFINITY, 5e-324, 9.9999995e5, 99999.95, 0.00001, 123456789.0];
-    for form in ["%.0f", "%.2f", "%5.1f", "%-8.3f|", "%08.3f", "%+.3e", "% g", "%G", "%.3g", "%10.4g", "%.99f", "%.0e", "%e", "%f", "%g"] {
+    let xs = [
+        0.5,
+        1.5,
+        2.5,
+        0.125,
+        0.375,
+        1e300,
+        -0.0,
+        f64::NAN,
+        f64::INFINITY,
+        5e-324,
+        9.9999995e5,
+        99999.95,
+        0.00001,
+        123456789.0,
+    ];
+    for form in [
+        "%.0f", "%.2f", "%5.1f", "%-8.3f|", "%08.3f", "%+.3e", "% g", "%G", "%.3g", "%10.4g",
+        "%.99f", "%.0e", "%e", "%f", "%g",
+    ] {
         let form = form.trim_end_matches('|').as_bytes();
         for &x in &xs {
             let sp = nfmt::parse_spec(form).unwrap();
             let mut out = Vec::new();
             assert!(nfmt::format_float(&mut out, &sp, x));
-            assert_eq!(out, c_f64(form, x), "{} {x:e}", String::from_utf8_lossy(form));
+            assert_eq!(
+                out,
+                c_f64(form, x),
+                "{} {x:e}",
+                String::from_utf8_lossy(form)
+            );
         }
     }
     assert!(nfmt::parse_spec(b"%#x").is_none());

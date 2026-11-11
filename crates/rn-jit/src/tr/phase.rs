@@ -4,7 +4,18 @@
 use std::cell::Cell;
 
 pub const NAMES: [&str; 12] = [
-    "rec_step", "lockstep", "pass_sink", "pass_other", "ra", "exits", "asm", "x86", "install", "hash", "pipeline", "tier1",
+    "rec_step",
+    "lockstep",
+    "pass_sink",
+    "pass_other",
+    "ra",
+    "exits",
+    "asm",
+    "x86",
+    "install",
+    "hash",
+    "pipeline",
+    "tier1",
 ];
 pub const REC_STEP: usize = 0;
 pub const LOCKSTEP: usize = 1;
@@ -52,7 +63,12 @@ pub fn report() -> String {
     ACC.with(|a| {
         CALLS.with(|c| {
             for i in 0..NAMES.len() {
-                o += &format!(" {} {:.2}/{}", NAMES[i], a[i].get() as f64 / 1e6, c[i].get());
+                o += &format!(
+                    " {} {:.2}/{}",
+                    NAMES[i],
+                    a[i].get() as f64 / 1e6,
+                    c[i].get()
+                );
             }
         })
     });

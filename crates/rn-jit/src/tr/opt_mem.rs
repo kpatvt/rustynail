@@ -396,10 +396,33 @@ pub fn header_safe_ins(i: &Ins, level: u32) -> bool {
         TOp::Tlen => i.aux == 1 || i.aux == 2 || mutants::active("hdrlib_table_tlen"),
         TOp::Lib => match i.aux & 0xFF {
             lib::SETMT if mutants::active("hdrlib_setmt") => true,
-            lib::BYTE | lib::STRMETH | lib::TYPENAME | lib::TYPE | lib::CCALLS | lib::IPAIRS_END | lib::STREQ | lib::STRLT | lib::STRLE | lib::RANDOM | lib::FIND | lib::FINDS | lib::FMTX => true,
+            lib::BYTE
+            | lib::STRMETH
+            | lib::TYPENAME
+            | lib::TYPE
+            | lib::CCALLS
+            | lib::IPAIRS_END
+            | lib::STREQ
+            | lib::STRLT
+            | lib::STRLE
+            | lib::RANDOM
+            | lib::FIND
+            | lib::FINDS
+            | lib::FMTX => true,
             // HDRSUB: the class-A string makers (no collector step, no table touched: they only intern / allocate a string) from level 2
             lib::SUB if level >= 2 || mutants::active("hdrlib_sub_always") => true,
-            lib::CHAR | lib::CHAR2 | lib::CHAR3 | lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS if level >= 3 => true,
+            lib::CHAR
+            | lib::CHAR2
+            | lib::CHAR3
+            | lib::LOWER
+            | lib::UPPER
+            | lib::REVERSE
+            | lib::REP
+            | lib::REPS
+                if level >= 3 =>
+            {
+                true
+            }
             // BUNDLE-H: the generator step of `math.random()` touches no table and no array part
             lib::RANDF => true,
             // BUNDLE-C (`tfmt`): a string maker like `SUB`
@@ -443,13 +466,20 @@ impl MemLog {
                     if blocked {
                         return None;
                     }
-                    return Some(if o.store { Found::Store(o.val) } else { Found::Load(o.val) });
+                    return Some(if o.store {
+                        Found::Store(o.val)
+                    } else {
+                        Found::Load(o.val)
+                    });
                 }
                 Alias::May => {
                     if !o.store {
                         continue;
                     }
-                    if o.class == Class::Upval && key.class == Class::Upval && uv_distinct(ir, o.a, key.a) {
+                    if o.class == Class::Upval
+                        && key.class == Class::Upval
+                        && uv_distinct(ir, o.a, key.a)
+                    {
                         if !sep.contains(&(o.a, key.a)) {
                             if sep.len() >= SEP_MAX {
                                 return None;
@@ -658,7 +688,17 @@ mod tests {
 
     #[test]
     fn every_op_is_classified() {
-        for op in [TOp::Newref, TOp::Tnew, TOp::Snew, TOp::Concat, TOp::Tlen, TOp::Tset, TOp::Tnext, TOp::Strto, TOp::Lib] {
+        for op in [
+            TOp::Newref,
+            TOp::Tnew,
+            TOp::Snew,
+            TOp::Concat,
+            TOp::Tlen,
+            TOp::Tset,
+            TOp::Tnext,
+            TOp::Strto,
+            TOp::Lib,
+        ] {
             assert!(!header_safe(op), "{op:?}");
         }
         for op in [

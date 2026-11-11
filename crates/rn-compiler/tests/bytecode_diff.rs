@@ -66,9 +66,7 @@ fn run_luac(luac: &Path, args: &[&str], file: &Path) -> Option<Vec<u8>> {
     Some(out.stdout)
 }
 
-pub fn compile_file(
-    file: &Path,
-) -> Result<(TestHost, rn_core::protodata::ProtoData<u32>), String> {
+pub fn compile_file(file: &Path) -> Result<(TestHost, rn_core::protodata::ProtoData<u32>), String> {
     let src = std::fs::read(file).map_err(|e| e.to_string())?;
     let src = skip_file_prefix(&src);
     let mut host = TestHost::default();

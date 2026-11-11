@@ -25,7 +25,9 @@ impl Hasher for FxHasher {
     fn write(&mut self, bytes: &[u8]) {
         let mut b = bytes;
         while b.len() >= 8 {
-            self.add(u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]));
+            self.add(u64::from_le_bytes([
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+            ]));
             b = &b[8..];
         }
         if b.len() >= 4 {

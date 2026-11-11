@@ -6,7 +6,6 @@
 //! * [`idiv`], [`imod`], [`shiftl`], [`fmod_lua`], [`pow_lua`], [`float_to_int`], and the exact
 //!   int/float comparisons `lt_int_float` & friends = `luaV_*` equivalents.
 
-
 /// A Lua number: 64-bit integer or double.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Number {
@@ -386,7 +385,10 @@ impl IntBuf {
             8081828384858687888990919293949596979899";
         // 20 bytes hold the 19 digits of `i64::MAX` plus a sign, and the 19 digits + sign of `i64::MIN` (`-9223372036854775808` is
         // 20 characters).
-        let mut r = IntBuf { buf: [0u8; 20], start: 20 };
+        let mut r = IntBuf {
+            buf: [0u8; 20],
+            start: 20,
+        };
         let mut u = i.unsigned_abs();
         let mut pos = 20usize;
         while u >= 100 {
@@ -658,7 +660,25 @@ mod tests {
     /// limits, powers of ten and their neighbours).
     #[test]
     fn int_to_string_all_shapes() {
-        let mut vals = vec![0i64, 1, -1, 9, 10, -9, -10, 99, 100, 101, -99, -100, -101, i64::MAX, i64::MIN, i64::MIN + 1, i64::MAX - 1];
+        let mut vals = vec![
+            0i64,
+            1,
+            -1,
+            9,
+            10,
+            -9,
+            -10,
+            99,
+            100,
+            101,
+            -99,
+            -100,
+            -101,
+            i64::MAX,
+            i64::MIN,
+            i64::MIN + 1,
+            i64::MAX - 1,
+        ];
         let mut p = 1i64;
         for _ in 0..19 {
             for d in [-1i64, 0, 1] {
@@ -678,9 +698,19 @@ mod tests {
         for v in vals {
             let want = format!("{v}");
             assert_eq!(IntBuf::new(v).as_bytes(), want.as_bytes(), "IntBuf {v}");
-            assert_eq!(tostring_int(v).as_bytes(), want.as_bytes(), "tostring_int {v}");
-            assert_eq!(tostring(Number::Int(v)).as_bytes(), want.as_bytes(), "tostring {v}");
-            with_tostring(Number::Int(v), |b| assert_eq!(b, want.as_bytes(), "with_tostring {v}"));
+            assert_eq!(
+                tostring_int(v).as_bytes(),
+                want.as_bytes(),
+                "tostring_int {v}"
+            );
+            assert_eq!(
+                tostring(Number::Int(v)).as_bytes(),
+                want.as_bytes(),
+                "tostring {v}"
+            );
+            with_tostring(Number::Int(v), |b| {
+                assert_eq!(b, want.as_bytes(), "with_tostring {v}")
+            });
         }
         with_tostring(Number::Float(1.0), |b| assert_eq!(b, b"1.0"));
     }

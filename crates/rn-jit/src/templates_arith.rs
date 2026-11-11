@@ -360,11 +360,21 @@ impl Cx<'_> {
         // (BUNDLE-D `armm`: operands that are not numbers go to the metamethod stub; the number cases that leave stay exits)
         let xm = self.arith_mm_label(pc, x);
         let instr = self.code[pc as usize];
-        let ty = self.dispatch(&ops, &[xm, xm], &mut |s, t| s.arith_leaf(a, ar, ops, t, x, instr));
+        let ty = self.dispatch(&ops, &[xm, xm], &mut |s, t| {
+            s.arith_leaf(a, ar, ops, t, x, instr)
+        });
         self.ty[a as usize] = ty;
     }
 
-    fn arith_leaf(&mut self, a: u32, ar: Ar, ops: [Opd; 2], t: &[Nt], x: L, instr: u32) -> Option<Ty> {
+    fn arith_leaf(
+        &mut self,
+        a: u32,
+        ar: Ar,
+        ops: [Opd; 2],
+        t: &[Nt],
+        x: L,
+        instr: u32,
+    ) -> Option<Ty> {
         let ii = t[0] == Nt::I && t[1] == Nt::I;
         match ar {
             Ar::Add | Ar::Sub | Ar::Mul | Ar::Div => {
@@ -394,7 +404,11 @@ impl Cx<'_> {
             // BUNDLE-Q (`t1q` bit 1): float modulo through `jit_fmod` (`luai_nummod`, stores the float result itself)
             Ar::Mod if !ii && self.calls_on() && self.env().t1q & 2 != 0 => {
                 let w = u32::from(self.env().t1q);
-                self.op(Op::CallH { f: rn_core::jit_helpers::jit_fmod as *const () as usize as u64, a: instr, b: w });
+                self.op(Op::CallH {
+                    f: rn_core::jit_helpers::jit_fmod as *const () as usize as u64,
+                    a: instr,
+                    b: w,
+                });
                 self.br(Cc::Ne, 0, Src::Imm(rn_core::jit_helpers::H_DONE as i32), x);
                 Some(Ty::Flt)
             }
@@ -796,15 +810,36 @@ impl Cx<'_> {
             self.br(Cc::Eq, 2, Src::V(3), lt);
         }
         self.br(Cc::Ne, 0, Src::Imm(ctb(LUA_VTABLE) as i32), lgen);
-        self.ld(4, W::B8, M { base: Base::Reg(2), off: rn_core::jit_layout::table::METATABLE as i32 });
-        self.ld(5, W::B8, M { base: Base::Reg(3), off: rn_core::jit_layout::table::METATABLE as i32 });
+        self.ld(
+            4,
+            W::B8,
+            M {
+                base: Base::Reg(2),
+                off: rn_core::jit_layout::table::METATABLE as i32,
+            },
+        );
+        self.ld(
+            5,
+            W::B8,
+            M {
+                base: Base::Reg(3),
+                off: rn_core::jit_layout::table::METATABLE as i32,
+            },
+        );
         for (r, skip) in [(4u8, false), (5u8, w & 0x400 != 0)] {
             if skip {
                 continue; // (mutant `t1q_eq_second_mm_skip`: the second metatable is not asked)
             }
             let next = self.p.label();
             self.br(Cc::Eq, r, Src::Imm(0), next);
-            self.ld(6, W::B1, M { base: Base::Reg(r), off: rn_core::jit_layout::table::FLAGS as i32 });
+            self.ld(
+                6,
+                W::B1,
+                M {
+                    base: Base::Reg(r),
+                    off: rn_core::jit_layout::table::FLAGS as i32,
+                },
+            );
             self.op(Op::And(6, Src::Imm(1 << rn_core::meta::Tm::Eq as i32)));
             self.br(Cc::Eq, 6, Src::Imm(0), lgen);
             self.op(Op::Bind(next));

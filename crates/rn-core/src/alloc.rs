@@ -363,7 +363,11 @@ impl Mem {
     /// Would an allocation of `extra` more bytes stay within the limit (the check `realloc` / `alloc_split` make)?
     #[inline]
     pub fn would_fit(&self, extra: usize) -> bool {
-        match self.total.checked_add(self.ext).and_then(|t| t.checked_add(extra)) {
+        match self
+            .total
+            .checked_add(self.ext)
+            .and_then(|t| t.checked_add(extra))
+        {
             Some(p) => p <= self.lim(),
             None => false,
         }

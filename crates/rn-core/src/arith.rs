@@ -336,7 +336,8 @@ impl State {
     fn concat_num(&mut self, total: usize) -> LuaResult<bool> {
         let first = self.top() - total;
         let mut texts = [[0u8; 32]; CONCAT_NUM_MAX];
-        let mut parts: [(*const u8, usize); CONCAT_NUM_MAX] = [(std::ptr::null(), 0); CONCAT_NUM_MAX];
+        let mut parts: [(*const u8, usize); CONCAT_NUM_MAX] =
+            [(std::ptr::null(), 0); CONCAT_NUM_MAX];
         let mut tl = 0usize;
         for j in 0..total {
             let v = self.get(first + j);

@@ -488,7 +488,8 @@ pub fn set_libfns(addrs: [usize; NUM_LIBFN], type_fn: usize) {
 
 /// BUNDLE-R: number of library functions registered by [`set_libfns_ext`] (indices `NUM_LIBFN ..` of [`libfn`]).
 pub const NUM_LIBFN_EXT: usize = 2;
-static BUILTIN_LIBFN_EXT: [AtomicUsize; NUM_LIBFN_EXT] = [const { AtomicUsize::new(0) }; NUM_LIBFN_EXT];
+static BUILTIN_LIBFN_EXT: [AtomicUsize; NUM_LIBFN_EXT] =
+    [const { AtomicUsize::new(0) }; NUM_LIBFN_EXT];
 
 /// BUNDLE-R: registers the addresses of `table.unpack` and `table.move` (indices [`libfn::TBL_UNPACK`], [`libfn::TBL_MOVE`]; 0 = unknown).
 pub fn set_libfns_ext(addrs: [usize; NUM_LIBFN_EXT]) {
@@ -504,7 +505,11 @@ pub fn libfn_of(addr: usize) -> Option<u8> {
     }
     (0..NUM_LIBFN as u8)
         .find(|&i| BUILTIN_LIBFN[usize::from(i)].load(Ordering::Relaxed) == addr)
-        .or_else(|| (0..NUM_LIBFN_EXT).find(|&i| BUILTIN_LIBFN_EXT[i].load(Ordering::Relaxed) == addr).map(|i| (NUM_LIBFN + i) as u8))
+        .or_else(|| {
+            (0..NUM_LIBFN_EXT)
+                .find(|&i| BUILTIN_LIBFN_EXT[i].load(Ordering::Relaxed) == addr)
+                .map(|i| (NUM_LIBFN + i) as u8)
+        })
 }
 
 static BUILTIN_STRFORMAT: AtomicUsize = AtomicUsize::new(0);
@@ -545,7 +550,9 @@ pub fn select_addr() -> usize {
 
 /// BUNDLE-T1I: the registered address of library function `i` of [`libfn`] (0 = none).
 pub fn libfn_addr(i: u8) -> usize {
-    BUILTIN_LIBFN.get(usize::from(i)).map_or(0, |c| c.load(Ordering::Relaxed))
+    BUILTIN_LIBFN
+        .get(usize::from(i))
+        .map_or(0, |c| c.load(Ordering::Relaxed))
 }
 
 /// Address of `type`'s function (0 = none).
@@ -970,7 +977,9 @@ pub fn rec_reroot(st: &mut State, caller: Ci) -> bool {
     if c.th == 0 || c.th != st.th_ptr() as usize || c.g != rec_owner(st) || st.hook_mask() != 0 {
         return false;
     }
-    let Some(cl) = st.ci_lclosure(caller) else { return false };
+    let Some(cl) = st.ci_lclosure(caller) else {
+        return false;
+    };
     let mut v = c;
     v.root = caller.as_ptr() as usize;
     v.root_func = caller.r().func.0;

@@ -380,7 +380,12 @@ pub(crate) fn jit_mm_pop(st: &mut State, ret: Ci, v: Value, flags: u32) -> bool 
     // SAFETY: VM1 — the caller was interrupted after fetching an instruction (it called the metamethod).
     let inst = Instruction(unsafe { *caller.r().savedpc.sub(1) });
     let op = inst.opcode();
-    if arith && matches!(op, Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink | OpCode::Unm | OpCode::Bnot)) {
+    if arith
+        && matches!(
+            op,
+            Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink | OpCode::Unm | OpCode::Bnot)
+        )
+    {
         // BUNDLE-D (`armm`): the metamethod of an arithmetic instruction returned `v`: `mm_return`'s store into the register of the
         // arithmetic instruction (the one before the `MMBIN*`, or the unary instruction itself); `savedpc` stays after the `MMBIN*`
         let dst = if matches!(op, Some(OpCode::Unm | OpCode::Bnot)) {
@@ -403,8 +408,16 @@ pub(crate) fn jit_mm_pop(st: &mut State, ret: Ci, v: Value, flags: u32) -> bool 
     }
     // BUNDLE-S S1 (`flags` bit 1 / 2): the metamethod of a table read (`__index` function) or store (`__newindex` function) returned: `mm_return`'s store of the
     // result into `R[A]` (nothing for a store); `savedpc` stays after the instruction
-    let is_get = matches!(op, Some(OpCode::Gettabup | OpCode::Gettable | OpCode::Geti | OpCode::Getfield | OpCode::SelfOp));
-    let is_set = matches!(op, Some(OpCode::Settabup | OpCode::Settable | OpCode::Seti | OpCode::Setfield));
+    let is_get = matches!(
+        op,
+        Some(
+            OpCode::Gettabup | OpCode::Gettable | OpCode::Geti | OpCode::Getfield | OpCode::SelfOp
+        )
+    );
+    let is_set = matches!(
+        op,
+        Some(OpCode::Settabup | OpCode::Settable | OpCode::Seti | OpCode::Setfield)
+    );
     if (flags & 2 != 0 && is_get) || (flags & 4 != 0 && is_set) {
         let nc = st.ncalls_raw();
         if nc as isize == ret.r().ctx + 1 && !mm_ret_mut(1) {
@@ -413,7 +426,11 @@ pub(crate) fn jit_mm_pop(st: &mut State, ret: Ci, v: Value, flags: u32) -> bool 
         let res = ret.r().func;
         if is_get {
             let base = caller.r().func.0 + 1;
-            let dst = if flags & 0x100 != 0 { inst.a() + 1 } else { inst.a() }; // (mutant `s1_get_dst_off`)
+            let dst = if flags & 0x100 != 0 {
+                inst.a() + 1
+            } else {
+                inst.a()
+            }; // (mutant `s1_get_dst_off`)
             st.set(StkId(base + dst as usize), v);
         }
         st.set_top(res);
@@ -506,7 +523,19 @@ pub(crate) fn jit_mm_tail_ok(st: &State, ci: Ci, f: Value) -> bool {
     }
     // SAFETY: VM1 — the caller was interrupted after fetching the instruction that called the metamethod.
     let inst = Instruction(unsafe { *caller.r().savedpc.sub(1) });
-    matches!(inst.opcode(), Some(OpCode::Mmbin | OpCode::Mmbini | OpCode::Mmbink | OpCode::Unm | OpCode::Bnot | OpCode::Lt | OpCode::Le | OpCode::Eq))
+    matches!(
+        inst.opcode(),
+        Some(
+            OpCode::Mmbin
+                | OpCode::Mmbini
+                | OpCode::Mmbink
+                | OpCode::Unm
+                | OpCode::Bnot
+                | OpCode::Lt
+                | OpCode::Le
+                | OpCode::Eq
+        )
+    )
 }
 
 /// Tier 1 (`jit_tailcall`): the interpreter's `mm_return` for the popped metamethod frame `ret` whose native tail callee finished.

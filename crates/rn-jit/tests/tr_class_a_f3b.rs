@@ -74,7 +74,11 @@ fn snew_exits_exactly_when_a_step_would_be_due() {
         st.heap().gc_set_threshold(total + 1);
         assert_eq!(snew_core(&mut st, n), s, "{n:?}: present string");
         st.heap().gc_set_threshold(total);
-        assert_eq!(snew_core(&mut st, n), 0, "{n:?}: present string, threshold reached");
+        assert_eq!(
+            snew_core(&mut st, n),
+            0,
+            "{n:?}: present string, threshold reached"
+        );
     }
 }
 
@@ -123,8 +127,8 @@ fn concat_exits_exactly_when_a_step_would_be_due() {
     let shapes: &[(&[&[u8]], u32)] = &[
         (&[b"ab", b"cd"], 0),
         (&[b"x", b"yy", b"zzz"], 8),
-        (&[&[b'q'; 20], &[b'r'; 20]], 0),      // 40 bytes: still short
-        (&[&[b'q'; 20], &[b'r'; 21]], 16),     // 41 bytes: long
+        (&[&[b'q'; 20], &[b'r'; 20]], 0),  // 40 bytes: still short
+        (&[&[b'q'; 20], &[b'r'; 21]], 16), // 41 bytes: long
         (&[&[b's'; 100], b"t", &[b'u'; 300]], 8 | 16 | 1),
     ];
     for (parts, bits) in shapes {
@@ -151,14 +155,26 @@ fn concat_exits_exactly_when_a_step_would_be_due() {
         for thr in [total + bytes - 1, total + bytes, total, 0] {
             st.heap().gc_set_threshold(thr);
             // SAFETY: live strings of the kinds `bits` says.
-            assert_eq!(unsafe { concat_core(&mut st, bits, ops) }, 0, "{total_len} bytes, threshold {thr}: must exit");
-            assert_eq!(st.heap().total_bytes(), total, "{total_len} bytes: the exit allocated");
+            assert_eq!(
+                unsafe { concat_core(&mut st, bits, ops) },
+                0,
+                "{total_len} bytes, threshold {thr}: must exit"
+            );
+            assert_eq!(
+                st.heap().total_bytes(),
+                total,
+                "{total_len} bytes: the exit allocated"
+            );
         }
         st.heap().gc_set_threshold(total + bytes + 1);
         // SAFETY: as above.
         let r = unsafe { concat_core(&mut st, bits, ops) };
         assert_ne!(r, 0, "{total_len} bytes: must allocate");
-        assert_eq!(st.heap().total_bytes(), total + bytes, "{total_len} bytes: accounting");
+        assert_eq!(
+            st.heap().total_bytes(),
+            total + bytes,
+            "{total_len} bytes: accounting"
+        );
         // the string has the interpreter's contents; a short one is the interned object
         let v = st.new_str(&joined).unwrap().as_ptr() as u64;
         if total_len <= rn_core::string::MAX_SHORT_LEN {
@@ -189,11 +205,19 @@ fn concat_leaves_special_cases_to_the_interpreter() {
     let total = st.heap().total_bytes();
     // SAFETY: live short strings.
     unsafe {
-        assert_eq!(concat_core(&mut st, 0, [a, e, 0]), 0, "empty second operand");
+        assert_eq!(
+            concat_core(&mut st, 0, [a, e, 0]),
+            0,
+            "empty second operand"
+        );
         assert_eq!(concat_core(&mut st, 0, [e, a, 0]), 0, "empty first operand");
         assert_eq!(concat_core(&mut st, 8, [a, a, e]), 0, "empty third operand");
         // recorded as a long result, but 6 bytes is short (and the reverse)
-        assert_eq!(concat_core(&mut st, 16, [a, a, 0]), 0, "short result recorded long");
+        assert_eq!(
+            concat_core(&mut st, 16, [a, a, 0]),
+            0,
+            "short result recorded long"
+        );
     }
     assert_eq!(st.heap().total_bytes(), total, "no special case allocated");
 }
@@ -203,7 +227,15 @@ fn concat_leaves_special_cases_to_the_interpreter() {
 fn string_helpers_follow_stop() {
     let mut st = state();
     st.heap().gc_set_threshold(0);
-    assert_eq!(snew_core(&mut st, Number::Int(424242)), 0, "threshold crossed: exits");
+    assert_eq!(
+        snew_core(&mut st, Number::Int(424242)),
+        0,
+        "threshold crossed: exits"
+    );
     st.heap().gc_set_stp(rn_core::gc::GCSTP_USER);
-    assert_ne!(snew_core(&mut st, Number::Int(424242)), 0, "stopped: allocates");
+    assert_ne!(
+        snew_core(&mut st, Number::Int(424242)),
+        0,
+        "stopped: allocates"
+    );
 }

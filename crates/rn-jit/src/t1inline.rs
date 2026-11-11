@@ -16,12 +16,14 @@
 
 use super::{ciw, fr, thw, Cx};
 use crate::ir::{Base, Cc, Mi, Op, Src, L, M, V, W, X};
-use rn_core::jit_hooks::{self, libfn, thread as thr};
-use rn_core::jit_layout::{callinfo as ci, cclosure, string as lstr, table};
 use rn_core::func::Proto;
 use rn_core::instruction::Instruction;
+use rn_core::jit_hooks::{self, libfn, thread as thr};
+use rn_core::jit_layout::{callinfo as ci, cclosure, string as lstr, table};
+use rn_core::value::{
+    ctb, LUA_VCCL, LUA_VLCF, LUA_VLNGSTR, LUA_VNUMFLT, LUA_VNUMINT, LUA_VSHRSTR, LUA_VTABLE,
+};
 use rn_core::ver::active::OpCode;
-use rn_core::value::{ctb, LUA_VCCL, LUA_VLCF, LUA_VLNGSTR, LUA_VNUMFLT, LUA_VNUMINT, LUA_VSHRSTR, LUA_VTABLE};
 
 /// Limit bit of [`CallEnv::inl`](super::calls::CallEnv::inl): `type`.
 pub const B_TYPE: u16 = 1;
@@ -148,16 +150,86 @@ fn select_shape(b: u32) -> bool {
 
 /// The rows, most frequent first (the identity tests are tried in this order).
 static BUILTINS: &[Builtin] = &[
-    Builtin { bit: B_TYPE, names: &["type"], kind: Kind::Closure, addr: a_type, shape: one_arg, emit: |c, s| c.t1i_type(s) },
-    Builtin { bit: B_FLOOR, names: &["floor"], kind: Kind::Light, addr: a_floor, shape: one_arg, emit: |c, s| c.t1i_floor(s) },
-    Builtin { bit: B_BYTE, names: &["byte"], kind: Kind::Light, addr: a_byte, shape: byte_shape, emit: |c, s| c.t1i_byte(s) },
-    Builtin { bit: B_MAX, names: &["max"], kind: Kind::Light, addr: a_max, shape: two_args, emit: |c, s| c.t1i_max(s) },
-    Builtin { bit: B_MIN, names: &["min"], kind: Kind::Light, addr: a_min, shape: two_args, emit: |c, s| c.t1i_min(s) },
-    Builtin { bit: B_ABS, names: &["abs"], kind: Kind::Light, addr: a_abs, shape: one_arg, emit: |c, s| c.t1i_abs(s) },
-    Builtin { bit: B_SQRT, names: &["sqrt"], kind: Kind::Light, addr: a_sqrt, shape: one_arg, emit: |c, s| c.t1i_sqrt(s) },
-    Builtin { bit: B_LEN, names: &["len"], kind: Kind::Light, addr: a_len, shape: one_arg, emit: |c, s| c.t1i_len(s) },
-    Builtin { bit: B_SELECT, names: &["select"], kind: Kind::Light, addr: a_select, shape: select_shape, emit: |c, s| c.t1i_select(s) },
-    Builtin { bit: B_RAWLEN, names: &["rawlen"], kind: Kind::Light, addr: a_rawlen, shape: one_arg, emit: |c, s| c.t1i_rawlen(s) },
+    Builtin {
+        bit: B_TYPE,
+        names: &["type"],
+        kind: Kind::Closure,
+        addr: a_type,
+        shape: one_arg,
+        emit: |c, s| c.t1i_type(s),
+    },
+    Builtin {
+        bit: B_FLOOR,
+        names: &["floor"],
+        kind: Kind::Light,
+        addr: a_floor,
+        shape: one_arg,
+        emit: |c, s| c.t1i_floor(s),
+    },
+    Builtin {
+        bit: B_BYTE,
+        names: &["byte"],
+        kind: Kind::Light,
+        addr: a_byte,
+        shape: byte_shape,
+        emit: |c, s| c.t1i_byte(s),
+    },
+    Builtin {
+        bit: B_MAX,
+        names: &["max"],
+        kind: Kind::Light,
+        addr: a_max,
+        shape: two_args,
+        emit: |c, s| c.t1i_max(s),
+    },
+    Builtin {
+        bit: B_MIN,
+        names: &["min"],
+        kind: Kind::Light,
+        addr: a_min,
+        shape: two_args,
+        emit: |c, s| c.t1i_min(s),
+    },
+    Builtin {
+        bit: B_ABS,
+        names: &["abs"],
+        kind: Kind::Light,
+        addr: a_abs,
+        shape: one_arg,
+        emit: |c, s| c.t1i_abs(s),
+    },
+    Builtin {
+        bit: B_SQRT,
+        names: &["sqrt"],
+        kind: Kind::Light,
+        addr: a_sqrt,
+        shape: one_arg,
+        emit: |c, s| c.t1i_sqrt(s),
+    },
+    Builtin {
+        bit: B_LEN,
+        names: &["len"],
+        kind: Kind::Light,
+        addr: a_len,
+        shape: one_arg,
+        emit: |c, s| c.t1i_len(s),
+    },
+    Builtin {
+        bit: B_SELECT,
+        names: &["select"],
+        kind: Kind::Light,
+        addr: a_select,
+        shape: select_shape,
+        emit: |c, s| c.t1i_select(s),
+    },
+    Builtin {
+        bit: B_RAWLEN,
+        names: &["rawlen"],
+        kind: Kind::Light,
+        addr: a_rawlen,
+        shape: one_arg,
+        emit: |c, s| c.t1i_rawlen(s),
+    },
 ];
 
 /// The limit bits whose rows exist for this process (addresses registered, CPU features present).
@@ -180,7 +252,10 @@ fn name_mask(name: &[u8]) -> u16 {
     let lower = name.to_ascii_lowercase();
     let mut m = 0;
     for r in BUILTINS {
-        if r.names.iter().any(|n| lower.windows(n.len()).any(|w| w == n.as_bytes())) {
+        if r.names
+            .iter()
+            .any(|n| lower.windows(n.len()).any(|w| w == n.as_bytes()))
+        {
             m |= r.bit;
         }
     }
@@ -193,7 +268,11 @@ fn name_mask(name: &[u8]) -> u16 {
 fn callee_mask(p: &Proto, pc: usize, reg: u32, depth: u32) -> u16 {
     let code = p.code();
     let k = p.k();
-    let key = |idx: u32| k.get(idx as usize).and_then(|v| v.as_string()).map_or(0, |s| name_mask(s.as_bytes()));
+    let key = |idx: u32| {
+        k.get(idx as usize)
+            .and_then(|v| v.as_string())
+            .map_or(0, |s| name_mask(s.as_bytes()))
+    };
     for q in (pc.saturating_sub(256)..pc).rev() {
         let i = Instruction(code[q]);
         let Some(op) = i.opcode() else { continue };
@@ -248,20 +327,30 @@ pub fn site_hints(p: &Proto) -> Box<[u16]> {
     for pc in 0..code.len() {
         let i = Instruction(code[pc]);
         if i.opcode() == Some(OpCode::Call) && (i.c() == 0 || i.c() == 2) {
-            out[pc] = if stripped { B_ALL } else { callee_mask(p, pc, i.a(), 0) };
+            out[pc] = if stripped {
+                B_ALL
+            } else {
+                callee_mask(p, pc, i.a(), 0)
+            };
         }
     }
     out.into_boxed_slice()
 }
 
 fn m_reg(v: V, off: i32) -> M {
-    M { base: Base::Reg(v), off }
+    M {
+        base: Base::Reg(v),
+        off,
+    }
 }
 
 impl Cx<'_> {
     /// The rows enabled for a call shape.
     fn t1i_rows(inl: u16, b: u32) -> Vec<&'static Builtin> {
-        BUILTINS.iter().filter(|r| inl & r.bit != 0 && (r.shape)(b) && usable(r)).collect()
+        BUILTINS
+            .iter()
+            .filter(|r| inl & r.bit != 0 && (r.shape)(b) && usable(r))
+            .collect()
     }
 
     /// The limit mask of the rows worth emitting at the `CALL` at `pc` (the prototype's [`site_hints`]; every row without them).
@@ -272,7 +361,8 @@ impl Cx<'_> {
         }
         // SAFETY: the map lives in the state's `JitData`, which outlives every lowering (see `CallEnv::hints`).
         let m = unsafe { &*env.hints };
-        m.get(&self.cfg.code_addr).map_or(B_ALL, |v| v.get(pc as usize).copied().unwrap_or(0))
+        m.get(&self.cfg.code_addr)
+            .map_or(B_ALL, |v| v.get(pc as usize).copied().unwrap_or(0))
     }
 
     /// Whether any row applies to a call with `B` = `b`, `C` = `c` (then the caller branches non-Lua-closures to the label it
@@ -288,10 +378,24 @@ impl Cx<'_> {
         let env = self.env();
         let rows = Self::t1i_rows(env.inl & self.t1i_site_mask(pc), b);
         let mu = env.inl_mut;
-        let site = Site { a, b, next, slow, mu };
+        let site = Site {
+            a,
+            b,
+            next,
+            slow,
+            mu,
+        };
         self.op(Op::Bind(notlcl));
-        let lights: Vec<&Builtin> = rows.iter().copied().filter(|r| r.kind == Kind::Light).collect();
-        let closures: Vec<&Builtin> = rows.iter().copied().filter(|r| r.kind == Kind::Closure).collect();
+        let lights: Vec<&Builtin> = rows
+            .iter()
+            .copied()
+            .filter(|r| r.kind == Kind::Light)
+            .collect();
+        let closures: Vec<&Builtin> = rows
+            .iter()
+            .copied()
+            .filter(|r| r.kind == Kind::Closure)
+            .collect();
         if !lights.is_empty() {
             let not_lcf = self.p.label();
             self.br(Cc::Ne, 0, Src::Imm(i32::from(LUA_VLCF)), not_lcf);
@@ -328,11 +432,19 @@ impl Cx<'_> {
     /// Stores the result `(tag, payload)` in `R[A]` and the dead copy above the arguments, sets `top` after the result and
     /// leaves to the continuation.
     fn t1i_store(&mut self, s: &Site, tag: Src, pay: V, dead: bool) {
-        self.op(Op::St { w: W::B8, m: fr(s.a, 0), src: tag });
+        self.op(Op::St {
+            w: W::B8,
+            m: fr(s.a, 0),
+            src: tag,
+        });
         self.st(W::B8, fr(s.a, 8), pay);
         if dead {
             let d = s.a + s.b + 1;
-            self.op(Op::St { w: W::B8, m: fr(d, 0), src: tag });
+            self.op(Op::St {
+                w: W::B8,
+                m: fr(d, 0),
+                src: tag,
+            });
             self.st(W::B8, fr(d, 8), pay);
         }
         self.t1i_done(s);
@@ -380,10 +492,18 @@ impl Cx<'_> {
         self.op(Op::FFloor(X2, X2));
         if s.mu & M_FLOOR_EXACT != 0 {
             let ok = self.p.label();
-            self.op(Op::F2IExact { dst: 4, src: X2, to: ok });
+            self.op(Op::F2IExact {
+                dst: 4,
+                src: X2,
+                to: ok,
+            });
             self.op(Op::Bind(ok));
         } else {
-            self.op(Op::F2IExact { dst: 4, src: X2, to: s.slow });
+            self.op(Op::F2IExact {
+                dst: 4,
+                src: X2,
+                to: s.slow,
+            });
         }
         self.t1i_store_int(s, 4);
     }
@@ -428,7 +548,12 @@ impl Cx<'_> {
         self.br(Cc::Ne, 2, Src::Imm(i32::from(LUA_VNUMFLT)), s.slow);
         let cc = if s.mu & M_MM_LE != 0 { Cc::Le } else { Cc::Lt };
         let (x, y) = if max { (4, 6) } else { (6, 4) };
-        self.op(Op::FBr { cc, a: x, b: y, to: p2 });
+        self.op(Op::FBr {
+            cc,
+            a: x,
+            b: y,
+            to: p2,
+        });
         self.op(Op::Jmp(p1));
         self.op(Op::Bind(ints));
         self.br(Cc::Lt, x, Src::V(y), p2);
@@ -510,7 +635,12 @@ impl Cx<'_> {
             // the generic path wants `LUA_MINSTACK` free slots above `top`
             self.ld(4, W::B8, thw(thr::STACK_SIZE));
             self.op(Op::Sub(4, Src::V(5)));
-            self.br(Cc::Le, 4, Src::Imm(rn_core::state::LUA_MINSTACK as i32), s.slow);
+            self.br(
+                Cc::Le,
+                4,
+                Src::Imm(rn_core::state::LUA_MINSTACK as i32),
+                s.slow,
+            );
         } else {
             self.op(Op::Mov(3, u64::from(s.b - 2)));
         }
@@ -568,12 +698,25 @@ impl Cx<'_> {
         let full = self.p.label();
         self.br(Cc::Eq, 4, Src::V(2), full);
         self.br(Cc::Uge, 4, Src::V(2), s.slow);
-        let tag = |off: i32| Mi { base: 3, idx: 4, scale: 1, off };
-        self.op(Op::LdI { dst: 6, w: W::B1, m: tag(table::ARRAY_TAG_BASE as i32 - 1) });
+        let tag = |off: i32| Mi {
+            base: 3,
+            idx: 4,
+            scale: 1,
+            off,
+        };
+        self.op(Op::LdI {
+            dst: 6,
+            w: W::B1,
+            m: tag(table::ARRAY_TAG_BASE as i32 - 1),
+        });
         self.op(Op::And(6, Src::Imm(0x0f)));
         self.br(Cc::Eq, 6, Src::Imm(0), s.slow);
         if s.mu & M_RAWLEN_NEXT == 0 {
-            self.op(Op::LdI { dst: 6, w: W::B1, m: tag(table::ARRAY_TAG_BASE as i32) });
+            self.op(Op::LdI {
+                dst: 6,
+                w: W::B1,
+                m: tag(table::ARRAY_TAG_BASE as i32),
+            });
             self.op(Op::And(6, Src::Imm(0x0f)));
             self.br(Cc::Ne, 6, Src::Imm(0), s.slow);
         }
@@ -581,7 +724,11 @@ impl Cx<'_> {
         // the hint is the array size: the last element is present and the hash part is the dummy node (no `asize + 1` key): the length
         // is `asize` and the hint stays
         self.op(Op::Bind(full));
-        self.op(Op::LdI { dst: 6, w: W::B1, m: tag(table::ARRAY_TAG_BASE as i32 - 1) });
+        self.op(Op::LdI {
+            dst: 6,
+            w: W::B1,
+            m: tag(table::ARRAY_TAG_BASE as i32 - 1),
+        });
         self.op(Op::And(6, Src::Imm(0x0f)));
         self.br(Cc::Eq, 6, Src::Imm(0), s.slow);
         self.ld(6, W::B1, m_reg(1, table::FLAGS as i32));

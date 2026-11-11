@@ -43,7 +43,10 @@ pub struct FPool {
 impl FPool {
     /// The empty pool.
     pub const fn new() -> FPool {
-        FPool { n: 0, bits: [0; FPOOL_N] }
+        FPool {
+            n: 0,
+            bits: [0; FPOOL_N],
+        }
     }
 
     /// Index of `b` (appended when new), `None` when full.
@@ -459,9 +462,7 @@ fn side_unchangeable(r: AbortReason) -> bool {
     unchangeable(r)
         || matches!(
             r,
-            AbortReason::LeaveLoop
-                | AbortReason::LeaveFrame
-                | AbortReason::SideShort
+            AbortReason::LeaveLoop | AbortReason::LeaveFrame | AbortReason::SideShort
         )
 }
 
@@ -497,7 +498,12 @@ fn lockstep_on(cfg: &cache::TrConfig) -> bool {
 /// recursion machinery (a function root of `tail` in awfy/list costs 25% instructions).
 fn closure_self_ref(cl: rn_core::value::Gc<rn_core::func::LClosure>) -> bool {
     let me = &*cl.proto() as *const rn_core::func::Proto;
-    (0..cl.nupvalues()).any(|i| cl.upval(i).get().as_lclosure().is_some_and(|c| std::ptr::eq(&*c.proto(), me)))
+    (0..cl.nupvalues()).any(|i| {
+        cl.upval(i)
+            .get()
+            .as_lclosure()
+            .is_some_and(|c| std::ptr::eq(&*c.proto(), me))
+    })
 }
 
 /// The recorder entry the cache calls at a hot head (`cache::StartFn`): arms the recorder for the frame `ci` at `pc`.
@@ -509,29 +515,43 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     let proto = cl.proto();
     let root = &*proto as *const rn_core::func::Proto as usize;
     let cfg = crate::rt::trace_config(st);
-    let resolve: record::ResolveFn = Rc::new(|st, p| cache::proto_ref(p).or_else(|| crate::rt::ensure_compiled(st, p).then(|| cache::proto_ref(p)).flatten()));
+    let resolve: record::ResolveFn = Rc::new(|st, p| {
+        cache::proto_ref(p).or_else(|| {
+            crate::rt::ensure_compiled(st, p)
+                .then(|| cache::proto_ref(p))
+                .flatten()
+        })
+    });
     let pr = cache::proto_ref(&proto);
     // BUNDLE-C (`fnpromo`): this function-entry head is a generic function root (not for a function that reaches itself through an upvalue)
     let promoted = pr.is_some_and(|pr| cache::fn_promoted(st, pr)) && !closure_self_ref(cl);
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
     // function with calls would get continuation traces whose return guard fails when no recursion is involved)
     let cok = cfg.limits.contok >= 1 && record::cont_ok(root);
-    if cfg.limits.recany != 0 && pr.is_some_and(|pr| cache::head_is_cont(st, pr, pc) && !cache::proto_recursive(st, pr) && !cok) {
+    if cfg.limits.recany != 0
+        && pr.is_some_and(|pr| {
+            cache::head_is_cont(st, pr, pc) && !cache::proto_recursive(st, pr) && !cok
+        })
+    {
         return false;
     }
-    let deep = cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
+    let deep =
+        cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
     let nest: Option<record::HeadQuery> = if cfg.limits.nest >= 1 {
-        pr.map(|pr| Rc::new(move |st: &mut State, pc| cache::head_traced(st, pr, pc)) as record::HeadQuery)
+        pr.map(|pr| {
+            Rc::new(move |st: &mut State, pc| cache::head_traced(st, pr, pc)) as record::HeadQuery
+        })
     } else {
         None
     };
-    let nest_frame: Option<record::FrameHeadQuery> = if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 {
-        Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
-            cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
-        }))
-    } else {
-        None
-    };
+    let nest_frame: Option<record::FrameHeadQuery> =
+        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+            }))
+        } else {
+            None
+        };
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
         fold: cfg.opts.fold,
@@ -544,8 +564,16 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         nest_frame_roots: cfg.limits.nest >= 2,
         nest_frame_sides: cfg.limits.sidenest != 0,
         stitch_min: cfg.limits.stitchmin,
-        unroll: if deep { cfg.limits.unroll.max(cfg.limits.deep) } else { cfg.limits.unroll },
-        max_depth: if deep { cfg.limits.maxdepth.max(cfg.limits.deep) } else { cfg.limits.maxdepth },
+        unroll: if deep {
+            cfg.limits.unroll.max(cfg.limits.deep)
+        } else {
+            cfg.limits.unroll
+        },
+        max_depth: if deep {
+            cfg.limits.maxdepth.max(cfg.limits.deep)
+        } else {
+            cfg.limits.maxdepth
+        },
         max_ins: if deep { cfg.limits.deepins as usize } else { 0 },
         loop_unroll: cfg.limits.loopunroll,
         ncallee: pr.is_some_and(|pr| cache::head_ncallee(st, pr, pc)),
@@ -556,10 +584,20 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         rec_any: cfg.limits.recany != 0,
         cnum: true,
         nil_store: cfg.limits.nilstore != 0,
-        rec_seen: pr.is_some_and(|pr| cache::proto_recursive(st, pr)) || (cfg.limits.contok >= 2 && cok),
-        rec_only: cfg.limits.recnat != 0 && cfg.limits.fnroot == 0 && !promoted && (pc == 0 || cfg.limits.recany != 0),
+        rec_seen: pr.is_some_and(|pr| cache::proto_recursive(st, pr))
+            || (cfg.limits.contok >= 2 && cok),
+        rec_only: cfg.limits.recnat != 0
+            && cfg.limits.fnroot == 0
+            && !promoted
+            && (pc == 0 || cfg.limits.recany != 0),
         rec_cont: pr.is_some_and(|pr| cache::head_is_cont(st, pr, pc)),
-        fn_min: if pr.is_some_and(|pr| cache::fn_cent(st, pr)) && !mutants::active("centry_fnmin_kept") { 0 } else { cfg.limits.fnmin },
+        fn_min: if pr.is_some_and(|pr| cache::fn_cent(st, pr))
+            && !mutants::active("centry_fnmin_kept")
+        {
+            0
+        } else {
+            cfg.limits.fnmin
+        },
         pack: true,
         gfor: true,
         mm: true,
@@ -582,7 +620,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         libcall_repcls: cfg.limits.libcall & 16 != 0,
         libcall_mask: cfg.limits.libcall,
         // BUNDLE-N: RETF (not with lazy frames: the pop assumes every frame below the running one is complete)
-        retf: if cfg.limits.lazyci != 0 { 0 } else { cfg.limits.retf },
+        retf: if cfg.limits.lazyci != 0 {
+            0
+        } else {
+            cfg.limits.retf
+        },
         retfmax: cfg.limits.retfmax,
         upbar: cfg.limits.upbar,
         f2mt: true,
@@ -616,7 +658,25 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                     token,
                     id,
                     root,
-                    opts: { let mut o = cfg.opts.clone(); o.hdrlib = cfg.limits.hdrlib | if cfg.limits.tnextinl & 1 != 0 { opt_mem::HDR_TNEXT } else { 0 }; o.sinkmt = cfg.limits.sinkmt; o.sinkside = cfg.limits.sinkside; o.uvsep = 1; o.aidx = cfg.limits.aidx; o.bhoist = if pr.is_some_and(|pr| cache::head_nohoist(st, pr, pc)) { 0 } else { cfg.limits.bhoist }; o },
+                    opts: {
+                        let mut o = cfg.opts.clone();
+                        o.hdrlib = cfg.limits.hdrlib
+                            | if cfg.limits.tnextinl & 1 != 0 {
+                                opt_mem::HDR_TNEXT
+                            } else {
+                                0
+                            };
+                        o.sinkmt = cfg.limits.sinkmt;
+                        o.sinkside = cfg.limits.sinkside;
+                        o.uvsep = 1;
+                        o.aidx = cfg.limits.aidx;
+                        o.bhoist = if pr.is_some_and(|pr| cache::head_nohoist(st, pr, pc)) {
+                            0
+                        } else {
+                            cfg.limits.bhoist
+                        };
+                        o
+                    },
                     hot_exit: cfg.hot_exit,
                     verbose: cfg.verbose,
                     dump: cfg.dump.is_some(),
@@ -660,10 +720,17 @@ pub fn driver_start_side(
         return None;
     }
     let rem = snap::land_info(&inner_low, start.pc).1;
-    let resolve: record::ResolveFn = Rc::new(|st, p| cache::proto_ref(p).or_else(|| crate::rt::ensure_compiled(st, p).then(|| cache::proto_ref(p)).flatten()));
+    let resolve: record::ResolveFn = Rc::new(|st, p| {
+        cache::proto_ref(p).or_else(|| {
+            crate::rt::ensure_compiled(st, p)
+                .then(|| cache::proto_ref(p))
+                .flatten()
+        })
+    });
     let hs: record::HeadQuery = Rc::new(move |st, pc| cache::head_traced(st, pr, pc));
     let fn_side = cache::head_is_fn(st, pr, 0);
-    let deep = cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
+    let deep =
+        cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
         fold: cfg.opts.fold,
@@ -684,14 +751,20 @@ pub fn driver_start_side(
         }),
         loop_unroll: cfg.limits.loopunroll,
         // C38 slice 1: a side recording that reaches a callee loop head with a root trace ends with the frame-linking exit
-        nest_frame: if cfg.limits.sidenest != 0 || (cfg.limits.retf & 1 != 0 && cfg.limits.lazyci == 0) {
-            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))) as record::FrameHeadQuery)
+        nest_frame: if cfg.limits.sidenest != 0
+            || (cfg.limits.retf & 1 != 0 && cfg.limits.lazyci == 0)
+        {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
         } else {
             None
         },
         // N3a: after a `RETF` the root frame is the caller: a loop head of ITS prototype
         retf_head: if cfg.limits.retf & 1 != 0 && cfg.limits.lazyci == 0 && !start.no_retf {
-            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))) as record::FrameHeadQuery)
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
         } else {
             None
         },
@@ -719,7 +792,11 @@ pub fn driver_start_side(
         libcall_repcls: cfg.limits.libcall & 16 != 0,
         libcall_mask: cfg.limits.libcall,
         // BUNDLE-N: RETF (not with lazy frames: the pop assumes every frame below the running one is complete)
-        retf: if cfg.limits.lazyci != 0 || start.no_retf { 0 } else { cfg.limits.retf },
+        retf: if cfg.limits.lazyci != 0 || start.no_retf {
+            0
+        } else {
+            cfg.limits.retf
+        },
         retfmax: cfg.limits.retfmax,
         upbar: cfg.limits.upbar,
         f2mt: true,
@@ -750,9 +827,17 @@ pub fn driver_start_side(
         cnum: true,
         nil_store: cfg.limits.nilstore != 0,
         rec_seen: cache::proto_recursive(st, pr),
-        unroll: if deep { cfg.limits.unroll.max(cfg.limits.deep) } else { cfg.limits.unroll + start.ubump },
+        unroll: if deep {
+            cfg.limits.unroll.max(cfg.limits.deep)
+        } else {
+            cfg.limits.unroll + start.ubump
+        },
         // (BUNDLE-N: a side recording honours `maxdepth` too; it read 0 = the compiled-in 4 unless a function side trace)
-        max_depth: if deep { cfg.limits.maxdepth.max(cfg.limits.deep) } else { cfg.limits.maxdepth },
+        max_depth: if deep {
+            cfg.limits.maxdepth.max(cfg.limits.deep)
+        } else {
+            cfg.limits.maxdepth
+        },
         max_ins: if deep { cfg.limits.deepins as usize } else { 0 },
         storm_step: storm_step(st, cfg.limits.allocguard),
         ..RecCfg::default()
@@ -763,7 +848,21 @@ pub fn driver_start_side(
             token,
             id,
             root,
-            opts: { let mut o = cfg.opts.clone(); o.hdrlib = cfg.limits.hdrlib | if cfg.limits.tnextinl & 1 != 0 { opt_mem::HDR_TNEXT } else { 0 }; o.sinkmt = cfg.limits.sinkmt; o.sinkside = cfg.limits.sinkside; o.uvsep = 1; o.aidx = cfg.limits.aidx; o.bhoist = cfg.limits.bhoist; o },
+            opts: {
+                let mut o = cfg.opts.clone();
+                o.hdrlib = cfg.limits.hdrlib
+                    | if cfg.limits.tnextinl & 1 != 0 {
+                        opt_mem::HDR_TNEXT
+                    } else {
+                        0
+                    };
+                o.sinkmt = cfg.limits.sinkmt;
+                o.sinkside = cfg.limits.sinkside;
+                o.uvsep = 1;
+                o.aidx = cfg.limits.aidx;
+                o.bhoist = cfg.limits.bhoist;
+                o
+            },
             hot_exit: cfg.hot_exit,
             verbose: cfg.verbose,
             dump: cfg.dump.is_some(),
@@ -932,7 +1031,12 @@ fn relaxstr(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
     for (i, ins) in ir.ins.iter().enumerate() {
         cand[i] = is_str(ins.t)
             && match ins.op {
-                TOp::Aload | TOp::Hload => ins.flags & F_GUARD != 0 && (ins.flags & F_OBS == 0 || any_use) && aux_bits(ins.aux) & 1 != 0 && aux_bits(ins.aux) & 2 == 0,
+                TOp::Aload | TOp::Hload => {
+                    ins.flags & F_GUARD != 0
+                        && (ins.flags & F_OBS == 0 || any_use)
+                        && aux_bits(ins.aux) & 1 != 0
+                        && aux_bits(ins.aux) & 2 == 0
+                }
                 TOp::Phi => true,
                 _ => false,
             };
@@ -1016,7 +1120,14 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
         .take_while(|i| matches!(i.op, TOp::Poll | TOp::Budget))
         .count();
     // (N2b: only the loads before the first `RETF` are entry values: later ones read the caller's frame)
-    let first_retf = if ir.segs.is_empty() || mutants::active("retf_entry_checks_past") { ir.ins.len() } else { ir.ins.iter().position(|i| i.op == TOp::Retf).unwrap_or(ir.ins.len()) };
+    let first_retf = if ir.segs.is_empty() || mutants::active("retf_entry_checks_past") {
+        ir.ins.len()
+    } else {
+        ir.ins
+            .iter()
+            .position(|i| i.op == TOp::Retf)
+            .unwrap_or(ir.ins.len())
+    };
     let moved: Vec<usize> = (p..first_retf).filter(|&i| checked(&ir.ins[i])).collect();
     if moved.is_empty() {
         return Ok(());
@@ -1176,7 +1287,14 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         for (name, pass) in PASSES {
             let t0 = phase::now();
             let r = pass(&mut rec, opts).map_err(|e| abort_err("pass", e));
-            phase::add(if *name == "sink" { phase::PASS_SINK } else { phase::PASS_OTHER }, t0);
+            phase::add(
+                if *name == "sink" {
+                    phase::PASS_SINK
+                } else {
+                    phase::PASS_OTHER
+                },
+                t0,
+            );
             r?;
         }
     } else if link_root || stitched {
@@ -1194,16 +1312,27 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     }
     let ir = &rec.ir;
     if cache::verbose_aborts() {
-        eprintln!("[trace] install: extent {} depth {} (parent {} {})", ir.extent, ir.depth, act.max_extent, act.max_ci);
+        eprintln!(
+            "[trace] install: extent {} depth {} (parent {} {})",
+            ir.extent, ir.depth, act.max_extent, act.max_ci
+        );
     }
     let mut side_room = false;
     if let Some(si) = side.filter(|s| s.frameful) {
         // S1: a side trace entered with virtual frames has no entry checks: it may not need more stack or spare `CallInfo`
         // nodes than the parent's checks guarantee. R2 (`siderooms`): one that does checks the room itself at its start.
         let _ = si;
-        if (ir.extent > act.max_extent || ir.depth > act.max_ci) && !crate::tr::mutants::active("fside_room_ignored") {
+        if (ir.extent > act.max_extent || ir.depth > act.max_ci)
+            && !crate::tr::mutants::active("fside_room_ignored")
+        {
             if !act.side_rooms {
-                return Err(abort_err("side-room", format!("extent {} > {} or depth {} > {}", ir.extent, act.max_extent, ir.depth, act.max_ci)));
+                return Err(abort_err(
+                    "side-room",
+                    format!(
+                        "extent {} > {} or depth {} > {}",
+                        ir.extent, act.max_extent, ir.depth, act.max_ci
+                    ),
+                ));
             }
             side_room = true;
         }
@@ -1237,7 +1366,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     // slot, a back-edge move through one) that the allocation without it has: spills off the loop-carried chain are cheap (store forwarding) and
     // never paid for the reload on the short, exit-heavy traces of the awfy / corpus programs (+2-6 % cycles measured).
     if ropts.xregs & 2 != 0 && al.uses_gpr(10) && !mutants::active("xregs_rec_r14") {
-        let without = RaOpts { xregs: ropts.xregs & !2, ..ropts.clone() };
+        let without = RaOpts {
+            xregs: ropts.xregs & !2,
+            ..ropts.clone()
+        };
         if let Ok(a2) = ra::allocate(ir, &end, &without) {
             if a2.carried_spills(ir) <= al.carried_spills(ir) {
                 al = a2;
@@ -1301,7 +1433,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     let mut init: Vec<usize> = snaps.iter().map(|s| s.land_addr as usize).collect();
     // S1: the cell of an exit with virtual-able frames is 0 until a side trace is attached (the stub / handler then
     // restores the frames); a trace that ends with a native frame push or a function-entry root keeps its landings
-    let frame_cells_on = (!ir.fn_root && ir.rec_call.is_none() && ir.rec_ret.is_none()) || !crate::tr::mutants::active("fcfn_cells_off");
+    let frame_cells_on = (!ir.fn_root && ir.rec_call.is_none() && ir.rec_ret.is_none())
+        || !crate::tr::mutants::active("fcfn_cells_off");
     if frame_cells_on {
         for (k, (c, s)) in init.iter_mut().zip(&snaps).enumerate() {
             let linking = side.is_some_and(|si| si.frame_link && si.link_snap as usize == k);
@@ -1410,7 +1543,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                 }
             }
         }
-        if same { cs } else { None }
+        if same {
+            cs
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -1434,21 +1571,35 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                     let call = rn_core::instruction::Instruction(rootp.code()[h.pc as usize - 1]);
                     let w = call.c() as i32 - 1;
                     // BUNDLE-K L1: a lazy native return leaves `thread.top` alone: a site that wants all results (`C == 0`) reads it
-                    ir.rec_ret.is_none() || w == n_ret || (w < 0 && !lazy) || mutants::active("rec_ret_wanted_unchecked")
+                    ir.rec_ret.is_none()
+                        || w == n_ret
+                        || (w < 0 && !lazy)
+                        || mutants::active("rec_ret_wanted_unchecked")
                 })
                 .map(|h| {
-                    let a = rn_core::instruction::Instruction(rootp.code()[h.pc as usize - 1]).a() as u8;
-                    (code + 4 * u64::from(h.pc), &h.rec as *const std::cell::Cell<usize> as u64, a)
+                    let a = rn_core::instruction::Instruction(rootp.code()[h.pc as usize - 1]).a()
+                        as u8;
+                    (
+                        code + 4 * u64::from(h.pc),
+                        &h.rec as *const std::cell::Cell<usize> as u64,
+                        a,
+                    )
                 })
                 .collect();
-            let c0 = tp
-                .head_index(0)
-                .map_or(0, |i| &tp.head(i).rec as *const std::cell::Cell<usize> as u64);
+            let c0 = tp.head_index(0).map_or(0, |i| {
+                &tp.head(i).rec as *const std::cell::Cell<usize> as u64
+            });
             (sites, c0)
         });
         let (sites, c0) = found.ok_or_else(|| abort_err("no-sites", "native return"))?;
         if cache::verbose_aborts() {
-            eprintln!("[trace] native sites for {}: {:x?} (rec_ret {:?}, rec_call {})", pc, sites, ir.rec_ret, ir.rec_call.is_some());
+            eprintln!(
+                "[trace] native sites for {}: {:x?} (rec_ret {:?}, rec_call {})",
+                pc,
+                sites,
+                ir.rec_ret,
+                ir.rec_call.is_some()
+            );
         }
         if ir.rec_ret.is_some() && (sites.is_empty() || sites.len() > cache::MAX_CONT_SITES) {
             return Err(abort_err("no-sites", "native return: continuation heads"));
@@ -1507,7 +1658,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
         chain: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.chainre } != 0,
         root_code: rootp.code_ptr() as usize as u64,
-        frame_link_snap: side.filter(|s| s.frame_link).map_or(u32::MAX, |s| s.link_snap),
+        frame_link_snap: side
+            .filter(|s| s.frame_link)
+            .map_or(u32::MAX, |s| s.link_snap),
         setmt_inline: true,
         b2_arr: true,
         b2_tag: true,
@@ -1579,7 +1732,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     let hash = cache::shape_hash_ir(ir, &al);
     phase::add(phase::HASH, t_h);
     let t_inst = phase::now();
-    let text = act.dump.then(|| format!("{}\n{}", print::dump(ir), ra::dump(ir, &al)));
+    let text = act
+        .dump
+        .then(|| format!("{}\n{}", print::dump(ir), ra::dump(ir, &al)));
     let newid = cache::install(
         st,
         act.id,
@@ -1621,11 +1776,23 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         // R2: a side trace that checks its own room fails through its start snapshot BEFORE the check: the room an exit of it
         // can promise to a side trace attached to that exit is the parent's (the later exits could promise more, which is not worth a
         // second number: a child that needs more checks its own room)
-        extent: if side_room && !crate::tr::mutants::active("side_room_meta_full") { act.max_extent } else { ir.extent },
-        depth: if side_room && !crate::tr::mutants::active("side_room_meta_full") { act.max_ci } else { ir.depth },
+        extent: if side_room && !crate::tr::mutants::active("side_room_meta_full") {
+            act.max_extent
+        } else {
+            ir.extent
+        },
+        depth: if side_room && !crate::tr::mutants::active("side_room_meta_full") {
+            act.max_ci
+        } else {
+            ir.depth
+        },
         frame_cells: frame_cells_on,
         lazy,
-        seg_oracle: if opts.verify && !ir.segs.is_empty() { al.nspill + asm::ORACLE_SLOT_K + 1 } else { 0 },
+        seg_oracle: if opts.verify && !ir.segs.is_empty() {
+            al.nspill + asm::ORACLE_SLOT_K + 1
+        } else {
+            0
+        },
     };
     let attached = cache::attach_exits(st, newid, meta);
     if attached.is_some() && !gk.is_empty() {
@@ -2181,7 +2348,10 @@ pub(crate) fn tail_mutants() -> u8 {
 
 /// BUNDLE-B item 2: the active `tset` mutants as the bit set of `templates_table::NS_*`.
 pub(crate) fn nilset_mutants() -> u8 {
-    use crate::templates_table::{NS_ARR_MT_SKIP, NS_BARRIER_SKIP, NS_FLAGS_SKIP, NS_GET_NIL_HIT, NS_GET_TAG_SKIP, NS_INT_KEY_SKIP, NS_MT_SKIP, NS_STR_TAG_SKIP};
+    use crate::templates_table::{
+        NS_ARR_MT_SKIP, NS_BARRIER_SKIP, NS_FLAGS_SKIP, NS_GET_NIL_HIT, NS_GET_TAG_SKIP,
+        NS_INT_KEY_SKIP, NS_MT_SKIP, NS_STR_TAG_SKIP,
+    };
     u8::from(mutants::active("nilset_flags_skip")) * NS_FLAGS_SKIP
         | u8::from(mutants::active("nilset_mt_skip")) * NS_MT_SKIP
         | u8::from(mutants::active("nilset_barrier_skip")) * NS_BARRIER_SKIP
@@ -2194,7 +2364,11 @@ pub(crate) fn nilset_mutants() -> u8 {
 
 /// BUNDLE-K item B: the active mutants `(strself_tag_skip, strself_mt_skip, strself_nil_hit)` of the inline string `SELF` of tier 1.
 pub(crate) fn strself_mut() -> (bool, bool, bool) {
-    (mutants::active("strself_tag_skip"), mutants::active("strself_mt_skip"), mutants::active("strself_nil_hit"))
+    (
+        mutants::active("strself_tag_skip"),
+        mutants::active("strself_mt_skip"),
+        mutants::active("strself_nil_hit"),
+    )
 }
 
 /// BUNDLE-T1I: the active mutants of the inline built-ins of tier 1 (bits of `lower::t1inline::M_*`).
@@ -2236,7 +2410,10 @@ pub(crate) fn t1inline_mut() -> u16 {
 
 /// T3: the active mutants `(t3idx_nil_hit, t3idx_use_mt)' of the inline `__index` level of the tier-1 table templates.
 pub(crate) fn t3idx_mut() -> (bool, bool) {
-    (mutants::active("t3idx_nil_hit"), mutants::active("t3idx_use_mt"))
+    (
+        mutants::active("t3idx_nil_hit"),
+        mutants::active("t3idx_use_mt"),
+    )
 }
 
 /// The active inline-`#t` mutants `(prev_skip, next_skip, dummy_skip, metatable_skip, hint_skip, zero_bound_skip)` (queried by `templates_alloc`).
@@ -2253,7 +2430,10 @@ pub(crate) fn tlen_mut() -> (bool, bool, bool, bool, bool, bool) {
 
 /// BUNDLE-D: the active `armm` code mutants as bits (queried by `templates_alloc`): 1 `armm_count_skip`, 2 `armm_land_skip`, 4 `armm_pay_skip`.
 pub(crate) fn armm_mut() -> u8 {
-    u8::from(mutants::active("armm_count_skip")) | u8::from(mutants::active("armm_land_skip")) << 1 | u8::from(mutants::active("armm_pay_skip")) << 2 | u8::from(mutants::active("armm_never")) << 3
+    u8::from(mutants::active("armm_count_skip"))
+        | u8::from(mutants::active("armm_land_skip")) << 1
+        | u8::from(mutants::active("armm_pay_skip")) << 2
+        | u8::from(mutants::active("armm_never")) << 3
 }
 
 /// BUNDLE-B: mutant `mmcmp_savedpc_skip` (queried by `templates_alloc`): the comparison does not save `savedpc` before `jit_cmp`.
@@ -2284,5 +2464,8 @@ pub(crate) fn t1q_mut() -> u32 {
 
 /// C2: the active tier-1 comparison mutants `(c2cmp_swap, c2cmp_exit_skip)` (queried by `templates_alloc`).
 pub(crate) fn c2cmp_mut() -> (bool, bool) {
-    (mutants::active("c2cmp_swap"), mutants::active("c2cmp_exit_skip"))
+    (
+        mutants::active("c2cmp_swap"),
+        mutants::active("c2cmp_exit_skip"),
+    )
 }

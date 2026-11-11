@@ -350,12 +350,20 @@ impl<'a> MatchState<'a> {
         let m = crate::strfast::mask();
         if m & crate::strfast::PATC != 0 {
             if let Some(pg) = patc::lookup(self.pat) {
-                self.plan = if m & crate::strfast::PAT1 != 0 { pg.plan } else { 0 };
+                self.plan = if m & crate::strfast::PAT1 != 0 {
+                    pg.plan
+                } else {
+                    0
+                };
                 self.prog = Some(pg);
                 return;
             }
         }
-        self.plan = if m & crate::strfast::PAT1 != 0 { self.analyze() } else { 0 };
+        self.plan = if m & crate::strfast::PAT1 != 0 {
+            self.analyze()
+        } else {
+            0
+        };
     }
 
     /// The one-item shape of the pattern (see [`Plan`]); `None` for anything else, including every malformed
@@ -392,7 +400,17 @@ impl<'a> MatchState<'a> {
                     if m == 0 {
                         (K_LIT, d, 0, 0, p + 2)
                     } else {
-                        (if d.is_ascii_lowercase() { K_CPOS } else { K_CNEG }, d, m as usize, 0, p + 2)
+                        (
+                            if d.is_ascii_lowercase() {
+                                K_CPOS
+                            } else {
+                                K_CNEG
+                            },
+                            d,
+                            m as usize,
+                            0,
+                            p + 2,
+                        )
                     }
                 }
             }
@@ -430,7 +448,11 @@ impl<'a> MatchState<'a> {
         if ep != pat.len() {
             return 0;
         }
-        kind | (cap as u64) << 3 | quant << 4 | (byte as u64) << 8 | (setp as u64) << 16 | (setep as u64) << 40
+        kind | (cap as u64) << 3
+            | quant << 4
+            | (byte as u64) << 8
+            | (setp as u64) << 16
+            | (setep as u64) << 40
     }
 
     /// Number of consecutive subject bytes from `s` (at most `max`) that match the item of `pl`.
@@ -443,11 +465,15 @@ impl<'a> MatchState<'a> {
             K_ANY => rest.len(),
             K_CPOS => {
                 let m = pl.set_p() as u16;
-                rest.iter().take_while(|&&c| CTYPE[c as usize] & m != 0).count()
+                rest.iter()
+                    .take_while(|&&c| CTYPE[c as usize] & m != 0)
+                    .count()
             }
             K_CNEG => {
                 let m = pl.set_p() as u16;
-                rest.iter().take_while(|&&c| CTYPE[c as usize] & m == 0).count()
+                rest.iter()
+                    .take_while(|&&c| CTYPE[c as usize] & m == 0)
+                    .count()
             }
             _ => {
                 if let Some(pg) = &self.prog {

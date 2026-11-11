@@ -585,7 +585,8 @@ impl Oracle {
             // 5.4 `FORLOOP` / `FORPREP` write the control variable copy (`a + 3`) only when the loop runs (`FORPREP` that skips the loop writes nothing): on the exit
             // path the slot keeps the last iteration's value (a number, out of scope, so the analysis's kill is sound). It is not
             // poisoned: the "defs but not written" check would flag every loop exit.
-            let exempt = cfg!(rustynail_lua54) && matches!(m.ops[pc], Some(OpCode::Forloop | OpCode::Forprep));
+            let exempt = cfg!(rustynail_lua54)
+                && matches!(m.ops[pc], Some(OpCode::Forloop | OpCode::Forprep));
             for s in e.defs.minus(&e.uses).iter().filter(|_| !exempt) {
                 if (s as usize) < ms {
                     // SAFETY: s < maxstack; poisoning a slot the instruction overwrites.
