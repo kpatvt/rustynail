@@ -216,7 +216,10 @@ jobs:
           [ "${{ github.event_name }}" = schedule ] && secs=600
           for t in $(cargo +nightly fuzz list); do
             echo "== $t"
-            cargo +nightly fuzz run "$t" -- -max_total_time=$secs -rss_limit_mb=2500 -timeout=30
+            # jit_diff and trace_ir panic on purpose when built without the compiler (`--features trace`)
+            feat=""
+            case "$t" in jit_diff|trace_ir) feat="--features trace" ;; esac
+            cargo +nightly fuzz run $feat "$t" -- -max_total_time=$secs -rss_limit_mb=2500 -timeout=30
           done
       - name: Upload crash artifacts
         if: failure()
