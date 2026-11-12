@@ -181,3 +181,30 @@ PGO only changed which of the two wide loads LLVM emitted (inlining decisions), 
 Fix: `char_core` uses the fresh variant of the intern probe (`short_core::<true>`); its 1..3 byte hash reads are volatile, and the probe's chain compare of a
 fresh string of at most 8 bytes is a byte-wise volatile loop (`bytes_eq_fresh`). Result (min of 5, Mcyc / Minstr): plain 177 -> 151, PGO 265 -> 140.
 The other programs of the list (m_type, os_clock, tonumber_int, knucleotide: +3..7% under PGO) are unchanged by this and have a different cause (not diagnosed).
+
+- `c36_cispare` / `p3_fdisp` on 5.4: weaker expectations (above); see "Verification A3" for what was found.
+- 5.4 under Tree Borrows: not run (5.4 ASan-JIT and the 5.4 Miri `rn-core` job were run in A3).
+
+## Verification A3 (2026-11-12)
+
+- **`twins_limits_and_caps` (tr_core) failure in the CI asan-jit job: not reproduced.** 30 runs of the test alone in the normal build
+  (`RUST_TEST_THREADS=3 TR_CORE_JOBS=2 TR_P8A_JOBS=2 TR_CORE_TIMEOUT=600`, 8 GB cap): 30 passes, about 30 s each. 30 runs under ASan (the
+  `scripts/asan-jit.sh` build and environment, same settings, run while other builds and Miri jobs loaded the machine, load average 7 to 25):
+  30 passes, 140 to 250 s each; the 5.4 full `scripts/asan-jit.sh` ran `tr_core` 187/187 (900 s). Under concurrent load (4 test processes at once, 8 children, 3 rounds, normal build): 12 of 12 passed. No child timeout, crash or output difference was seen, so the one CI failure remains unexplained. The child
+  diagnostics were added after that failure (`tr_core child TIMED OUT after` / `took` lines, the `<no result: status ...>` body and the
+  stderr tail in the failure message), so the next occurrence will say whether it was a timeout, a signal or an output difference. The most likely
+  explanation, a 120 s child timeout on a loaded shared runner (the test runs six child processes per program), is already addressed by `TR_CORE_TIMEOUT=600`
+  in ci.yml; this is a guess, not a finding.
+- **Miri (local, nightly, the commands of the `miri` and `miri-jit` jobs).** `cargo +nightly miri test -p rn-core --lib -- string:: heap:: tests_table tests_gc value:: alloc::`:
+  5.5 and 5.4 each 48 passed, 0 failed (no UB, no leak report). `scripts/miri.sh jit` (Stacked Borrows, 5.5, `--jobs 3`): 76 tests run, 76 passed.
+  Not run: `miri.sh` `jit-trace`, `interp*`, `core-it`, `compiler` suites (not part of the CI jobs), `miri-jit` on 5.4 (CI runs it on 5.5 only), Tree Borrows.
+- **5.4 policy tests.** On 5.4 `p3_fdisp_programs` and `c36_cispare_programs` pass (with the weaker 5.4 expectations in the tests) and the full 5.4
+  `scripts/asan-jit.sh` (`LUA_VERSION=5.4`, CI parallelism) prints `ASAN-JIT OK` (official suite, corpus, T15, trace modes, jit-diff seeds 1..40: 0 diffs,
+  `rn-jit` and all `tr_*` binaries). Explanation of `p3_fdisp`: found. On 5.4 every integer-key array access records an `ATOUCH` (the `alimit_touch`
+  effect, `record.rs` `array_ref`), and the recorder treats it as a store (`first_store`), so no callee guard that follows `fs[ops[i]]` may use the
+  entry snapshot (TR6d `entry_ok`): the guard is an ordinary body exit with a side trace, there is no entry failure and `ncallee_heads` stays 0. This is
+  by design (an entry-snapshot exit would re-execute the iteration past an effect), not a bug. Check: with the test-only mutant `atouch_skip`
+  (`RUSTYNAIL_JIT_MUT=atouch_skip`, `tr_mutants` feature) the 5.4 run behaves like 5.5 (`ncallee=0`: re-records, `Identical` abort; `ncallee=1`: `heads == 1`, no re-record
+  penalty). `c36_cispare`: the same mutant changes nothing, so `ATOUCH` is not the cause there. What is seen: on 5.4 the repair runs only twice
+  (`repaired 2`, 5.5: 391 = one per fresh coroutine) before the exit-ratio rule flushes the root; why the 5.4 trace keeps failing after a repair was not found.
+  Outputs are equal in every mode on both versions.
