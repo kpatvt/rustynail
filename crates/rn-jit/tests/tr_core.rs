@@ -1825,9 +1825,9 @@ fn h1_int_keys_do_not_exit_per_key() {
             j.trace,
             o.stats.line()
         );
-        // (one exit per leave of the inner loop: about 100; a miss per key would be 8000; 5.4 does not record hash-part integer keys)
+        // (one exit per leave of the inner loop: about 100; a miss per key would be 8000)
         assert!(
-            cfg!(rustynail_lua54) || o.stats.exits < 300,
+            o.stats.exits < 300,
             "{} {} {}: too many exits: {}",
             j.prog,
             j.trace,
@@ -1853,9 +1853,6 @@ fn h1_frame_side_thresholds() {
         job("fck=1,framemin=100000"),
     ]);
     let rec = |i: usize| res[i].1.stats.side_recorded;
-    if cfg!(rustynail_lua54) {
-        return; // (5.4 aborts `IntMiss` on the hash-part keys of the piles: the thresholds have nothing to act on)
-    }
     assert!(
         rec(0) > rec(1),
         "an unreachable fck still records side traces ({} vs {}): {}",

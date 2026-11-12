@@ -3183,7 +3183,6 @@ fn g2_ccalls_guard_is_hoisted() {
 /// from the hash part still aborts. Mutants `hrefi_lsize_skip` (the node-count guard), `hashint_nil_meta_skip` (a nil-valued node needs the
 /// `__index` guard), `hashint_newindex_skip`.
 #[test]
-#[cfg(not(rustynail_lua54))]
 fn h1_int_hash_keys_record_the_integer_hrefv() {
     let src = "local t = { [0] = 5, [-1] = 6, [1 << 40] = 7, 1 } local m = { [0] = false, [-9] = 1 } m[0] = nil
          function f(n) local s = 0 arm() for i = 1, n do s = s + t[0] + t[-1] + t[1 << 40] t[0] = i if m[0] == nil then s = s + 1 end m[0] = nil end return s end return f(40)";

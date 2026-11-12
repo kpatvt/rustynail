@@ -2983,8 +2983,12 @@ impl Rec {
                 if ins.op == TOp::Tlen && ins.aux == 0 {
                     // `luaH_getn` moved the array limit: the model follows the VM
                     let h = self.val_bits(ins.a);
-                    let hint = self.tabs[h as usize - 1].alimit_hint();
-                    self.model.tables[h as usize - 1].lenhint = hint;
+                    let real = self.tabs[h as usize - 1];
+                    let m = &mut self.model.tables[h as usize - 1];
+                    m.lenhint = real.alimit_hint();
+                    // (and `BITRAS`: `luaH_getn` sets it when the limit stops being the array size; `ATOUCH` of the model reads it)
+                    m.flags =
+                        (m.flags & !interp::MODEL_BITRAS) | (real.flags() & interp::MODEL_BITRAS);
                 }
                 Ok((bits, taint))
             }
@@ -3815,9 +3819,9 @@ impl Rec {
     }
 
     /// H1: the table of an integer-key access and the node index of the key when the key lives in the hash part (outside the array
-    /// part, present with any value, nil included). Off for 5.4 (`alimit` bookkeeping of the array accesses) and `RUSTYNAIL_JIT_HASHINT=0`.
+    /// part, present with any value, nil included). Off with `RUSTYNAIL_JIT_HASHINT=0`. (5.4: a key outside the real array part never touches `alimit` in the interpreter either: `luaH_getint` reaches the hash walk only for it.)
     fn int_hash_node(&self, tv: &Value, tt: Ty, k: i64) -> Option<(TableRef, usize)> {
-        if cfg!(rustynail_lua54) || tt != Ty::Tab || !super::hashint_enabled() {
+        if tt != Ty::Tab || !super::hashint_enabled() {
             return None;
         }
         let tbl = tv.as_table()?;
@@ -3934,7 +3938,7 @@ impl Rec {
                 return Ok(r);
             }
         }
-        if self.cfg.mm && t.1 == Ty::Tab && !cfg!(rustynail_lua54) {
+        if self.cfg.mm && t.1 == Ty::Tab {
             if let Some(tbl) = tv.as_table() {
                 if tbl.metatable().is_some() && !(1..=i64::from(tbl.array_size())).contains(&k) {
                     self.mm_index_int(vm, t.0, tbl, key, orig)?;
@@ -3992,7 +3996,7 @@ impl Rec {
         let (tbl, ev) = self.table_for(&tv, t.1, k)?;
         // (5.4: the interpreter's store into an empty slot goes through `finish_set`, whose `alimit` touches are not
         // those of the inline path -- the lockstep sees alimit 4 against 3 -- so it stays an `Insert` abort there)
-        if ev.is_none() && (val.1 == Ty::Nil || cfg!(rustynail_lua54)) {
+        if ev.is_none() && val.1 == Ty::Nil {
             return Err(AbortReason::Insert);
         }
         let has_mt = tbl.metatable().is_some();
@@ -10408,7 +10412,7 @@ impl Rec {
         Ok(())
     }
 
-    /// `t[k]` for an integer key outside the array part of a table with a metatable whose `__index` is a Lua closure (5.5): the raw
+    /// `t[k]` for an integer key outside the array part of a table with a metatable whose `__index` is a Lua closure (5.4: `luaH_getint` touches `alimit` only for keys inside the real array): the raw
     /// lookup misses when the key is outside the array part (guarded) and the hash part is the shared dummy node (flag bit, guarded).
     fn mm_index_int(&mut self, vm: &Vm<'_>, tr: Ref, tbl: TableRef, key: Ref, orig: Ref) -> R<()> {
         let m = tbl.metatable().ok_or(AbortReason::Diverge)?;

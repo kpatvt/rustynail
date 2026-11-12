@@ -586,6 +586,52 @@ unsafe fn alimit_touch(t: *const Table, u: u64) {
     #[cfg(not(rustynail_lua54))]
     let _ = (t, u);
 }
+/// 5.4: `alimit_touch(t, first), (t, first + 1), ... (t, first + n - 1)` in this order. The limit never decreases and a touch of an index
+/// below it does nothing, so the indices below the current limit are skipped (same final state as the plain loop; a table without
+/// `BITRAS` is untouched by every call).
+#[cfg(rustynail_lua54)]
+#[inline]
+unsafe fn alimit_replay_asc(t: *const Table, first: u64, n: u64) {
+    // SAFETY: the caller checked every index against `asize` (T1: the hint slot exists).
+    unsafe {
+        if (*t).flags & BITRAS == 0 {
+            return;
+        }
+        let j0 = (*lenhint(t) as u64).saturating_sub(first).min(n);
+        for j in j0..n {
+            alimit_touch(t, first + j);
+        }
+    }
+}
+
+/// 5.4: the alternating touches `(s + j, d + j)` of a `table.insert` / `table.remove` / `table.move` element loop within one table, `j` ascending
+/// or descending (`backward`); see [`alimit_replay_asc`] for why indices below the limit are skipped.
+#[cfg(rustynail_lua54)]
+#[inline]
+unsafe fn alimit_replay_move(t: *const Table, s: u64, d: u64, n: u64, backward: bool) {
+    // SAFETY: as for `alimit_replay_asc`.
+    unsafe {
+        if (*t).flags & BITRAS == 0 {
+            return;
+        }
+        let hi = s.max(d);
+        if backward {
+            for j in (0..n).rev() {
+                if hi + j < *lenhint(t) as u64 {
+                    break; // every lower index is below the (non-decreasing) limit too
+                }
+                alimit_touch(t, s + j);
+                alimit_touch(t, d + j);
+            }
+        } else {
+            let j0 = (*lenhint(t) as u64).saturating_sub(hi).min(n);
+            for j in j0..n {
+                alimit_touch(t, s + j);
+                alimit_touch(t, d + j);
+            }
+        }
+    }
+}
 #[inline]
 unsafe fn ikeyinarray(t: *const Table, k: i64) -> u32 {
     // SAFETY: valid table.
@@ -2121,18 +2167,7 @@ impl TableRef {
             #[cfg(rustynail_lua54)]
             {
                 // replay the limit updates of the reference's alternating read / write accesses
-                let (s, d) = (src as u64 - 1, dst as u64 - 1);
-                if backward {
-                    for j in (0..n).rev() {
-                        alimit_touch(t, s + j);
-                        alimit_touch(t, d + j);
-                    }
-                } else {
-                    for j in 0..n {
-                        alimit_touch(t, s + j);
-                        alimit_touch(t, d + j);
-                    }
-                }
+                alimit_replay_move(t, src as u64 - 1, dst as u64 - 1, n, backward);
             }
             #[cfg(not(rustynail_lua54))]
             let _ = backward;
@@ -2186,9 +2221,10 @@ impl TableRef {
             }
             let (si, di) = (spos as usize - 1, dpos as usize - 1);
             #[cfg(rustynail_lua54)]
-            for j in 0..count {
-                alimit_touch(s, (si + j) as u64);
-                alimit_touch(d, (di + j) as u64);
+            {
+                // (the touches of two different tables commute: each table replays its own ascending run)
+                alimit_replay_asc(s, si as u64, count as u64);
+                alimit_replay_asc(d, di as u64, count as u64);
             }
             std::ptr::copy_nonoverlapping(arr_tag(s, si), arr_tag(d, di), count);
             std::ptr::copy_nonoverlapping(
