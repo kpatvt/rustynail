@@ -80,3 +80,25 @@ for k = 1, 60 do
   z[#z + 1] = #t .. "/" .. #u
 end
 print(table.concat(z, " "))
+-- 5.4: appends `t[#t + 1] = v` to short, freshly built tables (the trace records the generic insertion for small arrays): the tables and
+-- their lengths after growth, a table that starts large, and an append loop that ends on a metatable-free table with a hole
+local function words(s)
+  local b = {}
+  for i = 1, #s do b[#b + 1] = s:sub(i, i) end
+  return b
+end
+local lens, big = {}, {}
+for k = 1, 120 do
+  local w = words(("abcdefghijklmnopqrstuvwxyz"):sub(1, k % 27))
+  lens[#lens + 1] = #w .. table.concat(w):sub(-3)
+end
+local function grow(t, n) for i = 1, n do t[#t + 1] = i end return #t end
+for k = 1, 30 do
+  local t = {}
+  grow(t, 40 + k)
+  big[#big + 1] = grow(t, 5) + #t
+  t[#t] = nil
+  t[#t + 2] = 7 -- a hole: `#t` may be either border
+  big[#big + 1] = #t >= 0
+end
+print(table.concat(lens, " "):sub(1, 60), #lens, big[1], big[59], big[60])

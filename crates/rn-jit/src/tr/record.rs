@@ -1246,6 +1246,9 @@ fn zeroed_vals(n: usize) -> Vec<Val> {
     }
 }
 
+/// 5.4: arrays up to this size record an append (`t[#t + 1] = v`) as the generic insertion, see [`Rec::array_set`].
+const APPEND_TSET_ASIZE: u32 = 16;
+
 impl Rec {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -4029,6 +4032,18 @@ impl Rec {
         self.guard(TOp::Aload, ety, aref, NOREF, 1)
     }
 
+    /// Is `key` the IR value `#t + 1` of the table `t` (the append idiom)?
+    fn is_append_key(&self, t: Ref, key: Ref) -> bool {
+        if !TraceIr::is_ins(key) {
+            return false;
+        }
+        let k = self.b.ir.at(key);
+        k.op == TOp::Add && TraceIr::is_ins(k.a) && {
+            let l = self.b.ir.at(k.a);
+            l.op == TOp::Tlen && l.a == t
+        }
+    }
+
     fn array_set(
         &mut self,
         vm: &Vm<'_>,
@@ -4059,6 +4074,17 @@ impl Rec {
         // those of the inline path -- the lockstep sees alimit 4 against 3 -- so it stays an `Insert` abort there)
         if ev.is_none() && val.1 == Ty::Nil {
             return Err(AbortReason::Insert);
+        }
+        // 5.4 (C63): `t[#t + 1] = v` on a small array that has room is recorded as the generic insertion (`TSET` handles the empty slot
+        // and the growth alike). The inline store guards `key <= asize`, and a table that is built element by element (a fresh `{}`
+        // in a loop of short strings) outgrows its array at every other append: the recorded in-array iteration then left the trace at
+        // most appends, and which iteration got recorded depended on the seed (random back-off): `programs/json` +-4 %.
+        if cfg!(rustynail_lua54)
+            && ev.is_none()
+            && tbl.array_size() <= APPEND_TSET_ASIZE
+            && self.is_append_key(t.0, key)
+        {
+            return self.int_insert(tbl, t, key, val);
         }
         let has_mt = tbl.metatable().is_some();
         let aref = self.array_guards_raw(t.0, key, tbl, false, has_mt)?;
