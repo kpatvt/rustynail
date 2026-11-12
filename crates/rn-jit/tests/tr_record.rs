@@ -2778,7 +2778,6 @@ fn f2_ops_record_their_guards() {
         dump(&ir)
     );
     // rawget / rawset: no metatable guard (the table has one), the barrier of a collectable value
-    #[cfg(not(rustynail_lua54))]
     {
         let ir = ir_of("local t = setmetatable({}, {__index = function() return 0 end, __newindex = function() end}) for i = 1, 8 do rawset(t, i, i) end local rawset, rawget = rawset, rawget local arm = arm local function f(n) local c = 0 ARM() for i = 1, n do rawset(t, i % 8 + 1, {}) if rawget(t, i % 8 + 1) then c = c + 1 end end return c end return f(30)");
         assert!(

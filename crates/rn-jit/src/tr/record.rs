@@ -8424,12 +8424,8 @@ impl Rec {
                 self.lib_num_identity(vm, idx, a, nargs, wanted, addr, f)
             }
             L::MATH_FMOD => self.lib_fmod(vm, idx, a, nargs, wanted, addr),
-            L::RAWGET if self.cfg.f2raw && !cfg!(rustynail_lua54) => {
-                self.lib_rawget(vm, idx, a, nargs, wanted, addr)
-            }
-            L::RAWSET if self.cfg.f2raw && !cfg!(rustynail_lua54) => {
-                self.lib_rawset(vm, idx, a, nargs, wanted, addr)
-            }
+            L::RAWGET if self.cfg.f2raw => self.lib_rawget(vm, idx, a, nargs, wanted, addr),
+            L::RAWSET if self.cfg.f2raw => self.lib_rawset(vm, idx, a, nargs, wanted, addr),
             L::TBL_MOVE if self.cfg.libcall_mask & 64 != 0 && !cfg!(rustynail_lua54) => {
                 self.lib_tmove(vm, idx, a, nargs, wanted, addr)
             }
