@@ -831,6 +831,21 @@ fn run_job(job: &Job) -> Out {
             None => std::thread::sleep(Duration::from_millis(10)),
         }
     };
+    let elapsed = t0.elapsed();
+    if status.is_none() || elapsed.as_secs() >= 30 {
+        // (sanitizer builds run these children many times slower: say which job was slow or timed out)
+        eprintln!(
+            "tr_core child {} {:.1}s (limit {}s): {}",
+            if status.is_none() {
+                "TIMED OUT after"
+            } else {
+                "took"
+            },
+            elapsed.as_secs_f64(),
+            limit.as_secs(),
+            job.tag()
+        );
+    }
     let stdout = h1.join().unwrap();
     let stderr = h2.join().unwrap();
     let body = stdout
@@ -838,7 +853,13 @@ fn run_job(job: &Job) -> Out {
         .and_then(|(_, r)| r.split_once(END))
         .map(|(b, _)| b.trim_start_matches('\n').to_string());
     let ok = status.is_some_and(|s| s.success()) && body.is_some();
-    let body = body.unwrap_or_else(|| format!("<no result: status {status:?}>\n{stdout}"));
+    let body = body.unwrap_or_else(|| {
+        format!(
+            "<no result: status {status:?}, {:.1}s of {}s>\n{stdout}",
+            elapsed.as_secs_f64(),
+            limit.as_secs()
+        )
+    });
     let (result, insns, iterations, verified) = match body.rsplit_once("\n@@insns=") {
         Some((r, t)) => {
             let mut it = t.split_whitespace();

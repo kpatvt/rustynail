@@ -40,6 +40,19 @@ export RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=1 --cfg rustynail_lsan $CFG"
 export CFLAGS="-fsanitize=address -fno-omit-frame-pointer -g"
 export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:allocator_may_return_null=1 # (tests ask for absurd sizes on purpose)
 export LSAN_OPTIONS=suppressions=$PWD/scripts/lsan-jit.supp # iced-x86's lazily built static tables (test oracle)
+# The LSan suppressions (scripts/lsan-jit.supp) match function names: without llvm-symbolizer they never match and the harnesses'
+# deliberate one-byte leaks (arith_diff/table_diff) and iced-x86's tables are reported as leaks (GitHub's ubuntu-24.04 image has no
+# unversioned `llvm-symbolizer` on PATH, only /usr/lib/llvm-N/bin/llvm-symbolizer). Look for one, and fail early with a clear message.
+if [ -z "${ASAN_SYMBOLIZER_PATH:-}" ] && ! command -v llvm-symbolizer >/dev/null 2>&1; then
+  for c in /usr/lib/llvm-*/bin/llvm-symbolizer /usr/bin/llvm-symbolizer-*; do
+    [ -x "$c" ] && export ASAN_SYMBOLIZER_PATH=$c
+  done
+fi
+if [ -z "${ASAN_SYMBOLIZER_PATH:-}" ] && ! command -v llvm-symbolizer >/dev/null 2>&1; then
+  echo "asan-jit.sh: llvm-symbolizer not found (install the llvm package or set ASAN_SYMBOLIZER_PATH): the LSan suppressions would not apply" >&2
+  exit 1
+fi
+export CARGO_TERM_COLOR=never # (the failure greps below match "^error" at a line start)
 export RUSTYNAIL_SYSTEM_MALLOC=1
 export RUSTYNAIL_TEST_NOULIMIT=1 # the test children's RLIMIT_AS (6 GiB) cannot hold ASan's shadow memory (F6)
 CAP=(systemd-run --user --scope -q -p MemoryMax=8G -p MemorySwapMax=0)
@@ -159,7 +172,7 @@ if [ $SKIP_TESTS = 0 ]; then
   # (F6) two tests are not ASan-compatible: the first lowers RLIMIT_AS (ASan's shadow memory needs terabytes), the second builds
   # synthetic tables from integer addresses and trips `ptr::add` precondition checks (the same harness is excluded from Miri)
   if ! "${CAP[@]}" timeout 3000 cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p rn-jit --features jit --no-fail-fast </dev/null -- --skip failing_mmap_of_code_chunks_falls_back_silently --skip inline_table_accesses_match_tier1_at_every_pc_on_synthetic_tables >"$W/jt.log" 2>&1; then
-    echo "FAIL [rn-jit tests]"; grep -E "AddressSanitizer|FAILED|panicked|^error" "$W/jt.log" | head -20; fail=1
+    echo "FAIL [rn-jit tests]"; grep -E -B2 -A12 "AddressSanitizer|FAILED|panicked|^error|exit status" "$W/jt.log" | head -150; fail=1
   else
     grep -E "^test result" "$W/jt.log" | sort | uniq -c
   fi
@@ -168,7 +181,7 @@ if [ $SKIP_TESTS = 0 ]; then
     echo "== cargo test -p rn-jit --features trace --test tr_* (ASan)"
     trt=(); for f in crates/rn-jit/tests/tr_*.rs; do trt+=(--test "$(basename "$f" .rs)"); done
     if ! "${CAP[@]}" timeout 5400 cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu -p rn-jit --features trace --no-fail-fast "${trt[@]}" </dev/null >"$W/tr.log" 2>&1; then
-      echo "FAIL [tr_* tests]"; grep -E "AddressSanitizer|FAILED|panicked|^error" "$W/tr.log" | head -20; fail=1
+      echo "FAIL [tr_* tests]"; grep -E -B2 -A12 "AddressSanitizer|FAILED|panicked|^error|exit status|tr_core child" "$W/tr.log" | head -150; fail=1
     else
       grep -E "^test result" "$W/tr.log" | sort | uniq -c
     fi
