@@ -337,7 +337,7 @@ impl Cx<'_> {
             mm: false,
         };
         // `#t` of a table: the length hint is the answer in the common states (see `len_inline`); everything else is the helper
-        let len_done = (op == O::Len && !rn_core::jit_layout::LUA54).then(|| self.p.label());
+        let len_done = (op == O::Len).then(|| self.p.label());
         if let Some(done) = len_done {
             self.len_inline(i, done);
         }
@@ -403,7 +403,10 @@ impl Cx<'_> {
         self.br(Cc::Eq, 1, Src::Imm(0), empty);
         self.ld(2, W::B8, rm(0, table::ARRAY as i32));
         self.ld(3, W::B4, rm(2, table::LENHINT as i32));
-        self.br(Cc::Eq, 3, Src::Imm(0), zero);
+        // 5.4 (`l54`): only the answers that leave `alimit` alone are inline (`TableRef::len` of 5.4 moves it under other rules: a hint
+        // of 0, a nil at `h - 1` or a non-nil at `h` are the helper's)
+        let l54 = rn_core::jit_layout::LUA54;
+        self.br(Cc::Eq, 3, Src::Imm(0), if l54 { slow } else { zero });
         self.br(Cc::Gt, 3, Src::V(1), slow);
         if !m_prev {
             tag(self, -1);
@@ -412,7 +415,7 @@ impl Cx<'_> {
         self.br(Cc::Eq, 3, Src::V(1), full);
         if !m_next {
             tag(self, 0);
-            self.br(Cc::Ne, 4, Src::Imm(0), push);
+            self.br(Cc::Ne, 4, Src::Imm(0), if l54 { slow } else { push });
         }
         self.op(Op::Jmp(store));
         for (l, zero) in [(full, false), (empty, true)] {
@@ -427,54 +430,76 @@ impl Cx<'_> {
             }
             self.op(Op::Jmp(store));
         }
-        // hint 0 (constructor tables: `asize / 2` is the initial hint, 0 for one slot): slot 0 nil is a binary search (helper); otherwise
-        // the upward scan below, which finishes inside the helper's four steps when `asize <= 5`
-        self.op(Op::Bind(zero));
-        if !m_zero {
-            self.br(Cc::Gt, 1, Src::Imm(5), slow);
-        }
-        self.op(Op::Mov(3, 1));
-        tag(self, -1);
-        self.br(Cc::Eq, 4, Src::Imm(0), slow);
-        self.op(Op::Jmp(pscan));
-        // pop: arr[h-1] nil, arr[h-2] non-nil -> hint = answer = h - 1
-        self.op(Op::Bind(pop));
-        self.br(Cc::Lt, 3, Src::Imm(2), slow);
-        tag(self, -2);
-        self.br(Cc::Eq, 4, Src::Imm(0), slow);
-        self.op(Op::Sub(3, Src::Imm(1)));
-        if !m_hint {
+        #[cfg(rustynail_lua54)]
+        {
+            // 5.4 pop: `arr[h-1]` nil, `h >= 2` and `arr[h-2]` non-nil: `h - 1` is the border. `luaH_getn` moves the limit to `h - 1` when
+            // `ispow2realasize` and `h - 1` is not a power of two: inline only with `BITRAS` already set (the flag stays), a power of two
+            // leaves the limit alone; everything else is the helper's (it clobbers V1: the slow path reads the frame)
+            self.op(Op::Bind(pop));
+            self.br(Cc::Lt, 3, Src::Imm(2), slow);
+            tag(self, -2);
+            self.br(Cc::Eq, 4, Src::Imm(0), slow);
+            self.ld(4, W::B1, rm(0, table::FLAGS as i32));
+            self.op(Op::And(4, Src::Imm(i32::from(table::BITRAS))));
+            self.br(Cc::Eq, 4, Src::Imm(0), slow);
+            self.op(Op::Sub(3, Src::Imm(1)));
+            self.op(Op::MovR(1, 3));
+            self.op(Op::Sub(1, Src::Imm(1)));
+            self.op(Op::And(1, Src::V(3)));
+            self.br(Cc::Eq, 1, Src::Imm(0), store);
             self.st(W::B4, rm(2, table::LENHINT as i32), 3);
+            self.op(Op::Jmp(store));
         }
-        self.op(Op::Jmp(store));
-        // push (h < asize, arr[h] non-nil): the helper's upward scan, one slot per step, at most four steps. Its second step (slot h+1) is
-        // the common case (`t[#t + 1] = v` leaves the hint one behind): a nil there, or the array's end, is answered at once; a longer
-        // scan is exact when `asize - h <= 4`; a nil slot `r` ends it with hint and answer `r`, the end of the array with hint `asize`
-        // (the answer for a dummy hash part)
-        self.op(Op::Bind(push));
-        self.op(Op::Add(3, Src::Imm(1)));
-        self.br(Cc::Eq, 3, Src::V(1), pend);
-        tag(self, 0);
-        self.br(Cc::Eq, 4, Src::Imm(0), pnil);
-        if !m_zero {
-            self.op(Op::MovR(4, 1));
-            self.op(Op::Sub(4, Src::V(3)));
-            self.br(Cc::Gt, 4, Src::Imm(3), slow);
-        }
-        self.op(Op::Add(3, Src::Imm(1)));
-        self.op(Op::Bind(pscan));
-        self.br(Cc::Eq, 3, Src::V(1), pend);
-        tag(self, 0);
-        self.br(Cc::Eq, 4, Src::Imm(0), pnil);
-        self.op(Op::Add(3, Src::Imm(1)));
-        self.op(Op::Jmp(pscan));
-        self.op(Op::Bind(pend));
-        self.ld(4, W::B1, rm(0, table::FLAGS as i32));
-        self.op(Op::And(4, Src::Imm(i32::from(table::BITDUMMY))));
-        self.br(Cc::Eq, 4, Src::Imm(0), slow);
-        self.op(Op::Bind(pnil));
-        if !m_hint {
-            self.st(W::B4, rm(2, table::LENHINT as i32), 3);
+        if !l54 {
+            // hint 0 (constructor tables: `asize / 2` is the initial hint, 0 for one slot): slot 0 nil is a binary search (helper); otherwise
+            // the upward scan below, which finishes inside the helper's four steps when `asize <= 5`
+            self.op(Op::Bind(zero));
+            if !m_zero {
+                self.br(Cc::Gt, 1, Src::Imm(5), slow);
+            }
+            self.op(Op::Mov(3, 1));
+            tag(self, -1);
+            self.br(Cc::Eq, 4, Src::Imm(0), slow);
+            self.op(Op::Jmp(pscan));
+            // pop: arr[h-1] nil, arr[h-2] non-nil -> hint = answer = h - 1
+            self.op(Op::Bind(pop));
+            self.br(Cc::Lt, 3, Src::Imm(2), slow);
+            tag(self, -2);
+            self.br(Cc::Eq, 4, Src::Imm(0), slow);
+            self.op(Op::Sub(3, Src::Imm(1)));
+            if !m_hint {
+                self.st(W::B4, rm(2, table::LENHINT as i32), 3);
+            }
+            self.op(Op::Jmp(store));
+            // push (h < asize, arr[h] non-nil): the helper's upward scan, one slot per step, at most four steps. Its second step (slot h+1) is
+            // the common case (`t[#t + 1] = v` leaves the hint one behind): a nil there, or the array's end, is answered at once; a longer
+            // scan is exact when `asize - h <= 4`; a nil slot `r` ends it with hint and answer `r`, the end of the array with hint `asize`
+            // (the answer for a dummy hash part)
+            self.op(Op::Bind(push));
+            self.op(Op::Add(3, Src::Imm(1)));
+            self.br(Cc::Eq, 3, Src::V(1), pend);
+            tag(self, 0);
+            self.br(Cc::Eq, 4, Src::Imm(0), pnil);
+            if !m_zero {
+                self.op(Op::MovR(4, 1));
+                self.op(Op::Sub(4, Src::V(3)));
+                self.br(Cc::Gt, 4, Src::Imm(3), slow);
+            }
+            self.op(Op::Add(3, Src::Imm(1)));
+            self.op(Op::Bind(pscan));
+            self.br(Cc::Eq, 3, Src::V(1), pend);
+            tag(self, 0);
+            self.br(Cc::Eq, 4, Src::Imm(0), pnil);
+            self.op(Op::Add(3, Src::Imm(1)));
+            self.op(Op::Jmp(pscan));
+            self.op(Op::Bind(pend));
+            self.ld(4, W::B1, rm(0, table::FLAGS as i32));
+            self.op(Op::And(4, Src::Imm(i32::from(table::BITDUMMY))));
+            self.br(Cc::Eq, 4, Src::Imm(0), slow);
+            self.op(Op::Bind(pnil));
+            if !m_hint {
+                self.st(W::B4, rm(2, table::LENHINT as i32), 3);
+            }
         }
         self.op(Op::Bind(store));
         self.st_imm(W::B1, fr(a, 0), LUA_VNUMINT as i32);

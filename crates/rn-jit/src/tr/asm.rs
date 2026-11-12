@@ -5626,12 +5626,10 @@ impl Cx<'_> {
         let ops = self.ops(i);
         let site = self.call_site(i)?;
         let d = self.g(self.dst(i));
-        // 5.4: no inline `#t` (`tlen_fast` replicates the 5.5 length hint and its one-step moves; 5.4 `luaH_getn` moves `alimit` under other rules
-        // (`ispow2realasize`, `limitequalsasize`), so the inline answer / store diverged on tables with holes: BUNDLE-VA, `tlen_inline` under
-        // `--cfg rustynail_lua54`); the helper call is exact
+        // 5.4: `tlen_fast` inlines only the answers of `luaH_getn` that leave `alimit` alone (and the pop with `BITRAS` set); the helper call
+        // is exact for every other state
         // A1: `setmetatable` of a table without a metatable to a metatable without `__gc`: a store (the helper call below is the slow path)
         let fast_done = if ins.op == TOp::Tlen
-            && !cfg!(rustynail_lua54)
             && self.ir.ty_of(ins.a) == Ty::Tab
             && self.env.alloc == jit_tr_alloc as *const () as usize as u64
         {
@@ -5863,6 +5861,7 @@ impl Cx<'_> {
             self.st(W::B8, m, Src::V(r));
             (r, Some(m))
         };
+        let l54 = cfg!(rustynail_lua54);
         let (slow, slow_r, done, got, full, empty) = (
             self.label(),
             self.label(),
@@ -5883,7 +5882,8 @@ impl Cx<'_> {
         self.br(Cc::Eq, 7, Src::Imm(0), empty);
         self.ld(r, W::B8, rm(t, table::ARRAY as i32));
         self.ld(r, W::B4, rm(r, table::LENHINT as i32));
-        self.br(Cc::Eq, r, Src::Imm(0), zero);
+        // 5.4 (`l54`): only the answers that leave `alimit` alone are inline (see `tlen_fast`); every other state is the helper's
+        self.br(Cc::Eq, r, Src::Imm(0), if l54 { slow_r } else { zero });
         self.br(Cc::Gt, r, Src::V(7), slow_r);
         // arr[h-1] nil: the hint is above the border (a pop)
         if !mutants::active("tlen_inline_prev_skip") {
@@ -5895,7 +5895,7 @@ impl Cx<'_> {
         // h < asize: arr[h] nil -> h; non-nil (a push) -> `push`
         if !mutants::active("tlen_inline_next_skip") {
             self.tlen_tag(t, r, 0);
-            self.br(Cc::Ne, 7, Src::Imm(0), push);
+            self.br(Cc::Ne, 7, Src::Imm(0), if l54 { slow_r } else { push });
         }
         self.push(Op::Jmp(got));
         // h == asize, or no array part at all: the dummy hash part
@@ -5913,57 +5913,79 @@ impl Cx<'_> {
             }
         }
         self.push(Op::Jmp(got));
-        // hint 0 (constructor tables: `asize / 2` is the initial hint, 0 for one slot): the helper starts at limit 1, so slot 0 nil is a
-        // binary search (helper); otherwise it takes the upward scan below, which finishes inside the four steps it allows when
-        // `asize <= 5`
-        self.push(Op::Bind(zero));
-        if !mutants::active("tlen_inline_zero_bound_skip") {
-            self.br(Cc::Gt, 7, Src::Imm(5), slow_r);
+        #[cfg(rustynail_lua54)]
+        {
+            // 5.4 pop (`arr[h-1]` nil): `h >= 2` and `arr[h-2]` non-nil make `h - 1` the border (`luaH_getn`'s "limit - 1 is a boundary"). The
+            // helper then moves the limit to `h - 1` when `ispow2realasize` and `h - 1` is not a power of two; inline only with `BITRAS`
+            // already set (`ispow2realasize` true, the flag stays), anything else is the helper's. A power of two answers `h - 1` and
+            // leaves the limit alone.
+            self.push(Op::Bind(pop));
+            self.br(Cc::Lt, r, Src::Imm(2), slow_r);
+            self.tlen_tag(t, r, -2);
+            self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
+            self.ld(7, W::B1, rm(t, table::FLAGS as i32));
+            self.push(Op::And(7, Src::Imm(i32::from(table::BITRAS))));
+            self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
+            self.push(Op::Sub(r, Src::Imm(1)));
+            self.push(Op::MovR(7, r));
+            self.push(Op::Sub(7, Src::Imm(1)));
+            self.push(Op::And(7, Src::V(r)));
+            self.br(Cc::Eq, 7, Src::Imm(0), got);
+            self.tlen_set_hint(t, r);
         }
-        self.push(Op::Mov(r, 1));
-        self.tlen_tag(t, r, -1);
-        self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
-        self.push(Op::Jmp(pscan));
-        // pop (arr[h-1] nil): the helper's first step down: arr[h-2] non-nil -> hint and answer h-1
-        self.push(Op::Bind(pop));
-        self.br(Cc::Lt, r, Src::Imm(2), slow_r);
-        self.tlen_tag(t, r, -2);
-        self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
-        self.push(Op::Sub(r, Src::Imm(1)));
-        self.tlen_set_hint(t, r);
-        self.push(Op::Jmp(got));
-        // push (h < asize, arr[h] non-nil): the helper's upward scan, one slot per step, at most four steps. Its second step (slot h+1)
-        // is the common case (`t[#t + 1] = v` leaves the hint one behind): a nil there, or the array's end, is answered at once; a
-        // longer scan is exact when `asize - h <= 4` (it then ends at the array's end, not at the step limit)
-        self.push(Op::Bind(push));
-        self.push(Op::Add(r, Src::Imm(1)));
-        self.ld(7, W::B4, rm(t, table::ASIZE as i32));
-        self.br(Cc::Eq, r, Src::V(7), pend);
-        self.tlen_tag(t, r, 0);
-        self.br(Cc::Eq, 7, Src::Imm(0), pnil);
-        if !mutants::active("tlen_inline_zero_bound_skip") {
+        if !l54 {
+            // hint 0 (constructor tables: `asize / 2` is the initial hint, 0 for one slot): the helper starts at limit 1, so slot 0 nil is a
+            // binary search (helper); otherwise it takes the upward scan below, which finishes inside the four steps it allows when
+            // `asize <= 5`
+            self.push(Op::Bind(zero));
+            if !mutants::active("tlen_inline_zero_bound_skip") {
+                self.br(Cc::Gt, 7, Src::Imm(5), slow_r);
+            }
+            self.push(Op::Mov(r, 1));
+            self.tlen_tag(t, r, -1);
+            self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
+            self.push(Op::Jmp(pscan));
+            // pop (arr[h-1] nil): the helper's first step down: arr[h-2] non-nil -> hint and answer h-1
+            self.push(Op::Bind(pop));
+            self.br(Cc::Lt, r, Src::Imm(2), slow_r);
+            self.tlen_tag(t, r, -2);
+            self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
+            self.push(Op::Sub(r, Src::Imm(1)));
+            self.tlen_set_hint(t, r);
+            self.push(Op::Jmp(got));
+            // push (h < asize, arr[h] non-nil): the helper's upward scan, one slot per step, at most four steps. Its second step (slot h+1)
+            // is the common case (`t[#t + 1] = v` leaves the hint one behind): a nil there, or the array's end, is answered at once; a
+            // longer scan is exact when `asize - h <= 4` (it then ends at the array's end, not at the step limit)
+            self.push(Op::Bind(push));
+            self.push(Op::Add(r, Src::Imm(1)));
             self.ld(7, W::B4, rm(t, table::ASIZE as i32));
-            self.push(Op::Sub(7, Src::V(r)));
-            self.br(Cc::Gt, 7, Src::Imm(3), slow_r);
+            self.br(Cc::Eq, r, Src::V(7), pend);
+            self.tlen_tag(t, r, 0);
+            self.br(Cc::Eq, 7, Src::Imm(0), pnil);
+            if !mutants::active("tlen_inline_zero_bound_skip") {
+                self.ld(7, W::B4, rm(t, table::ASIZE as i32));
+                self.push(Op::Sub(7, Src::V(r)));
+                self.br(Cc::Gt, 7, Src::Imm(3), slow_r);
+            }
+            self.push(Op::Add(r, Src::Imm(1)));
+            // invariant: slots 0..r-1 up to the hint are set and `arr[r-1]` is set, r <= asize
+            self.push(Op::Bind(pscan));
+            self.ld(7, W::B4, rm(t, table::ASIZE as i32));
+            self.br(Cc::Eq, r, Src::V(7), pend);
+            self.tlen_tag(t, r, 0);
+            self.br(Cc::Eq, 7, Src::Imm(0), pnil);
+            self.push(Op::Add(r, Src::Imm(1)));
+            self.push(Op::Jmp(pscan));
+            self.push(Op::Bind(pnil));
+            self.tlen_set_hint(t, r);
+            self.push(Op::Jmp(got));
+            // the scan reached the array's end (`arr[asize-1]` set): hint = asize, the answer if the hash part is the dummy node
+            self.push(Op::Bind(pend));
+            self.ld(7, W::B1, rm(t, table::FLAGS as i32));
+            self.push(Op::And(7, Src::Imm(i32::from(table::BITDUMMY))));
+            self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
+            self.tlen_set_hint(t, r);
         }
-        self.push(Op::Add(r, Src::Imm(1)));
-        // invariant: slots 0..r-1 up to the hint are set and `arr[r-1]` is set, r <= asize
-        self.push(Op::Bind(pscan));
-        self.ld(7, W::B4, rm(t, table::ASIZE as i32));
-        self.br(Cc::Eq, r, Src::V(7), pend);
-        self.tlen_tag(t, r, 0);
-        self.br(Cc::Eq, 7, Src::Imm(0), pnil);
-        self.push(Op::Add(r, Src::Imm(1)));
-        self.push(Op::Jmp(pscan));
-        self.push(Op::Bind(pnil));
-        self.tlen_set_hint(t, r);
-        self.push(Op::Jmp(got));
-        // the scan reached the array's end (`arr[asize-1]` set): hint = asize, the answer if the hash part is the dummy node
-        self.push(Op::Bind(pend));
-        self.ld(7, W::B1, rm(t, table::FLAGS as i32));
-        self.push(Op::And(7, Src::Imm(i32::from(table::BITDUMMY))));
-        self.br(Cc::Eq, 7, Src::Imm(0), slow_r);
-        self.tlen_set_hint(t, r);
         self.push(Op::Bind(got));
         if let Some(m) = spilled {
             // the answer is in `r` (a scratch that is not the destination): move it, then give `r` its value back
