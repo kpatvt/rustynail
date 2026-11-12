@@ -8393,8 +8393,8 @@ impl Rec {
     fn libfn_enabled(&self, addr: usize) -> Option<u8> {
         use jit_hooks::libfn as L;
         jit_hooks::libfn_of(addr).filter(|&f| match f {
-            L::TBL_UNPACK => self.cfg.libcall_mask & 32 != 0 && !cfg!(rustynail_lua54),
-            L::TBL_MOVE => self.cfg.libcall_mask & 64 != 0 && !cfg!(rustynail_lua54),
+            L::TBL_UNPACK => self.cfg.libcall_mask & 32 != 0,
+            L::TBL_MOVE => self.cfg.libcall_mask & 64 != 0,
             _ => true,
         })
     }
@@ -8426,10 +8426,10 @@ impl Rec {
             L::MATH_FMOD => self.lib_fmod(vm, idx, a, nargs, wanted, addr),
             L::RAWGET if self.cfg.f2raw => self.lib_rawget(vm, idx, a, nargs, wanted, addr),
             L::RAWSET if self.cfg.f2raw => self.lib_rawset(vm, idx, a, nargs, wanted, addr),
-            L::TBL_MOVE if self.cfg.libcall_mask & 64 != 0 && !cfg!(rustynail_lua54) => {
+            L::TBL_MOVE if self.cfg.libcall_mask & 64 != 0 => {
                 self.lib_tmove(vm, idx, a, nargs, wanted, addr)
             }
-            L::TBL_UNPACK if self.cfg.libcall_mask & 32 != 0 && !cfg!(rustynail_lua54) => {
+            L::TBL_UNPACK if self.cfg.libcall_mask & 32 != 0 => {
                 self.lib_tunpack(vm, idx, a, nargs, wanted, addr)
             }
             _ => Err(AbortReason::CFunc),
