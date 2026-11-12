@@ -2087,3 +2087,39 @@ The hops are removed (-57 % exits, -8.7 % instructions) but **cycles do not move
 - **Built, kept narrow on purpose:** `jit_mm_tail_ok`: native (non-Lua-closure) tail callees in `__index` / `__newindex` frames stay with the interpreter (`class_middleclass` +7 % cycles, trace formation); they are in tier 1 for arithmetic / comparison callers (needed by `programs/metamethods`: `return setmetatable(...)`). Cheap retest: change the predicate; `bv_mm_programs` covers both shapes.
 - **Not built.** (1) `__len` / `__concat` handler frames (`LEN` / `CONCAT` have their own helpers; no program of the 223 has them on the exit list). (2) The landing-label cost after partial-leaf arithmetic (`IDIV`, `MOD`, bitwise results are typed `Int` at the next pc; a metamethod result fails the tag check and exits): fix = drop the destination's type at the continuation pc when the instruction has an `armm` stub, i.e. a second code path or `Unk` typing of those results (costs the numeric fast path); a per-site hint (`t1i_hints`) would do. (3) A vararg-frame mutant (`bv_vararg_delta_skip` dropped: a wrong `top` after the pop is not observable by output). (4) Upvalue-barrier coverage in real runs: no stress mode produced a black upvalue with a white value at a recorded store, the hand-built `tr_asm` test is the only proof that the inline test and the helper call work together. (5) `upbar` for upvalue stores of collectable values into *open upvalues that alias a slot of an inlined (non-root) frame* still aborts `UpvalAlias`, as before. (6) PGO / ASan / fuzz.
 - **Record:** the BUNDLE-D 2.24x of `programs/metamethods` with `armm` was the ordinary resume entries (formation), as BUNDLE-S suspected; `armm=1` with private entries is neutral there.
+
+### C63: Lua 5.4 gap work (2026-11-12): what was enabled on 5.4 and what is left
+
+Source: the 5.4 section of the release benchmark report (5.4 was 16 % less effective relative to PUC than 5.5). Instruction counts (`perf stat instructions:u`, `RUSTYNAIL_SEED=0`, same script path, min of 5), 5.4 build before -> after:
+
+| program | before | after | ratio | what |
+|---|---|---|---|---|
+| lib/rawget_set | 1561 M | 201 M | 0.129 | `rawget` / `rawset` recorded |
+| lib/it_next | 1629 M | 662 M | 0.406 | `next(t, k)` calls recorded |
+| lib/it_next_empty | 1845 M | 885 M | 0.480 | same |
+| lib/len_tbl | 1505 M | 1169 M | 0.776 | inline `#t` |
+| lib/tinsert_append | 1265 M | 1183 M | 0.936 | inline `#t`, stores into empty slots |
+| lib/tfront_1k | 3949 M | 236 M | 0.060 | `arr_move` alimit replay skips indices below the limit (library, not JIT) |
+| lib/tmove | 1810 M | 886 M | 0.489 | `table.move` recorded, replay |
+| lib/tunpack | 1630 M | 757 M | 0.465 | `table.unpack` recorded |
+| programs/sieve | 9425 M | 4062 M | 0.431 | stores into empty array slots recorded |
+| programs/table_array | 4013 M | 1639 M | 0.409 | same |
+| corpus/class_middleclass | 13262 M | 2700 M | 0.204 | `rawget` / `rawset` (the `class` library calls them in its metamethods) |
+| programs/metamethods | 21170 M | 4446 M | 0.210 | same |
+
+5.5 instruction counts are unchanged (15 programs compared against a build of the base commit, all 1.000 +- 0.002; every change sits behind `rustynail_lua54`).
+
+What each change relies on (all verified differentially against the interpreter and, for the new `tests/vm/tables_14..17` scripts, against PUC 5.4 and 5.5):
+
+* `rawget` / `rawset`, `next(t, k)`, `table.unpack`, `table.move`, `__index` of an integer key outside the array part, integer keys of the hash part (`HREFV` int): the old gates said "the interpreter's `alimit` touches are not modelled". For these paths they are: `luaH_getint` touches `alimit` only for keys inside the real array part (the recorder's `array_guards_raw` emits `ATOUCH` there, in the library's order), a key outside the real array reaches the hash walk without a touch, and `next` / `findindex` never touch. The gates were conservative.
+* Stores into an empty slot inside the array part (`t[#t + 1] = v` with spare capacity): the `Insert` abort was hiding a bug of the *lockstep model*, not of the compiled code: after `luaH_getn` set `BITRAS`, the model kept the old flag byte, so the `ATOUCH` of the model did nothing while the VM's moved the limit ("VM alimit 6, IR 5" under `+verify`). Fix: the model copies `BITRAS` after a `TLEN`.
+* Inline `#t` (trace `tlen_fast`, tier-1 `len_inline`): only the answers of 5.4's `luaH_getn` that leave `alimit` alone (limit `h >= 1`, `arr[h-1]` set; then `h == asize` with a dummy hash part, or `h < asize` with `arr[h]` nil) plus the pop (`arr[h-1]` nil, `arr[h-2]` set) when `BITRAS` is already set (the helper's move is `alimit = h - 1` unless `h - 1` is a power of two). Everything else (hint 0, push over a set `arr[h]`, first `#t` after a growth) is the helper's. The 5.5 inline code is untouched.
+* `arr_move` / `arr_copy_to` (library): the 5.4 replay of the per-element touches skips indices below the current limit (the limit never decreases, a touch below it does nothing) and everything when `BITRAS` is clear: same final state, O(1) in the common case instead of O(n) (`tfront_1k` 3949 M -> 236 M, the 5.5 figure is 221 M).
+
+Not done (honest list):
+
+* **`ATOUCH` cost in array loops** (`jit-trace/int_rec2` 17.5 G vs 6.7 G on 5.5, `array_rec` 10.9 G vs 5.2 G; unchanged by this work): every array access carries `ld flags; and; br` (about 4 x86 instructions, 3 touches per iteration). Design: a trace-entry guard "`BITRAS` clear" per touched table plus dropping the `ATOUCH`es of that table when nothing in the trace can set it (only `luaH_getn` sets `BITRAS`: `TLEN`, `LIB` helpers, stitched C calls; rehash only clears it); or a `test byte [t+flags], BITRAS; jnz` micro-op (needs the portable IR, the x86 encoder and the emulator). Not attempted: a new optimiser pass with an effect analysis.
+* **RETF on 5.4** (`Rec::retf`: "`nresults` is a field of its own and the CIST bits differ"): with the above, `class_middleclass` is 2.85 G on 5.4 against 2.66 G on 5.5 and `metamethods` 4.45 G against 4.05 G; RETF is worth 6 % on `class_middleclass` on 5.5 (`retf=0`: 2.82 G), so the remaining 5.4 gap of the metamethod programs is mostly RETF. Not wired.
+* `tfront_1k`-style positional `table.insert(t, pos, v)` / `table.remove(t, pos)` are not recorded on either version (library call, `arr_move` inside).
+* **Pre-existing lockstep false alarm (5.5 and 5.4, found by jit-diff set `br`, mode `trverify`, seeds 61 / 135 / 183 of 1..300)**: `table.move(src, f, e, d, src)` on one table whose destination range grows the array (`table 2[8]: VM 18, IR ...` under `+verify`). The whole `CALL` has run in the VM before the lockstep evaluates the call's IR (`TSET` resyncs the model from the VM's final contents, so later model loads read overwritten elements). Plain modes (`tr`, `tron`, `always`) give the interpreter's output on all those seeds; only the `+verify` checker panics. Left as is.
+* `programs/load_big` (2.4x, not root-caused in the report) was not looked at.
