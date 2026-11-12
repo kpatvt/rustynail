@@ -172,6 +172,8 @@ jobs:
           RUST_TEST_THREADS: "3"
           TR_CORE_JOBS: "2"
           TR_P8A_JOBS: "2"
+          # a tr_* child is killed after 120 s by default; ASan children can be slower than that on a shared runner
+          TR_CORE_TIMEOUT: "600"
 
   miri:
     name: Miri subset of rn-core (Lua ${{ matrix.lua }})
