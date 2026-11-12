@@ -2980,8 +2980,8 @@ fn ba_ops_record_their_guards() {
         let rc = record_src(&src.replace("ARM()", "arm()"), cfg());
         closed(&rc).ir.clone()
     };
-    // next: identity guard, TNEXT, NE, typed HLOADs (5.5 only: the 5.4 recorder does not record `next` as a library call, the `CFunc` abort is by design)
-    if !cfg!(rustynail_lua54) {
+    // next: identity guard, TNEXT, NE, typed HLOADs
+    {
         let ir = ir_of("local t = { 5 } local function f(n) local a = 0 ARM() for i = 1, n do local k, v = next(t) a = a + k + v end return a end return f(30)");
         let builtin_eq = ir
             .ins

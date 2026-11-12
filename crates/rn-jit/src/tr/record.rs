@@ -5616,11 +5616,7 @@ impl Rec {
                 None if self.cfg.setmt && addr == rn_std::lib_base::jit_setmt_addr() => {
                     self.setmt_call(vm, idx, a, nargs, wanted, addr)
                 }
-                None if self.cfg.libnext
-                    && !cfg!(rustynail_lua54)
-                    && addr != 0
-                    && addr == jit_hooks::builtin_next() =>
-                {
+                None if self.cfg.libnext && addr != 0 && addr == jit_hooks::builtin_next() => {
                     self.next_call(vm, idx, a, nargs, wanted, addr)
                 }
                 None if self.cfg.libcall
