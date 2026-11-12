@@ -52,6 +52,22 @@ pub struct Heap {
     pub(crate) onebyte: [*mut LuaString; 256],
 }
 
+/// `a == b` (equal lengths) for a short `b` that was written by byte stores right before: it is read byte by byte (volatile, so LLVM and libc's `memcmp`
+/// do not turn it into one wider load, which cannot be store-forwarded from the byte stores and stalls ~15-20 cycles: `lib/char`, docs/RELEASE.md).
+#[inline(always)]
+fn bytes_eq_fresh(a: &[u8], b: &[u8]) -> bool {
+    debug_assert_eq!(a.len(), b.len());
+    let mut i = 0;
+    while i < b.len() {
+        // SAFETY: `i < b.len()`.
+        if a[i] != unsafe { std::ptr::read_volatile(b.as_ptr().add(i)) } {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 impl Heap {
     /// New heap on the system allocator.
     pub fn new(seed: u32) -> LuaResult<Heap> {
@@ -283,7 +299,11 @@ impl Heap {
                 if ((*p).hdr.hash.get() == h
                     || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY)))
                     && (*p).len() == s.len()
-                    && LuaString::bytes_raw(p) == s
+                    && (if FRESH && s.len() <= 8 {
+                        bytes_eq_fresh(LuaString::bytes_raw(p), s)
+                    } else {
+                        LuaString::bytes_raw(p) == s
+                    })
                 {
                     return (h, p, Some(0));
                 }

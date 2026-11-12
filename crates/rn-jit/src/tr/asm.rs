@@ -1310,7 +1310,13 @@ fn char_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3]) -> u64 {
     if kind != lib::CHAR && mutants::active("charn_order") {
         buf[..n].reverse();
     }
-    bytes_core(st, &buf[..n])
+    // `buf` was just written by byte stores: the fresh variant reads it byte by byte (a wider load stalls on the store forwarding)
+    short_core::<true>(
+        st,
+        &buf[..n],
+        mutants::active("lib_bytes_small"),
+        mutants::active("lib_no_gc_check"),
+    )
 }
 
 /// `math.random(low, up)` (`RANDOM`: `args` = closure, low, up; the drawn integer plus one, 0 = nothing done) or `math.random()` (`RANDF`: the top 53

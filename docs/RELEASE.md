@@ -168,3 +168,16 @@ Every command ran under `systemd-run --user --scope -p MemoryMax=...` (6-8 GB; M
 - Miri `gen_00`, `inc_00`, `pool_00` as whole shards: not completed (90 min each, no report); 27 of 30 script runs pass individually, the three `co_14_cstack_overflow` runs were cut at 25 min.
 - `c36_cispare` / `p3_fdisp` on 5.4: weaker expectations (above), the 5.4 policy difference is not explained.
 - 5.4 under ASan, Miri and Tree Borrows: not run.
+
+## lib/char under PGO: store-forwarding stall (2026-11-12)
+
+Symptom: `bench/lib/char.lua` took 265 Mcyc in the PGO build against 177 in the plain build, with fewer instructions (800M vs 892M; IPC 3.05 vs 4.94).
+Cause (not PGO layout): `string.char(a, b, c)` in a trace calls `char_core`, which assembles the bytes with three 1-byte stores into a stack buffer and
+then reads them back with a wider load. `perf record` + `annotate` (Zen 5, `taskset` to one CPU, `RUSTYNAIL_SEED=0`): in the PGO build 91% of the cycles
+sit on the instruction after `movzwl 0x4(%rsp),%esi` (LLVM merged the hash's first two byte reads of `fast_hash` into one 2-byte load over two byte stores);
+in the plain build 85% sit on the masked vector load of libc's `__memcmp_evex_movbe` (`vpcmpnequb (%rdi),%ymm18{%k2}`) that compares the buffer with the
+interned string. Neither load can be forwarded from the byte stores, so each stalls until the stores retire. Branch misses were equal (139k vs 137k).
+PGO only changed which of the two wide loads LLVM emitted (inlining decisions), and the 2-byte merge is the worse one.
+Fix: `char_core` uses the fresh variant of the intern probe (`short_core::<true>`); its 1..3 byte hash reads are volatile, and the probe's chain compare of a
+fresh string of at most 8 bytes is a byte-wise volatile loop (`bytes_eq_fresh`). Result (min of 5, Mcyc / Minstr): plain 177 -> 151, PGO 265 -> 140.
+The other programs of the list (m_type, os_clock, tonumber_int, knucleotide: +3..7% under PGO) are unchanged by this and have a different cause (not diagnosed).

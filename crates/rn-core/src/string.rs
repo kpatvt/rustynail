@@ -309,9 +309,17 @@ fn fast_hash_impl<const FRESH: bool>(s: &[u8]) -> u32 {
             last = b >> 24;
             h = mix(h ^ (a | ((b & 0xFF_FFFF) << 32)), K);
         } else if n > 0 {
-            let a = *p as u64;
-            let b = *p.add(n / 2) as u64;
-            last = *p.add(n - 1) as u64;
+            // (FRESH: volatile, or LLVM merges the first two bytes into one 2-byte load, which cannot be forwarded from two byte stores)
+            let (a, b, l) = if FRESH {
+                (
+                    u64::from(core::ptr::read_volatile(p)),
+                    u64::from(core::ptr::read_volatile(p.add(n / 2))),
+                    u64::from(core::ptr::read_volatile(p.add(n - 1))),
+                )
+            } else {
+                (*p as u64, *p.add(n / 2) as u64, *p.add(n - 1) as u64)
+            };
+            last = l;
             h = mix(h ^ (a | (b << 8)), K);
         } else {
             last = 0;
