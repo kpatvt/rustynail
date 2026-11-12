@@ -7349,6 +7349,22 @@ fn alimit_guard_programs() {
     }
 }
 
+/// `table.move(t, f, e, d, t)` whose destination range grows the array: the recorder copies the values it read before the first store (a
+/// re-read after the `TSET` insertion read overwritten elements: the lockstep model aborted under `+verify`, jit-diff set `br` seeds 61 / 135 /
+/// 183). Mutant `tmove_no_preread` is the nearby one (pre-read dropped).
+#[test]
+fn move_grow_same_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("move_grow_same", trace).opts("+verify"));
+        jobs.push(Job::new("move_grow_same", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("move_grow_same", trace).budget(17));
+        jobs.push(Job::new("move_grow_same", trace).opts("-loop"));
+        jobs.push(Job::new("move_grow_same", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+    }
+    compare(jobs);
+}
+
 /// F1: the folds and intrinsics of F1 (`x ^ 2` as a product, `math.sin` / `cos` / `exp` / `log`, `math.min` / `math.max` of three or more
 /// arguments, `string.len` / `s:len()`) and the carried `next` index (`pairs` / `next` order, assigning nil to existing fields, stale hints,
 /// nested and interleaved traversals, errors) in every trace mode against the interpreter. Detector of the

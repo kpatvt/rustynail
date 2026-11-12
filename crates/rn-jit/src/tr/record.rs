@@ -9594,10 +9594,14 @@ impl Rec {
         // below are then ordinary (CSE-able) re-reads of elements that no store before them has touched. A different destination
         // table is idempotent (the sources are not modified), so it needs no pre-read. (BUNDLE-VA: `instruction_count_identity`
         // `br_lib` `+exitstorm=7` found a storm exit between two stores; a natural guard failure has the same effect.)
+        // The copy below uses these very values: a re-read after an insertion (`TSET` of a destination index beyond the array part,
+        // which resyncs the model from the VM's final contents, the whole call having run) would read an element the move has
+        // already overwritten (jit-diff `br` seeds 61 / 135 / 183, `+verify`: `table 2[8]: VM 18, IR ...`).
+        let mut pre: Vec<Ref> = Vec::new();
         if same && !mutants::active("tmove_no_preread") {
             for i in 0..n {
                 let ks = self.kint(f + i);
-                self.array_get(vm, src, a + 1, ks, f + i)?;
+                pre.push(self.array_get(vm, src, a + 1, ks, f + i)?);
             }
         }
         let order: Vec<i64> = if fwd != mutants::active("tmove_order_flip") {
@@ -9606,8 +9610,13 @@ impl Rec {
             (0..n).rev().collect()
         };
         for i in order {
-            let ks = self.kint(f + i);
-            let v = self.array_get(vm, src, a + 1, ks, f + i)?;
+            let v = match pre.get(i as usize) {
+                Some(&v) => v,
+                None => {
+                    let ks = self.kint(f + i);
+                    self.array_get(vm, src, a + 1, ks, f + i)?
+                }
+            };
             let ety = ty_of_value(&stbl.get_int(f + i)).ok_or_else(|| self.nyi())?;
             let kd = self.kint(t + i);
             self.array_set(vm, dst, dslot, kd, t + i, (v, ety))?;

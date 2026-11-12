@@ -15125,4 +15125,9 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/tables_18_alimit_guard.lua"),
     },
+    Prog {
+        name: "move_grow_same",
+        small: true,
+        src: include_str!("../../../../tests/vm/tables_19_move_grow_same.lua"),
+    },
 ];
