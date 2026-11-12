@@ -93,48 +93,50 @@ writeback=[1=%22 2=%29 3=%28 5=%29 6=%20 7=%9 8=%18 9=%20 10=%32775 11=%16 12=%1
 0006     FLOAD  u32   %2
 0007     ADD    int   %3 #-1
 0008 >   ULT    i64   %7 %6  S1
-0009     ATOUCH nil   %2 %7
-0010     FLOAD  p64   %2 1
-0011     AREF   p64   %10 %7
-0012 >   ALOAD  num   %11 -  S1 bits=0xADDR
-0013     SLOAD  lcf   slot65535
-0014     UREF   p64   %13 #1
-0015     UVREL  i64   %14
-0016 >   UGE    i64   %15 #176  S2
-0017 >   ULOAD  lcf   %14 -  S2 bits=0xADDR
-0018 >   EQREF  i64   %17 #Proto:0xADDR  S3
-0019     ADD    int   %3 #2
-0020     ADD    int   %3 #1
-0021     MUL    int   %3 %20
-0022     CONV   num   %21 -
-0023     FMUL   num   %22 #0.5
-0024     FADD   num   %23 #2.0
-0025     FDIV   num   #1.0 %24
-0026     FMUL   num   %12 %25
-0027 >   SLOAD  num   slot2  S4 bits=0xADDR
-0028     FADD   num   %27 %26
-0029 >   SLOAD  int   slot5  S5 bits=0xADDR
-0030 >   SLOAD  int   slot4  S5 bits=0xADDR
-0031 >   SLOAD  int   slot3  S5 bits=0xADDR
-0032 >   NE     i64   %30 #0  S5
-0033 >   EQ     i64   %29 #1  S5
-0034     ADD    int   %30 #-1
-0035     ADD    int   %31 #1
+0009     FLOAD  u32   %2 3
+0010     BAND   i64   %9 #128
+0011 >   EQ     i64   %10 #0  S1
+0012     FLOAD  p64   %2 1
+0013     AREF   p64   %12 %7
+0014 >   ALOAD  num   %13 -  S1 bits=0xADDR
+0015     SLOAD  lcf   slot65535
+0016     UREF   p64   %15 #1
+0017     UVREL  i64   %16
+0018 >   UGE    i64   %17 #176  S2
+0019 >   ULOAD  lcf   %16 -  S2 bits=0xADDR
+0020 >   EQREF  i64   %19 #Proto:0xADDR  S3
+0021     ADD    int   %3 #2
+0022     ADD    int   %3 #1
+0023     MUL    int   %3 %22
+0024     CONV   num   %23 -
+0025     FMUL   num   %24 #0.5
+0026     FADD   num   %25 #2.0
+0027     FDIV   num   #1.0 %26
+0028     FMUL   num   %14 %27
+0029 >   SLOAD  num   slot2  S4 bits=0xADDR
+0030     FADD   num   %29 %28
+0031 >   SLOAD  int   slot5  S5 bits=0xADDR
+0032 >   SLOAD  int   slot4  S5 bits=0xADDR
+0033 >   SLOAD  int   slot3  S5 bits=0xADDR
+0034 >   NE     i64   %32 #0  S5
+0035 >   EQ     i64   %31 #1  S5
+0036     ADD    int   %32 #-1
+0037     ADD    int   %33 #1
 S0 pc=7 frame=0 []
 S1 pc=7 frame=0 refund=17 []
-S2 pc=8 frame=0 refund=13 [7=%12]
-S3 pc=11 frame=0 refund=13 [7=%12 8=%17 9=#2 10=%3]
-S4 pc=14 frame=0 [7=%26 8=%25 9=#2 10=%3 11=%20 12=%25 13=#1.0]
-S5 pc=16 frame=0 [2=%28 7=%26 8=%25 9=#2 10=%3 11=%20 12=%25 13=#1.0]
+S2 pc=8 frame=0 refund=13 [7=%14]
+S3 pc=7 frame=0 refund=17 []
+S4 pc=14 frame=0 [7=%28 8=%27 9=#2 10=%3 11=%22 12=%27 13=#1.0]
+S5 pc=16 frame=0 [2=%30 7=%28 8=%27 9=#2 10=%3 11=%22 12=%27 13=#1.0]
 S0 land=Pre step=0 frames=[] func=[]
 S1 land=Pre step=0 frames=[] func=[]
 S2 land=Mid step=1 frames=[] func=[]
-S3 land=Mid step=4 frames=[] func=[]
+S3 land=Pre step=0 frames=[] func=[]
 S4 land=Mid step=15 frames=[] func=[]
 S5 land=Mid step=16 frames=[] func=[]
-counts=[17] extent=16 depth=1 room=16 entry_snap=None head=7 loop_at=None n=17 deps=2
+counts=[17] extent=16 depth=1 room=16 entry_snap=Some(3) head=7 loop_at=None n=17 deps=2
 path=[P0:7 P0:8 P0:9 P0:10 P0:11 P1:0 P1:2 P1:4 P1:6 P1:8 P1:10 P1:12 P1:13 P1:15 P0:12 P0:14 P0:16]
-writeback=[2=%28 3=%35 4=%34 6=%35 7=%26 8=%25 9=%32773 10=%3 11=%20 12=%25 13=%32778]
+writeback=[2=%30 3=%37 4=%36 6=%37 7=%28 8=%27 9=%32774 10=%3 11=%22 12=%27 13=%32779]
 === math_intrinsics
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   32  S0
@@ -354,34 +356,38 @@ writeback=[2=%13 3=%20 4=%19 6=%20 7=%11 8=%7 9=%8 10=%11]
 0014     FLOAD  u32   %7
 0015     ADD    int   %8 #-1
 0016 >   ULT    i64   %15 %14  S5
-0017     ATOUCH nil   %7 %15
-0018     FLOAD  p64   %7 1
-0019     AREF   p64   %18 %15
-0020 >   ALOAD  int   %19 -  S5 bits=0xADDR
-0021     ADD    int   %11 %20
-0022     FLOAD  p64   %7 2
-0023 >   EQ     i64   %22 #0  S6
-0024     FLOAD  u32   %7
-0025 >   ULT    i64   %15 %24  S6
-0026     ATOUCH nil   %7 %15
-0027     FLOAD  p64   %7 1
-0028     AREF   p64   %27 %15
-0029     ASTORE i64   %28 %21
-0030 >   SLOAD  int   slot4  S7 bits=0xADDR
-0031 >   SLOAD  int   slot3  S7 bits=0xADDR
-0032 >   SLOAD  int   slot2  S7 bits=0xADDR
-0033 >   NE     i64   %31 #0  S7
-0034 >   EQ     i64   %30 #1  S7
-0035     ADD    int   %31 #-1
-0036     ADD    int   %32 #1
+0017     FLOAD  u32   %7 3
+0018     BAND   i64   %17 #128
+0019 >   EQ     i64   %18 #0  S5
+0020     FLOAD  p64   %7 1
+0021     AREF   p64   %20 %15
+0022 >   ALOAD  int   %21 -  S5 bits=0xADDR
+0023     ADD    int   %11 %22
+0024     FLOAD  p64   %7 2
+0025 >   EQ     i64   %24 #0  S6
+0026     FLOAD  u32   %7
+0027 >   ULT    i64   %15 %26  S6
+0028     FLOAD  u32   %7 3
+0029     BAND   i64   %28 #128
+0030 >   EQ     i64   %29 #0  S6
+0031     FLOAD  p64   %7 1
+0032     AREF   p64   %31 %15
+0033     ASTORE i64   %32 %23
+0034 >   SLOAD  int   slot4  S7 bits=0xADDR
+0035 >   SLOAD  int   slot3  S7 bits=0xADDR
+0036 >   SLOAD  int   slot2  S7 bits=0xADDR
+0037 >   NE     i64   %35 #0  S7
+0038 >   EQ     i64   %34 #1  S7
+0039     ADD    int   %35 #-1
+0040     ADD    int   %36 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=11 []
 S2 pc=7 frame=0 refund=7 [6=%6]
 S3 pc=8 frame=0 refund=7 [6=%6 7=%7]
 S4 pc=6 frame=0 refund=11 []
 S5 pc=2 frame=1 refund=2 [6=%6 7=%7 8=%8 9=%9 10=%11]
-S6 pc=5 frame=1 refund=2 [6=%6 7=%7 8=%8 9=%9 10=%11 11=%21]
-S7 pc=12 frame=0 refund=1 [6=%6 7=%7 8=%8 9=%9 10=%11 11=%21]
+S6 pc=5 frame=1 refund=2 [6=%6 7=%7 8=%8 9=%9 10=%11 11=%23]
+S7 pc=12 frame=0 refund=1 [6=%6 7=%7 8=%8 9=%9 10=%11 11=%23]
 S0 land=Pre step=0 frames=[] func=[]
 S1 land=Pre step=0 frames=[] func=[]
 S2 land=Mid step=1 frames=[] func=[]
@@ -392,7 +398,7 @@ S6 land=Mid step=8 frames=[P1@f6:c11:n0] func=[6]
 S7 land=Pre step=10 frames=[] func=[]
 counts=[11] extent=15 depth=1 room=15 entry_snap=Some(4) head=6 loop_at=None n=11 deps=2
 path=[P0:6 P0:7 P0:8 P0:9 P0:11 P1:0 P1:2 P1:3 P1:5 P1:6 P0:12]
-writeback=[2=%36 3=%35 5=%36 6=%6 7=%7 8=%8 9=%9 10=%11 11=%21]
+writeback=[2=%40 3=%39 5=%40 6=%6 7=%7 8=%8 9=%9 10=%11 11=%23]
 === nil_fill_results
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   13  S0

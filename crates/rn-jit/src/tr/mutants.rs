@@ -62,6 +62,7 @@ pub const NAMES: &[&str] = &[
     // 5.4 (F7a)
     "atouch_skip",
     "atouch_hoisted",
+    "atouch_guard_skip",
     "forloop54_no_ctl_copy",
     // v1.3
     "entry_guard_past_store",
@@ -821,7 +822,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 625);
+        assert_eq!(NAMES.len(), 626);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

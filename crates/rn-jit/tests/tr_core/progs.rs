@@ -15120,4 +15120,9 @@ for k = 1, 60 do r[#r + 1] = rd(full, 20) + rd(half, 20) + rd(hole, 20) + #{ n =
 print(r[1], r[60], #full, #half, #hole)
 "#,
     },
+    Prog {
+        name: "alimit_guard",
+        small: true,
+        src: include_str!("../../../../tests/vm/tables_18_alimit_guard.lua"),
+    },
 ];

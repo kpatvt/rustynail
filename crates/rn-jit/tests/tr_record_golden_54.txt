@@ -65,36 +65,40 @@ writeback=[0=%9 1=%7 3=%16 4=%15 6=%16 7=%8 8=%5]
 0007     FLOAD  u32   %4
 0008     ADD    int   %2 #-2
 0009 >   ULT    i64   %8 %7  S2
-0010     ATOUCH nil   %4 %8
-0011     FLOAD  p64   %4 1
-0012     AREF   p64   %11 %8
-0013 >   ALOAD  num   %12 -  S2 bits=0xADDR
-0014 >   SLOAD  num   slot2  S3 bits=0xADDR
-0015     FMUL   num   %13 %14
-0016 >   SLOAD  num   slot3  S4 bits=0xADDR
-0017     FADD   num   %15 %16
-0018     FLOAD  p64   %4 2
-0019 >   EQ     i64   %18 #0  S5
-0020     FLOAD  u32   %4
-0021 >   ULT    i64   %3 %20  S5
-0022     ATOUCH nil   %4 %3
-0023     FLOAD  p64   %4 1
-0024     AREF   p64   %23 %3
-0025     ASTORE i64   %24 %17
-0026 >   SLOAD  int   slot6  S6 bits=0xADDR
-0027 >   SLOAD  int   slot5  S6 bits=0xADDR
-0028 >   SLOAD  int   slot4  S6 bits=0xADDR
-0029 >   NE     i64   %27 #0  S6
-0030 >   EQ     i64   %26 #1  S6
-0031     ADD    int   %27 #-1
-0032     ADD    int   %28 #1
+0010     FLOAD  u32   %4 3
+0011     BAND   i64   %10 #128
+0012 >   EQ     i64   %11 #0  S2
+0013     FLOAD  p64   %4 1
+0014     AREF   p64   %13 %8
+0015 >   ALOAD  num   %14 -  S2 bits=0xADDR
+0016 >   SLOAD  num   slot2  S3 bits=0xADDR
+0017     FMUL   num   %15 %16
+0018 >   SLOAD  num   slot3  S4 bits=0xADDR
+0019     FADD   num   %17 %18
+0020     FLOAD  p64   %4 2
+0021 >   EQ     i64   %20 #0  S5
+0022     FLOAD  u32   %4
+0023 >   ULT    i64   %3 %22  S5
+0024     FLOAD  u32   %4 3
+0025     BAND   i64   %24 #128
+0026 >   EQ     i64   %25 #0  S5
+0027     FLOAD  p64   %4 1
+0028     AREF   p64   %27 %3
+0029     ASTORE i64   %28 %19
+0030 >   SLOAD  int   slot6  S6 bits=0xADDR
+0031 >   SLOAD  int   slot5  S6 bits=0xADDR
+0032 >   SLOAD  int   slot4  S6 bits=0xADDR
+0033 >   NE     i64   %31 #0  S6
+0034 >   EQ     i64   %30 #1  S6
+0035     ADD    int   %31 #-1
+0036     ADD    int   %32 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=6 []
 S2 pc=8 frame=0 [8=%3]
-S3 pc=9 frame=0 [8=%13]
-S4 pc=11 frame=0 [8=%15]
-S5 pc=13 frame=0 [8=%17]
-S6 pc=14 frame=0 [8=%17]
+S3 pc=9 frame=0 [8=%15]
+S4 pc=11 frame=0 [8=%17]
+S5 pc=13 frame=0 [8=%19]
+S6 pc=14 frame=0 [8=%19]
 S0 land=Pre step=0
 S1 land=Pre step=0
 S2 land=Mid step=1
@@ -104,7 +108,7 @@ S5 land=Mid step=4
 S6 land=Mid step=5
 counts=[6] extent=9 depth=0 head=6 loop_at=None n=6
 path=[6, 8, 9, 11, 13, 14]
-writeback=[4=%32 5=%31 7=%32 8=%17]
+writeback=[4=%36 5=%35 7=%36 8=%19]
 === upval_acc
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   5  S0
@@ -120,30 +124,32 @@ writeback=[4=%32 5=%31 7=%32 8=%17]
 0011     FLOAD  u32   %7
 0012     ADD    int   %8 #-1
 0013 >   ULT    i64   %12 %11  S2
-0014     ATOUCH nil   %7 %12
-0015     FLOAD  p64   %7 1
-0016     AREF   p64   %15 %12
-0017 >   ALOAD  int   %16 -  S2 bits=0xADDR
-0018     ADD    int   %6 %17
-0019     USTORE i64   %3 %18
-0020 >   SLOAD  int   slot4  S3 bits=0xADDR
-0021 >   SLOAD  int   slot3  S3 bits=0xADDR
-0022 >   SLOAD  int   slot2  S3 bits=0xADDR
-0023 >   NE     i64   %21 #0  S3
-0024 >   EQ     i64   %20 #1  S3
-0025     ADD    int   %21 #-1
-0026     ADD    int   %22 #1
+0014     FLOAD  u32   %7 3
+0015     BAND   i64   %14 #128
+0016 >   EQ     i64   %15 #0  S2
+0017     FLOAD  p64   %7 1
+0018     AREF   p64   %17 %12
+0019 >   ALOAD  int   %18 -  S2 bits=0xADDR
+0020     ADD    int   %6 %19
+0021     USTORE i64   %3 %20
+0022 >   SLOAD  int   slot4  S3 bits=0xADDR
+0023 >   SLOAD  int   slot3  S3 bits=0xADDR
+0024 >   SLOAD  int   slot2  S3 bits=0xADDR
+0025 >   NE     i64   %23 #0  S3
+0026 >   EQ     i64   %22 #1  S3
+0027     ADD    int   %23 #-1
+0028     ADD    int   %24 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=5 []
 S2 pc=7 frame=0 [6=%6]
-S3 pc=11 frame=0 [6=%18 7=%17]
+S3 pc=11 frame=0 [6=%20 7=%19]
 S0 land=Pre step=0
 S1 land=Pre step=0
 S2 land=Mid step=1
 S3 land=Mid step=4
 counts=[5] extent=8 depth=0 head=6 loop_at=None n=5
 path=[6, 7, 8, 10, 11]
-writeback=[2=%26 3=%25 5=%26 6=%18 7=%17]
+writeback=[2=%28 3=%27 5=%28 6=%20 7=%19]
 === branches
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   6  S0
@@ -225,42 +231,48 @@ writeback=[0=%5 2=%3]
 0007     FLOAD  u32   %4
 0008     ADD    int   %2 #-2
 0009 >   ULT    i64   %8 %7  S2
-0010     ATOUCH nil   %4 %8
-0011     FLOAD  p64   %4 1
-0012     AREF   p64   %11 %8
-0013 >   ALOAD  int   %12 -  S2 bits=0xADDR
-0014     FLOAD  p64   %4 2
-0015 >   EQ     i64   %14 #0  S3
-0016     FLOAD  u32   %4
-0017     ADD    int   %2 #-3
-0018 >   ULT    i64   %17 %16  S3
-0019     ATOUCH nil   %4 %17
-0020     FLOAD  p64   %4 1
-0021     AREF   p64   %20 %17
-0022 >   ALOAD  int   %21 -  S3 bits=0xADDR
-0023     ADD    int   %13 %22
-0024     BAND   int   %23 #16777215
-0025     FLOAD  p64   %4 2
-0026 >   EQ     i64   %25 #0  S4
-0027     FLOAD  u32   %4
-0028 >   ULT    i64   %3 %27  S4
-0029     ATOUCH nil   %4 %3
-0030     FLOAD  p64   %4 1
-0031     AREF   p64   %30 %3
-0032     ASTORE i64   %31 %24
-0033 >   SLOAD  int   slot4  S5 bits=0xADDR
-0034 >   SLOAD  int   slot3  S5 bits=0xADDR
-0035 >   SLOAD  int   slot2  S5 bits=0xADDR
-0036 >   NE     i64   %34 #0  S5
-0037 >   EQ     i64   %33 #1  S5
-0038     ADD    int   %34 #-1
-0039     ADD    int   %35 #1
+0010     FLOAD  u32   %4 3
+0011     BAND   i64   %10 #128
+0012 >   EQ     i64   %11 #0  S2
+0013     FLOAD  p64   %4 1
+0014     AREF   p64   %13 %8
+0015 >   ALOAD  int   %14 -  S2 bits=0xADDR
+0016     FLOAD  p64   %4 2
+0017 >   EQ     i64   %16 #0  S3
+0018     FLOAD  u32   %4
+0019     ADD    int   %2 #-3
+0020 >   ULT    i64   %19 %18  S3
+0021     FLOAD  u32   %4 3
+0022     BAND   i64   %21 #128
+0023 >   EQ     i64   %22 #0  S3
+0024     FLOAD  p64   %4 1
+0025     AREF   p64   %24 %19
+0026 >   ALOAD  int   %25 -  S3 bits=0xADDR
+0027     ADD    int   %15 %26
+0028     BAND   int   %27 #16777215
+0029     FLOAD  p64   %4 2
+0030 >   EQ     i64   %29 #0  S4
+0031     FLOAD  u32   %4
+0032 >   ULT    i64   %3 %31  S4
+0033     FLOAD  u32   %4 3
+0034     BAND   i64   %33 #128
+0035 >   EQ     i64   %34 #0  S4
+0036     FLOAD  p64   %4 1
+0037     AREF   p64   %36 %3
+0038     ASTORE i64   %37 %28
+0039 >   SLOAD  int   slot4  S5 bits=0xADDR
+0040 >   SLOAD  int   slot3  S5 bits=0xADDR
+0041 >   SLOAD  int   slot2  S5 bits=0xADDR
+0042 >   NE     i64   %40 #0  S5
+0043 >   EQ     i64   %39 #1  S5
+0044     ADD    int   %40 #-1
+0045     ADD    int   %41 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=8 []
 S2 pc=8 frame=0 [6=%3]
-S3 pc=11 frame=0 [6=%13 7=%8]
-S4 pc=16 frame=0 [6=%24 7=%22]
-S5 pc=17 frame=0 [6=%24 7=%22]
+S3 pc=11 frame=0 [6=%15 7=%8]
+S4 pc=16 frame=0 [6=%28 7=%26]
+S5 pc=17 frame=0 [6=%28 7=%26]
 S0 land=Pre step=0
 S1 land=Pre step=0
 S2 land=Mid step=1
@@ -269,7 +281,7 @@ S4 land=Mid step=6
 S5 land=Mid step=7
 counts=[8] extent=8 depth=0 head=6 loop_at=None n=8
 path=[6, 8, 9, 11, 12, 14, 16, 17]
-writeback=[2=%39 3=%38 5=%39 6=%24 7=%22]
+writeback=[2=%45 3=%44 5=%45 6=%28 7=%26]
 === mixed_arith
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   11  S0
@@ -446,39 +458,45 @@ writeback=[0=%4 2=%11 3=%10 5=%11]
 0005 >   EQ     i64   %4 #0  S1
 0006     FLOAD  u32   %2
 0007 >   ULT    i64   #0 %6  S1
-0008     ATOUCH nil   %2 #0
-0009     FLOAD  p64   %2 1
-0010     AREF   p64   %9 #0
-0011     ASTORE i64   %10 %3
-0012     FLOAD  p64   %2 2
-0013 >   EQ     i64   %12 #0  S2
-0014     FLOAD  u32   %2
-0015 >   ULT    i64   #1 %14  S2
-0016     ATOUCH nil   %2 #1
-0017     FLOAD  p64   %2 1
-0018     AREF   p64   %17 #1
-0019 >   ALOAD  int   %18 -  S2 bits=0xADDR
-0020     ADD    int   %3 %19
-0021     FLOAD  p64   %2 2
-0022 >   EQ     i64   %21 #0  S3
-0023     FLOAD  u32   %2
-0024 >   ULT    i64   #2 %23  S3
-0025     ATOUCH nil   %2 #2
-0026     FLOAD  p64   %2 1
-0027     AREF   p64   %26 #2
-0028     ASTORE i64   %27 %20
-0029 >   SLOAD  int   slot4  S4 bits=0xADDR
-0030 >   SLOAD  int   slot3  S4 bits=0xADDR
-0031 >   SLOAD  int   slot2  S4 bits=0xADDR
-0032 >   NE     i64   %30 #0  S4
-0033 >   EQ     i64   %29 #1  S4
-0034     ADD    int   %30 #-1
-0035     ADD    int   %31 #1
+0008     FLOAD  u32   %2 3
+0009     BAND   i64   %8 #128
+0010 >   EQ     i64   %9 #0  S1
+0011     FLOAD  p64   %2 1
+0012     AREF   p64   %11 #0
+0013     ASTORE i64   %12 %3
+0014     FLOAD  p64   %2 2
+0015 >   EQ     i64   %14 #0  S2
+0016     FLOAD  u32   %2
+0017 >   ULT    i64   #1 %16  S2
+0018     FLOAD  u32   %2 3
+0019     BAND   i64   %18 #128
+0020 >   EQ     i64   %19 #0  S2
+0021     FLOAD  p64   %2 1
+0022     AREF   p64   %21 #1
+0023 >   ALOAD  int   %22 -  S2 bits=0xADDR
+0024     ADD    int   %3 %23
+0025     FLOAD  p64   %2 2
+0026 >   EQ     i64   %25 #0  S3
+0027     FLOAD  u32   %2
+0028 >   ULT    i64   #2 %27  S3
+0029     FLOAD  u32   %2 3
+0030     BAND   i64   %29 #128
+0031 >   EQ     i64   %30 #0  S3
+0032     FLOAD  p64   %2 1
+0033     AREF   p64   %32 #2
+0034     ASTORE i64   %33 %24
+0035 >   SLOAD  int   slot4  S4 bits=0xADDR
+0036 >   SLOAD  int   slot3  S4 bits=0xADDR
+0037 >   SLOAD  int   slot2  S4 bits=0xADDR
+0038 >   NE     i64   %36 #0  S4
+0039 >   EQ     i64   %35 #1  S4
+0040     ADD    int   %36 #-1
+0041     ADD    int   %37 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=5 []
 S2 pc=7 frame=0 []
-S3 pc=10 frame=0 [6=%20]
-S4 pc=11 frame=0 [6=%20]
+S3 pc=10 frame=0 [6=%24]
+S4 pc=11 frame=0 [6=%24]
 S0 land=Pre step=0
 S1 land=Pre step=0
 S2 land=Mid step=1
@@ -486,7 +504,7 @@ S3 land=Mid step=3
 S4 land=Mid step=4
 counts=[5] extent=7 depth=0 head=6 loop_at=None n=5
 path=[6, 7, 8, 10, 11]
-writeback=[2=%35 3=%34 5=%35 6=%20]
+writeback=[2=%41 3=%40 5=%41 6=%24]
 === upval_rw
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   4  S0
@@ -579,24 +597,26 @@ writeback=[0=%5 2=%12 3=%11 5=%12 6=%2]
 0009     FLOAD  u32   %5
 0010     ADD    int   %6 #-1
 0011 >   ULT    i64   %10 %9  S2
-0012     ATOUCH nil   %5 %10
-0013     FLOAD  p64   %5 1
-0014     AREF   p64   %13 %10
-0015 >   ALOAD  int   %14 -  S2 bits=0xADDR
-0016 >   SLOAD  int   slot2  S3 bits=0xADDR
-0017     ADD    int   %15 %16
-0018 >   SLOAD  int   slot5  S4 bits=0xADDR
-0019 >   SLOAD  int   slot4  S4 bits=0xADDR
-0020 >   SLOAD  int   slot3  S4 bits=0xADDR
-0021 >   NE     i64   %19 #0  S4
-0022 >   EQ     i64   %18 #1  S4
-0023     ADD    int   %19 #-1
-0024     ADD    int   %20 #1
+0012     FLOAD  u32   %5 3
+0013     BAND   i64   %12 #128
+0014 >   EQ     i64   %13 #0  S2
+0015     FLOAD  p64   %5 1
+0016     AREF   p64   %15 %10
+0017 >   ALOAD  int   %16 -  S2 bits=0xADDR
+0018 >   SLOAD  int   slot2  S3 bits=0xADDR
+0019     ADD    int   %17 %18
+0020 >   SLOAD  int   slot5  S4 bits=0xADDR
+0021 >   SLOAD  int   slot4  S4 bits=0xADDR
+0022 >   SLOAD  int   slot3  S4 bits=0xADDR
+0023 >   NE     i64   %21 #0  S4
+0024 >   EQ     i64   %20 #1  S4
+0025     ADD    int   %21 #-1
+0026     ADD    int   %22 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=4 []
 S2 pc=8 frame=0 [7=%4]
-S3 pc=9 frame=0 [7=%4 8=%15]
-S4 pc=11 frame=0 [2=%17 7=%4 8=%15]
+S3 pc=9 frame=0 [7=%4 8=%17]
+S4 pc=11 frame=0 [2=%19 7=%4 8=%17]
 S0 land=Pre step=0
 S1 land=Pre step=0
 S2 land=Mid step=1
@@ -604,7 +624,7 @@ S3 land=Mid step=2
 S4 land=Mid step=3
 counts=[4] extent=9 depth=0 head=6 loop_at=None n=4
 path=[6, 8, 9, 11]
-writeback=[2=%17 3=%24 4=%23 6=%24 7=%4 8=%15]
+writeback=[2=%19 3=%26 4=%25 6=%26 7=%4 8=%17]
 === unary_ops
 0000 >   POLL   i64    S0
 0001 >   BUDGET i64   10  S0
@@ -1161,59 +1181,69 @@ writeback=[1=%32 2=%39 3=%38 5=%39 6=%25 7=%31]
 0004 >   EQ     i64   %3 #0  S1
 0005     FLOAD  u32   %2
 0006 >   ULT    i64   #0 %5  S1
-0007     ATOUCH nil   %2 #0
-0008     FLOAD  p64   %2 1
-0009     AREF   p64   %8 #0
-0010 >   ALOAD  tab   %9 -  S1 bits=0xADDR
-0011 >   SLOAD  int   slot5  S2 bits=0xADDR
-0012     FLOAD  p64   %10 2
-0013 >   EQ     i64   %12 #0  S2
-0014     FLOAD  u32   %10
-0015     ADD    int   %11 #-1
-0016 >   ULT    i64   %15 %14  S2
-0017     ATOUCH nil   %10 %15
-0018     FLOAD  p64   %10 1
-0019     AREF   p64   %18 %15
-0020 >   ALOAD  int   %19 -  S2 bits=0xADDR
-0021     FLOAD  p64   %2 2
-0022 >   EQ     i64   %21 #0  S3
-0023     FLOAD  u32   %2
-0024 >   ULT    i64   #1 %23  S3
-0025     ATOUCH nil   %2 #1
-0026     FLOAD  p64   %2 1
-0027     AREF   p64   %26 #1
-0028 >   ALOAD  tab   %27 -  S3 bits=0xADDR
-0029     FLOAD  p64   %28 2
-0030 >   EQ     i64   %29 #0  S4
-0031     FLOAD  u32   %28
-0032 >   ULT    i64   %15 %31  S4
-0033     ATOUCH nil   %28 %15
-0034     FLOAD  p64   %28 1
-0035     AREF   p64   %34 %15
-0036 >   ALOAD  int   %35 -  S4 bits=0xADDR
-0037     ADD    int   %20 %36
-0038     FLOAD  p64   %10 2
-0039 >   EQ     i64   %38 #0  S5
-0040     FLOAD  u32   %10
-0041 >   ULT    i64   %15 %40  S5
-0042     ATOUCH nil   %10 %15
-0043     FLOAD  p64   %10 1
-0044     AREF   p64   %43 %15
-0045     ASTORE i64   %44 %37
-0046 >   SLOAD  int   slot4  S6 bits=0xADDR
-0047 >   SLOAD  int   slot3  S6 bits=0xADDR
-0048 >   SLOAD  int   slot2  S6 bits=0xADDR
-0049 >   NE     i64   %47 #0  S6
-0050 >   EQ     i64   %46 #1  S6
-0051     ADD    int   %47 #-1
-0052     ADD    int   %48 #1
+0007     FLOAD  u32   %2 3
+0008     BAND   i64   %7 #128
+0009 >   EQ     i64   %8 #0  S1
+0010     FLOAD  p64   %2 1
+0011     AREF   p64   %10 #0
+0012 >   ALOAD  tab   %11 -  S1 bits=0xADDR
+0013 >   SLOAD  int   slot5  S2 bits=0xADDR
+0014     FLOAD  p64   %12 2
+0015 >   EQ     i64   %14 #0  S2
+0016     FLOAD  u32   %12
+0017     ADD    int   %13 #-1
+0018 >   ULT    i64   %17 %16  S2
+0019     FLOAD  u32   %12 3
+0020     BAND   i64   %19 #128
+0021 >   EQ     i64   %20 #0  S2
+0022     FLOAD  p64   %12 1
+0023     AREF   p64   %22 %17
+0024 >   ALOAD  int   %23 -  S2 bits=0xADDR
+0025     FLOAD  p64   %2 2
+0026 >   EQ     i64   %25 #0  S3
+0027     FLOAD  u32   %2
+0028 >   ULT    i64   #1 %27  S3
+0029     FLOAD  u32   %2 3
+0030     BAND   i64   %29 #128
+0031 >   EQ     i64   %30 #0  S3
+0032     FLOAD  p64   %2 1
+0033     AREF   p64   %32 #1
+0034 >   ALOAD  tab   %33 -  S3 bits=0xADDR
+0035     FLOAD  p64   %34 2
+0036 >   EQ     i64   %35 #0  S4
+0037     FLOAD  u32   %34
+0038 >   ULT    i64   %17 %37  S4
+0039     FLOAD  u32   %34 3
+0040     BAND   i64   %39 #128
+0041 >   EQ     i64   %40 #0  S4
+0042     FLOAD  p64   %34 1
+0043     AREF   p64   %42 %17
+0044 >   ALOAD  int   %43 -  S4 bits=0xADDR
+0045     ADD    int   %24 %44
+0046     FLOAD  p64   %12 2
+0047 >   EQ     i64   %46 #0  S5
+0048     FLOAD  u32   %12
+0049 >   ULT    i64   %17 %48  S5
+0050     FLOAD  u32   %12 3
+0051     BAND   i64   %50 #128
+0052 >   EQ     i64   %51 #0  S5
+0053     FLOAD  p64   %12 1
+0054     AREF   p64   %53 %17
+0055     ASTORE i64   %54 %45
+0056 >   SLOAD  int   slot4  S6 bits=0xADDR
+0057 >   SLOAD  int   slot3  S6 bits=0xADDR
+0058 >   SLOAD  int   slot2  S6 bits=0xADDR
+0059 >   NE     i64   %57 #0  S6
+0060 >   EQ     i64   %56 #1  S6
+0061     ADD    int   %57 #-1
+0062     ADD    int   %58 #1
 S0 pc=6 frame=0 []
 S1 pc=6 frame=0 refund=7 []
-S2 pc=7 frame=0 [6=%10]
-S3 pc=8 frame=0 [6=%10 7=%20]
-S4 pc=9 frame=0 [6=%10 7=%20 8=%28]
-S5 pc=12 frame=0 [6=%10 7=%37 8=%36]
-S6 pc=13 frame=0 [6=%10 7=%37 8=%36]
+S2 pc=7 frame=0 [6=%12]
+S3 pc=8 frame=0 [6=%12 7=%24]
+S4 pc=9 frame=0 [6=%12 7=%24 8=%34]
+S5 pc=12 frame=0 [6=%12 7=%45 8=%44]
+S6 pc=13 frame=0 [6=%12 7=%45 8=%44]
 S0 land=Pre step=0
 S1 land=Pre step=0
 S2 land=Mid step=1
@@ -1223,4 +1253,4 @@ S5 land=Mid step=5
 S6 land=Mid step=6
 counts=[7] extent=9 depth=0 head=6 loop_at=None n=7
 path=[6, 7, 8, 9, 10, 12, 13]
-writeback=[2=%52 3=%51 5=%52 6=%10 7=%37 8=%36]
+writeback=[2=%62 3=%61 5=%62 6=%12 7=%45 8=%44]

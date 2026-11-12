@@ -431,6 +431,7 @@ pub fn abort_name(r: AbortReason) -> &'static str {
         AbortReason::Cap => "Cap",
         AbortReason::SideUntraced => "SideUntraced",
         AbortReason::RetfAlias => "RetfAlias",
+        AbortReason::AtouchFlip => "AtouchFlip",
         AbortReason::SideShort => "SideShort",
         AbortReason::AllocStorm => "AllocStorm",
     }

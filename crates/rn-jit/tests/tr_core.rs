@@ -7319,6 +7319,36 @@ fn tlen_inline_programs() {
     }
 }
 
+/// 5.4 (C63): array accesses of a table whose `BITRAS` bit is clear are recorded as a guard on the flag byte instead of an `ATOUCH`; loops on
+/// tables with and without the bit, a loop whose own `#t` / `table.remove` sets it mid-recording (the recording is dropped and redone with
+/// plain touches), in every trace mode against the interpreter. On 5.5 the program is an ordinary array workload.
+#[test]
+fn alimit_guard_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("alimit_guard", trace).opts("+verify"));
+        jobs.push(Job::new("alimit_guard", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("alimit_guard", trace).opts("+exitstorm=7 +verify +randra=5"));
+        jobs.push(Job::new("alimit_guard", trace).budget(17));
+        jobs.push(Job::new("alimit_guard", trace).opts("-loop"));
+        jobs.push(Job::new("alimit_guard", trace).opts("-fwd -cse -loop -sink"));
+        jobs.push(Job::new("alimit_guard", trace).opts("+emurun +verify"));
+        jobs.push(Job::new("alimit_guard", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+    }
+    jobs.push(Job::new("alimit_guard", "t1"));
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// F1: the folds and intrinsics of F1 (`x ^ 2` as a product, `math.sin` / `cos` / `exp` / `log`, `math.min` / `math.max` of three or more
 /// arguments, `string.len` / `s:len()`) and the carried `next` index (`pairs` / `next` order, assigning nil to existing fields, stale hints,
 /// nested and interleaved traversals, errors) in every trace mode against the interpreter. Detector of the

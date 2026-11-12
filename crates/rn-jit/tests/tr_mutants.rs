@@ -425,6 +425,12 @@ const TABLE: &[Row] = &[
         owner: "F7a",
         dets: &[dl("tr_core", "mutant_probe_live_programs")],
     },
+    // C63: the `BITRAS`-clear guard that replaces an `ATOUCH` is not emitted
+    Row {
+        name: "atouch_guard_skip",
+        owner: "C63",
+        dets: &[d("tr_core", "alimit_guard_programs")],
+    },
     Row {
         name: "forloop54_no_ctl_copy",
         owner: "F7a",
@@ -3511,6 +3517,7 @@ const TABLE: &[Row] = &[
 const V54_ONLY: &[&str] = &[
     "atouch_skip",
     "atouch_hoisted",
+    "atouch_guard_skip",
     "forloop54_no_ctl_copy",
     "alimit_touch",
     "tfor54_no_ctl_copy",

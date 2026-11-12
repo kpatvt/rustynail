@@ -137,6 +137,9 @@ pub enum AbortReason {
     Hook,
     /// N3a (RETF): an upvalue store into the region below the root frame was recorded before a `RETF` (the caller's slots would be stale).
     RetfAlias,
+    /// 5.4: a table whose array accesses were guarded `BITRAS`-clear had the bit set by the recorded path itself (a loop would exit at
+    /// every second iteration); the head is re-recorded with plain `ATOUCH`s.
+    AtouchFlip,
     /// An instruction raised.
     Error,
     /// A callback from an unexpected frame or thread (validation, TR23.5).
@@ -579,6 +582,8 @@ pub enum RecOutcome {
 }
 
 thread_local! {
+    /// 5.4: heads (entry proto, pc) whose recording ended in [`AbortReason::AtouchFlip`]: recorded with plain `ATOUCH`s from then on.
+    static NOATG: RefCell<std::collections::HashSet<(usize, u32)>> = RefCell::new(std::collections::HashSet::new());
     static REC: RefCell<Option<Box<Rec>>> = const { RefCell::new(None) };
     static OUT: RefCell<Option<(u64, RecOutcome)>> = const { RefCell::new(None) };
 }
@@ -711,7 +716,12 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
         }
         Ok(Flow::Closed(done)) => {
             st.heap().unwatch_all();
-            finish_with(token, RecOutcome::Closed(done));
+            if rec.atg_flipped() {
+                NOATG.with(|n| n.borrow_mut().insert((rec.entry_proto, rec.head)));
+                finish_with(token, RecOutcome::Aborted(AbortReason::AtouchFlip));
+            } else {
+                finish_with(token, RecOutcome::Closed(done));
+            }
             RecStep::Leave
         }
         Err(why) => {
@@ -1053,6 +1063,15 @@ struct Rec {
     cur_pc: u32,
     cur_op: u8,
     cur_snap: Option<u32>,
+    /// Length of the IR when the instruction being recorded began (5.4: the BITRAS guard of an array access looks for table-length
+    /// ops emitted since).
+    insn_ir_start: usize,
+    /// 5.4: the tables (their `tabs` index) whose array accesses were recorded as `BITRAS`-clear guards, and whether the guard form is
+    /// allowed for this head (see [`AbortReason::AtouchFlip`]).
+    #[cfg_attr(not(rustynail_lua54), allow(dead_code))]
+    atg_tabs: Vec<usize>,
+    #[cfg_attr(not(rustynail_lua54), allow(dead_code))]
+    atg_ok: bool,
     /// P-O: the inlined protected call whose body is being recorded (see [`PcallCtx`]).
     pcall: Option<PcallCtx>,
     // the lockstep model
@@ -1321,6 +1340,9 @@ impl Rec {
             cur_pc: 0,
             cur_op: 0,
             cur_snap: None,
+            insn_ir_start: 0,
+            atg_tabs: Vec::new(),
+            atg_ok: !NOATG.with(|n| n.borrow().contains(&(proto, head))),
             pcall: None,
             model: Model::new(),
             reg: HashMap::default(),
@@ -1855,6 +1877,7 @@ impl Rec {
         }
         // P-O: inside an inlined protected call every guard uses the snapshot of the call
         self.cur_snap = self.pcall.as_ref().and_then(|c| c.snap);
+        self.insn_ir_start = self.b.ir.ins.len();
         if !self.segs.is_empty() && (self.cfg.retf & 8 != 0 || retf_stop) {
             // N2c (test mode `retf` bit 3): the first instruction of the caller after the pop. The recording ends here with the stitching exit (the caller's
             // body is not recorded yet): the snapshot is the state in the caller's frame, segment 1
@@ -3724,6 +3747,16 @@ impl Rec {
         Ok(observed)
     }
 
+    /// 5.4: did a table with `BITRAS`-clear array guards get the bit set while recording (by a `luaH_getn` of the recorded path)?
+    fn atg_flipped(&self) -> bool {
+        #[cfg(not(rustynail_lua54))]
+        return false;
+        #[cfg(rustynail_lua54)]
+        self.atg_tabs
+            .iter()
+            .any(|&h| self.tabs[h].flags() & rn_core::table::BITRAS != 0)
+    }
+
     /// `FLOAD t field`.
     fn fload(&mut self, t: Ref, f: Field, ty: Ty) -> R<Ref> {
         self.ins(TOp::Fload, ty, t, f as Ref)
@@ -3766,8 +3799,36 @@ impl Rec {
             // TR30: every integer-key array access performs `alimit_touch` right after its bounds guard (like the
             // interpreter's `luaH_getint` and `templates_table.rs`). It is an effect of the instruction: no entry
             // guard may move past it (`first_store`), and the optimiser never merges or hoists it.
-            self.first_store.get_or_insert(self.b.ir.ins.len());
-            self.ins(TOp::Atouch, Ty::Nil, t, idx0)?;
+            #[cfg(rustynail_lua54)]
+            if tbl.flags() & rn_core::table::BITRAS == 0
+                && self.atg_ok
+                && self.b.ir.ins[self.insn_ir_start..]
+                    .iter()
+                    .all(|i| super::opt_mem::header_safe(i.op))
+            {
+                // `alimit_touch` does nothing while `BITRAS` is clear: guard that instead (a pure op: the loop optimiser
+                // merges and hoists it, the optimiser's header-field forwarding kills it at every `TLEN` / call that may
+                // run `luaH_getn`). A set bit at run time exits before the access, in the interpreter's state.
+                let h = self.reg[&(tbl.as_ptr() as usize)] as usize - 1;
+                if !self.atg_tabs.contains(&h) {
+                    self.atg_tabs.push(h);
+                }
+                if !mutants::active("atouch_guard_skip") {
+                    let fl = self.fload(t, Field::Flags, Ty::U32)?;
+                    let bit = self.kint(i64::from(rn_core::table::BITRAS));
+                    let masked = self.ins(TOp::Band, Ty::I64, fl, bit)?;
+                    let z = self.kint(0);
+                    self.guard(TOp::Eq, Ty::I64, masked, z, 0)?;
+                }
+            } else {
+                self.first_store.get_or_insert(self.b.ir.ins.len());
+                self.ins(TOp::Atouch, Ty::Nil, t, idx0)?;
+            }
+            #[cfg(not(rustynail_lua54))]
+            {
+                self.first_store.get_or_insert(self.b.ir.ins.len());
+                self.ins(TOp::Atouch, Ty::Nil, t, idx0)?;
+            }
         }
         let arr = self.fload(t, Field::Array, Ty::P64)?;
         self.ins(TOp::Aref, Ty::P64, arr, idx0)
@@ -6239,7 +6300,7 @@ impl Rec {
             || self.cfg.retfmax == 0
             || self.segs.len() > self.cfg.retfmax as usize
         {
-            return NO; // (5.4: `nresults` is a field of its own and the CIST bits differ: not wired)
+            return NO; // (5.4: wired and measured in C63, not kept: `programs/heapsort` +11.6 % instructions, see docs/JIT_PARKED.md)
         }
         if self.pcall.is_some() || self.cur_depth != 0 || vm.cl.proto().is_vararg() {
             return NO;
