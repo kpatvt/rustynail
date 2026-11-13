@@ -4952,9 +4952,11 @@ Knob `libcall` (`RUSTYNAIL_JIT_TRACE_LIMITS=libcall=N`, struct default = process
   Not in the default of BUNDLE-H (`lib/rep` +18 % instructions, docs/PERF.md "BUNDLE-H"); ON since BUNDLE-R (bit 4 fixes the class exits, see "BUNDLE-R").
 Correctness notes: the order of effects equals the interpreter's (the helper runs once per call, a failed guard happens before any state change except `RANDF`/`RANDOM`, whose guard is spared by the exit storm); embedded zeros, high bytes, the empty string and negative counts are in `bh_lib` and the helper tests.
 
-**H2 `tnextinl`** (`TrLimits::tnextinl`, `RUSTYNAIL_JIT_TRACE_LIMITS=tnextinl=N`, struct default = process default `TNEXTINL_PROCESS` = 1, clamp 1; `opt_mem::HDR_TNEXT` = bit 8 of the `level` passed to `header_safe_ins`, set in `driver_start` / `driver_start_side`): bit 0 makes `TOp::Tnext` header-safe
+**H2 `tnextinl`** (`TrLimits::tnextinl`, `RUSTYNAIL_JIT_TRACE_LIMITS=tnextinl=N`, struct default = process default `TNEXTINL_PROCESS` = 1, clamp 1 (3 since BUNDLE-M); `opt_mem::HDR_TNEXT` = bit 8 of the `level` passed to `header_safe_ins`, set in `driver_start` / `driver_start_side`): bit 0 makes `TOp::Tnext` header-safe
 (`pairs` / `next` loops peel). Tests `tr_core::{bh_next_matrix, bh_tnext_peels}` (`bh_next`: arrays, hash parts, mixed and empty tables, nil assigned to / values overwritten in existing fields during the traversal, later fields removed, the table growing between runs,
 `__pairs`, float / boolean / negative keys, nested traversals, errors, `next` by hand), `tr_policy::bh_tnextinl_process_default`, jit-diff set `bh` (template `tr$id` of `gen.lua`); mutants `tnext_hdr_never` (the knob is ignored), `tnextinl_default_ignored`; registry 511 to 513.
+
+**BUNDLE-M `tnextinl` bit 1** (process default `TNEXTINL_PROCESS` = 3, clamp 3; `AsmEnv::tnext_inline` / `next_hint_cell`, `Asm::tnext_fast`): the inline traversal step, see docs/PERF.md "BUNDLE-M M1". Same result convention as the helper (the pseudo node `args[1..4]`), helper = the slow path. Mutants (registry 627 -> 634): `tnext_inl_nonpos_skip`, `_arr_bound_skip`, `_array_end_skip`, `_key_tag_skip`, `_key_payload_skip`, `_node_empty_skip`, `_spill_skip`; detector `tr_core::bm_next_programs`.
 
 
 ## BUNDLE-J: lazy PUC hash of short strings (`LAZY_HASH`, rn-core) and C-entered function roots (`centry`) (2026-11-09; `string.rs`, `heap.rs`, `table.rs`, `gc/mod.rs`; `rn-jit` `rt.rs` `hot_call`, `tr/cache.rs`, `tr/mod.rs`; tests `tr_hashd`, `tr_core::centry_*`, `tr_policy::bj_centry_process_default`; registry 513 to 525)

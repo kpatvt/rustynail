@@ -170,6 +170,10 @@ pub struct AsmEnv {
     pub frame_link_snap: u32,
     /// A1: `setmetatable(t, mt)` (`LIB` kind `SETMT`) stores the metatable inline when nothing needs the helper (see `Asm::setmt_fast`).
     pub setmt_inline: bool,
+    /// BUNDLE-M (`tnextinl` bit 1): `TNEXT` scans the array part and the hash part inline from the control key (the helper is the slow path).
+    pub tnext_inline: bool,
+    /// BUNDLE-M: address of the heap's traversal hint (`Heap::next_hint`, a `u32`), read by the inline `TNEXT` of a hash-part control key.
+    pub next_hint_cell: u64,
     /// B2: scaled array addressing (`b2arr`).
     pub b2_arr: bool,
     /// B2: skip the node tag store when the tag is known (`b2tag`).
@@ -287,6 +291,8 @@ impl Default for AsmEnv {
             root_code: 0,
             frame_link_snap: u32::MAX,
             setmt_inline: false,
+            tnext_inline: false,
+            next_hint_cell: 0,
             b2_arr: false,
             b2_tag: false,
             b2_hk: false,
@@ -5656,6 +5662,12 @@ impl Cx<'_> {
             && self.env.alloc == jit_tr_alloc as *const () as usize as u64
         {
             self.tlen_fast(&ops, d)
+        } else if ins.op == TOp::Tnext
+            && self.env.tnext_inline
+            && self.env.next_hint_cell != 0
+            && self.env.alloc == jit_tr_alloc as *const () as usize as u64
+        {
+            self.tnext_fast(&ops, d, &site, self.ir.ty_of(ins.b))
         } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::SETMT && self.env.setmt_inline {
             self.setmt_fast(&ops, d)
         } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::CCALLS && self.env.ccalls_inline {
@@ -6024,6 +6036,230 @@ impl Cx<'_> {
         self.push(Op::Bind(slow_r));
         if let Some(m) = spilled {
             self.ld(r, W::B8, m);
+        }
+        self.push(Op::Bind(slow));
+        Some(done)
+    }
+
+    /// BUNDLE-M (`tnextinl` bit 1): the inline form of the traversal step `TNEXT` (`TableRef::next_hinted`, the helper `tnext_entry` does the same). The pseudo node
+    /// the following `HLOAD`s read is the helper's: value payload at `args[1]`, value tag byte and key tag byte at `args[2]`, key payload at `args[3]`; the result
+    /// is its address. A control key `nil` starts at array slot 0; an integer in `1..=asize` continues the array scan after its own slot; every other
+    /// control key must be the key of the node the heap's traversal hint names (tag byte and payload equal, hint above the array part, node inside the
+    /// node vector) and continues with the next node. The array scan that runs out continues with node 0, the node scan that runs out answers
+    /// `nil` (the key tag 0 fails the key guard that follows). Everything else (an integer key in the hash part without the hint, a stale or
+    /// wrong hint, a key that is not in the table: the interpreter raises) takes the helper call, the slow path. The hint is moved exactly where the helper
+    /// moves it (a hash entry is returned). Three scratch registers besides `V7` are taken from those that are neither operand nor destination; the live ones
+    /// are stored to (and reloaded from) their slot of the exit area, which the helper's own `save_live` uses only after this sequence.
+    #[cold]
+    #[inline(never)]
+    fn tnext_fast(&mut self, ops: &[Loc], d: V, site: &CallSite, ct: Ty) -> Option<L> {
+        let Loc::G(t) = ops[0] else {
+            return None;
+        };
+        let cp = match (ct, ops[1]) {
+            (Ty::Nil, _) => None,
+            (_, Loc::G(c)) => Some(c),
+            _ => return None,
+        };
+        let tag = tag_of(ct)?;
+        let free = |r: &V| *r != t && Some(*r) != cp && *r != d;
+        let live = |r: V| site.live.gpr >> r & 1 != 0 || self.env.budget_reg == Some(r);
+        let mut cands: Vec<V> = (0..7u8).filter(free).collect();
+        cands.sort_by_key(|&r| live(r));
+        let (e0, e1, e2) = match cands[..] {
+            [a, b, c, ..] => (a, b, c),
+            _ => return None,
+        };
+        let spills: Vec<V> = [e0, e1, e2].into_iter().filter(|&r| live(r)).collect();
+        let (slow, slow_r, done, arr, aloop, afound, hash, hstart, hloop, hfound, hend, fin) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
+        let gm = |r: V| area_m(exit_area::GPR + 8 * usize::from(r));
+        for &r in &spills {
+            self.st(W::B8, gm(r), Src::V(r));
+        }
+        let masks = super::ir::DYN_MASKS.as_ptr() as u64;
+        let hint = self.env.next_hint_cell;
+        let ap = table::ARRAY_TAG_BASE as i32;
+        let ak = i32::from(LUA_VNUMINT) << 8;
+        let mask_of_node_count = |s: &mut Self, dst: V| {
+            s.ld(7, W::B1, rm(t, table::LSIZENODE as i32));
+            s.push(Op::Mov(dst, masks));
+            s.push(Op::LdI {
+                dst,
+                w: W::B4,
+                m: Mi {
+                    base: dst,
+                    idx: 7,
+                    scale: 4,
+                    off: 0,
+                },
+            });
+        };
+        // ---- entry
+        match cp {
+            None => {
+                self.ld(e2, W::B4, rm(t, table::ASIZE as i32));
+                self.push(Op::Mov(e0, 0));
+            }
+            Some(c) if ct == Ty::Int => {
+                self.ld(e2, W::B4, rm(t, table::ASIZE as i32));
+                self.push(Op::MovR(e0, c));
+                if !mutants::active("tnext_inl_nonpos_skip") {
+                    self.br(Cc::Le, e0, Src::Imm(0), hash);
+                }
+                if !mutants::active("tnext_inl_arr_bound_skip") {
+                    self.br(Cc::Gt, e0, Src::V(e2), hash);
+                }
+            }
+            Some(_) => self.push(Op::Jmp(hash)),
+        }
+        // ---- array scan: e0 = the next slot (0-based), e1 = the array, e2 = asize
+        self.push(Op::Bind(arr));
+        self.ld(e1, W::B8, rm(t, table::ARRAY as i32));
+        self.push(Op::Bind(aloop));
+        let aend = if mutants::active("tnext_inl_array_end_skip") {
+            hend
+        } else {
+            hstart
+        };
+        self.br(Cc::Uge, e0, Src::V(e2), aend);
+        let tagm = Mi {
+            base: e1,
+            idx: e0,
+            scale: 1,
+            off: ap,
+        };
+        self.push(Op::LdI {
+            dst: 7,
+            w: W::B1,
+            m: tagm,
+        });
+        self.push(Op::And(7, Src::Imm(0x0F)));
+        self.br(Cc::Ne, 7, Src::Imm(0), afound);
+        self.push(Op::Add(e0, Src::Imm(1)));
+        self.push(Op::Jmp(aloop));
+        // ---- found in the array: key = slot + 1, the value's tag byte and payload
+        self.push(Op::Bind(afound));
+        self.push(Op::LdI {
+            dst: 7,
+            w: W::B1,
+            m: tagm,
+        });
+        self.push(Op::Or(7, Src::Imm(ak)));
+        self.st(W::B8, area_m(exit_area::ARGS + 16), Src::V(7));
+        self.push(Op::Add(e0, Src::Imm(1)));
+        self.st(W::B8, area_m(exit_area::ARGS + 24), Src::V(e0));
+        self.push(Op::Neg(e0));
+        self.push(Op::LdI {
+            dst: 7,
+            w: W::B8,
+            m: Mi {
+                base: e1,
+                idx: e0,
+                scale: 8,
+                off: 0,
+            },
+        });
+        self.st(W::B8, area_m(exit_area::ARGS + 8), Src::V(7));
+        self.push(Op::Jmp(fin));
+        // ---- a hash-part control key: it must be the node of the hint
+        self.push(Op::Bind(hash));
+        if let Some(c) = cp {
+            self.ld(e2, W::B4, rm(t, table::ASIZE as i32));
+            self.push(Op::Mov(7, hint));
+            self.ld(e0, W::B4, rm(7, 0));
+            self.br(Cc::Le, e0, Src::V(e2), slow_r);
+            self.push(Op::Sub(e0, Src::V(e2))); // e0 = j + 1
+            mask_of_node_count(self, e2);
+            self.push(Op::MovR(7, e0));
+            self.push(Op::Sub(7, Src::Imm(1)));
+            self.br(Cc::Gt, 7, Src::V(e2), slow_r);
+            self.ld(e1, W::B8, rm(t, table::NODE as i32));
+            self.push(Op::Mul(7, Src::Imm(node::SIZE as i32)));
+            self.push(Op::Add(7, Src::V(e1)));
+            if !mutants::active("tnext_inl_key_tag_skip") {
+                self.push(Op::BrM {
+                    cc: Cc::Ne,
+                    w: W::B1,
+                    m: rm(7, node::KEY_TT as i32),
+                    imm: i32::from(tag as i8),
+                    to: slow_r,
+                });
+            }
+            if !mutants::active("tnext_inl_key_payload_skip") {
+                self.push(Op::BrMR {
+                    cc: Cc::Ne,
+                    m: rm(7, node::KEY as i32),
+                    src: c,
+                    to: slow_r,
+                });
+            }
+            self.push(Op::MovR(e1, 7));
+            self.push(Op::Add(e1, Src::Imm(node::SIZE as i32)));
+            self.push(Op::Jmp(hloop));
+        }
+        // ---- node scan from node 0 (the array scan ran out): e0 = 0, e2 = the last index
+        self.push(Op::Bind(hstart));
+        self.push(Op::Mov(e0, 0));
+        mask_of_node_count(self, e2);
+        self.ld(e1, W::B8, rm(t, table::NODE as i32));
+        // e0 = node index, e1 = its address, e2 = the last index
+        self.push(Op::Bind(hloop));
+        self.br(Cc::Gt, e0, Src::V(e2), hend);
+        self.ld(7, W::B1, rm(e1, node::VAL_TT as i32));
+        self.push(Op::And(7, Src::Imm(0x0F)));
+        if mutants::active("tnext_inl_node_empty_skip") {
+            self.push(Op::Jmp(hfound));
+        }
+        self.br(Cc::Ne, 7, Src::Imm(0), hfound);
+        self.push(Op::Add(e0, Src::Imm(1)));
+        self.push(Op::Add(e1, Src::Imm(node::SIZE as i32)));
+        self.push(Op::Jmp(hloop));
+        self.push(Op::Bind(hfound));
+        self.ld(e2, W::B1, rm(e1, node::VAL_TT as i32));
+        self.ld(7, W::B1, rm(e1, node::KEY_TT as i32));
+        self.push(Op::ShlI(7, 8));
+        self.push(Op::Or(7, Src::V(e2)));
+        self.st(W::B8, area_m(exit_area::ARGS + 16), Src::V(7));
+        self.ld(7, W::B8, rm(e1, node::KEY as i32));
+        self.st(W::B8, area_m(exit_area::ARGS + 24), Src::V(7));
+        self.ld(7, W::B8, rm(e1, node::VAL as i32));
+        self.st(W::B8, area_m(exit_area::ARGS + 8), Src::V(7));
+        // the hint: asize + j + 1
+        self.ld(e2, W::B4, rm(t, table::ASIZE as i32));
+        self.push(Op::Add(e2, Src::V(e0)));
+        self.push(Op::Add(e2, Src::Imm(1)));
+        self.push(Op::Mov(7, hint));
+        self.st(W::B4, rm(7, 0), Src::V(e2));
+        self.push(Op::Jmp(fin));
+        // ---- the end of the traversal: nil
+        self.push(Op::Bind(hend));
+        for k in 1..4 {
+            self.st(W::B8, area_m(exit_area::ARGS + 8 * k), Src::Imm(0));
+        }
+        self.push(Op::Bind(fin));
+        self.push(Op::Lea(d, area_m(exit_area::ARGS + 8)));
+        if !mutants::active("tnext_inl_spill_skip") {
+            for &r in &spills {
+                self.ld(r, W::B8, gm(r));
+            }
+        }
+        self.push(Op::Jmp(done));
+        self.push(Op::Bind(slow_r));
+        for &r in &spills {
+            self.ld(r, W::B8, gm(r));
         }
         self.push(Op::Bind(slow));
         Some(done)

@@ -590,6 +590,14 @@ pub const NAMES: &[&str] = &[
     // P2 bundle 2: `uvsep`
     "uvsep_no_guard",
     "uvsep_first_guard_only",
+    // BUNDLE-M: the inline traversal step (`tnextinl` bit 1)
+    "tnext_inl_nonpos_skip",
+    "tnext_inl_arr_bound_skip",
+    "tnext_inl_array_end_skip",
+    "tnext_inl_key_tag_skip",
+    "tnext_inl_key_payload_skip",
+    "tnext_inl_node_empty_skip",
+    "tnext_inl_spill_skip",
     // BUNDLE-L: `cloreuse`
     "cloreuse_guard_skip",
     "cleanup_third_dead",
@@ -824,7 +832,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 627);
+        assert_eq!(NAMES.len(), 634);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -1670,6 +1670,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             .filter(|s| s.frame_link)
             .map_or(u32::MAX, |s| s.link_snap),
         setmt_inline: true,
+        // SAFETY: as below.
+        tnext_inline: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.tnextinl } & 2 != 0,
+        next_hint_cell: std::ptr::addr_of_mut!(st.heap().next_hint) as u64,
         b2_arr: true,
         b2_tag: true,
         b2_hk: true,

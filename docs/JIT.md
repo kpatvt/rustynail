@@ -464,7 +464,7 @@ are ignored with a warning at `RUSTYNAIL_JIT_VERBOSE>=1`.
 | `retf` | 3 | 0-15 | BUNDLE-N (RETF, docs/JIT_PARKED.md C38): frame-leaving side traces. |
 | `retfmax` | 1 | 0-8 | BUNDLE-N: root `RETURN`s a recording may turn into `RETF` |
 | `upbar` | 1 | 0-1 | BUNDLE-V V2: record upvalue stores of collectable values |
-| `tnextinl` | 1 | 0-1 | BUNDLE-H: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel) |
+| `tnextinl` | 3 | 0-3 | BUNDLE-H / BUNDLE-M: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel; bit 1: the step itself is inline code, the helper is the slow path) |
 | `centry` | 2 | 0-2 | BUNDLE-J: C-entered function roots. |
 | `centrymin` | 60 | 0-100000 | BUNDLE-J: a C-entered function root whose trace has fewer IR instructions than this is not entered from C |
 | `centrywait` | 8 | 0-1000 | BUNDLE-J: hot events from C before a registered function is entered |

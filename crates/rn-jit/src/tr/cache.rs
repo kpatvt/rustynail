@@ -236,7 +236,7 @@ pub const CENTRY_WAIT: u32 = 8;
 /// BUNDLE-J (`centry`): process default of [`TrLimits::centry`] (0 = off, 1 = on, 2 = also without the entry back-off).
 pub const CENTRY_PROCESS: u32 = 2;
 /// BUNDLE-H (`tnextinl`): process default of [`TrLimits::tnextinl`] (bit 0 = `TNEXT` is header-safe: the loops of `pairs` / `next` peel).
-pub const TNEXTINL_PROCESS: u32 = 1;
+pub const TNEXTINL_PROCESS: u32 = 3;
 /// BUNDLE-1: process default of [`TrLimits::hdrlib`].
 pub const HDRLIB_PROCESS: u32 = 2;
 
@@ -807,7 +807,7 @@ impl TrLimits {
                 "retf" => l.retf = v.min(15),
                 "retfmax" => l.retfmax = v.min(8),
                 "upbar" => l.upbar = v.min(1),
-                "tnextinl" => l.tnextinl = v.min(1),
+                "tnextinl" => l.tnextinl = v.min(3),
                 "centry" => l.centry = v.min(2),
                 "centrymin" => l.centrymin = v.min(100_000),
                 "centrywait" => l.centrywait = v.min(1000),

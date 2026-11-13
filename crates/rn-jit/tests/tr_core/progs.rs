@@ -13106,6 +13106,73 @@ print(table.concat(out, "\n"))
 "####,
     },
     Prog {
+        name: "bm_next",
+        small: true,
+        src: r####"
+-- BUNDLE-M `tnextinl` bit 1 (inline traversal step): every control-key shape the inline scan distinguishes: nil / array index / hash key with the
+-- right hint / hash key with a stale hint (another table traversed in between, nested traversals, a rehash) / integer keys in the hash part / keys
+-- of every type / the end of the array with and without a hash part / holes / the dummy node / `next` called by hand with a key that is not in the table.
+local out = {}
+local function P(...) local t = table.pack(...) for i = 1, t.n do t[i] = tostring(t[i]) end out[#out + 1] = table.concat(t, ",") end
+local function walk(t) local c, ks, vs = 0, 0, 0 for k, v in pairs(t) do c = c + 1 if type(k) == "number" then ks = ks + k end if type(v) == "number" then vs = vs + v end end return c, ks, vs end
+-- arrays: dense, with holes in the middle / at the ends, the last slot empty, one element
+local dense, holes, tail, one, head = {}, {}, {}, { 7 }, {}
+for i = 1, 33 do dense[i] = i end
+for i = 1, 33 do holes[i] = i end for i = 2, 33, 3 do holes[i] = nil end
+for i = 1, 20 do tail[i] = i end tail[20] = nil tail[19] = nil
+for i = 1, 16 do head[i] = i end head[1] = nil head[2] = nil
+-- hash-only: strings, integer keys far from the array, negative / zero keys, floats, booleans, tables as keys
+local sparse, strs, keys, wide = { [100] = 1, [200] = 2, [-5] = 3, [0] = 4, [1000000] = 5 }, {}, { [1.5] = 1, [true] = 2, [false] = 3, [-2.5] = 4, [2^40 + 0.5] = 5, [2^53] = 6 }, {}
+for i = 1, 30 do strs["s" .. i] = i end
+for i = 1, 24 do wide[i * 1000] = i end
+-- array part plus integer keys in the hash part plus strings
+local mixed = { 1, 2, 3, nil, 5, [10] = 10, [11] = 11, a = 1, b = 2, [-1] = 3 }
+local mixed2 = {} for i = 1, 8 do mixed2[i] = i mixed2["x" .. i] = i * 2 mixed2[i + 100] = i * 3 end
+local all = { dense, holes, tail, one, head, sparse, strs, keys, wide, mixed, mixed2, {}, { n = 1 } }
+local function rounds(n) local a, b, c = 0, 0, 0 for i = 1, n do local x, y, z = walk(all[i % #all + 1]) a = a + x b = b + y c = c + z end return a, b, c end
+P(rounds(3000))
+-- two tables walked in lockstep: the hint belongs to the other table on every step
+local function lock(t1, t2, n) local c = 0 for i = 1, n do local k1, k2 = nil, nil local v1, v2 while true do k1, v1 = next(t1, k1) k2, v2 = next(t2, k2) if k1 == nil and k2 == nil then break end c = c + (k1 and 1 or 0) + (k2 and 100 or 0) end end return c end
+P(lock(strs, wide, 200)) P(lock(mixed2, strs, 200)) P(lock(dense, keys, 200)) P(lock(sparse, holes, 200))
+-- nested traversals of the same table
+local function nest(t, n) local c = 0 for i = 1, n do for k in pairs(t) do for k2 in pairs(t) do c = c + 1 end end end return c end
+P(nest(mixed2, 20)) P(nest(strs, 10))
+-- clearing the table while walking it (the control key stays as a dead key), and refilling it
+local function clear(n) local total = 0 for i = 1, n do local t = {} for j = 1, 9 do t[j] = j t["k" .. j] = j t[j * 50] = j end local c = 0 for k, v in pairs(t) do t[k] = nil c = c + v end for k in pairs(t) do c = c + 1000 end total = total + c end return total end
+P(clear(300))
+-- a rehash between traversals changes the node vector (the hint may name a node of a longer vector)
+local grow = {}
+local function g(n) local c = 0 for i = 1, n do grow["g" .. i] = i grow[i * 7] = i if i % 5 == 0 then grow["g" .. (i - 3)] = nil end for k, v in pairs(grow) do c = c + 1 end end return c end
+P(g(150))
+-- the traversal stopped half way (the hint names a node), then another traversal starts with nil and with a key
+local function half(t, n) local c = 0 for i = 1, n do local k = next(t) k = next(t, k) k = next(t, k) c = c + (k and 1 or 0) for k2, v2 in pairs(t) do c = c + 1 end end return c end
+P(half(strs, 100)) P(half(mixed2, 100)) P(half(dense, 100))
+-- keys of different types in one loop (the control key type changes: the inline scan is specialised for the type it saw)
+local function polykey(n) local c = 0 for i = 1, n do for k, v in pairs(i % 2 == 0 and keys or strs) do c = c + 1 end end return c end
+P(polykey(200))
+-- next by hand with a key that is not in the table: the interpreter raises, in the middle of a hot loop
+P(pcall(function() local t = { 1, 2, 3, a = 1 } local c = 0 for i = 1, 400 do c = c + (next(t, i < 390 and 2 or "nokey") or 0) end return c end))
+P(pcall(function() local t = { a = 1, b = 2 } local c = 0 for i = 1, 400 do c = c + select("#", next(t, i < 390 and "a" or 12345)) end return c end))
+-- a key that was deleted and collected between two steps is an error only when it is not found
+P(pcall(function() local t = { a = 1, b = 2, c = 3, d = 4 } local k = next(t) t[k] = nil collectgarbage() return next(t, k) ~= nil end))
+-- the end of the array reached with a populated hash part and with the dummy node
+local function ends(n) local c = 0 for i = 1, n do for k, v in pairs({ 1, 2, 3 }) do c = c + k end for k, v in pairs({ 1, 2, 3, x = 4 }) do c = c + v end for k, v in pairs({ x = 4 }) do c = c + v end end return c end
+P(ends(500))
+-- values of every type pass through the pseudo node unchanged
+local vals = { 1, 2.5, "s", true, false, {}, print, function() end, [10] = 3.25, v = "str", w = false, z = true }
+local function types(n) local acc = {} for i = 1, n do for k, v in pairs(vals) do acc[type(v)] = (acc[type(v)] or 0) + 1 end end return acc.number, acc.string, acc.boolean, acc.table, acc["function"] end
+P(types(400))
+-- the traversal hint names the node of the last key returned, of whichever table: a control key that is not the key of that node (another tag with
+-- the same payload bits, another payload) must not continue from it: the last round raises "invalid key to 'next'"
+local K, f = 0x3FE0000000000000, string.unpack("<d", string.pack("<i8", 0x3FE0000000000000))
+local t1 = { x = 1 }
+local ta, tb, tc = { [K] = 1 }, { [f] = 1 }, { [K + 1] = 1 }
+local function hintcheck(other, n) local ts = { ta, other } local c = 0 for i = 1, n do local tt = ts[1 + i // n] next(t1) local k = next(tt, K) c = c + (k and 1 or 0) end return c end
+P(pcall(hintcheck, tb, 600)) P(pcall(hintcheck, tc, 600))
+print(table.concat(out, "\n"))
+"####,
+    },
+    Prog {
         name: "bh_next_hot",
         small: true,
         src: r####"

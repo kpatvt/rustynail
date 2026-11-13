@@ -8278,6 +8278,63 @@ fn bh_next_matrix() {
     .is_empty());
 }
 
+/// BUNDLE-M `tnextinl` bit 1 (the inline traversal step): `bh_next` and `bm_next` (every control-key shape: nil, array index, hash key with the
+/// hint, stale hint, integer keys in the hash part, errors) with the inline step on and off, in every trace mode, `+emurun`, the collector stressed.
+/// Mutants `tnext_inl_*`.
+#[test]
+fn bm_next_matrix() {
+    for prog in ["bh_next", "bm_next"] {
+        assert!(!compare(ba_jobs(
+            prog,
+            &["tnextinl=3", "tnextinl=1", "tnextinl=3,libcall=7"]
+        ))
+        .is_empty());
+    }
+}
+
+/// BUNDLE-M: the detector of the mutants `tnext_inl_*` (`bm_next` and `bh_next` in the modes that run the traversal on a trace, the inline step on).
+#[test]
+fn bm_next_programs() {
+    let mut jobs = Vec::new();
+    for prog in ["bm_next", "bh_next"] {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(prog, trace).opts("+verify").limits_s("tnextinl=3"));
+            jobs.push(Job::new(prog, trace).limits_s("tnextinl=3"));
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s("tnextinl=3"),
+            );
+            jobs.push(
+                Job::new(prog, trace)
+                    .opts("+emurun +verify")
+                    .limits_s("tnextinl=3"),
+            );
+            jobs.push(Job::new(prog, trace).limits_s("tnextinl=3").budget(17));
+        }
+    }
+    assert!(!compare(jobs).is_empty());
+}
+
+/// BUNDLE-M: a hot `pairs` loop runs the inline traversal step (fewer instructions than with the helper: the loop must not exit).
+#[test]
+fn bm_tnext_inline_runs() {
+    let mk = |l: &str| {
+        Job::new("bh_next_hot", "always")
+            .opts("+verify")
+            .limits_s(l)
+    };
+    let r = run_all(vec![mk("tnextinl=3"), mk("tnextinl=1")]);
+    assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
+    assert_eq!(r[0].1.result, r[1].1.result);
+    assert!(
+        r[0].1.stats.entered >= 1 && r[0].1.stats.exits <= r[1].1.stats.exits + 2,
+        "inline {} helper {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
+}
+
 /// BUNDLE-H: with `tnextinl` the loop around a traversal is peeled (a loop trace), without it it is rolled. Mutant `tnext_hdr_never`.
 #[test]
 fn bh_tnext_peels() {

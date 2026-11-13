@@ -2809,6 +2809,41 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_loop", "uvsep_forwards_over_distinct_upvalue_stores")],
     },
     Row {
+        name: "tnext_inl_nonpos_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
+        name: "tnext_inl_arr_bound_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
+        name: "tnext_inl_array_end_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
+        name: "tnext_inl_key_tag_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
+        name: "tnext_inl_key_payload_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
+        name: "tnext_inl_node_empty_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
+        name: "tnext_inl_spill_skip",
+        owner: "BUNDLE-M",
+        dets: &[d("tr_core", "bm_next_programs")],
+    },
+    Row {
         name: "cloreuse_guard_skip",
         owner: "BUNDLE-L",
         dets: &[d("tr_core", "cloreuse_programs")],

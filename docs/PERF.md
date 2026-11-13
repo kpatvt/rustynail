@@ -1818,6 +1818,27 @@ The remaining ~135 instructions per element are the protocol around the helper (
 **Not built:** the inline scan (array part and hash part in generated code from the carried hint, fast path for empty tables): it needs the pseudo-node result cell protocol of `TNEXT` (`ExitArea.args[1..4]` read by the `HLOAD`s that follow) replaced by register results,
 the array tag array and node layout in `asm.rs`, and a hint-mismatch fallback that re-enters the helper; estimated 1-2 bundles. Retest/next step: docs/JIT_PARKED.md C50.
 
+### BUNDLE-M M1: inline `TNEXT` step (`tnextinl` bit 1; process default **3**)
+
+Mechanism (`Asm::tnext_fast`, tr/asm.rs): the traversal step of a trace scans inline and writes the same pseudo node (`args[1..4]`) the helper wrote, so the `HLOAD`s that follow, the register allocation, the lockstep and the sink / escape passes are untouched.
+Control key `nil`: array scan from slot 0. Integer in `1..=asize`: array scan after its own slot. Any other control key (hash part): it must be the key of the node the heap's traversal hint names (key tag byte and payload equal, hint above the array part, node index inside the node vector, the
+`DYN_MASKS` table gives the index mask) and the node scan continues with the next node. The array scan that runs out continues with node 0; the node scan that runs out answers `nil`. Anything else (an integer key in the hash part without the hint, a stale hint, a key not in the table: the
+interpreter raises) takes the helper call (slow path), whose arguments and live-register protocol are unchanged. The hint is written where `next_hinted` writes it. Scratch: three registers that are neither operand nor destination; the live ones are stored to / reloaded from their own slot of the
+exit area (which the helper path's `save_live` uses only after the sequence). 5.4 needs nothing special: `next` uses the real `asize` (never `alimit`), and the array tag / payload layout is the same.
+
+| program (min of 5, `RUSTYNAIL_SEED=0`, plain release) | instructions M (before -> after) | cycles M (CPU 4, min of 5, other builders loading the machine) |
+|---|---|---|
+| lib/it_pairs | 1364 -> 561 (0.411) | 292 -> 86 (0.296) |
+| lib/it_pairs_hash | 1314 -> 732 (0.558) | 438 -> 208 (0.475) |
+| lib/it_next | 660 -> 270 (0.410) | 210 -> 83 (0.396) |
+| lib/it_next_empty | 813 -> 350 (0.431) | 238 -> 97 (0.410) |
+| jit-trace/tfor_loops | 0.61 | 932 -> 444 (0.477) |
+
+All 223 programs, instructions (min of 5, same script paths, base binary = main at 4063b56): geomean 0.9832, **no program above 1.005** (astar_jumper 1.005, real_dis_x86 1.001, the rest 1.000 or below). Gate: passed.
+Tests: `tr_core::{bm_next_matrix, bm_next_programs, bm_tnext_inline_runs}` (`bm_next`: every control-key shape, stale hints from other tables, nested and lockstep walks, integer keys in the hash part, deleted keys, errors raised in a hot loop,
+a float key with the bit pattern of an integer control key and a same-tag different-payload key against a hint that names the wrong node), `bh_next` with the knob on; mutants `tnext_inl_{nonpos_skip,arr_bound_skip,array_end_skip,key_tag_skip,key_payload_skip,node_empty_skip,spill_skip}` (registry 627 -> 634), all caught by `bm_next_programs`.
+(A mutant that skips the array-slot emptiness test was tried and removed: the value-type guard behind the step exits on the empty slot, so it is equivalent.)
+
 ### BUNDLE-H final gate (both shipped knobs together, `libcall=7,tnextinl=1` vs `0,0`, one binary, 223 programs, 5 runs)
 
 ALL **0.9816 cycles / 0.9800 instructions** (`dup` 1.0001 / 1.0000). By set (cycles / instructions): lib 0.9591 / 0.9600, real 0.9597 / 0.9617, corpus 0.9886 / 0.9879, corpus2 dev 0.9985 / 0.9979, real_dis 0.9929 / 0.9924, apps 1.0004 / 1.0000, awfy 1.0005 / 0.9995,

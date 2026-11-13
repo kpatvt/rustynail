@@ -1332,7 +1332,7 @@ fn n3a_child_room_is_translated_by_the_segment() {
     );
 }
 
-/// BUNDLE-H: the process default of `tnextinl` (`TNEXTINL_PROCESS`); an explicit value wins and is clamped to 1.
+/// BUNDLE-H: the process default of `tnextinl` (`TNEXTINL_PROCESS`); an explicit value wins and is clamped to 3.
 #[test]
 fn bh_tnextinl_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, TNEXTINL_PROCESS};
@@ -1346,7 +1346,8 @@ fn bh_tnextinl_process_default() {
         (Some(""), d),
         (Some("tnextinl=0"), 0),
         (Some("maxside=9,tnextinl=1"), 1),
-        (Some("tnextinl=5"), 1),
+        (Some("tnextinl=5"), 3),
+        (Some("tnextinl=2"), 2),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
