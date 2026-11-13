@@ -2850,16 +2850,24 @@ fn pb_ops_record_their_guards() {
         );
     };
     let ir = ir_of("local s = 'hello world' local function f(n) local a = 0 ARM() for i = 1, n do local x = s:sub(2, 4) a = a + #x + s:byte(3) + #string.char(65 + i % 26) + #tostring(i) + #type(a) + #math.type(a) end return a end return f(30)");
-    for k in [
-        lib::SUB,
-        lib::BYTE,
-        lib::CHAR,
-        lib::TOSTR,
-        lib::TYPE,
-        lib::TYPENAME,
-    ] {
+    for k in [lib::SUB, lib::BYTE, lib::CHAR, lib::TOSTR, lib::TYPE] {
         lib_followed_by_ne(&ir, k);
     }
+    // `math.type` returns one of the heap's fixed strings, embedded as a constant: no helper call
+    assert!(
+        !ir.ins
+            .iter()
+            .any(|i| i.op == TOp::Lib && i.aux & 0xFF == lib::TYPENAME),
+        "math.type still calls the TYPENAME helper\n{}",
+        dump(&ir)
+    );
+    assert!(
+        ir.ins
+            .iter()
+            .any(|i| i.op == TOp::Kptr && i.t == Ty::ShrStr),
+        "no constant result string of math.type\n{}",
+        dump(&ir)
+    );
     // P-V: `s:method` is no helper call any more: the string metatable is a constant (`KPTR` of type table) behind guarded `HREFK` loads
     assert!(
         !ir.ins

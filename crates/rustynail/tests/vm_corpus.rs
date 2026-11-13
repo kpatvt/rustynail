@@ -114,6 +114,9 @@ fn run_ours(file: &Path, stress: u8, inc: bool, secs: u64) -> Outcome {
     let mut cmd = Command::new(ours_bin());
     cmd.arg(file.file_name().unwrap())
         .current_dir(file.parent().unwrap());
+    // the reference is the seed-0 build: pin our string-hash seed too (programs such as `tables_15_alimit_big_moves` print values that
+    // depend on it, in the reference as well; a random seed made the comparison flaky)
+    cmd.env("RUSTYNAIL_SEED", "0");
     if inc {
         cmd.env("RUSTYNAIL_GC_MODE", "inc"); // the CLI defaults to generational mode
     }

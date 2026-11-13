@@ -239,34 +239,55 @@ fn lib_helpers_exit_exactly_when_a_step_would_be_due() {
         let mut st = state();
         let case = mk(&mut st);
         let bytes = interpreter_bytes(&case.want);
-        assert!(bytes > 0, "case {k}");
         let total = st.heap().total_bytes();
-        for thr in [total + bytes - 1, total + bytes, total, 0] {
-            st.heap().gc_set_threshold(thr);
-            assert_eq!(
-                call(&mut st, case.x, case.args),
-                0,
-                "case {k} threshold {thr}: must exit"
-            );
+        // a result that is one of the heap's fixed strings ("integer", "float": `math.type`) allocates nothing and has no collector check (the recorder
+        // embeds the string as a constant): found at every threshold
+        let r = if bytes == 0 {
+            assert!(!case.long, "case {k}");
+            let mut first = 0;
+            for thr in [total + 1, total, 0] {
+                st.heap().gc_set_threshold(thr);
+                let r = call(&mut st, case.x, case.args);
+                assert_ne!(r, 0, "case {k} threshold {thr}: a fixed string is found");
+                assert_eq!(
+                    st.heap().total_bytes(),
+                    total,
+                    "case {k}: nothing allocated"
+                );
+                assert_eq!(text(r, case.long), case.want, "case {k}: contents");
+                assert!(first == 0 || first == r, "case {k}: the same object");
+                first = r;
+            }
+            continue;
+        } else {
+            for thr in [total + bytes - 1, total + bytes, total, 0] {
+                st.heap().gc_set_threshold(thr);
+                assert_eq!(
+                    call(&mut st, case.x, case.args),
+                    0,
+                    "case {k} threshold {thr}: must exit"
+                );
+                assert_eq!(
+                    st.heap().total_bytes(),
+                    total,
+                    "case {k}: the exit allocated"
+                );
+            }
+            st.heap().gc_set_threshold(total + bytes + 1);
+            let r = call(&mut st, case.x, case.args);
+            assert_ne!(r, 0, "case {k}: must allocate");
             assert_eq!(
                 st.heap().total_bytes(),
-                total,
-                "case {k}: the exit allocated"
+                total + bytes,
+                "case {k}: accounting"
             );
-        }
-        st.heap().gc_set_threshold(total + bytes + 1);
-        let r = call(&mut st, case.x, case.args);
-        assert_ne!(r, 0, "case {k}: must allocate");
-        assert_eq!(
-            st.heap().total_bytes(),
-            total + bytes,
-            "case {k}: accounting"
-        );
-        assert_eq!(text(r, case.long), case.want, "case {k}: contents");
-        assert!(
-            !st.heap().gc_due(),
-            "case {k}: the collector must stay idle"
-        );
+            assert_eq!(text(r, case.long), case.want, "case {k}: contents");
+            assert!(
+                !st.heap().gc_due(),
+                "case {k}: the collector must stay idle"
+            );
+            r
+        };
         if !case.long {
             // the interned object: a second call adds nothing, and only `total < threshold` matters
             let total = st.heap().total_bytes();
