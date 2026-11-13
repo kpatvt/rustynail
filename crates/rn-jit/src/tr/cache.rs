@@ -1994,6 +1994,8 @@ pub struct TrStats {
     pub ncallee_heads: u64,
     /// C36: persistent entry failures repaired by allocating spare `CallInfo` nodes (`cispare`).
     pub ci_repaired: u64,
+    /// CP1: native entries (push / return) whose TR6b check found no spare `CallInfo` and was repaired in place (`jit_tr_ci_spare`).
+    pub rec_ci_added: u64,
     /// `loopany` guard (`laprune`): side traces flushed alone (the root stayed).
     pub la_pruned: u64,
     /// `loopany` guard: guard firings that flushed the whole family.
@@ -5741,6 +5743,35 @@ pub unsafe extern "C" fn jit_tr_entry_fail(
         d.tr.in_handler -= 1;
     }
     0
+}
+
+/// CP1: `jit_tr_ci_spare(thread, ci, depth, 0) -> 1 | 0`: the `CallH` target of the TR6b repair of a frame entered natively (a push or a native
+/// return): makes sure `depth` `CallInfo` nodes follow the running frame, as a flat call would have (`luaE_extendCI`). 0 = allocation failure
+/// (the trace then continues in tier 1 as before). No Lua code runs, nothing is collected, no trace metadata is touched.
+///
+/// # Safety
+/// Called only from compiled code with the running thread and its current Lua frame (`thread.ci`).
+pub unsafe extern "C" fn jit_tr_ci_spare(
+    th: *mut Thread,
+    _ci: *mut CallInfo,
+    depth: u32,
+    _b: u32,
+) -> u32 {
+    // SAFETY: as in `jit_tr_hot`.
+    let mut st = unsafe { jit_hooks::state_from_thread(th.cast()) };
+    let mut n = depth as usize;
+    if mutants::active("recci_short") {
+        n = n.saturating_sub(1);
+    }
+    match st.ensure_spare_ci(n) {
+        Some(added) => {
+            if added > 0 {
+                d_of(&mut st).tr.stats.rec_ci_added += 1;
+            }
+            1
+        }
+        None => 0,
+    }
 }
 
 /// C36 (`cispare`): the entry-failure threshold of head `pc` was reached; when the installed trace needs spare `CallInfo` nodes (`TR6b`, `meta.depth`) and the

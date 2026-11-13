@@ -355,6 +355,7 @@ struct EmuTrace {
     exit_fn: u64,
     calln_fn: u64,
     entry_fail_fn: u64,
+    ci_spare_fn: u64,
 }
 
 /// The entry state of the trace that runs natively under `+emuverify`.
@@ -1632,6 +1633,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         head,
         head_pc: pc,
         entry_fail_fn: cache::jit_tr_entry_fail as *const () as usize as u64,
+        ci_spare_fn: cache::jit_tr_ci_spare as *const () as usize as u64,
         calln: asm::jit_tr_calln as *const () as usize as u64,
         barrier: asm::jit_tr_barrier as *const () as usize as u64,
         alloc: asm::jit_tr_alloc as *const () as usize as u64,
@@ -1874,6 +1876,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             exit_fn: env.exit_handler,
             calln_fn: env.calln,
             entry_fail_fn: env.entry_fail_fn,
+            ci_spare_fn: env.ci_spare_fn,
         };
         let key = (crate::rt::data_ptr(st) as usize, newid.slot);
         EMU.with(|e| e.borrow_mut().insert(key, Rc::new(t)));
@@ -2151,7 +2154,7 @@ impl Helpers for VerifyHelpers<'_> {
             area.args[0] = VERIFY_SENTINEL;
         } else if f == self.t.calln_fn {
             area.args[0] = asm::calln_core(a, area.args[0], area.args[1]);
-        } else if f == self.t.entry_fail_fn {
+        } else if f == self.t.entry_fail_fn || f == self.t.ci_spare_fn {
             // the head counters are restored by the caller
         } else {
             panic!("emuverify: unexpected helper {f:#x}");

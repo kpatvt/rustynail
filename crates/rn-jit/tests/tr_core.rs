@@ -489,6 +489,8 @@ struct TStats {
     la_self: u64,
     /// C36: entry failures repaired by `cispare` / roots re-recorded by `domtop` / heads given a second chance / identical re-records installed by `second`.
     ci_repaired: u64,
+    /// CP1: native entries repaired in place (spare `CallInfo`).
+    rec_ci_added: u64,
     dom_flushes: u64,
     /// P3: chain re-orders / checks (`chainre`), heads re-recorded without entry callee guards (`ncallee`).
     chain_flushes: u64,
@@ -589,6 +591,8 @@ impl TStats {
                 s.la_self = g("(self");
             } else if let Some(r) = l.strip_prefix("cispare: entry failures repaired ") {
                 s.ci_repaired = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("recci: native entries repaired in place ") {
+                s.rec_ci_added = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("domtop: roots re-recorded ") {
                 s.dom_flushes = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("chainre: callee chains re-ordered ") {
@@ -6010,6 +6014,33 @@ fn c36_cispare_programs() {
             "[{trace}] with cispare the trace stays: {}",
             on.line()
         );
+    }
+}
+
+/// CP1: the TR6b check of a natively entered frame repairs a missing spare `CallInfo` in place. `cp1_leaf` walks a tree whose leaves (a frame that never
+/// calls) sit at the deepest call depth, where no flat call has made the successor node: before CP1 every leaf fell to tier 1 at the inner entry
+/// (`rec_fail`). Same output in every mode; the repair counter is >= 1. Mutants `recci_never` (no repair: counter 0), `recci_short` (one node too few: the
+/// next native push uses a null `next`).
+#[test]
+fn cp1_leaf_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("cp1_leaf", trace).opts("+verify"));
+        jobs.push(Job::new("cp1_leaf", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("cp1_leaf", trace).budget(17));
+        jobs.push(Job::new("cp1_leaf", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        jobs.push(Job::new("cp1_leaf", trace).opts("+emurun +verify"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.opts == "+verify" {
+            assert!(
+                o.stats.rec_ci_added >= 1,
+                "[{}] the spare node is made in place: {}",
+                j.trace,
+                o.stats.line()
+            );
+        }
     }
 }
 

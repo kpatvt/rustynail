@@ -209,6 +209,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.ci_repaired
         );
     }
+    if s.rec_ci_added > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] recci: native entries repaired in place {}",
+            s.rec_ci_added
+        );
+    }
     if s.dom_flushes > 0 {
         let _ = writeln!(o, "[trace] domtop: roots re-recorded {}", s.dom_flushes);
     }

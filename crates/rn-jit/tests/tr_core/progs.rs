@@ -11247,6 +11247,27 @@ print(table.concat(out, "\n"))
 "##,
     },
     Prog {
+        name: "cp1_leaf",
+        small: true,
+        src: r##"
+-- CP1: a recursion with a loop (the shape of awfy permute): the leaves are frames that never call, at the deepest depth reached, where the
+-- chain of CallInfo nodes ends. The inner entry of the trace (TR6b, needed by the push at its end) finds no successor node there.
+local cnt, sum = 0, 0
+local function walk(d, k)
+  if d == 0 then
+    cnt = cnt + 1
+    sum = sum + k
+    return
+  end
+  for i = 1, 3 do walk(d - 1, k + i) end
+end
+for r = 1, 400 do walk(5, r) end
+-- a deeper tree afterwards: the chain then ends deeper than the trace has seen
+for r = 1, 40 do walk(7, r) end
+print(cnt, sum)
+"##,
+    },
+    Prog {
         name: "c36_ci",
         small: true,
         src: r##"
@@ -11358,6 +11379,8 @@ local function add(list, onl, s, gen)
     list[#list + 1] = s
   end
 end
+local function warm(n) if n == 0 then return 0 end return 1 + warm(n - 1) end
+warm(30)
 local onl, total = {}, 0
 for gen = 1, 4000 do
   local list = {}

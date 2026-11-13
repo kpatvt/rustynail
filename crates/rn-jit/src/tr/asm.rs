@@ -104,6 +104,8 @@ pub struct AsmEnv {
     pub head_pc: u32,
     /// `cache::jit_tr_entry_fail`.
     pub entry_fail_fn: u64,
+    /// `cache::jit_tr_ci_spare` (CP1: allocates the spare `CallInfo` nodes of a natively entered frame, instead of a tier-1 fall-back), or 0: none.
+    pub ci_spare_fn: u64,
     /// The pure-helper bracket target (`jit_tr_calln` or a test double).
     pub calln: u64,
     /// The write-barrier helper (`jit_tr_barrier` or a test double).
@@ -269,6 +271,7 @@ impl Default for AsmEnv {
             head: 0,
             head_pc: 0,
             entry_fail_fn: 0,
+            ci_spare_fn: 0,
             calln: 0,
             barrier: 0,
             alloc: 0,
@@ -2011,6 +2014,8 @@ struct Cx<'a> {
     /// J1-1: the fused pairs whose two guards leave through different snapshots: a failed 16-bit compare jumps to a cold
     /// disambiguator (`cmp byte [node + KEY_TT], tag; jne hrefk_exit; jmp hload_exit`), so each guard keeps its own exit (and class).
     hk_cold: Vec<HkCold>,
+    /// CP1: the out-of-line spare-`CallInfo` repairs of the TR6b checks of natively entered frames: (slow label, resume label).
+    rec_ci_cold: Vec<(L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
     bud_cold: Vec<(L, L, i32)>,
     /// J1-1: number of `HREFK`+`HLOAD` pairs fused (`Asm::hk_fused`).
@@ -2544,6 +2549,7 @@ pub fn assemble(
         ktag: Vec::new(),
         hk_fused: None,
         hk_cold: Vec::new(),
+        rec_ci_cold: Vec::new(),
         bud_cold: Vec::new(),
         hk_fused_n: 0,
         hk_split_n: 0,
@@ -2601,7 +2607,8 @@ pub fn assemble(
             // is reached by a fresh frame whose `next` may be null)
             cx.room_stack_check(rec_fail);
         } else {
-            cx.room_checks(rec_fail);
+            cx.room_stack_check(rec_fail);
+            cx.room_ci_check_rec(rec_fail);
         }
         cx.bind(past);
     }
@@ -2983,9 +2990,10 @@ impl Cx<'_> {
             // BUNDLE-F `fibdiet` bit 0: TR6a/TR6b of the new frame from the register that holds its function index (V2): the
             // reload of the `ci.func` just stored (a store-forwarding chain on the hottest path) is gone. Same value, same limit.
             self.room_stack_check_from(2, rec_fail);
-            self.room_ci_check(rec_fail);
+            self.room_ci_check_rec(rec_fail);
         } else {
-            self.room_checks(rec_fail);
+            self.room_stack_check(rec_fail);
+            self.room_ci_check_rec(rec_fail);
         }
         if self.first_flag {
             let m = spill_m(self.ext_slot(FIRST_SLOT_K));
@@ -3407,6 +3415,37 @@ impl Cx<'_> {
                 base = Base::Reg(0);
             }
         }
+    }
+
+    /// CP1: TR6b of a frame that a native push or return has just entered (eager chain only: `thread.ci` is the frame). A missing spare
+    /// node is no reason to leave the trace: the out-of-line block allocates the `depth` nodes (`jit_tr_ci_spare`, which does what a flat call
+    /// does through `luaE_extendCI`) and resumes after the check; only an allocation failure takes `fail`.
+    fn room_ci_check_rec(&mut self, fail: L) {
+        let ir = self.ir;
+        if self.env.ci_spare_fn == 0
+            || self.env.lazy
+            || mutants::active("recci_never")
+            || ir.depth == 0
+        {
+            self.room_ci_check(fail);
+            return;
+        }
+        let (slow, done) = (self.label(), self.label());
+        let mut base = Base::Ci;
+        for _ in 0..ir.depth {
+            self.push(Op::Ld {
+                dst: 0,
+                w: W::B8,
+                m: M {
+                    base,
+                    off: ci::NEXT as i32,
+                },
+            });
+            self.br(Cc::Eq, 0, Src::Imm(0), slow);
+            base = Base::Reg(0);
+        }
+        self.bind(done);
+        self.rec_ci_cold.push((slow, done));
     }
 
     fn entry_checks(&mut self, fail: L) -> Result<(), AsmError> {
@@ -7208,6 +7247,21 @@ impl Cx<'_> {
                 self.push(Op::Mov(7, self.env.pcl_h));
                 self.push(Op::JmpR(7));
             }
+        }
+        // CP1: the spare-`CallInfo` repairs (the budget register is saved around the helper, which destroys every register)
+        for (slow, done) in std::mem::take(&mut self.rec_ci_cold) {
+            self.bind(slow);
+            self.save_vb();
+            self.push(Op::CallH {
+                f: self.env.ci_spare_fn,
+                a: u32::from(self.ir.depth),
+                b: 0,
+            });
+            self.reload_vb();
+            if let Some(l) = rec_fail {
+                self.br(Cc::Eq, 0, Src::Imm(0), l);
+            }
+            self.push(Op::Jmp(done));
         }
         // J1-1: the cold disambiguators of the fused `HREFK`+`HLOAD` pairs (registers are as at the failed compare): a key tag
         // mismatch is the `HREFK` guard, otherwise the value tag was wrong

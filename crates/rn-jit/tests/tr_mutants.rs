@@ -2649,6 +2649,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "c36_cispare_programs")],
     },
     Row {
+        name: "recci_never",
+        owner: "CP1",
+        dets: &[d("tr_core", "cp1_leaf_programs")],
+    },
+    Row {
+        name: "recci_short",
+        owner: "CP1",
+        dets: &[d("tr_core", "cp1_leaf_programs")],
+    },
+    Row {
         name: "dom_never",
         owner: "C36",
         dets: &[d("tr_core", "c36_dom_programs"), dl("tr_policy", "c36_policy")],
