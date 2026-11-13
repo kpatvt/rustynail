@@ -2201,7 +2201,16 @@ local function run(name, f, ...)
   -- hook variants: the prelude hook is active for every other snippet; the snippets in between run without a hook,
   -- so that compiled code is entered (it is never entered while a hook is installed)
   RUNIDX = RUNIDX + 1
-  if HF then if RUNIDX % 2 == 0 then debug.sethook() else rehook() end end
+  -- A hooked snippet always runs in the interpreter, so what is compared there is the hook counters. A count / line event that falls
+  -- inside a finalizer is not delivered (hooks are off while a finalizer runs), so the counters depend on WHEN the collector runs
+  -- the finalizers: that is GC pacing, which differs between the modes by design (compiled code makes no CallInfo / stack-headroom
+  -- allocation for an inlined built-in call, a few dozen bytes of difference move a step, docs/RELEASE.md "Verification A3").
+  -- Hence: drain the pending finalizers with the hook off, and keep the collector stopped while the hook is on.
+  -- (the collector is restarted by the next, unhooked, snippet; the code between the snippets still runs with the hook on)
+  if HF then
+    if RUNIDX % 2 == 0 then debug.sethook(); collectgarbage("restart")
+    else collectgarbage(); collectgarbage("stop"); rehook() end
+  end
   local r = table.pack(pcall(f, ...))
   if r[1] then for i = 2, r.n do mix(r[i]) end else err(r[2]) end
   flusherrs(name)

@@ -96,6 +96,16 @@ line hook, or both (count 50-3000). The hook records the number of count events,
 (`hooks` line). Hooks are inherited by coroutines. The JIT must reproduce exact instruction counts and
 line sequences. (The reference interpreter and rnlua agree on these, validated below.)
 
+**GC pacing and the hook counters (2026-11-13).** A count / line event that falls inside a `__gc` finalizer is not delivered (hooks are off
+while a finalizer runs), so the counters of a hooked snippet depend on *when* the collector runs the finalizers. That timing differs between
+the modes by a few dozen bytes: tier 1 with the inline built-ins (`t1inline`, default on with traces) and traces do not make the real C call
+that the interpreter makes, so the call allocates no spare `CallInfo` node (96 bytes) and does not grow the stack by `LUA_MINSTACK`
+(`c0`: `local function f(v) return (math.floor(v)) end; f(1); collectgarbage()` leaves 96 bytes more in use under the interpreter; with
+`RUSTYNAIL_JIT_TRACE_LIMITS=t1inline=0` the counts are equal; this is the same effect as `cispare`, docs/JIT_TRACE_REF.md C36). Only memory accounting
+(`collectgarbage("count")`) and GC pacing are affected, both unspecified, so it is an accepted difference, not a soundness bug. The generator
+therefore drains the pending finalizers and stops the collector for every hooked snippet (`run()` in `gen.lua`): a hooked snippet runs the
+interpreter only, so no compiled-code coverage is lost. (jit-diff hook seeds 5.5 74 `tron` and 5.4 240 `tr` failed on this.)
+
 **Compiled code is never entered while a hook is installed** (JIT_DESIGN, "Hooks active"). Until T12 the prelude hook stayed
 installed for the whole program, so the `hook=count|line|both|all` runs compared the interpreter with the interpreter
 (`enters 0`); the "400 seeds `hook=all`" results quoted in JIT_TIER15.md 16.5 and above therefore tested hook *semantics* of
