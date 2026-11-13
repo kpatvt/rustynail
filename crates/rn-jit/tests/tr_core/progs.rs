@@ -13228,6 +13228,21 @@ print(table.concat(out, "\n"))
 "####,
     },
     Prog {
+        name: "bm_next_ends",
+        small: true,
+        src: r####"
+-- BUNDLE-M `tnextinl` bit 1, the end of the array part: two tables walked in lockstep with direct `next` calls, one with an array part AND a hash part
+-- (integer and string keys): the step that runs off the end of the array has to continue with the first hash node, a step that ends the traversal there
+-- drops every hash entry from the count. Long (20000 rounds) so that the trace exists for most of the run: the effect is not deterministic (when the trace
+-- starts varies from run to run: with the mutant `tnext_inl_array_end_skip` about a third of the runs differ), the jobs of `bm_next_programs` repeat it.
+local mixed2, strs = {}, {}
+for i = 1, 8 do mixed2[i] = i mixed2["x" .. i] = i * 2 mixed2[i + 100] = i * 3 end
+for i = 1, 30 do strs["s" .. i] = i end
+local function lock(t1, t2, n) local c = 0 for i = 1, n do local k1, k2 = nil, nil local v1, v2 while true do k1, v1 = next(t1, k1) k2, v2 = next(t2, k2) if k1 == nil and k2 == nil then break end c = c + (k1 and 1 or 0) + (k2 and 100 or 0) end end return c end
+print(lock(mixed2, strs, 20000))
+"####,
+    },
+    Prog {
         name: "bh_next_hot",
         small: true,
         src: r####"

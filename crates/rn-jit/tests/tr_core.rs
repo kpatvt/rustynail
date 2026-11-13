@@ -8411,6 +8411,12 @@ fn bm_next_programs() {
             jobs.push(Job::new(prog, trace).limits_s("tnextinl=3").budget(17));
         }
     }
+    // (`bm_next_ends` detects the mutant `tnext_inl_array_end_skip` in about a third of the runs of a job: 12 repetitions of each form)
+    for _ in 0..12 {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new("bm_next_ends", trace).limits_s("tnextinl=3"));
+        }
+    }
     assert!(!compare(jobs).is_empty());
 }
 
