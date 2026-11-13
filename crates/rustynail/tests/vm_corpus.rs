@@ -279,8 +279,12 @@ fn check(
 }
 
 fn skip_heavy(p: &Path) -> bool {
-    p.file_name()
-        .is_some_and(|n| n.to_string_lossy().starts_with("heavy_"))
+    // (`gc_17_setmetatable_black_table` runs 1.35 million collector-paced steps by design: it is the `tr_core::a1_setmt_black` detector, which runs it
+    // under the collector modes itself; with `RUSTYNAIL_GC_VERIFY` after every step of GC stress 2 it takes minutes)
+    p.file_name().is_some_and(|n| {
+        let n = n.to_string_lossy();
+        n.starts_with("heavy_") || n == "gc_17_setmetatable_black_table.lua"
+    })
 }
 
 #[test]
