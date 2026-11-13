@@ -5243,7 +5243,7 @@ fn sinkf_side_alloc_failure_raises_memory_error() {
 fn sinkroot_programs() {
     // (the shipped process defaults of the recorder that make the producer / consumer closures traceable; `second=0`: the shipped second chance
     // of a blacklisted head would also keep the head of the `sinkroot=0` run out of the blacklist, which is what this test counts)
-    const BASE: &str = "recnat=1,recany=1,loopany=1,second=0";
+    const BASE: &str = "recnat=1,recany=1,loopany=1,loopanymax=4,second=0,sinkside=0";
     let mut jobs = Vec::new();
     for p in ["sinkroot_pre", "sinkf_side"] {
         for sr in ["sinkroot=0", "sinkroot=1", "sinkroot=2"] {
@@ -5736,7 +5736,7 @@ fn s_loopany_guard_programs() {
     for trace in ["always", "on2"] {
         for lim in [
             "loopany=0",
-            "loopany=1",
+            "loopany=1,loopanymax=4",
             "loopany=1,loopanymax=2",
             "loopany=1,loopanymax=100000",
         ] {
@@ -5745,22 +5745,22 @@ fn s_loopany_guard_programs() {
         jobs.push(
             Job::new("s_loopany", trace)
                 .opts("+exitstorm=3 +verify")
-                .limits_s("loopany=1"),
+                .limits_s("loopany=1,loopanymax=4"),
         );
         jobs.push(
             Job::new("s_loopany", trace)
                 .budget(17)
-                .limits_s("loopany=1"),
+                .limits_s("loopany=1,loopanymax=4"),
         );
         jobs.push(
             Job::new("s_loopany", trace)
                 .env("RUSTYNAIL_GC_STRESS", "2")
-                .limits_s("loopany=1"),
+                .limits_s("loopany=1,loopanymax=4"),
         );
         jobs.push(
             Job::new("s_loopany", trace)
                 .opts("+emurun +verify")
-                .limits_s("loopany=1"),
+                .limits_s("loopany=1,loopanymax=4"),
         );
     }
     jobs.push(Job::new("s_loopany", "t1"));
@@ -5780,7 +5780,7 @@ fn s_loopany_guard_programs() {
     for trace in ["always", "on2"] {
         let (off, guard, wide) = (
             find(trace, "loopany=0"),
-            find(trace, "loopany=1"),
+            find(trace, "loopany=1,loopanymax=4"),
             find(trace, "loopany=1,loopanymax=100000"),
         );
         eprintln!(
@@ -5810,8 +5810,8 @@ fn p_laprune_programs() {
         for trace in ["always", "on2"] {
             for lim in [
                 "loopany=0,nilstore=1,siderooms=1,retf=2",
-                "laprune=0,loopany=1,nilstore=1,siderooms=1,retf=2",
-                "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2",
+                "laprune=0,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2",
                 "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=1,retf=2",
                 "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=2,retf=2",
                 "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=3,retf=2",
@@ -5822,22 +5822,22 @@ fn p_laprune_programs() {
             jobs.push(
                 Job::new(p, trace)
                     .opts("+exitstorm=3 +verify")
-                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2"),
             );
             jobs.push(
                 Job::new(p, trace)
                     .budget(17)
-                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2"),
             );
             jobs.push(
                 Job::new(p, trace)
                     .env("RUSTYNAIL_GC_STRESS", "2")
-                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2"),
             );
             jobs.push(
                 Job::new(p, trace)
                     .opts("+emurun +verify")
-                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2"),
+                    .limits_s("laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2"),
             );
         }
         jobs.push(Job::new(p, "t1"));
@@ -5860,12 +5860,12 @@ fn p_laprune_programs() {
             find(
                 "s_laprune",
                 trace,
-                "laprune=0,loopany=1,nilstore=1,siderooms=1,retf=2",
+                "laprune=0,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2",
             ),
             find(
                 "s_laprune",
                 trace,
-                "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2",
+                "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2",
             ),
         );
         eprintln!(
@@ -5925,7 +5925,7 @@ fn p_laprune_programs() {
         let h = find(
             "s_loopany",
             trace,
-            "laprune=1,loopany=1,nilstore=1,siderooms=1,retf=2",
+            "laprune=1,loopany=1,nilstore=1,siderooms=1,loopanymax=4,retf=2",
         );
         assert!(
             h.la_fired >= 1 && h.la_family >= 1 && h.la_pruned == 0,
@@ -6524,9 +6524,9 @@ fn c39_inner_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
         for lim in [
-            "innerretry=0,retf=2",
-            "innerretry=6,retf=2",
-            "innerretry=1,retf=2",
+            "innerretry=0,loopanymax=4,retf=2",
+            "innerretry=6,loopanymax=4,retf=2",
+            "innerretry=1,loopanymax=4,retf=2",
         ] {
             jobs.push(Job::new("c39_inner", trace).opts("+verify").limits_s(lim));
             jobs.push(
@@ -6563,9 +6563,9 @@ fn c39_inner_programs() {
     };
     for trace in ["always", "on2"] {
         let (off, on, one) = (
-            find(trace, "innerretry=0,retf=2"),
-            find(trace, "innerretry=6,retf=2"),
-            find(trace, "innerretry=1,retf=2"),
+            find(trace, "innerretry=0,loopanymax=4,retf=2"),
+            find(trace, "innerretry=6,loopanymax=4,retf=2"),
+            find(trace, "innerretry=1,loopanymax=4,retf=2"),
         );
         eprintln!(
             "c39_inner [{trace}] off: {} | on: {} rounds {} | one: {} rounds {}",
