@@ -2245,9 +2245,9 @@ pub struct TrState {
     /// on the same thread see the first one's readings).
     hops: BTreeMap<(u32, u32), HopSt>,
     /// BUNDLE-J (`centry`): code addresses of the prototypes that were first hot when a C function called them (read when the prototype is compiled).
-    pub(crate) centry: std::collections::HashSet<usize>,
+    pub(crate) centry: crate::fx::HashSet<usize>,
     /// BUNDLE-J: hot events of registered C-entered functions so far (key: code address; the entries start at the `centrywait`-th).
-    pub(crate) centry_seen: std::collections::HashMap<usize, u32>,
+    pub(crate) centry_seen: crate::fx::HashMap<usize, u32>,
 }
 
 /// BUNDLE-P: the state of one hop-rate check: `streak` the checks in a row that found the rate due.
@@ -2280,8 +2280,8 @@ impl TrState {
             dep_hook: None,
             nest_q: Vec::new(),
             hops: BTreeMap::new(),
-            centry: std::collections::HashSet::new(),
-            centry_seen: std::collections::HashMap::new(),
+            centry: Default::default(),
+            centry_seen: Default::default(),
         }
     }
 
