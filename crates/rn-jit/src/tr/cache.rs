@@ -239,8 +239,9 @@ pub const DEEP_PROCESS: u32 = 8;
 
 /// BUNDLE-2: process default of [`TrLimits::sinkmt`]. SINK-F: 1 (an exit inside inlined frames that names sunk tables gets a side trace now).
 pub const SINKMT_PROCESS: u32 = 1;
-/// BUNDLE-5: process default of [`TrLimits::sinkside`]. SINK-F: still 0 (sinking in side traces costs `classic_vector` 1.05 x against 0.89 x without, docs/JIT_PARKED.md A8).
-pub const SINKSIDE_PROCESS: u32 = 0;
+/// BUNDLE-5: process default of [`TrLimits::sinkside`]: 2 = sinking in the side traces that link back to a root frame only (BUNDLE-L: raytrace 0.91 x,
+/// `classic_vector` 0.93 x, `cd` 0.97 x cycles; 1 = every side / stitched trace, which loses on `awfy/json` and `stream_closures`; 0 = off), docs/JIT_PARKED.md A8.
+pub const SINKSIDE_PROCESS: u32 = 2;
 /// J1-2: process default of [`TrLimits::sinkstub`]. SINK-F: 1.
 pub const SINKSTUB_PROCESS: u32 = 1;
 /// SINK-R: process default of [`TrLimits::sinkroot`] (2: the shape is demoted for the root head only).
@@ -780,7 +781,7 @@ impl TrLimits {
                 "tailhook" => l.tailhook = v.min(2),
                 "hdrlib" => l.hdrlib = v.min(4),
                 "sinkmt" => l.sinkmt = v.min(1),
-                "sinkside" => l.sinkside = v.min(1),
+                "sinkside" => l.sinkside = v.min(2),
                 "sinkroot" => l.sinkroot = v.min(2),
                 "sinkstub" => l.sinkstub = v.min(1),
                 "deep" => l.deep = v.min(8),

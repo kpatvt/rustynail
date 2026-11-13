@@ -534,6 +534,12 @@ pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
         (Some(sd), _) => EndKind::Link((sd.link_proto, sd.link_pc)),
         (None, true) => EndKind::Exit,
     };
+    // `sinkside=2`: only the side traces that link back to a root frame (their stale slots are decided by the link target's active locals). The stitched /
+    // no-link traces and the frame-link traces gain nothing measurable and are the losers of `sinkside=1` (`awfy/json`, `stream_closures`: their
+    // materialisation stubs run more often than the allocations they remove), docs/JIT_PARKED.md A8.
+    if opts.sinkside == 2 && !matches!(end, EndKind::Loop | EndKind::Link(_)) {
+        return Ok(());
+    }
     let loaded = loaded_slots(&rec.ir);
     let mut cands: Vec<Cand> = Vec::new();
     for t in 0..rec.ir.ins.len() {
