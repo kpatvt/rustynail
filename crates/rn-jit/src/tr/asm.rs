@@ -1802,9 +1802,14 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             }
             c.upvalue(k).as_strref().map_or(0, |s| s.as_ptr() as u64)
         }
-        // `math.type`: the two fixed strings of the heap (no hashing, no allocation)
+        // `math.type`: the two fixed strings of the heap (no hashing, no allocation), but like every helper that stands for a string push it
+        // does nothing when the interpreter's `check_gc` right after the push would step the collector (`jit_alloc_ok(0)`)
         lib::TYPENAME if args[0] == 8 || args[0] == 9 => {
-            st.heap().num_type_name(args[0] == 9).as_ptr() as u64
+            let heap = st.heap();
+            if !mutants::active("lib_no_gc_check") && !heap.jit_alloc_ok(0) {
+                return 0;
+            }
+            heap.num_type_name(args[0] == 9).as_ptr() as u64
         }
         lib::TYPENAME => match lib::TYPENAMES.get(args[0] as usize) {
             Some(n) => short_core::<false>(

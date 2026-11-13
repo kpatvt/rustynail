@@ -197,6 +197,16 @@ lib/m_type: every `math.type(i)` hashed and probed the string table for a static
 helper); PGO inlined the probe into the 18 KB `jit_tr_alloc` (3 dependent loads for the area pointer, a spill and reload of it) and ended 5% behind.
 Fix: the heap owns the two result strings as fixed interned strings (`Heap::num_type_name`, like the `__metatable` name) and the recorder embeds
 their addresses as constants (`lib_math_type`): no helper call. m_type 166 -> 10.5 Mcyc plain, 175 -> 10.2 PGO (instructions 1103M -> 63M / 1084M -> 63M).
+**Follow-up (gate run on the merged tip): the constant was reverted to a helper call.** A constant has no collector check, but the interpreter's `math.type`
+pushes its result with `check_gc` and the trace helpers keep that contract (a helper reports 0, and the trace exits, exactly when a step would be due:
+`tr_class_a_pb::lib_helpers_exit_exactly_when_a_step_would_be_due`, mutant `lib_no_gc_check`); where pending debt exists (not observed in a test) the interpreter would step at that `CALL`
+and the constant would step later. `TYPENAME` 8/9 is now a helper fast path (the fixed string, no hashing, `jit_alloc_ok(0)` first): plain m_type 11 Mcyc (constant,
+no check) / 92 Mcyc (helper) / 170 Mcyc (before the fixed strings); instructions 63M / 609M / 1103M. If the 80 Mcyc matter, an inline collector-debt guard
+in the trace (exit to the `CALL` when the debt is positive) would give the constant's cost with the check; not built. The two heap strings shift the
+allocation byte counts of every program by about 70 bytes, which exposed a latent trace/interpreter difference (not caused by the strings): `jit-diff` hook
+mode `count` seed 74 `tron` on 5.5 (`RUSTYNAIL_SEED=0`; fixed strings or any equal shift of the heap's initial size reproduces it, a trace differing from
+the interpreter by a few instructions at a count-hook boundary in a program with `__gc` finalizers and sunk allocations); the same seed fails on 5.4 `tr`
+(seed 240, also on the commit before this session's 5.4 work), so it is not new.
 Instruction counts of the other 94 `bench/lib` programs are unchanged (+-0.1%, except find_cap/find_pat PGO -1.3% from the new profile); cycle moves of
 4-15% in programs with identical instruction counts (tsort_cmp, m_random_f, fmt_q, sel_n) flip between rebuilds of the same source: layout, not code.
 

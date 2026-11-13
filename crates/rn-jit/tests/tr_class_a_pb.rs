@@ -240,25 +240,19 @@ fn lib_helpers_exit_exactly_when_a_step_would_be_due() {
         let case = mk(&mut st);
         let bytes = interpreter_bytes(&case.want);
         let total = st.heap().total_bytes();
-        // a result that is one of the heap's fixed strings ("integer", "float": `math.type`) allocates nothing and has no collector check (the recorder
-        // embeds the string as a constant): found at every threshold
+        // a result that is one of the heap's fixed strings ("integer", "float") allocates nothing: only the present-string checks below apply
         let r = if bytes == 0 {
             assert!(!case.long, "case {k}");
-            let mut first = 0;
-            for thr in [total + 1, total, 0] {
-                st.heap().gc_set_threshold(thr);
-                let r = call(&mut st, case.x, case.args);
-                assert_ne!(r, 0, "case {k} threshold {thr}: a fixed string is found");
-                assert_eq!(
-                    st.heap().total_bytes(),
-                    total,
-                    "case {k}: nothing allocated"
-                );
-                assert_eq!(text(r, case.long), case.want, "case {k}: contents");
-                assert!(first == 0 || first == r, "case {k}: the same object");
-                first = r;
-            }
-            continue;
+            st.heap().gc_set_threshold(total + 1);
+            let r = call(&mut st, case.x, case.args);
+            assert_ne!(r, 0, "case {k}: a fixed string is found");
+            assert_eq!(
+                st.heap().total_bytes(),
+                total,
+                "case {k}: nothing allocated"
+            );
+            assert_eq!(text(r, case.long), case.want, "case {k}: contents");
+            r
         } else {
             for thr in [total + bytes - 1, total + bytes, total, 0] {
                 st.heap().gc_set_threshold(thr);
