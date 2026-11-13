@@ -1332,13 +1332,13 @@ fn char_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3]) -> u64 {
 /// # Safety
 /// `args[0]` is a live C closure.
 #[inline(always)]
-unsafe fn random_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3]) -> u64 {
+unsafe fn random_core(kind: u32, args: [u64; 3]) -> u64 {
     use rn_core::value::{ctb, Value, LUA_VCCL};
     // SAFETY: caller contract; `Value` is `repr(C)` `{ tag word, payload }`.
     let v: Value =
         unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]]) };
     if kind == lib::RANDF {
-        return match rn_std::lib_math::jit_random_float(st, &v) {
+        return match rn_std::lib_math::jit_random_float(&v) {
             // MUTANT `randf_plus_zero`: the result convention's `+ 1` is missing
             Some(m) => {
                 if mutants::active("randf_plus_zero") {
@@ -1357,7 +1357,7 @@ unsafe fn random_core(st: &mut rn_core::state::State, kind: u32, args: [u64; 3])
     } else {
         up
     };
-    match rn_std::lib_math::jit_random_range(st, &v, low, up) {
+    match rn_std::lib_math::jit_random_range(&v, low, up) {
         Some(x) => (x as u64).wrapping_add(1),
         None => 0,
     }
@@ -1559,7 +1559,7 @@ lean_lib!(
 );
 lean_lib!(
     /// BUNDLE-H: lean entry of `LIB random` / `randf`.
-    jit_tr_lib_random, |st, kind, _fl, args| unsafe { random_core(&mut st, kind, args) }
+    jit_tr_lib_random, |st, kind, _fl, args| { let _ = &st; unsafe { random_core(kind, args) } }
 );
 lean_lib!(
     /// BUNDLE-H: lean entry of `LIB streq` / `strlt` / `strle`.
@@ -1762,7 +1762,7 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
         lib::CHAR | lib::CHAR2 | lib::CHAR3 => char_core(st, kind, args),
         lib::RANDF | lib::RANDOM => {
             // SAFETY: caller contract: a live C closure (its tag is checked by the trace's type guard).
-            unsafe { random_core(st, kind, args) }
+            unsafe { random_core(kind, args) }
         }
         lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS => {
             strfn_core(st, kind, fl, args)

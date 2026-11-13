@@ -279,10 +279,10 @@ fn load_rand(cl: &Value) -> Rand {
 }
 
 /// (Integers are not collectable: no barrier is needed to store them into the closure.)
-fn store_rand(st: &mut State, cl: &Value, r: &Rand) {
+fn store_rand(cl: &Value, r: &Rand) {
     let cl = cl.as_cclosure().expect("random closure");
     for (i, w) in r.to_state().iter().enumerate() {
-        cl.set_upvalue(st.heap(), i, Value::int(*w as i64));
+        cl.set_upvalue_int(i, *w as i64);
     }
 }
 
@@ -293,7 +293,7 @@ fn math_random(st: &mut State) -> LuaResult<usize> {
     let mut rng = load_rand(&cl);
     let rv = rng.next_rand(); // the reference draws before looking at the arguments
     let res = random_args(st, &mut rng, rv);
-    store_rand(st, &cl, &rng);
+    store_rand(&cl, &rng);
     res
 }
 
@@ -330,9 +330,9 @@ pub fn jit_random_addr() -> usize {
 /// `low..=up`, or `None` having changed nothing when the interpreter must run the call (an empty interval, which raises; the value `-1`,
 /// which the trace's result convention `value + 1 == 0` cannot carry; a closure that is not `math.random`'s).
 #[cfg(feature = "jit")]
-pub fn jit_random_range(st: &mut State, cl: &Value, low: i64, up: i64) -> Option<i64> {
+pub fn jit_random_range(cl: &Value, low: i64, up: i64) -> Option<i64> {
     let (v, rng) = random_draw(cl, low, up)?;
-    store_rand(st, cl, &rng);
+    store_rand(cl, &rng);
     Some(v)
 }
 
@@ -346,14 +346,14 @@ pub fn jit_random_peek(cl: &Value, low: i64, up: i64) -> Option<i64> {
 /// BUNDLE-H (`libcall`): `math.random()` of the J5 `RANDF` helper: draws from the generator of the closure `cl` and returns the top 53 bits of the
 /// draw (`Rand::to_float` is that integer times 2^-53), or `None` having changed nothing for a closure that is not `math.random`'s.
 #[cfg(feature = "jit")]
-pub fn jit_random_float(st: &mut State, cl: &Value) -> Option<u64> {
+pub fn jit_random_float(cl: &Value) -> Option<u64> {
     let c = cl.as_cclosure()?;
     if c.f as usize != math_random as *const () as usize || c.nupvalues() != 4 {
         return None;
     }
     let mut rng = load_rand(cl);
     let rv = rng.next_rand();
-    store_rand(st, cl, &rng);
+    store_rand(cl, &rng);
     Some(rv >> 11)
 }
 
@@ -382,7 +382,7 @@ fn math_randomseed(st: &mut State) -> LuaResult<usize> {
         let n2 = st.opt_integer(2, 0)? as u64;
         rng.set_seed(n1, n2)
     };
-    store_rand(st, &cl, &rng);
+    store_rand(&cl, &rng);
     st.push(Value::int(n1 as i64));
     st.push(Value::int(n2 as i64));
     Ok(2)
@@ -465,7 +465,7 @@ pub fn open(st: &mut State) -> LuaResult<usize> {
     let rng = Rand::new_random();
     let random = st.try_alloc(|h| h.new_cclosure(math_random as rn_core::state::NativeFn, 4))?;
     st.push(Value::cclosure(random));
-    store_rand(st, &Value::cclosure(random), &rng);
+    store_rand(&Value::cclosure(random), &rng);
     st.raw_set_str(lib, b"random", Value::cclosure(random))?;
     let seed = st.try_alloc(|h| h.new_cclosure(math_randomseed as rn_core::state::NativeFn, 1))?;
     st.push(Value::cclosure(seed));
