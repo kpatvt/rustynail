@@ -222,7 +222,7 @@ Kept although ON in the shipped configuration (reason):
 | A5 | Raise / lift the side-trace family cap | `maxside=24` | 16 | BUILT-OFF (value) | BUNDLE-B 63841cab, BUNDLE-O | YES |
 | A6 | Polymorphic side traces past the cap | `polyside=48,polywait=2,polyframes=2` | 0 at HEAD, **48 in working tree** | BUILT-OFF (committed) | BUNDLE-O 65e69653 | YES |
 | A7 | Smaller side-trace minimum (O1) | `sidemin=0` / `sidemin=2` | 4 | CEILING (knob exists) | P-F, BUNDLE-O O1 | YES |
-| A8 | Sinking of metatabled tables (`sinkmt`: SHIPPED, SINK-F) and in side traces (`sinkside`: still off) | `sinkmt=0` to compare; `sinkside=1` | `sinkmt` 1, `sinkside` 0 | SUPERSEDED (`sinkmt` shipped), `sinkside` BUILT-OFF | BUNDLE-2 179f8731, BUNDLE-5 b22ef012, E, G1, H3-G, SINK-F | YES |
+| A8 | Sinking of metatabled tables (`sinkmt`: SHIPPED, SINK-F) and in side traces (`sinkside=2`: link-back side traces only, SHIPPED in BUNDLE-L, C64) | `sinkmt=0` to compare; `sinkside=0` / `1` | `sinkmt` 1, `sinkside` 2 | SUPERSEDED (`sinkmt` shipped, `sinkside=2` shipped; `sinkside=1` = every side / stitched trace stays off) | BUNDLE-2 179f8731, BUNDLE-5 b22ef012, E, G1, H3-G, SINK-F | YES |
 | A9 | Inline materialising exit stub | `sinkstub=0` to compare | 1 | SUPERSEDED (shipped, SINK-F) | BUNDLE-J1 92f527aa (E item 1 sized), SINK-F | YES (`sinkstub=0`) |
 | A10 | Count-based sunk-shape demotion | `sinkdemote=1024` | 0 | BUILT-OFF | H3-G patch, J1 | YES |
 | A11 | Rate-based per-site sinking policy | `sinkpol=1` (`sinkrate=2500`) | 0 | BUILT-OFF | BUNDLE-L D3 d3c8c5d3 | YES |
@@ -239,7 +239,7 @@ Kept although ON in the shipped configuration (reason):
 | A22 | Recorder lockstep off in production | (now shipped: `LOCKSTEP_PROCESS 0`) | 0 | SUPERSEDED (shipped) | BUNDLE-C refusal, M C1 36d3ec64 then e6103dc3 | YES (`lockstep=1`, `lockstep=8`) |
 | A23 | POLL folded into BUDGET | `pollbud=1` | 0 | BUILT-OFF | BUNDLE-4 8d18c4be, b76fbd6d | YES |
 | A24 | HREFK+HLOAD fusion early attempts | `hkfuse=0` to compare | 1 | SUPERSEDED (shipped) | BUNDLE-4 cc9e4d16 / 9b6b585c, J1 | YES (`hkfuse=0`) |
-| A25 | Unroll while/repeat loops of callees | `loopany=0` to compare | 1 | SUPERSEDED (shipped, guarded, BUNDLE-S) | M1 63103302, BUNDLE-S | YES (`loopany=0`) |
+| A25 | Unroll while/repeat loops of callees | `loopany=0` to compare; `loopanymax=4` is the pre-BUNDLE-L guard (now 48, C64) | 1 | SUPERSEDED (shipped, guarded, BUNDLE-S; guard retuned in BUNDLE-L) | M1 63103302, BUNDLE-S | YES (`loopany=0`) |
 | A26 | Function-entry heads for functions with loops | `fnroot=1,fnloops=1` | 0 | BUILT-OFF | M1 | YES |
 | A28 | Sink-aware ineffective-root rule | `sinkroot=0` to compare | 2 | SUPERSEDED (shipped, SINK-R) | SINK-R | YES (`sinkroot=0`) |
 | A27 | Continuation heads for loop recursion | `contok=1` / `contok=2` | 0 (test knob) | BUILT-OFF | BUNDLE-1 item 3, BUNDLE-E cb3288c0 | YES |
@@ -272,7 +272,7 @@ Kept although ON in the shipped configuration (reason):
 | C11 | Merge POLL+BUDGET / drop the budget compare | - | - | CEILING | BD 57dd7da0, B2 (f), H3 E | NO |
 | C12 | Register file, PHIs, loop rotation, lea folding | - | - | CEILING | B2 6a218c08, H3 F, BD (b) | NO |
 | C13 | Dead-slot snapshot purge | - | - | CEILING / rejected on semantics | BUNDLE-4 item 5 | NO |
-| C14 | C3 lazy / compact exit stubs, smaller side traces | - | - | NOT-MEASURED | H1 D, H3 C, BUNDLE-M | NO |
+| C14 | C3 lazy / compact exit stubs, smaller side traces | - | - | MEASURED, ceiling 2-5 % of cycles on the compile-heavy awfy programs (C64), not built | H1 D, H3 C, BUNDLE-M | NO |
 | C15 | Inline allocation (`TNEW`) fast path | - | - | CEILING | P-J, H2 item 3 | NO |
 | C16 | Tier-1 table constructors (inline NEWREF) | - | - | CEILING | BUNDLE-B item 1 | NO |
 | C17 | lru_cache coverage / dynamic integer-key HREF | - | - | CEILING (partly SUPERSEDED) | BUNDLE-5 item 2, BUNDLE-D item 2 | NO |
@@ -2133,3 +2133,67 @@ Not done (original list, kept for the record; items above supersede it):
 * **Pre-existing lockstep false alarm (5.5 and 5.4, found by jit-diff set `br`, mode `trverify`, seeds 61 / 135 / 183 of 1..300)**: `table.move(src, f, e, d, src)` on one table whose destination range grows the array (`table 2[8]: VM 18, IR ...` under `+verify`). The whole `CALL` has run in the VM before the lockstep evaluates the call's IR (`TSET` resyncs the model from the VM's final contents, so later model loads read overwritten elements). Plain modes (`tr`, `tron`, `always`) give the interpreter's output on all those seeds; only the `+verify` checker panics. Left as is.
 * `programs/load_big` (2.4x, not root-caused in the report) was not looked at.
 * **`programs/json` on 5.4 is seed dependent after this work** (instructions, `RUSTYNAIL_SEED` 0..5: 8.47 / 8.00 / 7.99 / 8.51 / 7.95 / 8.48 G; the base commit is 8.08-8.17 G for every seed; 5.5 is 7.44 G for every seed): with `RUSTYNAIL_SEED=0`, the benchmark convention, it is +4.5 % (over the 3 % gate), over six seeds +1.4 % on average. Cause: the loop of `str()` (`b[#b + 1] = c` on a fresh table per call) used to abort `Insert`; it is now a trace, and on some seeds the iteration it records is an in-array store, so every growth step of `b` leaves the trace through an `Other` exit (2.2 M exits against 0.85 M; two side-trace attempts end `SideShort`). 5.5 records the same code and does not vary. Not diagnosed further (why the recorded iteration depends on the seed on 5.4 only); the other 222 programs are within +-2.6 % (one run each, seed 0: geomean 0.926, worst others `lib/tremove_front` +2.5 %, `corpus2/heldout/stream_closures` +1.7 %, `awfy/deltablue` +1.7 %).
+
+### C64: BUNDLE-L (2026-11-13): the low-risk levers of the gaps study; what was built, what was measured and left
+
+Method for every row: plain release build, `RUSTYNAIL_SEED=0`, same script path, `perf stat` instructions:u / cycles:u, min of 3 (all 223 programs, 4 in parallel; the
+cycle columns of that sweep carry +-5 % noise) or min of 5-7 on a pinned core for the named programs. Ratios are new / old against the commit before the item.
+
+* **`centry` SipHash (`rt::hot_call`) SHIPPED.** `TrState::centry` / `centry_seen` are `fx` maps. `oop_mixins` 0.932 instructions, 0.92-0.96 cycles; all 223 programs 0.9990 instructions.
+* **`store_rand` SHIPPED.** The four generator words are stored with `set_upvalue_int` (no barrier path; an integer is not collectable). `lib/m_random` 0.937 instructions / 0.85 cycles,
+  `m_random_f` 0.941 / 0.83 (the `st` argument of `jit_random_range` / `jit_random_float` / `random_core` went away with it).
+* **`sinkside=2` SHIPPED (process and struct default).** Sinking in side traces is allowed only for the ones that link back to a root frame (`EndKind::Link`); the stitched / no-link
+  and frame-link kinds stay unsunk. A per-kind sweep (5 runs; mask 1 = no-link only, 2 = link, 4 = frame-link, 7 = all = `sinkside=1`): link-back alone carries every gain
+  (`raytrace` 0.89 instructions / 0.90 cycles, `classic_vector` 0.94 / 0.93, `awfy/cd` 0.985 / 0.97) and none of the losses of `sinkside=1` (`awfy/json` 1.012 / 1.018 and
+  `stream_closures` 1.015 / 1.013 become 1.000 / 0.995 and 0.999 / 0.999; the no-link kind alone loses on `stream_closures` 1.028 and `json` 1.012 instructions, frame-link alone gains nothing).
+  All 223: 0.9992 instructions, worst 1.008 (`particles_physics`). `sinkside=1` keeps its old meaning (every kind) and the `tr_core` sink programs that name it still run it.
+* **`loopanymax` 4 -> 48 SHIPPED, with a caveat.** The guard no longer protects `heapsort` (no program in the corpus fires it there since `laprune`), and at 4 it blocked the unrolled loops of
+  `containers_lru_heap` (0.94 cycles at 48), `lua_lexer` (0.97), `awfy/json` (0.96 instructions / 0.98 cycles), `stream_closures` (0.94 instructions; cycles +1.8 %), `mustache_lustache` (0.97 instructions).
+  There is no monotone rule: `loopanymax` 0 / 8 / 12 / 16 / 24 / 32 / 64 / 96 / 128 each lose a program by more than 3 % instructions or 1.5 % cycles (0 and 96-128: `real_dis_mips` 1.03-1.04;
+  16: `cd` 1.05; 12: `cd` 1.06; 32: `dijkstra_routes` 1.07; 8: `roguelike_turns` 1.03); 40 and 48 are the values with no program above +1 % instructions (`awfy/cd` +0.9 % instructions /
+  +1.5 % cycles and `stream_closures` +1.8 % cycles remain: the named programs' cycles are NOT all improved, `cd` gives back part of the `sinkside=2` gain). With `sinkside=2` in place `awfy/cd` no
+  longer gains from a looser guard (the study's 0.952 cycles for `loopanymax=0` was measured without it): the two levers overlap. All 223: 0.9991 instructions. The guard tests
+  (`s_loopany_guard_programs`, `p_laprune_programs`, `c39_inner_programs`, `sinkroot_programs`) name `loopanymax=4` (and `sinkside=0`) explicitly, since they test the mechanism and not the
+  shipped values. A rule that keeps the wins and is robust (e.g. weighting the attempts by the exits behind them instead of counting them) was not found.
+* **Head-pad jump SHIPPED.** `Assembler::align_pad_skip` (`x86::emit` for an `Align` directly followed by a `Pad`): a `jmp rel8` skips the 48-111 padding bytes of a trace loop head when they hold
+  more than one NOP. All 223: 0.9968 instructions (fib 0.893, permute 0.960, binary_trees 0.965, loops_arith 0.975, short_inner 0.976, fannkuch 0.977), cycles on a pinned core: fib 0.989, permute 0.990,
+  binary_trees 0.980, short_inner 0.995, fannkuch / loops_arith 1.003. **Known cost:** `lib/tonumber_flt` (+10 %), `lib/sel_n` (+5-9 %), `programs/json` (+4 %) with identical instruction and
+  branch counts and identical loop bytes at identical offsets (the pad runs only 8934 times in `tonumber_flt`): probably a front-end effect of entering the loop through a taken branch
+  (op-cache entry start); the study's scratch patch showed the same kind of losers. Kept because the rule (instructions, named programs' cycles) is met; revert `align_pad_skip` if the micro losers matter more.
+* **Faster interning (`short_core`) NOT BUILT: the found path is memory-latency bound, not instruction bound.** `perf record -e instructions:u` of `programs/knucleotide`: `short_core` 42 %,
+  `jit_tr_lib_sub` 16 %, and 35 % of `short_core`'s samples sit on the `test` right after the string-table bucket load (`mov (%rax,%rcx,8),%r12`): a cache miss on the bucket (the table holds
+  every distinct 1-4 byte substring) shows as skid there, 10 % on the loop after the hash (`or`), 9 % on the hash multiply. The compare is a handful of instructions; this is why the study's compare
+  patch and C46 (inline short compare) gave nothing. A real gain needs the bucket address earlier or a smaller / denser table; neither is a one-pass lean path. Skipping `jit_alloc_ok(0)` for a found
+  string would change GC pacing for no measurable gain and was not tried.
+* **`cloreuse` BUILT, OFF (knob `cloreuse`, `CLOREUSE_PROCESS` 0).** When the callee of an inlined call is loaded from an upvalue of a closure the trace already holds (`ULOAD (UREF known, n)`) and is
+  at record time that very closure (a live frame's function), `call_lua` guards `EQREF loaded, known` (register equality) instead of the proto against a constant and names `known` as the callee
+  frame's closure ref, so the upvalue loads of the recursion levels (`UREF` / `UVREL` / `UGE` / `ULOAD`) are the same instructions and CSE. No code constant, so C43's GC objection does not apply;
+  the guard is exact (a same-proto closure with other upvalues fails it: `tr_core::cloreuse_programs`, `c64_cloreuse` swaps the recursion's closure mid-run; mutant `cloreuse_guard_skip` is caught).
+  Census of record-time matches (inlined Lua calls recorded over the 223 programs: 13033; matches with a live frame's closure: 2058): `rec_loop` 777 of 855, `tail_loop` 420 of 826, `binary_trees`
+  205 of 218, `coro_generators` 144 of 150, `lua_parser` 92 of 817, `astar_jumper` 59, `expr_lang` 56, `cd` 53. Result with the knob on: `tail_loop` 0.71 instructions / 0.46 cycles, `rec_loop` 0.82 / 0.69,
+  `lua_parser` 0.998 / 0.96, `binary_trees` and everything else unchanged, **`apps/expr_lang` 1.50 instructions / 2.0 cycles** (the recursive evaluator `eval`; `polyside=0` reduces the loss to 1.23,
+  `sinkmt=0` / `sinkside=0` / `sinkroot=0` do not; with the guard but WITHOUT the substitution of the callee frame's ref `expr_lang` is unchanged and `tail_loop` loses its gain, so the effect is in
+  the shared refs, not in the guard). The cause was not found: with the knob on `expr_lang` records 293 side traces (57 off), 79 of them abort `InnerLoop`, 30 roots / sides flush `Unsink`, and
+  hot exits in inlined `eval` frames stay in the interpreter 50 K cycles per stay. Suspects: snapshots whose frames share one closure ref (`FrameRec::closure`) and the frame-side / sink bookkeeping that
+  assumes distinct refs. Retest trigger: a diagnosis of that formation (diff the IR / snapshots of the first `eval` side trace, `RUSTYNAIL_JIT_DUMP` on both settings); then turn the knob on.
+* **Compile cost (C14 lazy stubs, fewer wasted recordings) MEASURED, NOT BUILT.** `[trace] phases` (Mtsc; the cycle share is against `cycles:u`, tsc and core clock differ by a few %):
+
+  | program | run Mcyc | rec_step | pipeline (ra / exits / asm / x86 / install) | share of run |
+  |---|---|---|---|---|
+  | awfy/cd | 266 | 17.1 | 53.3 (7.9 / 4.1 / 14.1 / 10.3 / 2.9) | compile 29 %, asm+x86+exits 10.7 %, rec_step 6.4 % |
+  | awfy/deltablue | 106 | 11.2 | 12.6 (2.1 / 0.8 / 3.4 / 2.6 / 0.6) | compile 24 %, rec_step 10.5 % |
+  | awfy/richards | 57 | 4.1 | 6.9 | rec_step 7.2 % |
+  | awfy/towers | 48 | 2.1 | 7.4 (1.1 / 0.6 / 1.9 / 1.6 / 0.3) | asm+x86+exits 10 % |
+  | awfy/json | 142 | 5.6 | 14.7 | rec_step 4 %, asm+x86+exits 6 % |
+  | apps/raytrace | 137 | 11.5 | 13.1 | rec_step 8.4 % |
+
+  Exit stubs are 72-75 % of the code bytes (C14), so a lazy / compact stub scheme can remove at most ~70 % of the `x86` encoding time and part of `asm` (stub op construction): 4-5 % of `cd`,
+  2-3 % of the other awfy programs, close to nothing outside compile-bound programs, for a change of the exit protocol (`+exitstorm`, sink stubs, frame stubs). Wasted recordings: `cd` 41 root
+  recordings / 29 installed and 257 side / 170 installed; `deltablue` 35 / 13 and 74 / 31; `raytrace` 18 / 5 and 49 / 30; at about 2300 tsc per recorded step the aborted share of `rec_step` is
+  ~2 % of `cd`, ~6 % of `deltablue`, ~5 % of `raytrace` (an upper bound: an abort also teaches the policy). Pre-checking known-unrecordable shapes (`FnShort`: 81 in `deltablue`, `Nyi(Call)`,
+  `InnerLoop`) needs the facts the recording gathers and shifts formation (C25, A21, the `rearm` cliffs of C45): not built; the numbers above are the ceiling to compare a future attempt with.
+* **Exact presize of fresh tables (C22 / H14): NOT BUILT.** A layout-exact presize needs a record-time simulation of the growth sequence of the keys, their hashes and the seed (node
+  positions depend on the insertion order and on collisions) plus the same GC debt as the growth path; no cheap layout-exact shortcut exists beyond the exact growth fast paths already built
+  (C22, `classic_vector` 0.965 instructions). Left as is.
+* **`gmatch`-headed loops / lean `FIND` `GMATCH` `FMT` `STRTO` `TOSTR` entries (H9 / H17): NOT BUILT** (not cheap: the recorder would have to model the iterator state of `GMATCH`, and each lean entry needs
+  its own argument convention and mutants; C61 lists the census).
