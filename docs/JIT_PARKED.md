@@ -2293,3 +2293,36 @@ Gate "geomean < 2 % or concentrated in <= 3 programs": the first leg holds. **Re
 conservative column shows only `parser_combinator`, `deltablue`, `json_rxi`, `coro_scheduler` above 5 %), or a cheaper partial mechanism (e.g. re-linking only returns to a caller loop whose
 frame is already on the trace, no snapshot shrinking). Cheap retest: YES, rerun the method (scratch patch above, 223 programs, ~15 min serially; parallel `perf record` runs lost about 40 %
 of the profiles silently here, run them one at a time).
+
+## C67: BUNDLE-N (2026-11-13): `cloreuse` on, inline `math.random` shipped (`randinl`), gmatch loop-end side trace NOT built
+
+**1. `cloreuse` is ON** (cause of the `apps/expr_lang` loss found: the substitution's CSE let a too-big deep recording fit under `deepins`; fixed by charging the merged upvalue loads back, see the C64 `cloreuse` bullet).
+All 223 programs: geomean 0.9975 instructions, `tail_loop` 0.713 / 0.458 (instructions / cycles), `rec_loop` 0.806 / 0.684, `expr_lang` 1.000, none above 1.003.
+
+**2. `randinl` (process default 1, `RUSTYNAIL_JIT_TRACE_LIMITS=randinl=0` is the helper call of before).** `LIB RANDOM` / `LIB RANDF` (recorded `math.random(m [, n])` / `math.random()`) get an inline form in
+`Asm::random_fast` (`tr/asm.rs`, next to `type_fast`, same shape: the helper stays the slow path behind a label, nothing of the IR changes, so CSE / forwarding / `uvroll` / the exit-storm exemption
+of the guard behind the draw are untouched). One xoshiro256** step on the four integer upvalues of the closure, in memory (state loads and stores, no state in registers across draws), `Rand::project`
+exactly as the library does it (mask = the bounds' smear, `ran &= mask`, accept when `ran <= n` unsigned, else draw again; the rejection loop is machine code), float form `(draw >> 11) + 1` (the
+result convention of the helper). Slow path (helper, nothing changed yet) when: the closure's function is not `math.random`'s; one of the four upvalues is not an integer (`debug.setupvalue(math.random,
+k, 1.0)`: the helper reads it as 0 and writes integers back); the interval is empty; the interval contains -1 (a draw of -1 cannot be carried by the helper's `value + 1 == 0` convention, and
+refusing on the bounds, before any state is written, means the generator advances exactly once per call and never needs a roll-back; `random(-n, n)` therefore stays on the helper). With constant
+bounds (the common case) the checks and the mask are folded at assembly time and an interval that fails them gets no inline form. Registers: `V7` and three registers that are neither operand nor
+destination (saved / restored through extension slots 2..4), the draw / width / mask go through slots 5..7; the destination is written last. No new IR op, no allocation, no barrier (integers).
+Output is bit-identical to the interpreter's (`tr_core::bn_random_programs`: const / run-time bounds, powers of two and rejection, the widest intervals, -1 in range, an empty interval raised from
+a hot loop, a float state word in the middle of the run, a gmatch iterator at the same call site, a reseed; always / on2 x knob on / off x `+verify`, `+exitstorm=3`, `+emurun`, `+randra=5`, budget 17;
+and 5.4). **Numbers** (same binary, `randinl=0` vs `1`, `RUSTYNAIL_SEED=0`, min of 5, pinned core): `lib/m_random` 853 -> 337 Minstr, 197 -> 77 Mcyc (0.395 / 0.391); `lib/m_random_f` 775 -> 376 Minstr,
+107 -> 52 Mcyc (0.485 / 0.486). All 223: geomean 0.9926 instructions, nothing above 1.001. About 90 instructions per `random(1, 100)` iteration remain (the loop, the 4 tag checks, 3 saves and
+restores, the 53-bit mask loop); tag checks could go if the closure's identity were guarded once per trace, a saves-free form needs a register reserve. Mutants (registry 634 -> 644, owner
+BUNDLE-N, all caught by `bn_random_programs`): `randinl_empty_skip`, `randinl_m1_skip`, `randinl_lim_off`, `randinl_rot_off`, `randinl_s3_rot_off`, `randinl_commit_skip`, `randinl_float_shift`,
+`randinl_retry_skip`, `randinl_tag_skip`, `randinl_restore_skip`. There is no mutant for the function-pointer check: from Lua every other C closure has a non-integer upvalue, which the tag checks
+send to the helper as well (the check stays for closures made through the C API). Policy test `tr_policy::bn_randinl_cloreuse_process_default`.
+
+**3. gmatch loop end (`GMATCH_END`, side recording behind the loop): NOT BUILT, the design does not hold for the program it was meant for.** The proposal (a separate `GMATCH_END` kind returning 1 only at the
+end and never advancing on a match, a non-alloc exit class for the end guard so that the exit may get a side trace, a side recording that treats the iterator step as "returns nothing" and continues
+behind the loop, like the `ipairs` end rule) is implementable in the recorder (`tforcall_gmatch` has the `GmStep::End` branch that aborts `LeaveLoop`; `exit::site_classes` would exempt the
+`NE %lib, 1` guard and the two guards would need distinct snapshots). What it buys is decided by what comes after the loop: `corpus2/dev/text_adventure`'s only gmatch loop is the one in `Game:parse`
+(`for w in line:lower():gmatch("%a+") do ... end`), and behind the loop come a handful of table reads and the `RETURN` of `parse`. The loop root's frame 0 is `parse`, so a side trace that continues
+behind the loop reaches `RETURN` out of the root frame after ~10 instructions and must stop there with another exit (frame-leaving traces: C38 slices 2-5, C66 gate not met). The entry + exit cost per
+loop (2-3 words per call, 1.8 M entries) would be paid at the `RETURN` instead of at the loop end: no instructions saved except the handful of recorded ones, and one more side trace per exit site.
+The other gmatch loops in the 223 (`lib/gmatch_words`, `wordfreq`, `real_dis_*`) run hundreds of words per entry and were already won by BUNDLE-GM. **Retest trigger:** frame-leaving side traces (C38) or a
+program whose gmatch loop is followed by a long straight-line tail inside the same frame. Not measured: a prototype (the above is read from the code and the program, not from a built experiment).

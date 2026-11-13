@@ -236,6 +236,9 @@ pub const CENTRY_MIN_IR: u32 = 60;
 pub const CENTRY_WAIT: u32 = 8;
 /// BUNDLE-J (`centry`): process default of [`TrLimits::centry`] (0 = off, 1 = on, 2 = also without the entry back-off).
 pub const CENTRY_PROCESS: u32 = 2;
+/// BUNDLE-N (`randinl`): process default of [`TrLimits::randinl`] (1 = `math.random()` / `math.random(m [, n])` of a trace draw from the generator inline: the xoshiro step on the closure's
+/// four integer upvalues in machine code, the helper is the slow path).
+pub const RANDINL_PROCESS: u32 = 1;
 /// BUNDLE-H (`tnextinl`): process default of [`TrLimits::tnextinl`] (bit 0 = `TNEXT` is header-safe: the loops of `pairs` / `next` peel).
 pub const TNEXTINL_PROCESS: u32 = 3;
 /// BUNDLE-1: process default of [`TrLimits::hdrlib`].
@@ -533,6 +536,8 @@ pub struct TrLimits {
     pub upbar: u32,
     /// BUNDLE-H: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel) (default [`TNEXTINL_PROCESS`]).
     pub tnextinl: u32,
+    /// BUNDLE-N: inline `math.random` draws (default [`RANDINL_PROCESS`]; 0 = the helper call of before).
+    pub randinl: u32,
     /// BUNDLE-J: C-entered function roots. A Lua function that a C function calls (`table.sort` comparator, `string.gsub` callback, `pcall`'d function; its caller's frame is a
     /// native frame) is entered into compiled code even when it is small and loop-free, gets a function-entry head (also without a `CALL`) that is a generic function root from the
     /// start (no recursion probe), and is exempt from the short-function minimum `fnmin` (1 = on, 2 = also without the entry back-off monitor; default [`CENTRY_PROCESS`]).
@@ -643,6 +648,7 @@ impl Default for TrLimits {
             retfmax: RETFMAX_PROCESS,
             upbar: UPBAR_PROCESS,
             tnextinl: TNEXTINL_PROCESS,
+            randinl: RANDINL_PROCESS,
             centry: CENTRY_PROCESS,
             centrymin: CENTRY_MIN_IR,
             centrywait: CENTRY_WAIT,
@@ -809,6 +815,7 @@ impl TrLimits {
                 "retfmax" => l.retfmax = v.min(8),
                 "upbar" => l.upbar = v.min(1),
                 "tnextinl" => l.tnextinl = v.min(3),
+                "randinl" => l.randinl = v.min(1),
                 "centry" => l.centry = v.min(2),
                 "centrymin" => l.centrymin = v.min(100_000),
                 "centrywait" => l.centrywait = v.min(1000),

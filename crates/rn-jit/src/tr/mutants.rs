@@ -600,6 +600,17 @@ pub const NAMES: &[&str] = &[
     "tnext_inl_spill_skip",
     // BUNDLE-L: `cloreuse`
     "cloreuse_guard_skip",
+    // BUNDLE-N: inline `math.random` (`randinl`)
+    "randinl_empty_skip",
+    "randinl_m1_skip",
+    "randinl_lim_off",
+    "randinl_rot_off",
+    "randinl_s3_rot_off",
+    "randinl_commit_skip",
+    "randinl_float_shift",
+    "randinl_retry_skip",
+    "randinl_tag_skip",
+    "randinl_restore_skip",
     "cleanup_third_dead",
     "cleanup_third_stale",
     // C39: `innerretry`
@@ -832,7 +843,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 634);
+        assert_eq!(NAMES.len(), 644);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -14984,6 +14984,97 @@ end
 for i = 1, #log do print(log[i]) end
 "####,
     },
+    Prog {
+        name: "bn_random",
+        small: true,
+        src: r####"
+-- BUNDLE-N `randinl`: `math.random()` / `math.random(m)` / `math.random(m, n)` drawn inline on a trace. Every sum is compared with the interpreter's: constant and
+-- run-time bounds, powers of two (no rejection) and others (rejection loop), intervals that contain -1 (helper), the widest intervals, an empty interval raised
+-- from the loop, a state word that stops being an integer in the middle of the run, a gmatch iterator (a C closure of another function) at the same call site,
+-- a reseed in the middle, and live values around the draws (the inline code borrows registers).
+local out = {}
+local function P(...) local t = table.pack(...) for i = 1, t.n do t[i] = tostring(t[i]) end out[#out + 1] = table.concat(t, ",") end
+local random = math.random
+math.randomseed(2024, 5)
+-- the float form
+local s, lo = 0.0, 0
+for i = 1, 3000 do local r = random() s = s + r if r < 0.5 then lo = lo + 1 end end
+P("float", string.format("%.17g", s), lo)
+-- constant intervals
+local a1, a2, a3, a4, a5, a6, a7 = 0, 0, 0, 0, 0, 0, 0
+for i = 1, 2500 do
+  a1 = a1 + random(1, 100)
+  a2 = a2 + random(16)
+  a3 = a3 + random(5, 5)
+  a4 = a4 + random(3, 1000003)
+  a5 = a5 ~ random(0, math.maxinteger)
+  a6 = a6 ~ random(math.mininteger, -2)
+  a7 = a7 + random(math.mininteger, math.maxinteger) // 1024 -- contains -1: the helper
+end
+P("const", a1, a2, a3, a4, a5, a6, a7)
+-- run-time bounds, live accumulators across the draws
+local b1, b2, b3, b4, b5, keep1, keep2, keep3 = 0, 0, 0, 0, 0, 11, 22, 33
+for i = 1, 3000 do
+  local lo, hi = i % 13 - 5, i % 13 + i % 29 + 1  -- sometimes contains -1, sometimes not
+  if lo >= 0 then b1 = b1 + random(lo, hi) end
+  b2 = b2 + random(i % 7 + 1)
+  b3 = b3 + random(i, i + 7)
+  b4 = b4 + random(-i, i)
+  b5 = b5 + random(-i, -1) + random(-2 * i, -2)
+  keep1, keep2, keep3 = keep1 + i, keep2 ~ i, keep3 + keep1 % 7
+end
+P("dyn", b1, b2, b3, b4, b5, keep1, keep2, keep3)
+-- an empty interval raised from the middle of a hot loop (run-time bounds), caught by pcall around the loop
+local c1, errs = 0, 0
+local function runc(n, bad)
+  for i = 1, n do
+    -- the upper bound falls below 1 at i = 100 for `bad` (no branch: the empty interval is a run-time value)
+    local hi = 200 - i - (bad and 100 or 0)
+    c1 = c1 + random(1, hi)
+  end
+end
+for r = 1, 12 do
+  local ok = pcall(runc, 400, r % 2 == 0)
+  if not ok then errs = errs + 1 end
+end
+P("empty", c1, errs)
+-- a state word that is a float in the middle of the run (the helper reads it as 0 and writes integers back); the change comes at the END of an iteration so that the
+-- next draws run on the trace with the float state
+local d1 = 0
+for i = 1, 3000 do
+  d1 = d1 + random(1, 1000) + random(7) + random(i, i + 9)
+  if i % 700 == 0 then local _, v = debug.getupvalue(random, 2) debug.setupvalue(random, 2, v + 0.0) end
+end
+P("tag", d1)
+-- another C closure at the same call site (the gmatch iterator keeps four upvalues, none of them the generator)
+local f, e1 = random, 0
+local it = ("abcdefghij"):rep(400):gmatch(".")
+for i = 1, 3000 do
+  if i % 5 == 0 then f = it else f = random end
+  local v = f(1, 100)
+  if type(v) == "number" then e1 = e1 + v else e1 = e1 + #v end
+end
+P("closure", e1)
+-- reseeding in the middle, then the sequences again
+local g1 = 0
+for i = 1, 3000 do
+  if i == 1500 then math.randomseed(77) end
+  g1 = g1 + random(1, 6) + random(1, 1 << 20)
+end
+P("reseed", g1, random(1000), random(), random(-3, 3))
+for i = 1, #out do print(out[i]) end
+"####,
+    },
+    Prog {
+        name: "bn_random_hot",
+        small: true,
+        src: r####"
+math.randomseed(99)
+local random, s, t = math.random, 0, 0.0
+for i = 1, 20000 do s = s + random(1, 100) + random(i % 9 + 1) t = t + random() end
+print(s, string.format("%.15g", t))
+"####,
+    },
 ];
 
 /// Y5: programs only the dedicated tests run (not in `selected()`: they build a large heap, or (`bm_mtype_gc`) observe the collector's timing, and are meaningless under the generic matrices).

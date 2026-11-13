@@ -1672,6 +1672,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         setmt_inline: true,
         // SAFETY: as below.
         tnext_inline: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.tnextinl } & 2 != 0,
+        // SAFETY: as below.
+        rand_inline: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.randinl } != 0,
         next_hint_cell: std::ptr::addr_of_mut!(st.heap().next_hint) as u64,
         b2_arr: true,
         b2_tag: true,

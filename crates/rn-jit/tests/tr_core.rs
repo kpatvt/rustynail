@@ -8316,6 +8316,55 @@ fn bm_next_programs() {
     assert!(!compare(jobs).is_empty());
 }
 
+/// BUNDLE-N: the inline `math.random` draws (`randinl=1`, the xoshiro step in machine code; `randinl=0` is the helper call of before) give the interpreter's numbers in every mode
+/// and with the knob off. Detector of the `randinl_*` mutants.
+#[test]
+fn bn_random_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["randinl=1", "randinl=0"] {
+            jobs.push(Job::new("bn_random", trace).opts("+verify").limits_s(lim));
+            jobs.push(Job::new("bn_random", trace).limits_s(lim));
+            jobs.push(
+                Job::new("bn_random", trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("bn_random", trace)
+                    .opts("+emurun +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(
+                Job::new("bn_random", trace)
+                    .opts("+randra=5 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new("bn_random", trace).limits_s(lim).budget(17));
+        }
+    }
+    assert!(!compare(jobs).is_empty());
+}
+
+/// BUNDLE-N: a hot loop of draws runs the inline step (fewer instructions than with the helper, and the loop does not exit).
+#[test]
+fn bn_random_inline_runs() {
+    let mk = |l: &str| {
+        Job::new("bn_random_hot", "always")
+            .opts("+verify")
+            .limits_s(l)
+    };
+    let r = run_all(vec![mk("randinl=1"), mk("randinl=0")]);
+    assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
+    assert_eq!(r[0].1.result, r[1].1.result);
+    assert!(
+        r[0].1.stats.entered >= 1 && r[0].1.stats.exits <= r[1].1.stats.exits + 2,
+        "inline {} helper {}",
+        r[0].1.stats.line(),
+        r[1].1.stats.line()
+    );
+}
+
 /// BUNDLE-M: a hot `pairs` loop runs the inline traversal step (fewer instructions than with the helper: the loop must not exit).
 #[test]
 fn bm_tnext_inline_runs() {

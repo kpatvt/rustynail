@@ -172,6 +172,8 @@ pub struct AsmEnv {
     pub setmt_inline: bool,
     /// BUNDLE-M (`tnextinl` bit 1): `TNEXT` scans the array part and the hash part inline from the control key (the helper is the slow path).
     pub tnext_inline: bool,
+    /// BUNDLE-N (`randinl`): `math.random` draws inline (see `Asm::random_fast`; the helper is the slow path).
+    pub rand_inline: bool,
     /// BUNDLE-M: address of the heap's traversal hint (`Heap::next_hint`, a `u32`), read by the inline `TNEXT` of a hash-part control key.
     pub next_hint_cell: u64,
     /// B2: scaled array addressing (`b2arr`).
@@ -292,6 +294,7 @@ impl Default for AsmEnv {
             frame_link_snap: u32::MAX,
             setmt_inline: false,
             tnext_inline: false,
+            rand_inline: false,
             next_hint_cell: 0,
             b2_arr: false,
             b2_tag: false,
@@ -5679,6 +5682,12 @@ impl Cx<'_> {
         {
             self.type_fast(&ops, d)
         } else if ins.op == TOp::Lib
+            && matches!(ins.aux & 0xFF, lib::RANDOM | lib::RANDF)
+            && self.env.rand_inline
+            && self.env.alloc == jit_tr_alloc as *const () as usize as u64
+        {
+            self.random_fast(&ops, d, ins.aux & 0xFF == lib::RANDOM)
+        } else if ins.op == TOp::Lib
             && ins.aux & 0xFF == lib::TYPENAME
             && self.env.alloc == jit_tr_alloc as *const () as usize as u64
         {
@@ -6497,6 +6506,219 @@ impl Cx<'_> {
         }
         self.push(Op::Bind(slow));
         Some(done)
+    }
+
+    /// BUNDLE-N (`randinl`): the inline form of `math.random()` (`RANDF`: the top 53 bits of the draw plus one) and `math.random(m [, n])` (`RANDOM`: `project(draw, up - low) + low` plus
+    /// one), the same arithmetic as `jit_tr_lib_random` (`Rand::next_rand` / `Rand::project`: one xoshiro256** step on the four integer upvalues of the closure). The helper is the slow
+    /// path and runs when nothing was changed: the closure's function is not `math.random`'s, an upvalue is not an integer (`debug.setupvalue`), the interval is empty, or it contains -1 (a
+    /// draw of -1 cannot be carried by the result convention `value + 1 == 0`; this is checked on the bounds, before any state is written, so the generator changes exactly once per
+    /// call, at the end of the draw). With constant bounds the checks and the mask of `project` are folded here and a failing check gives no inline form at all. The state words are
+    /// read and written in the closure (`UPVALS + 16 k + 8`), the registers are four temporaries (`V7` and three that are neither operand nor destination, saved in the extension slots
+    /// 2..4 and restored), the draw, the interval width and the mask go through the slots 5..7. The destination is written last.
+    #[cold]
+    #[inline(never)]
+    fn random_fast(&mut self, ops: &[Loc], d: V, range: bool) -> Option<L> {
+        use rn_core::jit_layout::cclosure;
+        let Loc::G(c) = ops[0] else {
+            return None;
+        };
+        let tf = rn_std::lib_math::jit_random_addr() as u64;
+        // the bounds: a register, or a constant that folds the checks and the mask
+        enum B {
+            G(V),
+            K(i64),
+        }
+        let bound = |l: Loc, cx: &Self| match l {
+            Loc::G(r) => Some(B::G(r)),
+            Loc::Const(k) => Some(B::K(cx.kbits_of(k) as i64)),
+            _ => None,
+        };
+        let (lo, up) = if range {
+            (bound(ops[1], self)?, bound(ops[2], self)?)
+        } else {
+            (B::K(0), B::K(0))
+        };
+        let stat = match (&lo, &up) {
+            (B::K(l), B::K(u)) if range => {
+                let empty = *l > *u && !mutants::active("randinl_empty_skip");
+                let m1 = *l <= -1 && *u >= -1 && !mutants::active("randinl_m1_skip");
+                if empty || m1 {
+                    return None;
+                }
+                let n = (*u as u64).wrapping_sub(*l as u64);
+                let mut lim = n;
+                if !mutants::active("randinl_lim_off") {
+                    for sh in [1u32, 2, 4, 8, 16, 32] {
+                        lim |= lim >> sh;
+                    }
+                }
+                Some((n, lim))
+            }
+            _ => None,
+        };
+        let mut used = vec![c, d];
+        for b in [&lo, &up] {
+            if let B::G(r) = b {
+                used.push(*r);
+            }
+        }
+        let mut tmp = (0..7u8).filter(|r| !used.contains(r));
+        let (ra, rb, rc) = (tmp.next()?, tmp.next()?, tmp.next()?);
+        let rd: V = 7;
+        let slot = |cx: &Self, k: u16| spill_m(cx.ext_slot(k));
+        let (s_res, s_n, s_lim) = (5u16, 6u16, 7u16);
+        let up_m = |k: usize| rm(c, (cclosure::UPVALS + 16 * k + 8) as i32);
+        let (slow_r, slow, done, top, fin) = (
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+            self.label(),
+        );
+        for (k, r) in [ra, rb, rc].into_iter().enumerate() {
+            self.st(W::B8, slot(self, 2 + k as u16), Src::V(r));
+        }
+        // the closure is `math.random` (its four upvalues are the generator)
+        self.ld(rd, W::B8, rm(c, cclosure::F as i32));
+        self.push(Op::Mov(ra, tf));
+        // (no mutant for this one: from Lua every closure of another function has a non-integer upvalue, which the tag checks send to the helper too)
+        self.br(Cc::Ne, rd, Src::V(ra), slow_r);
+        // every state word is an integer (the helper reads anything else as 0 and would write integers back)
+        if !mutants::active("randinl_tag_skip") {
+            for k in 0..4 {
+                self.ld(rd, W::B1, rm(c, (cclosure::UPVALS + 16 * k) as i32));
+                self.br(Cc::Ne, rd, Src::Imm(i32::from(LUA_VNUMINT)), slow_r);
+            }
+        }
+        if range && stat.is_none() {
+            // run-time bounds: A = low, D = up; empty -> helper; low <= -1 <= up -> helper
+            match lo {
+                B::G(r) => self.push(Op::MovR(ra, r)),
+                B::K(k) => self.push(Op::Mov(ra, k as u64)),
+            }
+            match up {
+                B::G(r) => self.push(Op::MovR(rd, r)),
+                B::K(k) => self.push(Op::Mov(rd, k as u64)),
+            }
+            if !mutants::active("randinl_empty_skip") {
+                self.br(Cc::Gt, ra, Src::V(rd), slow_r);
+            }
+            if !mutants::active("randinl_m1_skip") {
+                let ok = self.label();
+                self.br(Cc::Gt, ra, Src::Imm(-1), ok);
+                self.br(Cc::Lt, rd, Src::Imm(-1), ok);
+                self.push(Op::Jmp(slow_r));
+                self.push(Op::Bind(ok));
+            }
+            self.push(Op::Sub(rd, Src::V(ra)));
+            self.st(W::B8, slot(self, s_n), Src::V(rd));
+            self.push(Op::MovR(ra, rd));
+            if !mutants::active("randinl_lim_off") {
+                for sh in [1u8, 2, 4, 8, 16, 32] {
+                    self.push(Op::MovR(rb, ra));
+                    self.push(Op::ShrI(rb, sh));
+                    self.push(Op::Or(ra, Src::V(rb)));
+                }
+            }
+            self.st(W::B8, slot(self, s_lim), Src::V(ra));
+        }
+        self.push(Op::Bind(top));
+        // res = rotl(s1 * 5, 7) * 9
+        self.ld(ra, W::B8, up_m(1));
+        self.push(Op::Mul(ra, Src::Imm(5)));
+        self.push(Op::MovR(rb, ra));
+        let rot = if mutants::active("randinl_rot_off") {
+            8
+        } else {
+            7
+        };
+        self.push(Op::ShlI(rb, rot));
+        self.push(Op::ShrI(ra, 64 - rot));
+        self.push(Op::Or(ra, Src::V(rb)));
+        self.push(Op::Mul(ra, Src::Imm(9)));
+        self.st(W::B8, slot(self, s_res), Src::V(ra));
+        // the state step: s0' = s0 ^ s3 ^ s1, s1' = s1 ^ s2 ^ s0, s2' = (s2 ^ s0) ^ (s1 << 17), s3' = rotl(s3 ^ s1, 45)
+        self.ld(ra, W::B8, up_m(0));
+        self.ld(rb, W::B8, up_m(1));
+        self.ld(rc, W::B8, up_m(2));
+        self.ld(rd, W::B8, up_m(3));
+        self.push(Op::Xor(rc, Src::V(ra)));
+        self.push(Op::Xor(rd, Src::V(rb)));
+        self.push(Op::Xor(ra, Src::V(rd)));
+        if !mutants::active("randinl_commit_skip") {
+            self.st(W::B8, up_m(0), Src::V(ra));
+        }
+        self.push(Op::MovR(ra, rb));
+        self.push(Op::ShlI(ra, 17));
+        self.push(Op::Xor(ra, Src::V(rc)));
+        self.st(W::B8, up_m(2), Src::V(ra));
+        self.push(Op::Xor(rb, Src::V(rc)));
+        self.st(W::B8, up_m(1), Src::V(rb));
+        self.push(Op::MovR(ra, rd));
+        let rot = if mutants::active("randinl_s3_rot_off") {
+            44
+        } else {
+            45
+        };
+        self.push(Op::ShlI(rd, rot));
+        self.push(Op::ShrI(ra, 64 - rot));
+        self.push(Op::Or(rd, Src::V(ra)));
+        self.st(W::B8, up_m(3), Src::V(rd));
+        self.ld(ra, W::B8, slot(self, s_res));
+        if range {
+            // project: ran &= lim; accept when ran <= n (unsigned), else draw again
+            match stat {
+                Some((n, lim)) => {
+                    self.push(Op::Mov(rb, lim));
+                    self.push(Op::And(ra, Src::V(rb)));
+                    self.push(Op::Mov(rb, n));
+                }
+                None => {
+                    self.ld(rb, W::B8, slot(self, s_lim));
+                    self.push(Op::And(ra, Src::V(rb)));
+                    self.ld(rb, W::B8, slot(self, s_n));
+                }
+            }
+            if !mutants::active("randinl_retry_skip") {
+                self.br(Cc::Uge, rb, Src::V(ra), done);
+                self.push(Op::Jmp(top));
+            }
+            self.push(Op::Bind(done));
+            // + low + 1
+            match lo {
+                B::G(r) => {
+                    self.push(Op::Add(ra, Src::V(r)));
+                    self.push(Op::Add(ra, Src::Imm(1)));
+                }
+                B::K(k) => {
+                    self.push(Op::Mov(rb, (k as u64).wrapping_add(1)));
+                    self.push(Op::Add(ra, Src::V(rb)));
+                }
+            }
+        } else {
+            // the top 53 bits plus one
+            let sh = if mutants::active("randinl_float_shift") {
+                10
+            } else {
+                11
+            };
+            self.push(Op::ShrI(ra, sh));
+            self.push(Op::Add(ra, Src::Imm(1)));
+        }
+        self.push(Op::MovR(d, ra));
+        for (k, r) in [ra, rb, rc].into_iter().enumerate() {
+            if k == 1 && mutants::active("randinl_restore_skip") {
+                continue;
+            }
+            self.ld(r, W::B8, slot(self, 2 + k as u16));
+        }
+        self.push(Op::Jmp(fin));
+        self.push(Op::Bind(slow_r));
+        for (k, r) in [ra, rb, rc].into_iter().enumerate() {
+            self.ld(r, W::B8, slot(self, 2 + k as u16));
+        }
+        self.push(Op::Bind(slow));
+        Some(fin)
     }
 
     /// F2: the inline form of `string.byte(s, i)` (`lib_core`'s `BYTE` does the same in the helper): for `1 <= i <= #s` (and a long string

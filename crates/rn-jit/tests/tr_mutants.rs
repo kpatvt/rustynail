@@ -2849,6 +2849,56 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "cloreuse_programs")],
     },
     Row {
+        name: "randinl_empty_skip",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_m1_skip",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_lim_off",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_rot_off",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_s3_rot_off",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_commit_skip",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_float_shift",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_retry_skip",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_tag_skip",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
+        name: "randinl_restore_skip",
+        owner: "BUNDLE-N",
+        dets: &[d("tr_core", "bn_random_programs")],
+    },
+    Row {
         name: "cleanup_third_dead",
         owner: "P2",
         dets: &[d("tr_loop", "cleanup_renumbers_third_operands")],

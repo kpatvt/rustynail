@@ -1355,6 +1355,30 @@ fn bh_tnextinl_process_default() {
     }
 }
 
+/// BUNDLE-N: the process defaults of `randinl` (inline `math.random` draws) and `cloreuse` (closure-identity reuse); an explicit value wins and both are clamped to 1.
+#[test]
+fn bn_randinl_cloreuse_process_default() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, CLOREUSE_PROCESS, RANDINL_PROCESS};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!((l.randinl, l.cloreuse), (RANDINL_PROCESS, CLOREUSE_PROCESS));
+    assert_eq!((RANDINL_PROCESS, CLOREUSE_PROCESS), (1, 1));
+    for (env, want) in [
+        (None, (1, 1)),
+        (Some(""), (1, 1)),
+        (Some("randinl=0"), (0, 1)),
+        (Some("cloreuse=0,randinl=1"), (1, 0)),
+        (Some("randinl=5,cloreuse=7"), (1, 1)),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(
+            (c.limits.randinl, c.limits.cloreuse),
+            want,
+            "limits env {env:?}"
+        );
+    }
+}
+
 /// BUNDLE-J: the process default of `centry` (`CENTRY_PROCESS`) and of the weight rule `centrymin`; an explicit value wins and `centry` is clamped to 2.
 #[test]
 fn bj_centry_process_default() {
