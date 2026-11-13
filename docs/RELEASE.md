@@ -281,6 +281,9 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
   * `lazy_mat_no_leave`: survives on 5.5 AND 5.4 (also at the base commit; it is not a 5.4 item). A trap emitted at the skipped completion shows that `bk_obs3` (new, `tests/lazyci/bk_obs3.lua`:
     an exit inside an inlined callee of a native recursion, CallInfo nodes scrambled with tail-called frames and other constants before each run) and `r2_rec` execute the stub with lazy frames
     above the root, yet nothing they print depends on the fields the completion writes. Not shown equivalent: listed in `UNDETECTED` of `tr_mutants.rs`, a documented gap. `bk_obs3` stays as coverage.
-  * `smi_black_skip`: caught on 5.5 (`a1_setmt_old`), survives on 5.4. A trap experiment shows that on 5.4 the inline `setmetatable` store is executed with a black table and a white metatable in the
-    `a1_setmt_old` jobs (inc and gen, stress 2, with `RUSTYNAIL_GC_VERIFY`), but neither the output nor the verifier reports it, unlike 5.5. Not explained (the `Heap::barrier` code is the same on both
-    versions); also in `UNDETECTED` (5.4 only). Open: a 5.4 GC investigation (why the missing barrier does not leave a white metatable or a verifier hit).
+  * `smi_black_skip`: was caught on 5.5 (`a1_setmt_old`) and survived on 5.4. Investigated: no collector bug and no masked barrier. Counting the calls of the barrier's slow path in the unmutated
+    `a1_setmt_old` under GC stress 2 shows that the program never stores a white metatable into a black table during a mark phase on 5.4 (inc: 48 calls, all in the sweep phase, where the barrier is only
+    an optimisation; gen: none, the metatables created by `pre` are old after the hundreds of per-safepoint young collections before `apply` runs), while on 5.5 there are 1716 mark-phase calls. So the
+    mutant was reached (black table, white metatable) but harmless there, which is also why the verifier said nothing. A deterministic program (`tr_core::a1_setmt_black` = `tests/vm/gc_17`, tests
+    `setmt_black_barrier_programs`: generational, and incremental with one-unit steps) creates the interleaving on both versions: the unmutated build passes it (5.5 and 5.4, verify, exit storms, stress 1 and 2), the
+    mutant fails it on both. The `UNDETECTED` entry is gone.

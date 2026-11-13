@@ -1778,7 +1778,7 @@ const TABLE: &[Row] = &[
     Row {
         name: "smi_black_skip",
         owner: "A1",
-        dets: &[d("tr_core", "setmt_programs")],
+        dets: &[d("tr_core", "setmt_black_barrier_programs")],
     },
     Row {
         name: "smi_old_skip",
@@ -3649,13 +3649,9 @@ const V55_ONLY: &[&str] = &[
 /// docs/JIT_TESTING.md). `lazy_mat_no_leave` (both versions): the inline frame-rebuilding stub of a lazy-aware trace skips the completion of the lazy chain
 /// below the root; `tr_core::bk_obs3` / `r2_rec` execute that stub with lazy frames above the root (a trap emitted at the site crashes both), but nothing
 /// they print depends on the fields the completion writes (`top`, `kcache`, `trap`, `callstatus`: the nodes are scrambled with other values before the
-/// run in `bk_obs3`). `smi_black_skip` (5.4 only; the 5.5 runner catches it through `a1_setmt_old`): the inline `setmetatable` stores into a black table;
-/// on 5.4 the stub is reached with a black table and a white metatable (trap experiment) but neither the output nor `RUSTYNAIL_GC_VERIFY` reports it.
+/// run in `bk_obs3`).
 #[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
-const UNDETECTED: &[(&str, Option<bool>)] = &[
-    ("lazy_mat_no_leave", None),
-    ("smi_black_skip", Some(true)), // Some(true): 5.4 only
-];
+const UNDETECTED: &[(&str, Option<bool>)] = &[("lazy_mat_no_leave", None)];
 
 /// Mutants that are equivalent since the same-table `table.move` pre-reads its source elements (BUNDLE-VA): the order of the stores no longer changes any value
 /// (it was the order of reads and stores that made an overlapping move wrong), and the table layout after the call is the same in both orders for every

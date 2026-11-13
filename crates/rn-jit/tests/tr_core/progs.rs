@@ -15080,6 +15080,14 @@ print(s, string.format("%.15g", t))
 /// Y5: programs only the dedicated tests run (not in `selected()`: they build a large heap, or (`bm_mtype_gc`) observe the collector's timing, and are meaningless under the generic matrices).
 pub const Y_PROGS: &[Prog] = &[
     Prog {
+        // the barrier of the inline `setmetatable` store: a black table gets a fresh white metatable in the generational and in the
+        // incremental mark phase (`a1_setmt_old` does not reach that state on 5.4 under GC stress 2: there the metatables are old
+        // or the cycle is in its sweep phase when the store runs). The same file is the vm corpus program `gc_17`.
+        name: "a1_setmt_black",
+        small: false,
+        src: include_str!("../../../../tests/vm/gc_17_setmetatable_black_table.lua"),
+    },
+    Prog {
         name: "bm_mtype_gc",
         small: false,
         src: r##"

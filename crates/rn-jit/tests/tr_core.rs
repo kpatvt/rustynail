@@ -7278,6 +7278,36 @@ fn setmt_programs() {
     }
 }
 
+/// A1: the barrier of the inline `setmetatable` store. A black table (old in generational mode, traversed in the mark phase of an incremental
+/// cycle) gets a fresh white metatable that nothing else references (`tests/vm/gc_17_setmetatable_black_table.lua`); without the barrier the
+/// metatable is freed by the cycle and the `__index` lookups afterwards read freed memory or give other results. Unlike `a1_setmt_old`
+/// this reaches that state on 5.5 and on 5.4 (under GC stress 2 the 5.4 run of `a1_setmt_old` stores into black tables in the sweep phase
+/// only, where the barrier is an optimisation). Detector of the mutant `smi_black_skip`.
+#[test]
+fn setmt_black_barrier_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("a1_setmt_black", trace));
+        jobs.push(Job::new("a1_setmt_black", trace).opts("+verify"));
+        jobs.push(Job::new("a1_setmt_black", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("a1_setmt_black", trace).opts("-fwd -cse -loop -sink"));
+        jobs.push(Job::new("a1_setmt_black", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        jobs.push(Job::new("a1_setmt_black", trace).env("RUSTYNAIL_GC_STRESS", "1"));
+    }
+    jobs.push(Job::new("a1_setmt_black", "t1"));
+    for o in compare(jobs) {
+        let (j, o) = o;
+        if j.trace == "always" && j.opts.is_empty() && j.env.is_empty() {
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// The inline `#t` of traces (`TLEN`) and of tier 1 (`LEN`): stack push / pop, stale hints, holes, hash-part integers, array boundaries, `__len`,
 /// no array part, a metatable appearing in mid-loop, in every trace mode and with the collector stressed. Detector of the mutants
 /// `tlen_inline_prev_skip`, `tlen_inline_next_skip`, `tlen_inline_dummy_skip` and `tlen_inline_mt_skip` (the last one tier 1 only).
@@ -8888,6 +8918,11 @@ fn adhoc_file() {
     let mut j = Job::new(&format!("@{file}"), &var("TR_ADHOC_TRACE", "always"))
         .opts(&var("TR_ADHOC_OPTS", ""));
     j.limits = var("TR_ADHOC_LIMITS", "");
+    // `TR_ADHOC_ENV=K=V,K=V`: the job's child environment (`RUSTYNAIL_GC_STRESS` and `RUSTYNAIL_GC_VERIFY` are removed from the inherited one)
+    for kv in var("TR_ADHOC_ENV", "").split(',').filter(|s| !s.is_empty()) {
+        let (k, v) = kv.split_once('=').expect("TR_ADHOC_ENV: K=V,K=V");
+        j = j.env(k, v);
+    }
     compare(vec![j]);
 }
 
