@@ -180,7 +180,34 @@ interned string. Neither load can be forwarded from the byte stores, so each sta
 PGO only changed which of the two wide loads LLVM emitted (inlining decisions), and the 2-byte merge is the worse one.
 Fix: `char_core` uses the fresh variant of the intern probe (`short_core::<true>`); its 1..3 byte hash reads are volatile, and the probe's chain compare of a
 fresh string of at most 8 bytes is a byte-wise volatile loop (`bytes_eq_fresh`). Result (min of 5, Mcyc / Minstr): plain 177 -> 151, PGO 265 -> 140.
-The other programs of the list (m_type, os_clock, tonumber_int, knucleotide: +3..7% under PGO) are unchanged by this and have a different cause (not diagnosed).
+The other programs of the list (m_type, os_clock, tonumber_int, knucleotide) have different causes: next section.
+
+## The remaining PGO > plain programs of the session report (2026-11-12)
+
+Re-measured on the build above (min of 7, `taskset` on an idle-sibling CPU, `RUSTYNAIL_SEED=0`, the same script path; Mcyc / Minstr, plain vs PGO):
+
+| program | plain | PGO | verdict |
+|---|---|---|---|
+| lib/m_type | 168 / 1103 | 178 / 1084 (+5%) | real; fixed (below) |
+| lib/os_clock | 116 / 318 | 121 / 331 (+4%) | real, instructions +4.1% in PGO; not fixed |
+| lib/tonumber_int | 136-139 / 905 | 141 / 846 (+1.6..4.7%) | noise: the plain figure alone moves 3% between rebuilds; PGO executes 6.5% fewer instructions |
+| programs/knucleotide | 1071 / 6858 | 1097 / 6300 (+2.4%) | reproducible but below 3%, PGO executes 8% fewer instructions; not located |
+
+lib/m_type: every `math.type(i)` hashed and probed the string table for a static `"integer"` (240 instructions per call, ~36 cycles at IPC 6.6 in a
+helper); PGO inlined the probe into the 18 KB `jit_tr_alloc` (3 dependent loads for the area pointer, a spill and reload of it) and ended 5% behind.
+Fix: the heap owns the two result strings as fixed interned strings (`Heap::num_type_name`, like the `__metatable` name) and the recorder embeds
+their addresses as constants (`lib_math_type`): no helper call. m_type 166 -> 10.5 Mcyc plain, 175 -> 10.2 PGO (instructions 1103M -> 63M / 1084M -> 63M).
+Instruction counts of the other 94 `bench/lib` programs are unchanged (+-0.1%, except find_cap/find_pat PGO -1.3% from the new profile); cycle moves of
+4-15% in programs with identical instruction counts (tsort_cmp, m_random_f, fmt_q, sel_n) flip between rebuilds of the same source: layout, not code.
+
+lib/os_clock: not syscall specific. A pure C function through the same path (`os.difftime` in a loop) shows the same +13 instructions per call in PGO
+(302.6M vs 317.8M, +3.7% cycles); it is the generic template native-call path (`jit_call` / `pre_call_native_fast`, 6 KB in PGO against 0.9 KB plain,
+everything inlined), about 270 instructions per call. For os_clock 96-98% of the samples carry no symbol (kernel entry), so perf cannot locate the 13 extra
+instructions; the cycle noise of the program alone is +-5%. A real fix is a leaner call path (the queued C-call work), not a tweak here.
+
+lib/m_type, os_clock, tonumber_int and knucleotide are all near IPC 6 (the cycles sit on helper entry loads: `th -> state -> area` pointer chasing and the
+arguments just stored by the trace; the stores and loads are both 8 bytes, so unlike lib/char there is no store-forwarding mismatch).
+
 
 - `c36_cispare` / `p3_fdisp` on 5.4: weaker expectations (above); see "Verification A3" for what was found.
 - 5.4 under Tree Borrows: not run (5.4 ASan-JIT and the 5.4 Miri `rn-core` job were run in A3).

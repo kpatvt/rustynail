@@ -1802,6 +1802,10 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             }
             c.upvalue(k).as_strref().map_or(0, |s| s.as_ptr() as u64)
         }
+        // `math.type`: the two fixed strings of the heap (no hashing, no allocation)
+        lib::TYPENAME if args[0] == 8 || args[0] == 9 => {
+            st.heap().num_type_name(args[0] == 9).as_ptr() as u64
+        }
         lib::TYPENAME => match lib::TYPENAMES.get(args[0] as usize) {
             Some(n) => short_core::<false>(
                 st,

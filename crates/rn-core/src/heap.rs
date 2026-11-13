@@ -46,6 +46,8 @@ pub struct Heap {
     pub(crate) tm_names: [*mut LuaString; TM_N],
     /// F2: the interned, fixed string `"__metatable"` (the field `getmetatable` / `setmetatable` look up; traces embed its address).
     pub(crate) metatable_name: *mut LuaString,
+    /// The interned, fixed result strings of `math.type` (`"integer"`, `"float"`): the trace helper of `math.type` returns them without hashing.
+    pub(crate) num_type_names: [*mut LuaString; 2],
     /// F1: the carried traversal index of `next` (`TableRef::next_hinted`); only a hint, validated by every use.
     pub next_hint: u32,
     /// B3-6: the 256 interned, fixed one-byte strings (never collected, found without hashing).
@@ -93,6 +95,7 @@ impl Heap {
             gc: GcState::new(),
             tm_names: [std::ptr::null_mut(); TM_N],
             metatable_name: std::ptr::null_mut(),
+            num_type_names: [std::ptr::null_mut(); 2],
             next_hint: 0,
             onebyte: [std::ptr::null_mut(); 256],
         };
@@ -108,6 +111,11 @@ impl Heap {
         let s = h.new_str(b"__metatable")?;
         h.fix_object(s.as_ptr().cast());
         h.metatable_name = s.as_ptr();
+        for (i, name) in [&b"integer"[..], &b"float"[..]].into_iter().enumerate() {
+            let s = h.new_str(name)?;
+            h.fix_object(s.as_ptr().cast());
+            h.num_type_names[i] = s.as_ptr();
+        }
         for b in 0..=255u8 {
             let s = h.new_str(&[b])?;
             h.fix_object(s.as_ptr().cast());
@@ -142,6 +150,12 @@ impl Heap {
     pub fn metatable_name(&self) -> StrRef {
         // SAFETY: created and fixed in `with_mem`.
         StrRef(unsafe { NonNull::new_unchecked(self.metatable_name) })
+    }
+
+    /// The interned, fixed string `math.type` returns: `"integer"` (`float == false`) or `"float"`.
+    pub fn num_type_name(&self, float: bool) -> StrRef {
+        // SAFETY: created and fixed in `with_mem`.
+        StrRef(unsafe { NonNull::new_unchecked(self.num_type_names[usize::from(float)]) })
     }
 
     /// Total bytes currently allocated (GC accounting).
@@ -963,6 +977,16 @@ mod tests {
         assert_eq!(h.new_str(&[b'q'; 200]).unwrap_err(), Status::ErrMem);
         // heap still usable
         let _ = h.new_str(b"ok").unwrap();
+    }
+
+    #[test]
+    fn num_type_names_are_the_interned_strings() {
+        let mut h = heap();
+        let (i, f) = (h.num_type_name(false), h.num_type_name(true));
+        assert_eq!(h.str_bytes(i), b"integer");
+        assert_eq!(h.str_bytes(f), b"float");
+        assert_eq!(h.new_str(b"integer").unwrap().as_ptr(), i.as_ptr());
+        assert_eq!(h.new_str(b"float").unwrap().as_ptr(), f.as_ptr());
     }
 
     #[test]

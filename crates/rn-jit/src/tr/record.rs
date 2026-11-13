@@ -9299,7 +9299,7 @@ impl Rec {
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
     }
 
-    /// `math.type(x)`: the name of the number kind (the string is interned by the helper), `nil` for anything else.
+    /// `math.type(x)`: the name of the number kind (one of the heap's fixed strings, embedded as a constant), `nil` for anything else.
     fn lib_math_type(
         &mut self,
         vm: &Vm<'_>,
@@ -9316,10 +9316,21 @@ impl Rec {
         let (_, t) = self.rd(vm, a + 1)?;
         let r = match t {
             Ty::Int | Ty::Num => {
-                let k = self.kint(if t == Ty::Int { 8 } else { 9 });
-                let z = self.kint(0);
-                let hint = self.lib_hint(vm, a, nargs, wanted);
-                self.lib_op(lib::TYPENAME, Ty::ShrStr, k, z, None, hint)?
+                // the heap's two fixed (never collected) result strings: embedded as constants, no helper call
+                let name = vm.st.g().heap.num_type_name(t == Ty::Num);
+                let a = self.b.ir.konst(KVal::Ptr(
+                    payload_bits(&Value::string(name), Ty::ShrStr),
+                    PtrKind::Raw,
+                ));
+                self.b.emit_raw(Ins {
+                    op: TOp::Kptr,
+                    t: Ty::ShrStr,
+                    flags: 0,
+                    a,
+                    b: NOREF,
+                    prev: NOREF,
+                    aux: 0,
+                })?
             }
             _ => self.b.ir.konst(KVal::Pri(Ty::Nil)),
         };
