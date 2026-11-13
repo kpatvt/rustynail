@@ -3530,7 +3530,17 @@ const V55_ONLY: &[&str] = &[
     "gfor_end_guard_skip",
     "gfor_end_always",
     "tnext_key_site_type",
+    // 5.5 only: the inline `rawlen(t)` of a table (the 5.4 template jumps to the slow path) and the `asize` bounds of the 5.5 inline `#t` (the 5.4 one is a
+    // separate template, `l54`); their sites are not reached on 5.4 (the 5.4 runner of the gate run showed them as survivors)
+    "t1i_rawlen_next_skip",
+    "tlen_inline_zero_bound_skip",
 ];
+
+/// Mutants that are equivalent since the same-table `table.move` pre-reads its source elements (BUNDLE-VA): the order of the stores no longer changes any value
+/// (it was the order of reads and stores that made an overlapping move wrong), and the table layout after the call is the same in both orders for every
+/// shape tried (array part growth by rehash gives the same final sizes). Both the 5.5 and the 5.4 runner show it as a survivor.
+#[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
+const EQUIVALENT: &[&str] = &["tmove_order_flip"];
 
 // ---- consistency of the table with the registry (pure) ---------------------------------------------------------------------------
 
@@ -3883,6 +3893,9 @@ mod runner {
         for r in &rows {
             if !cfg!(rustynail_lua54) && V54_ONLY.contains(&r.name) {
                 continue; // a 5.4 mutant: its injection site is compiled out of the 5.5 build (F7a)
+            }
+            if EQUIVALENT.contains(&r.name) {
+                continue; // see `EQUIVALENT`
             }
             if cfg!(rustynail_lua54) && V55_ONLY.contains(&r.name) {
                 continue; // a 5.5 mutant (N7): its site is not reached on 5.4
