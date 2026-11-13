@@ -2166,17 +2166,23 @@ cycle columns of that sweep carry +-5 % noise) or min of 5-7 on a pinned core fo
   every distinct 1-4 byte substring) shows as skid there, 10 % on the loop after the hash (`or`), 9 % on the hash multiply. The compare is a handful of instructions; this is why the study's compare
   patch and C46 (inline short compare) gave nothing. A real gain needs the bucket address earlier or a smaller / denser table; neither is a one-pass lean path. Skipping `jit_alloc_ok(0)` for a found
   string would change GC pacing for no measurable gain and was not tried.
-* **`cloreuse` BUILT, OFF (knob `cloreuse`, `CLOREUSE_PROCESS` 0).** When the callee of an inlined call is loaded from an upvalue of a closure the trace already holds (`ULOAD (UREF known, n)`) and is
+* **`cloreuse` BUILT (knob `cloreuse`), ON since BUNDLE-N (2026-11-13; it was OFF with a 1.5 x loss on `apps/expr_lang`, cause found and fixed, see below).** When the callee of an inlined call is loaded from an upvalue of a closure the trace already holds (`ULOAD (UREF known, n)`) and is
   at record time that very closure (a live frame's function), `call_lua` guards `EQREF loaded, known` (register equality) instead of the proto against a constant and names `known` as the callee
   frame's closure ref, so the upvalue loads of the recursion levels (`UREF` / `UVREL` / `UGE` / `ULOAD`) are the same instructions and CSE. No code constant, so C43's GC objection does not apply;
   the guard is exact (a same-proto closure with other upvalues fails it: `tr_core::cloreuse_programs`, `c64_cloreuse` swaps the recursion's closure mid-run; mutant `cloreuse_guard_skip` is caught).
   Census of record-time matches (inlined Lua calls recorded over the 223 programs: 13033; matches with a live frame's closure: 2058): `rec_loop` 777 of 855, `tail_loop` 420 of 826, `binary_trees`
-  205 of 218, `coro_generators` 144 of 150, `lua_parser` 92 of 817, `astar_jumper` 59, `expr_lang` 56, `cd` 53. Result with the knob on: `tail_loop` 0.71 instructions / 0.46 cycles, `rec_loop` 0.82 / 0.69,
-  `lua_parser` 0.998 / 0.96, `binary_trees` and everything else unchanged, **`apps/expr_lang` 1.50 instructions / 2.0 cycles** (the recursive evaluator `eval`; `polyside=0` reduces the loss to 1.23,
-  `sinkmt=0` / `sinkside=0` / `sinkroot=0` do not; with the guard but WITHOUT the substitution of the callee frame's ref `expr_lang` is unchanged and `tail_loop` loses its gain, so the effect is in
-  the shared refs, not in the guard). The cause was not found: with the knob on `expr_lang` records 293 side traces (57 off), 79 of them abort `InnerLoop`, 30 roots / sides flush `Unsink`, and
-  hot exits in inlined `eval` frames stay in the interpreter 50 K cycles per stay. Suspects: snapshots whose frames share one closure ref (`FrameRec::closure`) and the frame-side / sink bookkeeping that
-  assumes distinct refs. Retest trigger: a diagnosis of that formation (diff the IR / snapshots of the first `eval` side trace, `RUSTYNAIL_JIT_DUMP` on both settings); then turn the knob on.
+  205 of 218, `coro_generators` 144 of 150, `lua_parser` 92 of 817, `astar_jumper` 59, `expr_lang` 56, `cd` 53. **The `expr_lang` cause (BUNDLE-N, `RUSTYNAIL_JIT_DUMP` + `RUSTYNAIL_JIT_VERBOSE=2` of both settings, the logs
+  are identical up to trace 82):** not the shared refs, the *size accounting*. The loop of `run` (proto:189 pc 8) calls the recursive `eval`; its first recordings abort `Recursion`, the J2-2 deep re-recording (`deep`, `deepins` = 300 IR
+  instructions) then aborts `TooLong` on the big evaluation tree, so the loop stays in tier 1 (1.0). With `cloreuse` the CSE'd upvalue loads of every recursion level made the same tree fit under `deepins`: the recording
+  succeeded as one 244 KB trace (394 IR instructions after optimisation) specialised to ONE tree shape of a polymorphic `k == "num" / "var" / "bin" / ...` dispatch, whose guards then failed everywhere: 293 side traces
+  (57 off), 79 of them `InnerLoop` aborts, `Unsink` flushes, 85-127 K cycle interpreter stays at `eval` pc 0 / 1 / 6 / 15. (The earlier suspects, shared `FrameRec::closure` refs and the sink bookkeeping, were wrong;
+  `polyside=0` and `sinkmt=0` only moved the same accident.) **Fix:** `Builder::cse_uv_hits` counts the upvalue-load instructions (`UREF` / `UVREL` / `UGE` / `ULOAD`) that CSE merged away, and a deep recording's `TooLong`
+  test is `ins.len() + cse_uv_hits > deepins` while `cloreuse` is on, i.e. the instructions the substitution saved are charged back and a call tree that was too big stays too big. Two cruder variants were measured first:
+  no substitution in deep recordings (`expr_lang` 1.0, but `rec_loop` loses its whole gain: its recursion is a deep recording) and charging the IR size double after the first substitution (`expr_lang` 1.07 / 1.18 cycles; x3: `expr_lang` 1.0 but
+  `rec_loop` 3.4 x worse because its recording is then too big: the budget is a cliff, the charge of the real saving is the only variant that keeps both). Result, all 223 programs, `cloreuse=1` vs `=0` on the same binary (instructions
+  `perf stat`, `RUSTYNAIL_SEED=0`, min of 2): geomean 0.9975, `tail_loop` 0.713 instructions / 0.458 cycles, `rec_loop` 0.806 / 0.684, `regex_nfa` 0.995, `astar_jumper` 0.998, `expr_lang` 1.000, nothing above 1.003 (cycle outliers of the shared machine, e.g.
+  `table_hash` 1.04-1.2 with identical instruction counts, vary the same way between two runs of the same setting). Not covered by a mutant: the charge is a performance rule (a missing charge changes which recordings succeed, never what a trace computes);
+  `tr_core::cloreuse_programs` still pins the semantics in both settings.
 * **Compile cost (C14 lazy stubs, fewer wasted recordings) MEASURED, NOT BUILT.** `[trace] phases` (Mtsc; the cycle share is against `cycles:u`, tsc and core clock differ by a few %):
 
   | program | run Mcyc | rec_step | pipeline (ra / exits / asm / x86 / install) | share of run |

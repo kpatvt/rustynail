@@ -1198,6 +1198,9 @@ pub struct Builder {
     /// DYNMASK: may two [`HREF_DYN`] `HREFV`s of the same operands be merged? Only for a builder whose input has no op that can rehash a table
     /// (the loop optimiser's: it gives up on `NEWREF` and friends, `opt_mem::header_safe_ins`).
     pub cse_dyn_href: bool,
+    /// Upvalue-load instructions (`UREF` / `UVREL` / `UGE` / `ULOAD`) that CSE merged into an earlier one: the recorder charges them against the deep
+    /// recording's IR budget when `cloreuse` is on (they are the instructions the closure substitution saves).
+    pub cse_uv_hits: u32,
 }
 
 impl Builder {
@@ -1209,6 +1212,7 @@ impl Builder {
             fold,
             cse,
             cse_dyn_href: false,
+            cse_uv_hits: 0,
         }
     }
 
@@ -1260,6 +1264,9 @@ impl Builder {
                 || super::mutants::active("dynmask_cse_merge"))
         {
             if let Some(r) = self.find(&ins) {
+                if matches!(op, TOp::Uref | TOp::Uvrel | TOp::Uge | TOp::Uload) {
+                    self.cse_uv_hits += 1;
+                }
                 return Ok(r);
             }
         }

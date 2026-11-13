@@ -77,12 +77,13 @@ pub const LAPRUNE_PROCESS: u32 = 1;
 /// C36 (`cispare`): process value of [`TrLimits::cispare`] (K3a: also the struct default): a persistent entry failure whose cause is missing spare `CallInfo` nodes
 /// behind the frame (`TR6b`) is repaired by extending the chain instead of flushing the root.
 pub const CISPARE_PROCESS: u32 = 1;
-/// BUNDLE-L (`cloreuse`): process value of [`TrLimits::cloreuse`] (also the struct default; **0 = off**: it halves `jit-trace/tail_loop` and cuts `rec_loop` to 0.69 x cycles but
-/// makes `apps/expr_lang` 1.5 x instructions, formation, cause not found, docs/JIT_PARKED.md C64): the callee-identity guard of an inlined call compares the loaded closure
-/// with a closure that the trace already holds in a register when it is the same object at record time (recursion through an upvalue, a call chain back to a frame
-/// that is live), instead of checking its prototype against a code constant, and the callee frame then names that register: the `UREF` / `UVREL` / `UGE` / `ULOAD`
-/// chain of the callee's upvalue loads CSEs with the earlier ones.
-pub const CLOREUSE_PROCESS: u32 = 0;
+/// BUNDLE-L / BUNDLE-N (`cloreuse`): process value of [`TrLimits::cloreuse`] (also the struct default; 0 = off): the callee-identity guard of an inlined call compares the
+/// loaded closure with a closure that the trace already holds in a register when it is the same object at record time (recursion through an upvalue, a call chain back to
+/// a frame that is live), instead of checking its prototype against a code constant, and the callee frame then names that register: the `UREF` / `UVREL` / `UGE` / `ULOAD`
+/// chain of the callee's upvalue loads CSEs with the earlier ones. `jit-trace/tail_loop` 0.71 x instructions / 0.46 x cycles, `rec_loop` 0.81 / 0.69. The CSE'd upvalue loads
+/// are charged against the IR budget of deep recordings (`deepins`), so the substitution cannot turn a call tree that was too big (`TooLong`) into a huge unrolled trace
+/// (`apps/expr_lang` was 1.5 x instructions without the charge, docs/JIT_PARKED.md C64).
+pub const CLOREUSE_PROCESS: u32 = 1;
 /// C36 (`domtop`): process value of [`TrLimits::domtop`] (K3a: also the struct default): the percent of a root's entries through ONE pre-roll site into a side
 /// trace (at least [`TrLimits::domn`] entries) above which the root, recorded on a rare path, is re-recorded once (no penalty).
 pub const DOMTOP_PROCESS: u32 = 82;

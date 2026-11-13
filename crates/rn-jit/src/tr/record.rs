@@ -1854,7 +1854,9 @@ impl Rec {
             || self.b.ir.ins.len() > MAX_INS - 16
             || (self.cfg.side.is_some() && self.b.ir.ins.len() > MAX_SIDE_INS)
             || (self.cfg.max_ins != 0
-                && self.b.ir.ins.len() > self.cfg.max_ins
+                && self.b.ir.ins.len()
+                    + self.b.cse_uv_hits as usize * usize::from(self.cfg.cloreuse)
+                    > self.cfg.max_ins
                 && !mutants::active("deep_ins_unbounded"))
         {
             return Err(AbortReason::TooLong);
