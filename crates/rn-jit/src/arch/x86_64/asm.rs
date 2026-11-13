@@ -420,6 +420,21 @@ impl Assembler {
         self.pad(pad);
     }
 
+    /// [`Assembler::align`] to `n` followed by `extra` more bytes of padding, as ONE padding region that a short `jmp` skips when it holds more than one NOP
+    /// (the region sits in the fall-through path of a trace entry: the head padding of a trace loop is executed once per entry otherwise, 11 % of the
+    /// instructions of `programs/fib`). The bytes behind the `jmp` are never executed (NOPs, so the region disassembles cleanly).
+    pub fn align_pad_skip(&mut self, n: usize, extra: usize) {
+        assert!(n.is_power_of_two(), "alignment must be a power of two");
+        let total = ((n - (self.buf.len() & (n - 1))) & (n - 1)) + extra;
+        if total > 9 && total - 2 <= 127 {
+            self.b(0xEB);
+            self.b((total - 2) as u8);
+            self.pad(total - 2);
+        } else {
+            self.pad(total);
+        }
+    }
+
     /// Emits exactly `pad` bytes of Intel's recommended multi-byte NOPs (at most 9 bytes each).
     pub fn pad(&mut self, mut pad: usize) {
         const NOPS: [&[u8]; 9] = [

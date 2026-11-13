@@ -85,11 +85,26 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
     let mut a = Assembler::new();
     let labels: Vec<Label> = (0..prog.nlabels).map(|_| a.new_label()).collect();
     let lab = |l: L| labels[l as usize];
-    for op in &prog.ops {
+    let mut skip_pad = false;
+    for (oi, op) in prog.ops.iter().enumerate() {
         match *op {
             Op::Bind(l) => a.bind(lab(l)),
-            Op::Align(n) => a.align(usize::from(n)),
-            Op::Pad(n) => a.pad(usize::from(n)),
+            // an `Align` directly followed by a `Pad` is one region (the head padding of a trace loop): a `jmp` skips it
+            Op::Align(n) => {
+                if let Some(Op::Pad(m)) = prog.ops.get(oi + 1) {
+                    a.align_pad_skip(usize::from(n), usize::from(*m));
+                    skip_pad = true;
+                } else {
+                    a.align(usize::from(n));
+                }
+            }
+            Op::Pad(n) => {
+                if skip_pad {
+                    skip_pad = false;
+                } else {
+                    a.pad(usize::from(n));
+                }
+            }
             Op::Mov(v, i) => a.mov_ri(vr(v), i as i64),
             Op::MovR(d, s) => a.mov_rr(Size::S64, vr(d), vr(s)),
             Op::Ld { dst, w, m } => match w {

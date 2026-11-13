@@ -958,18 +958,18 @@ fn o_polyside_process_default() {
 /// Mutant `loopany_default_ignored`.
 #[test]
 fn s_loopany_process_default() {
-    use rn_jit::tr::cache::{TrConfig, TrMode, LOOPANY_PROCESS};
+    use rn_jit::tr::cache::{TrConfig, TrMode, LOOPANYMAX_PROCESS as M, LOOPANY_PROCESS};
     assert_eq!(LOOPANY_PROCESS, 1);
     let c0 = TrConfig::for_mode(TrMode::On);
     assert_eq!(
         (c0.limits.loopany, c0.limits.loopanymax),
-        (LOOPANY_PROCESS, 4)
+        (LOOPANY_PROCESS, M)
     );
     for (env, want) in [
-        (None, (1, 4)),
-        (Some(""), (1, 4)),
-        (Some("nest=2"), (1, 4)),
-        (Some("loopany=0"), (0, 4)),
+        (None, (1, M)),
+        (Some(""), (1, M)),
+        (Some("nest=2"), (1, M)),
+        (Some("loopany=0"), (0, M)),
         (Some("loopany=1,loopanymax=9"), (1, 9)),
         (Some("loopanymax=5"), (1, 5)),
     ] {
