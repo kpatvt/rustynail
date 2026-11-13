@@ -14883,8 +14883,26 @@ for i = 1, #log do print(log[i]) end
     },
 ];
 
-/// Y5: programs only the dedicated tests run (not in `selected()`: they build a large heap and are meaningless under the generic matrices).
+/// Y5: programs only the dedicated tests run (not in `selected()`: they build a large heap, or (`bm_mtype_gc`) observe the collector's timing, and are meaningless under the generic matrices).
 pub const Y_PROGS: &[Prog] = &[
+    Prog {
+        name: "bm_mtype_gc",
+        small: false,
+        src: r##"
+-- math.type on a trace has the collector check of a string push (an inline guard of the trace): a finalizer that becomes due
+-- at the next push runs at the same iteration as in the interpreter (GC stress modes)
+local N = 3000
+local fired, acc, out = 0, 0, {}
+local mt = { __gc = function() fired = fired + 1 end }
+for i = 1, N do
+  if i % 700 == 0 then setmetatable({}, mt) end
+  if math.type(i) == "integer" then acc = acc + 1 end
+  if math.type(i + 0.5) == "float" then acc = acc + 1 end
+  if i % 700 <= 2 then out[#out + 1] = i .. ":" .. fired end
+end
+print(acc, fired, table.concat(out, " "))
+"##,
+    },
     Prog {
         name: "y5_upbar_black",
         small: false,

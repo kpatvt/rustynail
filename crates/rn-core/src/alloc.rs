@@ -338,6 +338,18 @@ impl Mem {
         &mut self.virt as *mut usize
     }
 
+    /// Addresses of the cells [`Mem::would_fit`] and [`Mem::total_bytes`] read, for the inline collector guard of a trace:
+    /// (`total`, `virt`, `ext`, `limit`).
+    #[cfg(feature = "jit_trace")]
+    pub fn jit_cells(&self) -> [usize; 4] {
+        [
+            &raw const self.total as usize,
+            &raw const self.virt as usize,
+            &raw const self.ext as usize,
+            &raw const self.limit as usize,
+        ]
+    }
+
     pub fn system() -> Self {
         Self::new(Box::new(SystemAllocator))
     }

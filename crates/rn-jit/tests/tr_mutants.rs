@@ -1193,7 +1193,10 @@ const TABLE: &[Row] = &[
     Row {
         name: "lib_no_gc_check",
         owner: "P-B",
-        dets: &[dl("tr_class_a_pb", "lib_helpers_exit_exactly_when_a_step_would_be_due")],
+        dets: &[
+            dl("tr_class_a_pb", "lib_helpers_exit_exactly_when_a_step_would_be_due"),
+            dl("tr_core", "bm_mtype_gc_matrix"),
+        ],
     },
     Row {
         name: "lib_kind_skip",

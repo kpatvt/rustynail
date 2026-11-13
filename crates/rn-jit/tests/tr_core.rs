@@ -8062,6 +8062,48 @@ fn hs_sub_ring_matrix() {
     assert!(!res.is_empty());
 }
 
+/// `math.type` on a trace (`bm_mtype_gc`): the inline collector guard in front of the constant result string. The program observes the collector
+/// (a finalizer that becomes due at a push), so each run is compared with the interpreter under the same GC stress: in every trace mode, stress 1 and 2 in
+/// both collector modes. Mutant `lib_no_gc_check` (the inline form).
+#[test]
+fn bm_mtype_gc_matrix() {
+    let mut cases = Vec::new();
+    for gc in ["1", "2"] {
+        for mode in ["inc", "gen"] {
+            for trace in ["off", "always", "on2", "on"] {
+                cases.push(
+                    Job::new("bm_mtype_gc", trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .env("TR_CORE_GCMODE", mode),
+                );
+            }
+        }
+    }
+    let res = run_all(cases);
+    let mut bad = Vec::new();
+    for g in res.chunks(4) {
+        let (j0, o0) = &g[0];
+        assert!(
+            o0.ok && o0.result.contains("STATUS true"),
+            "{}: {}",
+            j0.tag(),
+            o0.result
+        );
+        for (j, o) in &g[1..] {
+            if !o.ok || o.result != o0.result {
+                bad.push(format!(
+                    "{}: differs from the interpreter\n{}\n---\n{}\n{}",
+                    j.tag(),
+                    o0.result,
+                    o.result,
+                    tail(&o.stderr)
+                ));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n====\n"));
+}
+
 /// BUNDLE-A: `tonumber(string)` (`libnum`), the plain call `next(t [, k])` (`libnext`) and plain `string.find` (`libfind`) recorded: the three programs in every
 /// trace mode with verification, exit storms, budgets, GC stress 1 and 2 in both collector modes (and the heap verifier), the stack-move stress and the
 /// emulator, with each knob alone and all together (the knobs off are the controls). Mutants `tonum_type_guard_skip`, `tonum_mode_ignored`, `next_ctl_nil`,

@@ -1642,6 +1642,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         exit_cells: cells as u64,
         side: side_env,
         vcell: st.heap().virtual_cell() as u64,
+        gc_cells: st.heap().jit_gc_cells(),
+        num_names: [
+            st.heap().num_type_name(false).as_ptr() as u64,
+            st.heap().num_type_name(true).as_ptr() as u64,
+        ],
         rec_sites,
         rec_nsites,
         rec_link_cell,

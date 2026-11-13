@@ -134,6 +134,11 @@ pub struct AsmEnv {
     /// (P-L: the only cell; the collector-visible total is the real bytes plus this counter). `0`: none (tests without
     /// sinking).
     pub vcell: u64,
+    /// The cells of the collector debt check (`Heap::jit_gc_cells`; `total == 0`: none, the helper does the check) and the heap's two fixed
+    /// strings of `math.type` (`"integer"`, `"float"`): the inline form of `LIB TYPENAME` for those.
+    pub gc_cells: rn_core::gc::JitGcCells,
+    /// See `gc_cells`.
+    pub num_names: [u64; 2],
     /// P-M3: the continuation heads a native `RETURN1` continues at: (address of the instruction after the `CALL` = the
     /// caller's `savedpc`, address of the head's native-entry cell, register `A` of that `CALL`), `rec_nsites` valid entries.
     pub rec_sites: [(u64, u64, u8); super::cache::MAX_CONT_SITES],
@@ -269,6 +274,8 @@ impl Default for AsmEnv {
             exit_cells: 0,
             side: None,
             vcell: 0,
+            gc_cells: Default::default(),
+            num_names: [0; 2],
             rec_sites: [(0, 0, 0); super::cache::MAX_CONT_SITES],
             rec_nsites: 0,
             rec_link_cell: 0,
@@ -5659,6 +5666,11 @@ impl Cx<'_> {
             && self.env.alloc == jit_tr_alloc as *const () as usize as u64
         {
             self.type_fast(&ops, d)
+        } else if ins.op == TOp::Lib
+            && ins.aux & 0xFF == lib::TYPENAME
+            && self.env.alloc == jit_tr_alloc as *const () as usize as u64
+        {
+            self.typename_fast(&ops, d)
         } else if ins.op == TOp::Lib && ins.aux & 0xFF == lib::BYTE && self.env.f2_byte {
             self.byte_fast(&ops, d, self.ir.ty_of(ins.a) == Ty::LngStr)
         } else if ins.op == TOp::Lib
@@ -6115,6 +6127,85 @@ impl Cx<'_> {
         self.push(Op::And(7, Src::Imm(0xffff)));
         self.br(Cc::Ge, 7, Src::Imm(bound as i32), slow);
         self.push(Op::Mov(d, 1));
+        self.push(Op::Jmp(done));
+        self.push(Op::Bind(slow));
+        Some(done)
+    }
+
+    /// The inline form of `math.type(x)` for a number (`LIB TYPENAME` with the index 8 or 9): the result is one of the heap's two fixed
+    /// strings, an embedded constant, behind the collector check every string push makes (`Heap::jit_alloc_ok(0)`, what the helper does):
+    /// no collector step due at the interpreter's `check_gc` after the push, no memory limit failure. The check is read off the heap's
+    /// cells inline (`stp == 0`, no stress mode, `total + virt < threshold`, `total + ext <= limit`); a stopped collector, or any
+    /// state the inline check refuses, takes the helper call (the slow path), which answers 0 ("exit to the interpreter") exactly when
+    /// the check fails. Writes `V7` and the destination (a scratch until the answer).
+    fn typename_fast(&mut self, ops: &[Loc], d: V) -> Option<L> {
+        let Loc::Const(kr) = ops[0] else {
+            return None;
+        };
+        let k = self.kbits_of(kr);
+        if k != 8 && k != 9 {
+            return None;
+        }
+        let c = self.env.gc_cells;
+        let name = self.env.num_names[(k == 9) as usize];
+        if c.total == 0 || name == 0 {
+            return None;
+        }
+        let rel = |a: usize| i32::try_from(a as i64 - c.stp as i64).ok();
+        let (total, virt, ext, limit, thr, s1, s2) = (
+            rel(c.total)?,
+            rel(c.virt)?,
+            rel(c.ext)?,
+            rel(c.limit)?,
+            rel(c.threshold)?,
+            rel(c.stress)?,
+            rel(c.stress_steps)?,
+        );
+        let (slow, done) = (self.label(), self.label());
+        if !mutants::active("lib_no_gc_check") {
+            self.push(Op::Mov(7, c.stp as u64));
+            for off in [0, s1, s2] {
+                self.push(Op::BrM {
+                    cc: Cc::Ne,
+                    w: W::B1,
+                    m: rm(7, off),
+                    imm: 0,
+                    to: slow,
+                });
+            }
+            // d = total + virt; the collector is idle when it is below the threshold
+            self.ld(d, W::B8, rm(7, virt));
+            self.push(Op::Ld {
+                dst: 7,
+                w: W::B8,
+                m: rm(7, total),
+            });
+            self.push(Op::Add(d, Src::V(7)));
+            self.push(Op::Mov(7, c.stp as u64));
+            self.push(Op::Ld {
+                dst: 7,
+                w: W::B8,
+                m: rm(7, thr),
+            });
+            self.br(Cc::Uge, d, Src::V(7), slow);
+            // total + ext must not exceed the limit
+            self.push(Op::Mov(7, c.stp as u64));
+            self.ld(d, W::B8, rm(7, ext));
+            self.push(Op::Ld {
+                dst: 7,
+                w: W::B8,
+                m: rm(7, total),
+            });
+            self.push(Op::Add(d, Src::V(7)));
+            self.push(Op::Mov(7, c.stp as u64));
+            self.push(Op::Ld {
+                dst: 7,
+                w: W::B8,
+                m: rm(7, limit),
+            });
+            self.br(Cc::Ult, 7, Src::V(d), slow);
+        }
+        self.push(Op::Mov(d, name));
         self.push(Op::Jmp(done));
         self.push(Op::Bind(slow));
         Some(done)

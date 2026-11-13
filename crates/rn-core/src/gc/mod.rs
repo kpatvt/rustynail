@@ -189,6 +189,28 @@ pub const GCP_STEPMUL: usize = 4;
 pub const GCP_STEPSIZE: usize = 5;
 pub const GCP_N: usize = 6;
 
+/// Addresses of the cells the collector debt check reads (see [`Heap::jit_gc_cells`]).
+#[cfg(feature = "jit_trace")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JitGcCells {
+    /// `Mem::total` (`usize`).
+    pub total: usize,
+    /// `Mem::virt` (`usize`).
+    pub virt: usize,
+    /// `Mem::ext` (`usize`).
+    pub ext: usize,
+    /// `Mem::limit` (`usize`).
+    pub limit: usize,
+    /// The collector's threshold (`usize`).
+    pub threshold: usize,
+    /// `gcstp` bits (`u8`).
+    pub stp: usize,
+    /// Stress mode 1 (`bool`).
+    pub stress: usize,
+    /// Stress mode 2 (`bool`).
+    pub stress_steps: usize,
+}
+
 /// Collector parameters (5.5 semantics: stored as encoded percentages, see `lgc.h`).
 #[derive(Clone, Copy, Debug)]
 pub struct GcParams {
@@ -990,6 +1012,23 @@ impl Heap {
                 && !self.gc.stress_steps
                 && self.mem.total_bytes().saturating_add(extra) < self.gc.threshold);
         idle && self.mem.would_fit(extra)
+    }
+    /// The inline form of [`Heap::jit_alloc_ok`]`(0)` for trace code: the addresses of the cells it reads. It holds when
+    /// `stp == 0 && !stress && !stress_steps && total + virt < threshold && total + ext <= limit` (the code takes its slow
+    /// path, the helper, for a stopped collector, so that the common case needs no branch for it).
+    #[cfg(feature = "jit_trace")]
+    pub fn jit_gc_cells(&self) -> JitGcCells {
+        let [total, virt, ext, limit] = self.mem.jit_cells();
+        JitGcCells {
+            total,
+            virt,
+            ext,
+            limit,
+            threshold: &raw const self.gc.threshold as usize,
+            stp: &raw const self.gc.stp as usize,
+            stress: &raw const self.gc.stress as usize,
+            stress_steps: &raw const self.gc.stress_steps as usize,
+        }
     }
     /// Is a collection running right now?
     pub fn gc_in_collect(&self) -> bool {

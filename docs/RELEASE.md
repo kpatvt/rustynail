@@ -201,8 +201,9 @@ their addresses as constants (`lib_math_type`): no helper call. m_type 166 -> 10
 pushes its result with `check_gc` and the trace helpers keep that contract (a helper reports 0, and the trace exits, exactly when a step would be due:
 `tr_class_a_pb::lib_helpers_exit_exactly_when_a_step_would_be_due`, mutant `lib_no_gc_check`); where pending debt exists (not observed in a test) the interpreter would step at that `CALL`
 and the constant would step later. `TYPENAME` 8/9 is now a helper fast path (the fixed string, no hashing, `jit_alloc_ok(0)` first): plain m_type 11 Mcyc (constant,
-no check) / 92 Mcyc (helper) / 170 Mcyc (before the fixed strings); instructions 63M / 609M / 1103M. If the 80 Mcyc matter, an inline collector-debt guard
-in the trace (exit to the `CALL` when the debt is positive) would give the constant's cost with the check; not built. The two heap strings shift the
+no check) / 92 Mcyc (helper) / 170 Mcyc (before the fixed strings); instructions 63M / 609M / 1103M. **Inline guard (built after):** `asm::typename_fast` reads the heap's cells (`Heap::jit_gc_cells`: `stp`, both stress flags, `total + virt < threshold`, `total + ext <= limit`) and embeds the
+result string as a constant when the collector would stay idle; a stopped collector or any state the inline check refuses runs the helper (the slow path, same answers). m_type 609M -> 196M instructions (the
+constant without check was 63M; the guard is ~29 instructions per call); detectors of the mutant `lib_no_gc_check` for the inline form: `tr_core::bm_mtype_gc_matrix`. The two heap strings shift the
 allocation byte counts of every program by about 70 bytes, which exposed a latent trace/interpreter difference (not caused by the strings): `jit-diff` hook
 mode `count` seed 74 `tron` on 5.5 (`RUSTYNAIL_SEED=0`; fixed strings or any equal shift of the heap's initial size reproduces it, a trace differing from
 the interpreter by a few instructions at a count-hook boundary in a program with `__gc` finalizers and sunk allocations); the same seed fails on 5.4 `tr`
