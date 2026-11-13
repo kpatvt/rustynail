@@ -4599,7 +4599,7 @@ fn pm3_programs_run_on_traces() {
 fn bk_lazy_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for p in ["pm3_rec", "bk_obs1", "bk_obs2", "r2_rec"] {
+        for p in ["pm3_rec", "bk_obs1", "bk_obs2", "bk_obs3", "r2_rec"] {
             jobs.push(Job::new(p, trace).opts("+verify"));
             jobs.push(Job::new(p, trace).opts("+exitstorm=3"));
             jobs.push(Job::new(p, trace).opts("+exitstorm=1 +verify"));

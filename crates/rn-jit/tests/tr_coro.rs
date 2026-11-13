@@ -8,12 +8,13 @@
 //! `cofuse_wanted_nil_skip` (co_11: `local x = yield()`), `cofuse_results_room_skip` (co_11: 5000 yielded values), `cofuse_prev_c_ignored`
 //! (co_15: `pcall(coroutine.yield)`).
 #![cfg(feature = "trace")]
-#![cfg_attr(rustynail_lua54, allow(dead_code))] // every test is Lua 5.5 only: the helpers are unused on 5.4
 
 use rn_core::state::{LuaState, LUA_MULTRET};
 use rn_core::status::Status;
 
-#[cfg(not(rustynail_lua54))]
+// The expected outputs are the reference interpreter's of the same version: `ref/55` for the `.expected` files, `ref/54` (run in `tests/vm`) for
+// `.expected54` (co_11, co_14 and co_15 print the same on both versions; co_12 and co_13 differ: `coroutine.close()` without an argument, traceback
+// names, `<no error object>`). The mutants `cofuse_*` have their sites on 5.4 as well, so their detectors run there too.
 mod progs {
     pub const CO_11: (&str, &str, &str) = (
         "co_11_switch_shapes.lua",
@@ -23,12 +24,18 @@ mod progs {
     pub const CO_12: (&str, &str, &str) = (
         "co_12_errors_status.lua",
         include_str!("../../../tests/vm/co_12_errors_status.lua"),
+        #[cfg(not(rustynail_lua54))]
         include_str!("data/co_12_errors_status.expected"),
+        #[cfg(rustynail_lua54)]
+        include_str!("data/co_12_errors_status.expected54"),
     );
     pub const CO_13: (&str, &str, &str) = (
         "co_13_close_tbc_hooks.lua",
         include_str!("../../../tests/vm/co_13_close_tbc_hooks.lua"),
+        #[cfg(not(rustynail_lua54))]
         include_str!("data/co_13_close_tbc_hooks.expected"),
+        #[cfg(rustynail_lua54)]
+        include_str!("data/co_13_close_tbc_hooks.expected54"),
     );
     pub const CO_14: (&str, &str, &str) = (
         "co_14_cstack_overflow.lua",
@@ -93,31 +100,26 @@ fn check(p: (&str, &str, &str)) {
     }
 }
 
-#[cfg(not(rustynail_lua54))]
 #[test]
 fn co_switch_shapes_match_the_reference() {
     check(progs::CO_11);
 }
 
-#[cfg(not(rustynail_lua54))]
 #[test]
 fn co_errors_and_status_match_the_reference() {
     check(progs::CO_12);
 }
 
-#[cfg(not(rustynail_lua54))]
 #[test]
 fn co_hooks_close_and_tracebacks_match_the_reference() {
     check(progs::CO_13);
 }
 
-#[cfg(not(rustynail_lua54))]
 #[test]
 fn co_cstack_gc_and_overflow_match_the_reference() {
     check(progs::CO_14);
 }
 
-#[cfg(not(rustynail_lua54))]
 #[test]
 fn co_patterns_match_the_reference() {
     check(progs::CO_15);

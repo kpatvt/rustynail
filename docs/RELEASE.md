@@ -253,3 +253,34 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
   (output unchanged, only slower). The test program now keeps `a` and the sum in upvalues (two registers fewer in `work`), the call sits two slots lower
   and `c36_cispare_programs` asserts `rerecord == 0` on both versions (the weaker 5.4 branch is gone).
   Outputs are equal in every mode on both versions.
+
+## Verification A4 (2026-11-13): the open correctness items of the A3 gate run
+
+- **jit-diff hook mode, `RUSTYNAIL_SEED=0`: 5.5 seed 74 `count` / `tron`, 5.4 seed 240 `count` and `both` / `tr` (accepted timing difference; harness fixed).**
+  Evidence: the snippet `l3s6` (`__gc` finalizers on its objects) runs hooked; the count-hook event count and the line hash differ by a few events. With
+  `collectgarbage("stop")` at the top all modes agree, so the cause is when the finalizers run (a count / line event that falls inside a finalizer is not delivered:
+  hooks are off while a finalizer runs, as in PUC). The pacing differs from the heap size at the start of the snippet: in the reduced program
+  (`collectgarbage("count")` after each loop iteration, `RUSTYNAIL_GC_STRESS=2`) the trace mode is 96 bytes lower from the first iteration on, and a program as small as
+  `local function f(v) return (math.floor(v)) end; f(1); collectgarbage()` ends with 96 bytes more in use under the interpreter than with `t1inline` (tier 1 and traces:
+  the inline built-in makes no real C call, so no spare `CallInfo` node is allocated and the stack does not grow by `LUA_MINSTACK`; `t1inline=0` gives equal counts; the same
+  effect is `cispare`, docs/JIT_TRACE_REF.md C36). That moved GC steps and thereby finalizers, which is how two fixed heap strings (a few bytes of allocation) made seed 74 flip.
+  Not a soundness bug: only `collectgarbage("count")` and GC pacing differ, both unspecified; PUC itself differs between builds. (An error at the stack limit could in
+  principle be raised one call later by the inline path; not observed, same accepted class.) Fix: `tests/jitdiff/gen.lua` `run()` drains the pending finalizers and stops the
+  collector for every hooked snippet (a hooked snippet runs the interpreter only, no compiled-code coverage is lost). Result: 5.5 seed 74 and 5.4 seed 240 clean,
+  hook=all seeds 1..200 (5.5) and 200..400 (5.4), modes `off tr tron`, 0 diffs (see the numbers in the commit). No regression test of the harness itself.
+- **5.4 t15 shadow gate vacuous (by design; exempted loudly).** `emit_region` returns `None` for 5.4 prototypes (T-5.5: regions need the 5.4 `FORLOOP` layout and
+  `alimit_touch` in typed array ops, "T9b", never built): 5.4 runs show `t15 policy: regions 0`, `shadow_checked 0` (the `promoted` / `recompiled` counters only count attempts, so
+  `NOREGIONS` never fired either). All `t15*` modes / corpus runs on 5.4 re-run tier 1. `scripts/jit-diff.sh` prints `NOSHADOW-5.4 ... exempt` for a 5.4 binary and still fails
+  `NOSHADOW` on 5.5. Enabling needs T9b. Documented in docs/JIT_TESTING.md.
+- **5.4 mutant survivors (runner `TR_MUT_ONLY=...`, 5.4 cfg, base 3fc4d7a plus the test changes).**
+  * `cofuse_*` (7): the five `tr_coro` detectors were `cfg(not(rustynail_lua54))` (their expected files are the 5.5 reference's). co_11 / co_14 / co_15 print the same on `ref/54`;
+    co_12 / co_13 differ, so `co_12_errors_status.expected54` and `co_13_close_tbc_hooks.expected54` (from `ref/54/build/lua`) were added and the five tests run on both versions.
+    All seven caught on 5.4 now.
+  * `retf_*`: 12 of the 23 survive on 5.4 (the detectors `nr_retf_traces_are_installed` / `nr_n3_programs` assert RETF traces, which 5.4 never installs); the other 11 are caught
+    by unit tests. The 12 are in `V55_ONLY` with a comment.
+  * `lazy_mat_no_leave`: survives on 5.5 AND 5.4 (also at the base commit; it is not a 5.4 item). A trap emitted at the skipped completion shows that `bk_obs3` (new, `tests/lazyci/bk_obs3.lua`:
+    an exit inside an inlined callee of a native recursion, CallInfo nodes scrambled with tail-called frames and other constants before each run) and `r2_rec` execute the stub with lazy frames
+    above the root, yet nothing they print depends on the fields the completion writes. Not shown equivalent: listed in `UNDETECTED` of `tr_mutants.rs`, a documented gap. `bk_obs3` stays as coverage.
+  * `smi_black_skip`: caught on 5.5 (`a1_setmt_old`), survives on 5.4. A trap experiment shows that on 5.4 the inline `setmetatable` store is executed with a black table and a white metatable in the
+    `a1_setmt_old` jobs (inc and gen, stress 2, with `RUSTYNAIL_GC_VERIFY`), but neither the output nor the verifier reports it, unlike 5.5. Not explained (the `Heap::barrier` code is the same on both
+    versions); also in `UNDETECTED` (5.4 only). Open: a 5.4 GC investigation (why the missing barrier does not leave a white metatable or a verifier hit).
