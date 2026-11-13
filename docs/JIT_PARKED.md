@@ -296,7 +296,7 @@ Kept although ON in the shipped configuration (reason):
 | C35 | Compare metamethods (`__lt`/`__le`/`__eq`) from compiled code | `mm=0` to compare | 1 | SUPERSEDED (already shipped, N3) | BUNDLE-N N3, FEATURE-5 check | YES (`mm=0`) |
 | C36 | Recording-moment fragility of loop roots (awfy bounce / list, bigint_rsa floor) | `cispare=0`, `second=0`, `domtop=0` (the study found three distinct causes, one knob each) | `cispare=1`, `second=3`, `domtop=82`, `domn=65536` | PARTLY FIXED (cispare: bigint_rsa and the floor bit; second / domtop: list and bounce at some gates; not at `wgate=60000`) | C36 study | YES |
 | C37 | Generic C calls inside traces (`CALLC`, or stitch landing / continuation heads after unknown natives) | - | - | DESIGN ONLY; landing-trace slice measured as a predicted loss, not built (see "Landing-trace slice attempt") | feature-6 study, 2026-11-08 | NO |
-| C38 | `lua_lexer` shape: data-dependent callee loops under the `loopany` guard (nested link of side recordings, root-frame-leaving side traces) | `loopanymax=0` (unguarded, storms `heapsort`); slice 1 only: `sidenest=1` | - (`sidenest=0`) | SLICE 1 BUILT (design item 1, side recordings link at callee loop heads; sound, tested, knob OFF: it does not fire on `lua_lexer`, whose callee loop heads have no root; items 2-3 not built; slice 2 attempt 2026-11-08: STOPPED at design, docs only, see C38 "Slice 2 attempt") | C38, C38 slice 1 | partial (`sidenest=0`) |
+| C38 | `lua_lexer` shape: data-dependent callee loops under the `loopany` guard (nested link of side recordings, root-frame-leaving side traces) | `loopanymax=0` (unguarded, storms `heapsort`); slice 1 only: `sidenest=1` | - (`sidenest=0`) | SLICE 1 BUILT (design item 1, side recordings link at callee loop heads; sound, tested, knob OFF: it does not fire on `lua_lexer`, whose callee loop heads have no root; items 2-3 not built; slice 2 attempt 2026-11-08: STOPPED at design, docs only, see C38 "Slice 2 attempt") | C38, C38 slice 1, C66 (census: gate not met, slices 2-5 stay unbuilt) | partial (`sidenest=0`) |
 | C39 | `InnerLoop` abort / blacklist policy: bounded retry rounds for a head blacklisted by two `InnerLoop` aborts | `innerretry=0` | `innerretry=6` | SHIPPED (2026-11-08; iter_pipeline fixpoint under `ientry=1` 2748 -> 314 Mcyc; no regression > 0.5 % instructions over 223 programs, sudoku_solver 0.912, lua_lexer 0.972; 2026-11-09: expr_lang +30 % instructions from the 2nd round fixed by x4 round waits and no re-record of an ineffective retried trace, docs/PERF.md "Regression hunt") | C21 study, C39 task | YES (`innerretry=0`) |
 | C40 | BUNDLE-B (2): Lua functions called from C (`CIST_FRESH`, `table.sort` comparators) enter compiled code although small and loop-free | `centry=0` (1 = bypass `interp_entry`, 2 = also the entry back-off monitor) | `centry=0` | BUILT, OFF (2026-11-08): no measurable gain on oop_mixins even with `centry=2` (enters 3038 -> 3166, instructions identical, cycles +2..+10 %) | BUNDLE-B | YES (`centry=1,2`) |
 | C41 | Megamorphic call sites in traces (chain of side traces ordered by recording time; callee guard in the entry segment) | `chainre=0` (no chain re-order), `ncallee=0` | `chainre=95`, `chainn=65536`, `ncallee=1` | SHIPPED (2026-11-09; forth_vm 0.813 instructions, fdisp random K=4 2.7x; 223 programs: no program above 1.0002 in instructions; fdisp K=16 +17 % cycles, mdisp +1..5 % cycles are the known losers) | P3 study + build | YES (`chainre=0`, `ncallee=0`) |
@@ -2218,3 +2218,72 @@ Machine: loaded by other builders during the runs (cycles are min of 5 on CPU 4,
 * **M4 cheaper coroutine resume / yield (C9 steps 1-2): NOT BUILT.** Profile of `lib/co_yield` (cycles:u): interpreter `run_mode` 57.8 % (the program's own loop and the coroutine body, both in the interpreter around the C calls), `jit_call` 19.8 %, `resume_fused` 9.8 %, `co_yield` 4.2 %, `auxwrap` 2.1 %,
   `resume_finish` 1.8 %, `raw_run_protected` 1.5 %. The glue the C9 design removes (`jit_call` + `resume_fused` + `resume_finish` + `raw_run_protected`, about 33 %) is a flat resume without the Rust-level protected call; it crosses error handling, `coroutine.close`, hooks and the C API's `lua_resume` / `lua_yieldk`
   and is a core change, not a bundle-M-sized one. Not started.
+
+
+## C66: BUNDLE-H census (2026-11-13): what a frame-leaving trace mechanism (C38 slices 2-5) could convert; GATE NOT MET, nothing built
+
+**Decision.** STOP at the census (the standing rule of the bundle: estimated geomean gain < 2 %). C38 slices 2-5 (root-relative `SlotMap` with negative slots, caller-identity guards,
+shrinking snapshots, re-push link) and the `InnerLoop` policy stay unbuilt. No code, no knob, no mutant changed; the registry count is unchanged.
+
+**Method.** A scratch build of main 7af5824 (not committed): tier-1 perf-map symbols carry the prototype's `linedefined` (`lua_proto@<ptr>:L<line>`), and the side-abort verbose line
+carries the root proto's line (`rootproto:<line>`; the root-abort line already had `proto:<line>`). For each of the 223 programs under `bench/`: `perf record -e cycles:u -F 4000`
+with `RUSTYNAIL_JIT_PERFMAP=1 RUSTYNAIL_JIT_VERBOSE=2 RUSTYNAIL_SEED=0` (release `--features jit`, pinned core, one run), `perf report --sort dso,sym`; the cycle share of every
+`lua_proto@..:L<n>` symbol is summed per proto line (unnamed `[JIT]` addresses = trace code, everything else = runtime). A proto is an **abort head** when a recording aborted `LeaveFrame` or
+`InnerLoop` with it as root (root aborts) or as the root of the parent trace of an aborted side recording (side aborts). Columns:
+**tier-1** = cycle share of all tier-1 code; **perfect** = share of tier-1 code in abort-head protos (the most a frame-leaving mechanism could turn into trace code; it also
+credits protos whose recordings abort for other reasons too, so it is an upper bound); **conservative** = share in abort-head protos whose only recorded abort reasons are `LeaveFrame` /
+`InnerLoop` (+ `StartRefused`), i.e. where removing these two reasons plausibly yields a trace. Gain = share x (1 - 1/s) with s = 2 and 3 (trace code 2-3x faster than tier-1).
+Limits: the proto of a *side* abort is the parent's root proto (the callee-frame head is not logged), the interpreter's own cycles are not split out here (earlier instruction census, `interp_share`:
+mean 5.8 % of JIT-on instructions, dominated by library-heavy / coroutine programs that this mechanism does not touch), line numbers collide across files of one program (rare in `bench/`),
+one run per program (shares, not wall times; ~+-1 point).
+
+**Result (223 programs).**
+
+| Quantity | s = 2 | s = 3 |
+|---|---|---|
+| ceiling: ALL tier-1 code of every program becomes trace code, geomean cycles | -4.27 % | -5.81 % |
+| **perfect** (all abort-head protos convert) | **-1.07 %** | **-1.44 %** |
+| **conservative** (only protos whose aborts are all `LeaveFrame` / `InnerLoop`) | **-0.20 %** | **-0.27 %** |
+
+Mean cycle shares: tier-1 8.1 %, perfect 2.1 %, conservative 0.4 %. Programs with perfect share >= 2 %: 43, >= 5 %: 29, >= 10 %: 15, >= 20 %: 5; conservative >= 2 %: 10, >= 5 %: 5, >= 10 %: 3, >= 20 %: 0.
+The tier-1 cycles that exist are mostly *not* behind these two abort reasons: even the perfect share is a quarter of the tier-1 total, and in most of the heavy programs the
+head protos also abort `FnShort`, `Nyi(Call)`, `CFunc`, `Metamethod`, `SideShort`, `Recursion`, `TailCall` (the conservative column), so a frame-leaving mechanism alone would not make them traces.
+
+Top 25 by perfect share (cycle %, one run):
+
+| Program | tier-1 | perfect | conservative | trace |
+|---|---|---|---|---|
+| `corpus2/heldout/scheme_interp` | 41.8 | 34.5 | 3.6 | 9.8 |
+| `apps/events` | 50.5 | 31.4 | 0.0 | 15.7 |
+| `awfy/list` | 45.1 | 31.2 | 0.0 | 43.2 |
+| `real/lua_interp` | 48.9 | 28.4 | 0.0 | 21.7 |
+| `corpus/mustache_lustache` | 30.5 | 26.2 | 0.0 | 8.6 |
+| `corpus/parser_combinator` | 55.4 | 16.7 | 15.0 | 3.8 |
+| `awfy/deltablue` | 28.2 | 15.6 | 13.3 | 21.8 |
+| `apps/raytrace` | 33.3 | 15.4 | 5.7 | 18.9 |
+| `corpus/coro_scheduler` | 27.1 | 15.3 | 7.0 | 1.1 |
+| `corpus2/heldout/bigint_rsa` | 15.1 | 14.8 | 1.4 | 39.6 |
+| `awfy/havlak` | 23.0 | 13.2 | 0.0 | 12.5 |
+| `corpus/json_rxi` | 30.2 | 12.8 | 11.1 | 9.9 |
+| `awfy/queens` | 13.9 | 11.8 | 0.0 | 69.0 |
+| `corpus2/heldout/dijkstra_routes` | 18.0 | 10.2 | 0.0 | 61.7 |
+| `corpus2/heldout/roguelike_turns` | 33.4 | 10.0 | 1.9 | 39.3 |
+| `corpus/inspect_lua` | 29.6 | 9.6 | 0.0 | 14.0 |
+| `apps/expr_lang` | 18.6 | 8.7 | 0.0 | 31.8 |
+| `corpus/astar_jumper` | 23.9 | 8.2 | 0.0 | 44.6 |
+| `corpus2/dev/oop_mixins` | 21.6 | 8.1 | 0.0 | 24.8 |
+| `corpus2/dev/particles_physics` | 9.3 | 7.4 | 0.2 | 34.5 |
+| `corpus/csv_ini_yaml` | 10.8 | 7.2 | 0.0 | 5.9 |
+| `programs/nbody` | 6.7 | 6.7 | 0.9 | 91.1 |
+| `corpus/containers_lru_heap` | 38.3 | 6.7 | 0.0 | 23.8 |
+| `corpus2/dev/lua_parser` | 23.1 | 6.4 | 0.0 | 11.8 |
+| `awfy/richards` | 11.7 | 6.3 | 4.1 | 61.2 |
+
+**Reading.** The 1.3-2.2x LuaJIT programs are real (scheme_interp, events, list, lua_interp, mustache, parser_combinator: 30-50 % of cycles in tier-1 code in abort-head protos), but only
+the five programs with perfect >= 20 % could gain > 10 % even in the ideal case, and for `lua_interp` (tail-call dispatch, `jit_tailcall`), `parser_combinator` (`FnShort`, recursion) and
+`awfy/list` (`SideShort`) other abort reasons gate the same protos. The geomean is therefore < 2 % under both assumptions (1.1-1.4 % perfect, 0.2-0.3 % conservative; the estimate
+excludes the cost side: negative-slot snapshots touch the exit / restore / sink / lockstep contract, and `sidenest`-style policy changes have previously cost cd +39 % and heapsort +69 %, C38).
+Gate "geomean < 2 % or concentrated in <= 3 programs": the first leg holds. **Retest trigger:** a program class in which `LeaveFrame` / `InnerLoop` are the *only* aborts of a hot proto (the
+conservative column shows only `parser_combinator`, `deltablue`, `json_rxi`, `coro_scheduler` above 5 %), or a cheaper partial mechanism (e.g. re-linking only returns to a caller loop whose
+frame is already on the trace, no snapshot shrinking). Cheap retest: YES, rerun the method (scratch patch above, 223 programs, ~15 min serially; parallel `perf record` runs lost about 40 %
+of the profiles silently here, run them one at a time).
