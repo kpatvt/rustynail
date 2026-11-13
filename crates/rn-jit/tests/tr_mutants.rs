@@ -3852,6 +3852,8 @@ mod runner {
         if mb == 0 {
             return;
         }
+        // SAFETY: the closure runs in the forked child before `exec` and only calls `setrlimit`, which is async-signal-safe
+        // (no allocation, no locks); it captures a `u64` by value.
         unsafe {
             cmd.pre_exec(move || {
                 let l = libc::rlimit {
@@ -3890,6 +3892,7 @@ mod runner {
         }
         let mut child = cmd.spawn().expect("spawn");
         let pgid = child.id() as libc::pid_t;
+        // SAFETY: `kill` takes plain integers; `-pgid` addresses the process group made by `process_group(0)` above.
         let kill_group = || unsafe {
             libc::kill(-pgid, libc::SIGKILL);
         };

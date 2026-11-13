@@ -257,6 +257,7 @@ pub(crate) struct JitProto {
 
 impl JitProto {
     /// N3b: see [`Mon::reset`].
+    #[cfg(feature = "trace")]
     pub(crate) fn reset_entry_backoff(&self) {
         self.mon.reset();
     }
@@ -298,6 +299,7 @@ const MIN_STAY: u64 = 48;
 /// used to weigh `TICK_PERIOD`, which made the first loop block last a single tick and never grow in practice.
 const FIRST_SKIP: u32 = 64;
 /// N3b: a stay of at least this many bytecodes ran a loop (a trace) for a while.
+#[cfg(feature = "trace")]
 const LONG_STAY: u64 = 256;
 const MAX_SKIP: u32 = 1 << 20;
 
@@ -324,6 +326,7 @@ impl Mon {
     }
 
     /// N3b: forgets the back-off: the compiled code the entries were judged on changed (a trace was installed in the prototype).
+    #[cfg(feature = "trace")]
     pub(crate) fn reset(&self) {
         self.skip.set(0);
         self.next_skip.set(0);
@@ -869,13 +872,12 @@ fn ctl_set_enabled(st: &mut State, on: bool) {
 /// flushes requested inside an exit handler are deferred, compiled code on the stack stays valid until retired).
 /// Tier-1 code of prototypes is valid regardless of traces and is kept.
 fn ctl_flush(st: &mut State) {
-    if data_ptr_registered(st).is_none() {
-        return;
-    }
     #[cfg(feature = "trace")]
-    {
+    if data_ptr_registered(st).is_some() {
         crate::tr::cache::control_flush(st);
     }
+    #[cfg(not(feature = "trace"))]
+    let _ = st;
 }
 
 /// Sets the cap on mapped code bytes of `st`'s arena (default 256 MiB, or `RUSTYNAIL_JIT_CODE_CAP`). When the
@@ -1982,8 +1984,10 @@ fn entry_offset(jp: &JitProto, pc: *const u32) -> Option<u32> {
 }
 
 /// R1: the knob `rearm` counts back-edges of the frame's own loops; the tick's span is kept in units of 1/`REARM_UNIT` of one (loops of callees cost one unit).
+#[cfg(feature = "trace")]
 const REARM_UNIT: u32 = 32;
 /// R1: Lua frames above the stay's entry frame that the arming looks through.
+#[cfg(feature = "trace")]
 const REARM_DEPTH: usize = 8;
 
 #[cfg(feature = "trace")]
@@ -2221,6 +2225,7 @@ fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
 /// R1: does the loop whose head is `head` contain a call (`CALL` / `TAILCALL`) between the head and its backward edge? Such a loop
 /// leaves compiled tier-1 code at every iteration (a C function or a not yet compiled callee), so its entry back-off says
 /// nothing about the iteration count. (No backward edge to `head` found: no.)
+#[cfg(feature = "trace")]
 fn loop_calls(code: &[u32], head: usize) -> bool {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode as O;
@@ -2358,6 +2363,7 @@ fn enter(st: &mut State, ci: Ci) -> JitExit {
     let target = jp.block.addr() + off as usize;
     let at_start = ci.r().savedpc == jp.code_ptr;
     // R1: the frame this stay is entered at (frame node and function slot; `ci` itself is not touched after the call)
+    #[cfg(feature = "trace")]
     let entry_key = (ci.as_ptr() as usize, ci.r().func.0);
     // Everything needed after the call is taken here, by value or shared ownership: while compiled code runs,
     // this frame can return flat into a compiled caller, which can run the collector and free `p` (its

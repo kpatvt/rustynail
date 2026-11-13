@@ -305,6 +305,7 @@ fn mm_eq(st: &mut State, ci: Ci, a: Value, b: Value) -> Option<Ci> {
 /// Tier 1 (`jit_cmp`): the in-place metamethod frame of an order comparison (`ev` = `Tm::Lt` / `Tm::Le`) of two values that are
 /// not both numbers or both strings, exactly as the interpreter launches it (`mm_bin`); `None` = the interpreter's general path
 /// must run the instruction (no metamethod, a C function, a hook, the C-stack limit, no room).
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_order(st: &mut State, ci: Ci, a: Value, b: Value, ev: Tm) -> Option<Ci> {
     mm_bin(st, ci.r().top, a, b, ev)
 }
@@ -312,6 +313,7 @@ pub(crate) fn jit_mm_order(st: &mut State, ci: Ci, a: Value, b: Value, ev: Tm) -
 /// Tier 1 (`jit_cmp`): `__eq` of two tables / two full userdata that are not raw-equal. `Ok(Some(frame))`: the metamethod frame
 /// was pushed; `Ok(None)`: no `__eq` metamethod at all (the values are unequal); `Err(())`: the interpreter must run the
 /// instruction (a C function, a hook, the C-stack limit, no room).
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_eq(st: &mut State, ci: Ci, a: Value, b: Value) -> Result<Option<Ci>, ()> {
     let (m1, m2) = if let (Some(x), Some(y)) = (a.as_table(), b.as_table()) {
         (x.metatable(), y.metatable())
@@ -337,26 +339,23 @@ pub(crate) fn jit_mm_eq(st: &mut State, ci: Ci, a: Value, b: Value) -> Result<Op
 /// it, or a non-table operand with a type metatable) for the key `key`, wanting one result: `luaV_finishget`'s call `tm(obj, key)`, launched as the interpreter's
 /// `mm_index` does. The caller has saved `savedpc` = the instruction after the read. `false` = nothing happened (a hook, the C-stack limit, no room): the
 /// interpreter runs the instruction.
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_index(st: &mut State, ci: Ci, tm: Value, obj: Value, key: Value) -> bool {
     mm_frame(st, ci.r().top, tm, &[obj, key], 1).is_some()
 }
 
 /// BUNDLE-S S1 (tier 1, `jit_set`): the in-place frame of the Lua `__newindex` of the table `t` for the store instruction `i` of the running frame `ci` (the
 /// interpreter's `mm_newindex`, results discarded). `false` = nothing happened (no Lua function, a hook, the C-stack limit, no room).
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_newindex(st: &mut State, ci: Ci, i: Instruction, t: Value) -> bool {
     mm_newindex(st, ci, i, t).is_some()
 }
 
-/// `jit_mm_pop` mutant switch; always false without the `jit` feature.
+/// `jit_mm_pop` mutant switch.
+#[cfg(feature = "jit")]
 #[inline(always)]
 fn mm_ret_mut(bit: u8) -> bool {
-    #[cfg(feature = "jit")]
-    return crate::jit_helpers::mut_mm_ret(bit);
-    #[cfg(not(feature = "jit"))]
-    {
-        let _ = bit;
-        false
-    }
+    crate::jit_helpers::mut_mm_ret(bit)
 }
 
 /// Tier 1 (`jit_mm_ret`): the metamethod frame `ret` (a `RETURN0` / `RETURN1` of compiled code) returned `cond` to a comparison of
@@ -365,6 +364,7 @@ fn mm_ret_mut(bit: u8) -> bool {
 /// compiled code resumes through the resume table entry of the `JMP` and reads the flag, the interpreter (when the caller has no
 /// entry) finishes the instruction with [`jit_mm_finish`]. `false` (nothing changed) when the caller's instruction is not one of the
 /// register comparisons.
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_pop(st: &mut State, ret: Ci, v: Value, flags: u32) -> bool {
     let arith = flags & 1 != 0;
     let Some(caller) = ret.previous() else {
@@ -456,6 +456,7 @@ pub(crate) fn jit_mm_pop(st: &mut State, ret: Ci, v: Value, flags: u32) -> bool 
 /// exactly as the interpreter would at its `MMBIN*` (`instr` is the `MMBIN*` word; its `A`/`B` operands are the instruction's) or at the
 /// unary instruction itself (`UNM` / `BNOT`). The caller has saved `savedpc` = the instruction after `instr`. `false` = nothing happened
 /// (no Lua metamethod, a hook, the C-stack limit, no room): the interpreter runs the arithmetic instruction itself.
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_arith(st: &mut State, ci: Ci, instr: Instruction) -> bool {
     let base = ci.r().func.0 + 1;
     let rd = |n: u32| st.get(StkId(base + n as usize));
@@ -492,6 +493,7 @@ pub(crate) fn jit_mm_arith(st: &mut State, ci: Ci, instr: Instruction) -> bool {
 
 /// Tier 1: finish the comparison of the current frame whose result [`jit_mm_pop`] left at its `top` (the interpreter's `mm_return`
 /// tail: skip the `JMP` when the condition fails).
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_finish(st: &mut State) {
     let caller = st.ci();
     // SAFETY: VM1 — as in `jit_mm_pop`; the comparison is followed by a `JMP`.
@@ -510,6 +512,7 @@ pub(crate) fn jit_mm_finish(st: &mut State) {
 /// frame, its return goes through `jit_mm_ret`); anything else (a native function, a table with `__call`) only when the metamethod belongs to an arithmetic / bitwise /
 /// unary / comparison instruction of the caller: native tail callees in `__index` / `__newindex` frames (`return rawget(t, k)`) moved the trace formation of
 /// `class_middleclass` by +7 % cycles (-3 % instructions) and stay with the interpreter as before.
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_tail_ok(st: &State, ci: Ci, f: Value) -> bool {
     let _ = st;
     if f.is_lclosure() {
@@ -539,6 +542,7 @@ pub(crate) fn jit_mm_tail_ok(st: &State, ci: Ci, f: Value) -> bool {
 }
 
 /// Tier 1 (`jit_tailcall`): the interpreter's `mm_return` for the popped metamethod frame `ret` whose native tail callee finished.
+#[cfg(feature = "jit")]
 pub(crate) fn jit_mm_return(st: &mut State, ret: Ci) -> LuaResult<()> {
     mm_return(st, ret).map(|_| ())
 }
