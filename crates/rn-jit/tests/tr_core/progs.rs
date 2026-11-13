@@ -7021,6 +7021,37 @@ print(s)
 "##,
     },
     Prog {
+        name: "c64_cloreuse",
+        small: true,
+        src: r##"
+-- BUNDLE-L `cloreuse`: recursion and tail recursion through an upvalue. The upvalue names the closure itself (the trace's callee guard compares the
+-- loaded closure with the closure it already holds); then it is swapped for another closure of the same prototype with other upvalues, and back.
+local function make(k)
+  local f
+  local function set(g) f = g end
+  f = function(n) if n == 0 then return 0 end return k + f(n - 1) end
+  return f, set
+end
+local function make2(k)
+  local g
+  local function set(h) g = h end
+  g = function(n, acc) if n == 0 then return acc end return g(n - 1, acc + k) end
+  return g, set
+end
+local A, setA = make(1)
+local B = make(100)
+local T, setT = make2(1)
+local U = make2(1000)
+local s = 0
+for i = 1, 900 do
+  if i == 300 then setA(B); setT(U) end
+  if i == 600 then setA(A); setT(T) end
+  s = s + A(4) + T(5, i)
+end
+print(s)
+"##,
+    },
+    Prog {
         name: "s_loopany",
         small: true,
         src: r##"

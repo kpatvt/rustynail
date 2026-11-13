@@ -77,6 +77,12 @@ pub const LAPRUNE_PROCESS: u32 = 1;
 /// C36 (`cispare`): process value of [`TrLimits::cispare`] (K3a: also the struct default): a persistent entry failure whose cause is missing spare `CallInfo` nodes
 /// behind the frame (`TR6b`) is repaired by extending the chain instead of flushing the root.
 pub const CISPARE_PROCESS: u32 = 1;
+/// BUNDLE-L (`cloreuse`): process value of [`TrLimits::cloreuse`] (also the struct default; **0 = off**: it halves `jit-trace/tail_loop` and cuts `rec_loop` to 0.69 x cycles but
+/// makes `apps/expr_lang` 1.5 x instructions, formation, cause not found, docs/JIT_PARKED.md C64): the callee-identity guard of an inlined call compares the loaded closure
+/// with a closure that the trace already holds in a register when it is the same object at record time (recursion through an upvalue, a call chain back to a frame
+/// that is live), instead of checking its prototype against a code constant, and the callee frame then names that register: the `UREF` / `UVREL` / `UGE` / `ULOAD`
+/// chain of the callee's upvalue loads CSEs with the earlier ones.
+pub const CLOREUSE_PROCESS: u32 = 0;
 /// C36 (`domtop`): process value of [`TrLimits::domtop`] (K3a: also the struct default): the percent of a root's entries through ONE pre-roll site into a side
 /// trace (at least [`TrLimits::domn`] entries) above which the root, recorded on a rare path, is re-recorded once (no penalty).
 pub const DOMTOP_PROCESS: u32 = 82;
@@ -364,6 +370,8 @@ pub struct TrLimits {
     /// inlines a built-in never makes the real call that would have allocated them), allocate them, reset the head's failure account and keep the trace
     /// (0 = flush and re-record, which compiles to the same code and blacklists the head; default [`CISPARE_PROCESS`] (process and tests)).
     pub cispare: u32,
+    /// BUNDLE-L: closure-identity reuse in the callee guard of inlined calls (see [`CLOREUSE_PROCESS`]; 0 = the `EQREF closure, proto` guard of before).
+    pub cloreuse: u32,
     /// M1: the least number of recorded steps of such a side trace.
     pub sidestitchmin: u32,
     /// T3: the tier-1 `GETFIELD` / `SELF` / `GETTABUP` templates probe this many `__index` tables (instance -> class -> base class ...) inline (0 = the `jit_get` helper).
@@ -581,6 +589,7 @@ impl Default for TrLimits {
             loopanymax: LOOPANYMAX_PROCESS,
             laprune: LAPRUNE_PROCESS,
             cispare: CISPARE_PROCESS,
+            cloreuse: CLOREUSE_PROCESS,
             sidestitchmin: 4,
             t3idx: T3IDX_PROCESS,
             t1inline: T1INLINE_PROCESS,
@@ -746,6 +755,7 @@ impl TrLimits {
                 "loopanymax" => l.loopanymax = v,
                 "laprune" => l.laprune = v.min(1),
                 "cispare" => l.cispare = v.min(1),
+                "cloreuse" => l.cloreuse = v.min(1),
                 "sidestitchmin" => l.sidestitchmin = v,
                 "t3idx" => l.t3idx = v.min(4),
                 "t1inline" => l.t1inline = v.min(1023),

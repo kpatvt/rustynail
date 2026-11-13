@@ -579,6 +579,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         loop_unroll: cfg.limits.loopunroll,
         ncallee: pr.is_some_and(|pr| cache::head_ncallee(st, pr, pc)),
         uvsep: true,
+        cloreuse: cfg.limits.cloreuse != 0,
         fn_root: pr.is_some_and(|pr| cache::head_is_fn(st, pr, pc)),
         rec_native: cfg.limits.recnat != 0,
         rec_conts: cfg.limits.recnat != 0,
@@ -841,6 +842,7 @@ pub fn driver_start_side(
         },
         max_ins: if deep { cfg.limits.deepins as usize } else { 0 },
         storm_step: storm_step(st, cfg.limits.allocguard),
+        cloreuse: cfg.limits.cloreuse != 0,
         ..RecCfg::default()
     };
     let token = record::arm(st, ci, start.pc, rc)?;

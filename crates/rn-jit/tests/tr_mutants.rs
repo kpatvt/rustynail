@@ -2809,6 +2809,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_loop", "uvsep_forwards_over_distinct_upvalue_stores")],
     },
     Row {
+        name: "cloreuse_guard_skip",
+        owner: "BUNDLE-L",
+        dets: &[d("tr_core", "cloreuse_programs")],
+    },
+    Row {
         name: "cleanup_third_dead",
         owner: "P2",
         dets: &[d("tr_loop", "cleanup_renumbers_third_operands")],

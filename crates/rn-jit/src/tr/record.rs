@@ -234,6 +234,8 @@ pub struct RecCfg {
     pub ncallee: bool,
     /// P2 bundle 2 (`uvsep`): a `UREF` carries the identity of the real `UpVal` it was recorded on (`aux`), for the loop optimiser's guarded disjointness.
     pub uvsep: bool,
+    /// BUNDLE-L (`cloreuse`): the callee guard of an inlined call compares with a closure already held by the trace when it is the same object (see `call_lua`).
+    pub cloreuse: bool,
     /// P-E: inlining depth limit (`maxdepth`, at most [`exit::MAX_FRAMES`]); 0 = the default [`MAX_DEPTH`].
     pub max_depth: u32,
     /// P-E2: a function-entry root: the head is pc 0 of the root frame's prototype and the recording ends, with the
@@ -476,6 +478,7 @@ impl Default for RecCfg {
             loop_unroll: 0,
             ncallee: false,
             uvsep: false,
+            cloreuse: false,
             fn_root: false,
             rec_native: false,
             rec_only: false,
@@ -5967,6 +5970,46 @@ impl Rec {
         Ok(s)
     }
 
+    /// BUNDLE-L (`cloreuse`): the ref of a closure that the trace holds for the closure object at `addr` (a frame `0..=d` whose function it is), other than `cref`
+    /// itself. The root frame's ref exists once an upvalue of the root closure was addressed (`func_ref`); a frame without a ref (side traces start so) has none.
+    fn known_closure(&self, addr: usize, d: usize, cref: Ref) -> Option<Ref> {
+        // only a callee that is loaded from an upvalue of a closure the trace already holds (`ULOAD (UREF known, n)`): the identity then rests on the
+        // upvalue cell, which is stable for the recursion / mutual-recursion shapes this is for. A callee that comes from anywhere else (an argument, a
+        // table field, a result) is a different closure object of the same prototype often enough that the identity guard would exit (`apps/expr_lang`).
+        if cref == NOREF || cref < REF_BIAS {
+            return None;
+        }
+        let ld = self.b.ir.ins[usize::from(cref - REF_BIAS)];
+        if ld.op != TOp::Uload || ld.a < REF_BIAS {
+            return None;
+        }
+        let ur = self.b.ir.ins[usize::from(ld.a - REF_BIAS)];
+        if ur.op != TOp::Uref {
+            return None;
+        }
+        let base_ok = (0..=d).any(|j| {
+            ur.a == if j == 0 {
+                self.func_ref
+            } else {
+                self.frames[j].cref
+            }
+        });
+        if !base_ok {
+            return None;
+        }
+        for j in (0..=d).rev() {
+            let f = &self.frames[j];
+            if f.closure != addr {
+                continue;
+            }
+            let r = if j == 0 { self.func_ref } else { f.cref };
+            if r != NOREF && r != cref {
+                return Some(r);
+            }
+        }
+        None
+    }
+
     /// Inlines a call of the Lua closure `cl` (4.4): checks (vararg, recursion, depth, extent, tier-1 labels), the
     /// callee-identity guard (`EQREF closure, KPTR proto`, an entry guard when TR6d allows), the callee frame (its
     /// parameters are the caller's argument slots; missing ones are `nil`) and the TR6b/TR6c conditions. The edge to
@@ -6068,9 +6111,26 @@ impl Rec {
         }
         // callee identity: the function slot holds a Lua closure (typecheck by the read) of this very proto (TR7a)
         let (cref, _) = self.rd(vm, a)?;
-        let kp = self.b.ir.konst(KVal::Ptr(key as u64, PtrKind::Proto));
+        // BUNDLE-L (`cloreuse`): the very same closure object as one the trace already holds in a register (a live frame's function: recursion through an
+        // upvalue, a chain of calls back to a frame on the stack) is guarded by register equality with that closure instead of by its prototype, and the callee
+        // frame then names the known closure's ref, so that its upvalue loads (`UREF` / `UVREL` / `UGE` / `ULOAD`) are the same instructions as the known
+        // closure's and CSE with them. The guard is exact: at run time the loaded closure is the known one or the trace exits (a closure of the same prototype with
+        // other upvalues, as after an upvalue assignment, fails it).
+        let known = if self.cfg.cloreuse {
+            self.known_closure(cl.as_ptr() as usize, d, cref)
+        } else {
+            None
+        };
+        let fcref = known.unwrap_or(cref);
         if !mutants::active("callee_guard_skip") {
-            self.entry_guard(TOp::Eqref, Ty::I64, cref, kp, 0)?;
+            if let Some(k) = known {
+                if !mutants::active("cloreuse_guard_skip") {
+                    self.entry_guard(TOp::Eqref, Ty::I64, cref, k, 0)?;
+                }
+            } else {
+                let kp = self.b.ir.konst(KVal::Ptr(key as u64, PtrKind::Proto));
+                self.entry_guard(TOp::Eqref, Ty::I64, cref, kp, 0)?;
+            }
         }
         let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
         if tail {
@@ -6109,7 +6169,7 @@ impl Rec {
             f.closure = cl.as_ptr() as usize;
             f.nslots = nslots;
             f.low = low;
-            f.cref = cref;
+            f.cref = fcref;
             f.tail = true;
             f.vpending = vararg.then_some(totalargs);
             f.vdelta = 0;
@@ -6140,7 +6200,7 @@ impl Rec {
             call_pc: idx as u32,
             nresults: wanted as i16,
             low,
-            cref,
+            cref: fcref,
             tail: false,
             vpending,
             vdelta: 0,

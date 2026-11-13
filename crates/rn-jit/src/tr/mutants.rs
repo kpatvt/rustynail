@@ -590,6 +590,8 @@ pub const NAMES: &[&str] = &[
     // P2 bundle 2: `uvsep`
     "uvsep_no_guard",
     "uvsep_first_guard_only",
+    // BUNDLE-L: `cloreuse`
+    "cloreuse_guard_skip",
     "cleanup_third_dead",
     "cleanup_third_stale",
     // C39: `innerretry`

@@ -8743,6 +8743,32 @@ fn random_storm_programs() {
     }
 }
 
+/// BUNDLE-L: closure-identity reuse (`cloreuse=1`) in the callee guard of inlined calls: recursion / tail recursion through an upvalue whose closure is swapped for
+/// a closure of the same prototype with other upvalues and back, in every mode (the output is the interpreter's), with the knob on and off. Mutant `cloreuse_guard_skip`.
+#[test]
+fn cloreuse_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["cloreuse=0", "cloreuse=1"] {
+            for opts in ["+verify", "+exitstorm=3 +verify", "+emurun +verify", ""] {
+                jobs.push(Job::new("c64_cloreuse", trace).opts(opts).limits_s(lim));
+            }
+        }
+    }
+    jobs.push(Job::new("c64_cloreuse", "t1"));
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.limits == "cloreuse=1" && j.opts == "+verify" {
+            assert!(
+                o.stats.installed >= 1 && o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.tag(),
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// Debugging aid, not a check of anything (does nothing unless `TR_ADHOC_FILE` is set): runs the Lua file `TR_ADHOC_FILE` as a
 /// program of this harness and compares it with the interpreter. `TR_ADHOC_TRACE` (default `always`; `on2`, `on`), `TR_ADHOC_OPTS`
 /// (the `+verify +exitstorm=7 ...` option string) and `TR_ADHOC_LIMITS` (a knob string such as `maxside=9,sidemin=2`) select the job; the
