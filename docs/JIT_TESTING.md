@@ -244,6 +244,7 @@ arithmetic; a coroutine yielding from a loop of intrinsics; and one that compile
 Tier-1.5 option strings (`RUSTYNAIL_JIT_OPT`, docs/JIT_TIER15.md section 22): `+shadow` (tier-1 emulation of pure region blocks, aborts on a mismatch),
 `+exitstorm=N` (N in {1,2,7,61}: pseudo-guards failing every N-th execution), `+randra=SEED`, `+flushall`, `+verify`.
 
+- **The T15 modes are vacuous on 5.4 (2026-11-13).** `emit_region` returns `None` for 5.4 prototypes (`T-5.5`, docs/JIT_TIER15.md 4.10: regions need the 5.4 `FORLOOP` layout and `alimit_touch` in typed array ops, "T9b", not built), so a 5.4 build never compiles a region: verbose shows `t15 policy: regions 0`, `shadow_checked 0` (the `promoted` / `recompiled` counters only count attempts). The `t15*` modes of `jit-diff.sh`, the T15 corpus runs of `asan-jit.sh` and `t15_stress` on 5.4 therefore re-run tier 1 and nothing else. `jit-diff.sh` prints `NOSHADOW-5.4 ... exempt` instead of failing `NOSHADOW` when the binary is a 5.4 build; on 5.5 `NOSHADOW` still fails the run. Enabling it needs T9b; the regions of 5.5 are covered by the 5.5 runs.
 - **jit-diff modes** (`JITDIFF_MODES="off t15shadow t15storm ..."`): `t15shadow`, `t15shadowrand` (+randra=seed), `t15storm1|2|7|61` (fixed N), `t15storm` (N and
   randra chosen from the seed), `t15stormshadow` (storm + shadow + verify), `t15stormprof` (T15=on, hot 4, storm + shadow). With `JITDIFF_ENTERS=1` a
   `*shadow*` mode that never shadow-verified a block fails (`NOSHADOW`).

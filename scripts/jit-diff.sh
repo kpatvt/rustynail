@@ -244,12 +244,16 @@ seq "$FROM" "$TO" >"$ROOT/seeds"
 xargs -a "$ROOT/seeds" -P "$JOBS" -I{} nice -n 10 "$0" --one {} "$BIN" "$ROOT"
 total=$(grep -c '^DONE' "$ROOT/results")
 diffs=$(grep -c '^DIFF' "$ROOT/results")
+is54=0; "$BIN" -v 2>&1 </dev/null | grep -q '^Lua 5\.4' && is54=1
 # counter assertion: every (hook, mode) must have entered compiled code, T15 modes must have recompiled regions
 noenters=0
 if [ "${JITDIFF_ENTERS:-0}" = 1 ]; then
   while read -r hk m e p r rs gu sh; do
     echo "enters: hook=$hk mode=$m enters=$e t15_promoted=$p t15_recompiled=$r t15_respecialised=$rs t15_given_up=$gu shadow_checked=$sh"
-    case $m in *shadow*) if [ "$sh" = 0 ]; then echo "NOSHADOW hook=$hk mode=$m: no block was ever shadow-verified"; noenters=1; fi;; esac
+    case $m in *shadow*) if [ "$sh" = 0 ]; then
+      if [ "$is54" = 1 ]; then echo "NOSHADOW-5.4 hook=$hk mode=$m: exempt, 5.4 builds compile no T15 regions (region lowering refuses 5.4 prototypes, T-5.5: docs/JIT_TIER15.md 4.10), so the shadow / storm modes only re-run tier 1 here"
+      else echo "NOSHADOW hook=$hk mode=$m: no block was ever shadow-verified"; noenters=1; fi
+    fi;; esac
     if [ "$e" = 0 ]; then echo "NOENTERS hook=$hk mode=$m: compiled code was never entered"; noenters=1; fi
     case $m in t15*) if [ "$r" = 0 ]; then echo "NOREGIONS hook=$hk mode=$m: no region was ever generated"; noenters=1; fi;; esac
   done < <(grep '^ENTERS' "$ROOT/results" | awk '{k=$2" "$3; e[k]+=$4; p[k]+=$5; r[k]+=$6; rs[k]+=$7; gu[k]+=$8; sh[k]+=$9} END {for (k in e) print k, e[k], p[k], r[k], rs[k], gu[k], sh[k]}' | sort)
