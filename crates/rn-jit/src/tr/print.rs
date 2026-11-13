@@ -281,8 +281,8 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     if s.side_started > 0 {
         let _ = writeln!(
             o,
-            "[trace] side traces: recorded {} installed {} failed {} preludes {}",
-            s.side_started, s.side_installed, s.side_failed, s.side_preludes
+            "[trace] side traces: recorded {} installed {} failed {} preludes {} framed {}",
+            s.side_started, s.side_installed, s.side_failed, s.side_preludes, s.side_framed
         );
         for (reason, n) in &s.side_aborted {
             let _ = writeln!(o, "[trace] side aborted {reason}: {n}");

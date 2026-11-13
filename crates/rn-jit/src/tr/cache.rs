@@ -2020,6 +2020,8 @@ pub struct TrStats {
     pub exits: u64,
     /// F2a: side recordings started.
     pub side_started: u64,
+    /// S1: side recordings started at an exit inside inlined frames, with the frames kept virtual.
+    pub side_framed: u64,
     /// C38 slice 1: side traces installed that end with a frame-linking exit into a callee loop trace (`sidenest`).
     pub side_frame_links: u64,
     /// F2a: side traces installed.
@@ -4394,6 +4396,9 @@ fn side_attempt(
     // S1: the frames stay virtual; slot numbers are root-relative in every frame, so the exit stub's slots are known
     // for a side trace with frames as well.
     let virt = frame_side && snap.frame_side_ok();
+    if virt && !snap.frames.is_empty() {
+        d_of(st).tr.stats.side_framed += 1;
+    }
     vlog(d_of(st), || {
         format!(
             "side start at exit {k}: frames {} (mm {}) virtual {virt}",

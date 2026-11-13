@@ -462,6 +462,8 @@ struct TStats {
     side_installed: u64,
     side_failed: u64,
     side_preludes: u64,
+    /// S1: side recordings started inside inlined frames (frames kept virtual).
+    side_framed: u64,
     /// H3-A: handler calls for blacklisted exits.
     black_handled: u64,
     /// BUNDLE-J: prototypes registered as C-entered / of those with a light root / calls from C that entered compiled code.
@@ -558,6 +560,7 @@ impl TStats {
                 s.side_installed = g("installed");
                 s.side_failed = g("failed");
                 s.side_preludes = g("preludes");
+                s.side_framed = g("framed");
             } else if let Some(r) = l.strip_prefix("centry: registered ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.c_registered = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -7621,9 +7624,15 @@ fn s1_frame_side_programs() {
         .find(|(j, _)| {
             j.trace == "always" && j.limits.is_empty() && j.opts == "+verify" && j.env.is_empty()
         })
-        .map(|(_, o)| o.stats.side_installed)
+        .map(|(_, o)| (o.stats.side_installed, o.stats.side_framed))
         .expect("job");
-    assert!(with >= 6, "s1_frame_sides: the exits inside inlined frames got no side traces: {with} side traces installed");
+    assert!(with.0 >= 6, "s1_frame_sides: the exits inside inlined frames got no side traces: {} side traces installed", with.0);
+    // (the other exits of the program get side traces too: only the recordings started inside inlined frames show the mutant `frame_side_never`)
+    assert!(
+        with.1 >= 3,
+        "s1_frame_sides: no side recording started inside inlined frames: {} framed starts",
+        with.1
+    );
 }
 
 /// N3b: a loop whose metamethod allocates/// N3b: a loop whose metamethod allocates (the collector steps every few dozen iterations; each step is an allocation exit of the trace,
