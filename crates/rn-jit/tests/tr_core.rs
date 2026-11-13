@@ -6004,23 +6004,12 @@ fn c36_cispare_programs() {
             "[{trace}] without cispare the entry-failure rule flushes the root: {}",
             off.line()
         );
-        if cfg!(rustynail_lua54) {
-            // 5.4: the repair happens (`ci_repaired` above), but the root of `mul_small` is flushed by the exit-ratio rule anyway after the repair restarted its
-            // entry account (`flush Rerec (entries 0, exits 6000)`), in both knob settings: the 5.5 `rerecord == 0` is a 5.5 policy number. Not worse than off.
-            assert!(
-                on.rerecord <= off.rerecord,
-                "[{trace}] cispare must not add re-records: {} vs {}",
-                on.rerecord,
-                off.rerecord
-            );
-        } else {
-            assert_eq!(
-                on.rerecord,
-                0,
-                "[{trace}] with cispare the trace stays: {}",
-                on.line()
-            );
-        }
+        assert_eq!(
+            on.rerecord,
+            0,
+            "[{trace}] with cispare the trace stays: {}",
+            on.line()
+        );
     }
 }
 

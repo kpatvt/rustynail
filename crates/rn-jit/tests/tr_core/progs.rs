@@ -11232,14 +11232,17 @@ local function mul_small(a, m)
   end
   return r
 end
+-- (`a` and the sum are upvalues: two registers fewer in `work`, so the call of `mul_small` sits low in a fresh coroutine's 40-slot stack. The trace needs the
+-- frame of `mul_small` plus `LUA_MINSTACK` for the intrinsic (30 slots on 5.5, 31 on 5.4), and on 5.4 the `for` loop has one more slot: with the locals in
+-- `work` the room check TR6a fails on 5.4 and the `cispare` repair, which only extends the `CallInfo` chain, cannot help.)
+local a = { 1234, 5678, 91 }
+local S = 0
 local function work(n)
-  local a = { 1234, 5678, 91 }
-  local s = 0
   for k = 1, n do
     local r = mul_small(a, k % 97 + 1)
-    s = s + #r + r[1]
+    S = S + #r + r[1]
   end
-  return s
+  return S
 end
 local s = work(6000)
 for c = 1, 400 do

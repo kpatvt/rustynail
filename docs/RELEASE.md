@@ -232,6 +232,13 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
   entry snapshot (TR6d `entry_ok`): the guard is an ordinary body exit with a side trace, there is no entry failure and `ncallee_heads` stays 0. This is
   by design (an entry-snapshot exit would re-execute the iteration past an effect), not a bug. Check: with the test-only mutant `atouch_skip`
   (`RUSTYNAIL_JIT_MUT=atouch_skip`, `tr_mutants` feature) the 5.4 run behaves like 5.5 (`ncallee=0`: re-records, `Identical` abort; `ncallee=1`: `heads == 1`, no re-record
-  penalty). `c36_cispare`: the same mutant changes nothing, so `ATOUCH` is not the cause there. What is seen: on 5.4 the repair runs only twice
-  (`repaired 2`, 5.5: 391 = one per fresh coroutine) before the exit-ratio rule flushes the root; why the 5.4 trace keeps failing after a repair was not found.
+  penalty). `c36_cispare`: the same mutant changes nothing, so `ATOUCH` is not the cause there. Cause (found afterwards): on 5.4 the repair ran only twice
+  (`repaired 2`, 5.5: 391) because the entry check that kept failing was TR6a (stack room), not TR6b. `ensure_spare_ci` then returned `Some(0)` (the spare
+  `CallInfo` nodes were there), the repair declined and the entry-failure rule flushed the root. In the test program the trace of `mul_small` needs `extent`
+  31 on 5.4 (30 on 5.5: its frame plus `LUA_MINSTACK` for the inlined `math.floor`); a fresh coroutine has 40 stack slots and the call sits at `func` 8
+  (5.4: one more `for` slot than 5.5, so `func` is one higher): 8 + 1 + 31 >= 40 fails, 8 + 1 + 30 passes. So it is a one-slot difference of frame layout
+  and not a policy difference. The repair does not grow the stack (reallocating it inside the entry-failure helper, from the failure path of a trace, is
+  outside TR1 and was not attempted); a trace that needs more room than a fresh coroutine has is still flushed and ends `Identical`/blacklisted
+  (output unchanged, only slower). The test program now keeps `a` and the sum in upvalues (two registers fewer in `work`), the call sits two slots lower
+  and `c36_cispare_programs` asserts `rerecord == 0` on both versions (the weaker 5.4 branch is gone).
   Outputs are equal in every mode on both versions.
