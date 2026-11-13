@@ -11247,6 +11247,33 @@ print(table.concat(out, "\n"))
 "##,
     },
     Prog {
+        name: "cp2_side_room",
+        small: true,
+        src: r##"
+-- CP2: a frameless side trace (the exit is in the root frame, before the rare branch) that inlines a callee with very many registers: it needs far more
+-- stack than the loop root checked at its entry, so its own entry check must stay. The stack is shrunk by `collectgarbage` between short runs.
+local function wide(a, b)
+  local a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20,a21,a22,a23,a24,a25,a26,a27,a28,a29,a30,a31,a32,a33,a34,a35,a36,a37,a38,a39,a40,a41,a42,a43,a44,a45,a46,a47,a48,a49,a50,a51,a52,a53,a54,a55,a56,a57,a58,a59,a60 = a+1,b-2,a+3,b-4,a+5,b-6,a+7,b-8,a+9,b-10,a+11,b-12,a+13,b-14,a+15,b-16,a+17,b-18,a+19,b-20,a+21,b-22,a+23,b-24,a+25,b-26,a+27,b-28,a+29,b-30,a+31,b-32,a+33,b-34,a+35,b-36,a+37,b-38,a+39,b-40,a+41,b-42,a+43,b-44,a+45,b-46,a+47,b-48,a+49,b-50,a+51,b-52,a+53,b-54,a+55,b-56,a+57,b-58,a+59,b-60
+  return a1+a2+a3+a4+a5+a6+a7+a8+a9+a10+a11+a12+a13+a14+a15+a16+a17+a18+a19+a20+a21+a22+a23+a24+a25+a26+a27+a28+a29+a30+a31+a32+a33+a34+a35+a36+a37+a38+a39+a40+a41+a42+a43+a44+a45+a46+a47+a48+a49+a50+a51+a52+a53+a54+a55+a56+a57+a58+a59+a60
+end
+local function run(m, k)
+  local acc = 0
+  for i = 1, m do
+    local x = (i * 37 + k) % 41 - 17
+    acc = (acc + x) % 1000003
+    if x > 15 then acc = (acc + wide(x, 3)) % 1000003 end
+  end
+  return acc
+end
+local tot = 0
+for k = 1, 300 do
+  tot = (tot + run(40, k)) % 1000003
+  if k % 3 == 0 then collectgarbage() end
+end
+print(tot)
+"##,
+    },
+    Prog {
         name: "cp1_leaf",
         small: true,
         src: r##"

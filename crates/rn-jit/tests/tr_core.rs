@@ -6017,6 +6017,32 @@ fn c36_cispare_programs() {
     }
 }
 
+/// CP2: frameless side traces run without their own entry room checks when the parent's checks cover what they need (`ir.extent` / `depth` within the
+/// parent's), and keep them when they need more. `cp2_side_room`: a rare branch that inlines a 60-register callee, with the stack shrunk between short
+/// runs. Mutant `side_nroom_skip` (no check even when more is needed).
+#[test]
+fn cp2_side_room_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("cp2_side_room", trace).opts("+verify"));
+        jobs.push(Job::new("cp2_side_room", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("cp2_side_room", trace).budget(17));
+        jobs.push(Job::new("cp2_side_room", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        jobs.push(Job::new("cp2_side_room", trace).opts("+emurun +verify"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.opts == "+verify" {
+            assert!(
+                o.stats.side_installed >= 1,
+                "[{}] the rare branch gets a side trace: {}",
+                j.trace,
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// CP1: the TR6b check of a natively entered frame repairs a missing spare `CallInfo` in place. `cp1_leaf` walks a tree whose leaves (a frame that never
 /// calls) sit at the deepest call depth, where no flat call has made the successor node: before CP1 every leaf fell to tier 1 at the inner entry
 /// (`rec_fail`). Same output in every mode; the repair counter is >= 1. Mutants `recci_never` (no repair: counter 0), `recci_short` (one node too few: the

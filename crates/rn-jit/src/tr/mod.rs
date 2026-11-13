@@ -1662,7 +1662,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         root_maxstack: u16::from(rootp.maxstacksize),
-        no_room_checks: side.is_some_and(|s| s.frameful),
+        // S1: a frameful side trace has no entry checks. CP2: neither has a frameless one whose needs the parent's checks cover (it is entered
+        // by an exit of the parent, in the very frame the parent's checks promised room for); a prelude is entered through the head's cell
+        // from tier 1 and keeps them
+        no_room_checks: side.is_some_and(|s| {
+            s.frameful
+                || (!act.prelude
+                    && ((ir.extent <= act.max_extent && ir.depth <= act.max_ci)
+                        || crate::tr::mutants::active("side_nroom_skip")))
+        }),
         side_room,
         frame_cells: frame_cells_on,
         // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.

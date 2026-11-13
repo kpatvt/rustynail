@@ -2659,6 +2659,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "cp1_leaf_programs")],
     },
     Row {
+        name: "side_nroom_skip",
+        owner: "CP2",
+        dets: &[d("tr_core", "cp2_side_room_programs")],
+    },
+    Row {
         name: "dom_never",
         owner: "C36",
         dets: &[d("tr_core", "c36_dom_programs"), dl("tr_policy", "c36_policy")],
