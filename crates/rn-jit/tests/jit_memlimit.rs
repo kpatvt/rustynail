@@ -99,7 +99,7 @@ fn tight_limits_fall_back_to_the_interpreter_consistently() {
     let mut completed = 0;
     // a sweep of headroom values over the state's base use: from nothing to plenty
     for head in [
-        0usize, 500, 2_000, 8_000, 20_000, 60_000, 200_000, 4_000_000,
+        0usize, 500, 2_000, 8_000, 20_000, 60_000, 200_000, 600_000, 1_000_000, 4_000_000,
     ] {
         let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
         assert_eq!(run_in(&mut st, "collectgarbage()"), Status::Ok);
