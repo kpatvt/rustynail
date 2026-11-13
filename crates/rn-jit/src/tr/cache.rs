@@ -268,6 +268,10 @@ pub const POLYFRAMES_PROCESS: u32 = 2;
 /// [`TrLimits::loopanymax`] (a family whose exits inside callee frames keep needing side traces loses its unrolled loops). `iter_pipeline` 557 -> 70 ms; the
 /// unguarded `loopany=1` cost `heapsort` 1.48 x and `awfy/cd` 1.50 x (docs/JIT_PARKED.md A25). One constant (0) turns it off.
 pub const LOOPANY_PROCESS: u32 = 1;
+/// BUNDLE-L: process value of [`TrLimits::loopanymax`] (also the struct default). 4 until BUNDLE-L: since `laprune` the guard no longer storms `heapsort`, and 4 blocked
+/// the unrolled loops of `containers_lru_heap` (0.94 x cycles with 48), `lua_lexer` (0.97 x), `awfy/json` (0.98 x ins 0.96), `stream_closures` (0.94 x instructions);
+/// 0 and 16-32 lose on `real_dis_mips` / `awfy/cd` / `dijkstra_routes` (formation-dependent, docs/JIT_PARKED.md A25), 40-48 lose on none above 1 % instructions.
+pub const LOOPANYMAX_PROCESS: u32 = 48;
 /// BUNDLE-B item 2: process value of [`TrLimits::tset`] (the three inline store paths and, BUNDLE-G1, bit 3 = the inline integer-key hash probe of `GETTABLE`; K3a: also the struct default).
 pub const TSET_PROCESS: u32 = 15;
 
@@ -574,7 +578,7 @@ impl Default for TrLimits {
             nilstore: NILSTORE_PROCESS,
             fnmin: 16,
             loopany: LOOPANY_PROCESS,
-            loopanymax: 4,
+            loopanymax: LOOPANYMAX_PROCESS,
             laprune: LAPRUNE_PROCESS,
             cispare: CISPARE_PROCESS,
             sidestitchmin: 4,
