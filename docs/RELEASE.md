@@ -281,6 +281,9 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
   * `lazy_mat_no_leave`: survives on 5.5 AND 5.4 (also at the base commit; it is not a 5.4 item). A trap emitted at the skipped completion shows that `bk_obs3` (new, `tests/lazyci/bk_obs3.lua`:
     an exit inside an inlined callee of a native recursion, CallInfo nodes scrambled with tail-called frames and other constants before each run) and `r2_rec` execute the stub with lazy frames
     above the root, yet nothing they print depends on the fields the completion writes. Not shown equivalent: listed in `UNDETECTED` of `tr_mutants.rs`, a documented gap. `bk_obs3` stays as coverage.
+    Re-investigated with a temporary instrumented build: at the skipped site `callstatus` and `trap` of the lazy frames are already correct (the lazy push stores them), `top` and `kcache` are
+    stale; poisoning the completion with a wrong `callstatus` is caught by `bk_obs3`, poisoning `top`, `kcache` (zeroed constants) or `trap` alone is not caught by any `bk_lazy_programs` job, including the
+    new `bk_obs4` (table fields with constant string keys after each return). Still `UNDETECTED`; no equivalence proof (the unwritten fields are only read by a resumed frame, and the next leave completes the chain first).
   * `smi_black_skip`: was caught on 5.5 (`a1_setmt_old`) and survived on 5.4. Investigated: no collector bug and no masked barrier. Counting the calls of the barrier's slow path in the unmutated
     `a1_setmt_old` under GC stress 2 shows that the program never stores a white metatable into a black table during a mark phase on 5.4 (inc: 48 calls, all in the sweep phase, where the barrier is only
     an optimisation; gen: none, the metatables created by `pre` are old after the hundreds of per-safepoint young collections before `apply` runs), while on 5.5 there are 1716 mark-phase calls. So the

@@ -3921,6 +3921,11 @@ print(s, table.concat(r, ","), table.concat(u, ","), fib(16), cnt(40))
         small: false,
         src: include_str!("../../../../tests/lazyci/bk_obs3.lua"),
     },
+    Prog {
+        name: "bk_obs4",
+        small: false,
+        src: include_str!("../../../../tests/lazyci/bk_obs4.lua"),
+    },
     // BUNDLE-L (`aidx`, `bhoist`): observers and boundary cases of array loops; the sources are shared with `scripts/bl-diff.sh`
     Prog {
         name: "bl_obs1",

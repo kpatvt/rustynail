@@ -3664,7 +3664,12 @@ const V55_ONLY: &[&str] = &[
 /// docs/JIT_TESTING.md). `lazy_mat_no_leave` (both versions): the inline frame-rebuilding stub of a lazy-aware trace skips the completion of the lazy chain
 /// below the root; `tr_core::bk_obs3` / `r2_rec` execute that stub with lazy frames above the root (a trap emitted at the site crashes both), but nothing
 /// they print depends on the fields the completion writes (`top`, `kcache`, `trap`, `callstatus`: the nodes are scrambled with other values before the
-/// run in `bk_obs3`).
+/// run in `bk_obs3`). Investigated again (A4 follow-up): at the skipped site the leftover `callstatus` and `trap` of the lazy frames already equal the
+/// completed values (the lazy push stores them: 307 frames inspected, 0 differed), `top` and `kcache` are stale in about 98% of them; poisoning the
+/// completion with a wrong `callstatus` (+1 and `CIST_TAIL`) IS detected by `bk_obs3` (so the detectors are sensitive to these fields), but poisoning
+/// `top` (= `func`), `kcache` (a zeroed table) or `trap` (= 1) one at a time leaves every `bk_lazy_programs` job unchanged, also `bk_obs4` (the work after
+/// each return is done on table fields with constant string keys, which tier 1 reads through the `kcache` of the frame it resumes). No consumer of
+/// those fields is reached before the next leave completes the chain (the stale `lazy_root` makes it start at the old root); not proven equivalent.
 #[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
 const UNDETECTED: &[(&str, Option<bool>)] = &[("lazy_mat_no_leave", None)];
 
