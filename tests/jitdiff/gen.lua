@@ -6295,7 +6295,8 @@ local function rng3$id(n) local i = 0 return function() i = i + 1 if i <= n then
 local function bits$id(n) local i = 0 return function() i = i + 1 if i <= n then return i % $A ~= 0 end end end
 local function drift$id(n, at) local i = 0 return function() i = i + 1 if i <= n then if i >= at then return i + 0.5 end return i end end end
 local function sless$id(t, i) i = i + 1 local v = t[i] if v ~= nil then return i, v end end
-local function bad$id(at) local i = 0 return function() i = i + 1 if i == at then error("bad" .. i) end return i end end
+-- (`at` <= 0 is possible when the round count outgrows the length: the iterator must still end; bound 100000 changes no seed that ended before)
+local function bad$id(at) local i = 0 return function() i = i + 1 if i == at then error("bad" .. i) end if i > 100000 then return nil end return i end end
 local function clo$id() return setmetatable({}, { __close = function() mix("closed") end }) end
 local arr$id = {}
 for i = 1, 12 do arr$id[i] = i * $A end

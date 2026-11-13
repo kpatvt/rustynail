@@ -29,6 +29,11 @@ workers with `ulimit -v 6000000`, `timeout $TMO` (default 20 s) and `</dev/null`
 `$TMPDIR` (default `/tmp`) and are deleted afterwards (`KEEP=1` keeps them). About 40 seeds per second
 with 3 jobs on the three-mode configuration below.
 
+Timeouts in all modes at once (also in the interpreter and in the reference `lua`) are a generator bug, not a JIT hang. Seeds 291 and 317 (Lua 5.4, hook
+variants; about 3 per 100 seeds on 5.5) were the BUNDLE-Q template `q1c5`: its error iterator `bad` was asked for round `n - r <= 0`, never raised and never
+ended (`for x in bad(at)` with `at <= 0` counts up forever, only a count / line hook made it visible because the other variants chose other parameters). The
+iterator now ends after 100000 values. Check a suspected hang that way first: run the program with `RUSTYNAIL_JIT=off` and with the reference.
+
 Modes (each program runs once per mode; the first mode is the baseline; stdout, stderr and the exit
 code are compared; `0x...` addresses and the `rnlua:`/`lua:` program-name prefix are normalised):
 
