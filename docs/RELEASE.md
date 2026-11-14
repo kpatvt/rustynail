@@ -1,6 +1,6 @@
 # Release checklist
 
-Steps for the person cutting a release. The version is **0.0.1 and not tagged yet**: no release has been cut. The build
+Steps for the person cutting a release. The version is **0.0.2 and not tagged yet**: no release has been cut. The build
 scripts are `scripts/release-build.sh` (one Lua series: `rnlua`, `rnluac`) and `scripts/release.sh` (the full matrix with the C API
 library and headers).
 
@@ -23,7 +23,7 @@ Release defaults (since 2026-11-11):
 Checklist:
 
 - [x] Repository URL set (`[workspace.package]` `repository`/`homepage` = https://github.com/kpatvt/rustynail).
-- [ ] Decide the version (`[workspace.package] version`, now 0.0.1), update it, commit.
+- [x] Decide the version (`[workspace.package] version`, now 0.0.2), update it, commit.
 - [ ] Licence check: `python3 scripts/gen-notice.py --check` (NOTICE must match the dependency graph; the release script
   runs it), `cargo deny check` (see `deny.toml`), and `rnlua --license | head` prints the embedded texts.
 - [ ] Known-good test list (see `docs/JIT_TESTING.md`, "Release triage (BUNDLE Y)" for the documented exceptions). Known
