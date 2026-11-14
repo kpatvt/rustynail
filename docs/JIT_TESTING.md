@@ -630,3 +630,16 @@ expectation. The state afterwards, per item:
 
 No test of the known-good list fails. Not passing or not decided: the `inconclusive` jobs of the three `tr_oracle` tests (leash timeouts, `os.exit`: above),
 the Y6 failure that could not be reproduced, and the 88 files `cargo fmt` would touch.
+
+### Loose ends run (2026-11-13, base 86c114b)
+
+- **Full mutant runner**, 3 shards, `TR_MUT_JOBS=2 TR_CORE_JOBS=2`, one 8 GB scope, built once, from a normal build directory, output to files; about 50 minutes wall per version.
+  Registry 647. **5.5**: 639 ran, 638 caught, 1 survivor (`frame_side_never`); the 8 not run are `lazy_mat_no_leave` (`UNDETECTED`), `tmove_order_flip` (`EQUIVALENT`) and the six
+  5.4-only mutants. **5.4**: 627 ran, 625 caught, 2 survivors (`frame_side_never`, `tnext_inl_array_end_skip`); the rest are the `V55_ONLY` and the two documented ones.
+  * `frame_side_never` (both versions): `s1_frame_side_programs` only asserted at least 6 side traces, which the other exits of the program provide alone. The test now asserts side
+    recordings started inside inlined frames (`Stats::side_framed`, printed as `framed N` on the `side traces:` line): 0 with the mutant, at least 3 without. Caught on both versions.
+  * `tnext_inl_array_end_skip` (5.4; 5.5 caught it): the detector was non-deterministic (with the mutant, `bm_next_programs` failed in 6 of 12 runs on 5.4 and in 12 of 12 on 5.5;
+    the effect depends on when the trace starts, which varies between runs). `bm_next_ends` (a long lockstep `next()` walk of a table with an array and a hash part) is repeated 12
+    times per trace mode in the test: 12 of 12 runs fail with the mutant on 5.4 and 8 of 8 on 5.5, 3 of 3 control runs pass. Not proven deterministic: other mutants caught only by
+    similar timing-dependent effects could also have survived by chance in a run.
+- jit-diff sweeps on the same tree (`RUSTYNAIL_SEED=0`, `JITDIFF_ENTERS=1`, modes `off tr tron trstorm tremu trstack trverify`, seeds 1..300, `JOBS=3 TMO=60`): see the table in docs/RELEASE.md A4.

@@ -272,6 +272,10 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
   `alimit_touch` in typed array ops, "T9b", never built): 5.4 runs show `t15 policy: regions 0`, `shadow_checked 0` (the `promoted` / `recompiled` counters only count attempts, so
   `NOREGIONS` never fired either). All `t15*` modes / corpus runs on 5.4 re-run tier 1. `scripts/jit-diff.sh` prints `NOSHADOW-5.4 ... exempt` for a 5.4 binary and still fails
   `NOSHADOW` on 5.5. Enabling needs T9b. Documented in docs/JIT_TESTING.md.
+- **Loose-ends run on the tree after 86c114b (2026-11-13; details in docs/JIT_TESTING.md "Loose ends run").** Full mutant runner (registry 647, 3 shards): 5.5 638 caught / 1 survivor (`frame_side_never`), 5.4 625 / 2 (`frame_side_never`,
+  `tnext_inl_array_end_skip`); both detectors were strengthened (`Stats::side_framed`; `bm_next_ends`, the 5.4 detection of the latter had been about 50% per run) and re-run caught on both versions; `lazy_mat_no_leave` stays `UNDETECTED` (above).
+  jit-diff, seeds 1..300, modes `off tr tron trstorm tremu trstack trverify` (`trdef` instead of `tron` for `nr`), `RUSTYNAIL_SEED=0`: 5.4 `tr` 0 diffs (35 slow skips), `bk` 0 diffs (162 slow skips of 300: the baseline of the recursion programs is slow), `bc` 0, `br` 0;
+  5.5 `nr` 0; 5.5 all hook variants `off tr tron` seeds 1..200: 0 diffs and 0 timeouts. The hook-variant timeouts (5.4 seeds 291 / 317, about 3 per 100 seeds on 5.5) were a generator bug (an iterator that never ended in every mode and in PUC), fixed in `tests/jitdiff/gen.lua`.
 - **5.4 mutant survivors (runner `TR_MUT_ONLY=...`, 5.4 cfg, base 3fc4d7a plus the test changes).**
   * `cofuse_*` (7): the five `tr_coro` detectors were `cfg(not(rustynail_lua54))` (their expected files are the 5.5 reference's). co_11 / co_14 / co_15 print the same on `ref/54`;
     co_12 / co_13 differ, so `co_12_errors_status.expected54` and `co_13_close_tbc_hooks.expected54` (from `ref/54/build/lua`) were added and the five tests run on both versions.
