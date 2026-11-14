@@ -4630,11 +4630,11 @@ fn bk_lazy_programs() {
     );
     for l in ["unroll=4,maxdepth=6", "fnroot=1", "lazyci=0"] {
         let mut j = Job::new("bk_obs1", "always").opts("+verify");
-        j.limits = format!("recnat=1,lazyci=1,{l}").replace("lazyci=1,lazyci=0", "lazyci=0");
+        j.limits = format!("recnat=1,lazyci=2,{l}").replace("lazyci=2,lazyci=0", "lazyci=0");
         jobs.push(j);
     }
     for j in jobs.iter_mut().filter(|j| j.limits.is_empty()) {
-        j.limits = "recnat=1,lazyci=1".into();
+        j.limits = "recnat=1,lazyci=2".into();
     }
     compare(jobs);
 }
@@ -4696,7 +4696,7 @@ fn bl_programs_enter_traces() {
 /// lazy frames; `pm3_rec` has `pcall(fib, ...)` roots (a `CIST_FRESH` root frame must not return natively: the mutant `lazy_ret_root_unchecked`).
 #[test]
 fn bk_lazy_r2_programs() {
-    let on = "recnat=1,recany=1,lazyci=1";
+    let on = "recnat=1,recany=1,lazyci=2";
     let mut jobs = Vec::new();
     for p in ["r2_rec", "pm3_rec"] {
         for trace in ["always", "on2"] {
@@ -4716,9 +4716,9 @@ fn bk_lazy_r2_programs() {
                 jobs.push(j);
             }
             for lim in [
-                "recnat=1,recany=1,lazyci=1,unroll=4,maxdepth=6",
-                "recnat=1,recany=1,lazyci=1,maxside=0",
-                "recnat=1,recany=1,lazyci=1,unroll=1",
+                "recnat=1,recany=1,lazyci=2,unroll=4,maxdepth=6",
+                "recnat=1,recany=1,lazyci=2,maxside=0",
+                "recnat=1,recany=1,lazyci=2,unroll=1",
             ] {
                 let mut j = Job::new(p, trace);
                 j.limits = lim.into();
@@ -4739,7 +4739,7 @@ fn bk_lazy_r2_programs() {
 #[test]
 fn bk_lazy_programs_enter_traces() {
     let mut j = Job::new("bk_obs1", "always").opts("+verify");
-    j.limits = "recnat=1,lazyci=1".into();
+    j.limits = "recnat=1,lazyci=2".into();
     let res = compare(vec![j]);
     for (j, o) in &res {
         assert!(
@@ -6061,6 +6061,47 @@ fn cp1_leaf_programs() {
         jobs.push(Job::new("cp1_leaf", trace).budget(17));
         jobs.push(Job::new("cp1_leaf", trace).env("RUSTYNAIL_GC_STRESS", "2"));
         jobs.push(Job::new("cp1_leaf", trace).opts("+emurun +verify"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.opts == "+verify" {
+            assert!(
+                o.stats.rec_ci_added >= 1,
+                "[{}] the spare node is made in place: {}",
+                j.trace,
+                o.stats.line()
+            );
+        }
+    }
+}
+
+/// CP1 on a lazy chain (`lazyci=1`, a loop-free recursion): the repair extends the list behind the running frame (`thread.ci` is stale). Same output in
+/// every mode, the repair counter is >= 1; `recci_never` / `recci_short` are caught by the counter / the output.
+#[test]
+fn cp1_lazy_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(
+            Job::new("cp1_lazy", trace)
+                .opts("+verify")
+                .limits_s("lazyci=1"),
+        );
+        jobs.push(
+            Job::new("cp1_lazy", trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s("lazyci=1"),
+        );
+        jobs.push(Job::new("cp1_lazy", trace).budget(17).limits_s("lazyci=1"));
+        jobs.push(
+            Job::new("cp1_lazy", trace)
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .limits_s("lazyci=1"),
+        );
+        jobs.push(
+            Job::new("cp1_lazy", trace)
+                .opts("+emurun +verify")
+                .limits_s("lazyci=1"),
+        );
     }
     let res = compare(jobs);
     for (j, o) in &res {
@@ -10188,7 +10229,7 @@ fn nr_matrix() {
 #[test]
 fn nr_retf_traces_are_installed() {
     let mk = |l: &str| Job::new("n_retf_hot", "always").opts("+verify").limits_s(l);
-    let r = run_all(vec![mk("retf=1,retfmax=1"), mk("retf=0")]);
+    let r = run_all(vec![mk("retf=1,retfmax=1,lazyci=0"), mk("retf=0")]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
     // RETF is inert under the 5.4 build (by design): no RETF trace is ever installed, the output is the same
     let inert = cfg!(rustynail_lua54);
@@ -10218,7 +10259,7 @@ fn nr_retf_traces_are_installed() {
     ] {
         let r = run_all(vec![Job::new(p, "always")
             .opts("+verify")
-            .limits_s("retf=1,retfmax=1")]);
+            .limits_s("retf=1,retfmax=1,lazyci=0")]);
         assert!(r[0].1.ok, "{p}: {}", r[0].1.stderr);
         if inert {
             assert_eq!(
@@ -10243,7 +10284,7 @@ fn nr_retf_traces_are_installed() {
 /// `retf_untraced_aborts`, `retf_second_return_aborts`, `relink_jumps_to_land`, `relink_savedpc_off`.
 #[test]
 fn nr_n3_programs() {
-    let lim = "retf=7,retfmax=3";
+    let lim = "retf=7,retfmax=3,lazyci=0"; // (RETF never pops into a possibly lazy-aware caller: these programs have loop-free callers)
     for p in [
         "n_retf_types",
         "n_retf_upvals",

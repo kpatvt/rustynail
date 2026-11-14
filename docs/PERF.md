@@ -2679,3 +2679,10 @@ instructions +0.0..0.15 %). Test: `pattern::patc::tests::cache_is_per_thread_and
 * Static `libgcc` (drops `libgcc_s.so`: ~25 k cycles) or a static-pie executable (drops `ld.so`, ~270 k cycles, the real gap to PUC): the second breaks `dlopen` of C modules (the `rn-capi` exports are used by modules loaded with `require`), the first changes how the unwinder is linked; both are release-build decisions, not code changes. DT_RELR (`-z pack-relative-relocs`, 2786 relative relocations, 17 k cycles of relocation time) needs glibc >= 2.36 at run time.
 * Environment reads (`getenv` x ~25) could be batched into one `environ` scan (~10 k cycles, 1 %); not done.
 The remaining gap to PUC (905 k -> 875 k against 683 k cycles) is the dynamic loader (+60 k: one more library, 2786 relative relocations, 126 `GLOB_DAT` entries under `BIND_NOW`), the registration work above (+55 k) and kernel/page-fault effects of a larger image.
+
+
+## Call-protocol stage 2 (2026-11-13): `lazyci` ON by default; callee-identity hoist not built
+
+Details, gates and the per-program table: docs/JIT_PARKED.md C70. Summary (all 223 programs, `RUSTYNAIL_SEED=0`, equal-length binary dirs, identical script paths, min of 3): instructions geomean 0.9998, cycles 0.998, no program above +1.5 % instructions.
+`programs/fib` 0.890 instructions / 0.900 cycles (1418 -> 1277 Mcyc), `binary_trees` 1.003 instructions (was 1.060 with the old `lazyci=1`), `awfy/permute` 1.000 / 0.977, `towers` 1.012 / 1.040 (lottery), `expr_lang` 1.000 / 0.978, `coro_generators` 1.015 / 1.023, `class_middleclass` 1.001 / 1.005, `lua_lexer` 1.000 / 0.991.
+Target `fib` 0.6 instructions was not reached: the identity hoist (C70 b) was not built.

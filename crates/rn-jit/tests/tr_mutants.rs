@@ -2659,6 +2659,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "cp1_leaf_programs")],
     },
     Row {
+        name: "retf_lazy_caller_ok",
+        owner: "CP1L",
+        dets: &[d("tr_core", "twins_always_and_on")],
+    },
+    Row {
+        name: "recci_lazy_stale",
+        owner: "CP1L",
+        dets: &[d("tr_core", "cp1_lazy_programs")],
+    },
+    Row {
         name: "side_nroom_skip",
         owner: "CP2",
         dets: &[d("tr_core", "cp2_side_room_programs")],

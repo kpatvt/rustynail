@@ -3422,11 +3422,8 @@ impl Cx<'_> {
     /// does through `luaE_extendCI`) and resumes after the check; only an allocation failure takes `fail`.
     fn room_ci_check_rec(&mut self, fail: L) {
         let ir = self.ir;
-        if self.env.ci_spare_fn == 0
-            || self.env.lazy
-            || mutants::active("recci_never")
-            || ir.depth == 0
-        {
+        // (a lazy chain too: the helper extends the list behind `r13`, the running frame, not behind the stale `thread.ci`)
+        if self.env.ci_spare_fn == 0 || mutants::active("recci_never") || ir.depth == 0 {
             self.room_ci_check(fail);
             return;
         }
@@ -8151,6 +8148,7 @@ pub mod support {
                         && !p.is_vararg(),
                     recnat: d.tr.cfg.limits.recnat != 0,
                     lazy: d.tr.cfg.limits.lazyci != 0,
+                    lazy_any: d.tr.cfg.limits.lazyci >= 2,
                     fn_loops: d.tr.cfg.limits.recany != 0,
                     rec_any: d.tr.cfg.limits.recany != 0,
                     c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),

@@ -525,6 +525,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         })
     });
     let pr = cache::proto_ref(&proto);
+    // BUNDLE-K L1: RETF (and the frame links that go with it) only in traces of a prototype that is not lazy-aware: the pop assumes every frame below the running one is complete
+    let lazy_root = pr.is_some_and(|pr| cache::proto_lazy(st, pr));
     // BUNDLE-C (`fnpromo`): this function-entry head is a generic function root (not for a function that reaches itself through an upvalue)
     let promoted = pr.is_some_and(|pr| cache::fn_promoted(st, pr)) && !closure_self_ref(cl);
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
@@ -623,11 +625,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         libcall_repcls: cfg.limits.libcall & 16 != 0,
         libcall_mask: cfg.limits.libcall,
         // BUNDLE-N: RETF (not with lazy frames: the pop assumes every frame below the running one is complete)
-        retf: if cfg.limits.lazyci != 0 {
-            0
-        } else {
-            cfg.limits.retf
-        },
+        retf: if lazy_root { 0 } else { cfg.limits.retf },
         retfmax: cfg.limits.retfmax,
         upbar: cfg.limits.upbar,
         f2mt: true,
@@ -709,7 +707,9 @@ pub fn driver_start_side(
     let proto = cl.proto();
     let root = &*proto as *const rn_core::func::Proto as usize;
     let pr = cache::proto_ref(&proto)?;
+    // (see `driver_start`)
     let cfg = crate::rt::trace_config(st);
+    let lazy_root = cache::proto_lazy(st, pr);
     let low = cache::landing_cached(&proto)?;
     // S1: a start inside inlined frames lands at a label of the innermost frame's prototype
     let inner_low = if start.frames.is_empty() {
@@ -754,9 +754,7 @@ pub fn driver_start_side(
         }),
         loop_unroll: cfg.limits.loopunroll,
         // C38 slice 1: a side recording that reaches a callee loop head with a root trace ends with the frame-linking exit
-        nest_frame: if cfg.limits.sidenest != 0
-            || (cfg.limits.retf & 1 != 0 && cfg.limits.lazyci == 0)
-        {
+        nest_frame: if cfg.limits.sidenest != 0 || (cfg.limits.retf & 1 != 0 && !lazy_root) {
             Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
                 cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
             }) as record::FrameHeadQuery)
@@ -764,7 +762,8 @@ pub fn driver_start_side(
             None
         },
         // N3a: after a `RETF` the root frame is the caller: a loop head of ITS prototype
-        retf_head: if cfg.limits.retf & 1 != 0 && cfg.limits.lazyci == 0 && !start.no_retf {
+        retf_nolazy: cfg.limits.lazyci,
+        retf_head: if cfg.limits.retf & 1 != 0 && !lazy_root && !start.no_retf {
             Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
                 cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
             }) as record::FrameHeadQuery)
@@ -795,7 +794,7 @@ pub fn driver_start_side(
         libcall_repcls: cfg.limits.libcall & 16 != 0,
         libcall_mask: cfg.limits.libcall,
         // BUNDLE-N: RETF (not with lazy frames: the pop assumes every frame below the running one is complete)
-        retf: if cfg.limits.lazyci != 0 || start.no_retf {
+        retf: if lazy_root || start.no_retf {
             0
         } else {
             cfg.limits.retf

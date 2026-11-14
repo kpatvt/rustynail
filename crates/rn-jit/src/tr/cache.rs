@@ -60,7 +60,7 @@ pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
 pub const BHOIST_PROCESS: u32 = 1;
 /// BUNDLE-K L1: the process default of [`TrLimits::lazyci`] (also the struct default).
-pub const LAZYCI_PROCESS: u32 = 0;
+pub const LAZYCI_PROCESS: u32 = 1;
 /// P-M4: the process default of [`TrLimits::recnat`] (native self-recursion on; K3a: also the struct default).
 pub const RECNAT_PROCESS: u32 = 1;
 /// R2: the process default of [`TrLimits::recany`] (K3a: also the struct default).
@@ -819,7 +819,7 @@ impl TrLimits {
                 "centry" => l.centry = v.min(2),
                 "centrymin" => l.centrymin = v.min(100_000),
                 "centrywait" => l.centrywait = v.min(1000),
-                "lazyci" => l.lazyci = v.min(1),
+                "lazyci" => l.lazyci = v.min(2),
                 "aidx" => l.aidx = v.min(1),
                 "bhoist" => l.bhoist = v.min(1),
                 "pollr15" => l.pollr15 = v.min(2),
@@ -5758,17 +5758,24 @@ pub unsafe extern "C" fn jit_tr_entry_fail(
 /// Called only from compiled code with the running thread and its current Lua frame (`thread.ci`).
 pub unsafe extern "C" fn jit_tr_ci_spare(
     th: *mut Thread,
-    _ci: *mut CallInfo,
+    ci: *mut CallInfo,
     depth: u32,
     _b: u32,
 ) -> u32 {
-    // SAFETY: as in `jit_tr_hot`.
-    let mut st = unsafe { jit_hooks::state_from_thread(th.cast()) };
+    // SAFETY: as in `jit_tr_hot`; `ci` is the running frame (`r13`), which in a lazy chain is not `thread.ci`.
+    let (mut st, ci) = unsafe { (jit_hooks::state_from_thread(th.cast()), Ci::from_raw(ci)) };
     let mut n = depth as usize;
     if mutants::active("recci_short") {
         n = n.saturating_sub(1);
     }
-    match st.ensure_spare_ci(n) {
+    // (mutant `recci_lazy_stale`: behind `thread.ci`, which a lazy chain leaves stale)
+    let from = if mutants::active("recci_lazy_stale") {
+        st.ci()
+    } else {
+        ci
+    };
+    // SAFETY: `from` is a node of the thread's list.
+    match unsafe { st.ensure_spare_ci_after(from, n) } {
         Some(added) => {
             if added > 0 {
                 d_of(&mut st).tr.stats.rec_ci_added += 1;
@@ -5981,8 +5988,9 @@ pub(crate) struct DispatchCfg {
     pub fn_root: bool,
     /// P-M3: native self-recursion: function-entry heads also get continuation heads.
     pub recnat: bool,
-    /// BUNDLE-K L1: `TrLimits::lazyci != 0`.
+    /// BUNDLE-K L1: `TrLimits::lazyci != 0`; `lazy_any`: `lazyci >= 2` (also prototypes whose `CALL`s want different result counts).
     pub lazy: bool,
+    pub lazy_any: bool,
     /// M1: a function with loops also gets the function-entry head (a loop-free path through it is what the recording sees).
     pub fn_loops: bool,
     /// R2: continuation heads for any callee load, native `RETURN0` (`TrLimits::recany`).
@@ -6085,7 +6093,24 @@ pub(crate) fn emit_dispatch(
     if dis.ext.is_none() {
         let tp = TrProto::new(env.ins.len(), &pcs, c.hot, c.always, c.seed, c.line);
         // BUNDLE-K L1: a loop-free function with the entry head of native recursion is lazy-aware (all of its traces, cells and heads)
-        let lazy = c.lazy && fn_head && c.recnat && env.backedges.is_empty() && !c.c_entered;
+        // (and every `CALL` of it wants the same number of results: the leave then completes the chain in line; with different counts it
+        // calls the Rust helper at every exit, which cost `awfy/list` 6 % instructions)
+        let same_c = {
+            let mut cs = env
+                .ops
+                .iter()
+                .zip(env.ins.iter())
+                .filter(|(o, _)| matches!(o, Some(OpCode::Call)))
+                .map(|(_, i)| i.c());
+            let first = cs.next();
+            cs.all(|x| Some(x) == first)
+        };
+        let lazy = c.lazy
+            && fn_head
+            && c.recnat
+            && env.backedges.is_empty()
+            && !c.c_entered
+            && (same_c || c.lazy_any);
         tp.lazy.set(lazy);
         for h in tp.heads() {
             h.lazy.set(lazy);
@@ -6467,6 +6492,7 @@ pub fn lower_probe(st: &mut State, trace: bool) -> Option<Probe> {
             fn_root: false,
             recnat: false,
             lazy: false,
+            lazy_any: false,
             fn_loops: false,
             rec_any: false,
             c_entered: false,

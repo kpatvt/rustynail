@@ -313,6 +313,8 @@ pub struct RecCfg {
     /// N3a: (prototype, pc) head query for the root frame of a side recording AFTER a `RETF` (its root is the caller `C`, not the entry
     /// prototype the side configuration's `head_state` is bound to).
     pub retf_head: Option<FrameHeadQuery>,
+    /// BUNDLE-K L1 (`lazyci` on): `RETF` does not pop into a caller that may be lazy-aware.
+    pub retf_nolazy: u32,
     /// F2: record `getmetatable(t)` of a table as inline loads (0 = the stitching C call)
     pub f2mt: bool,
     /// F2: record string comparisons (long-string `==`, `<`, `<=`) with a helper (0 = the Nyi abort)
@@ -472,6 +474,7 @@ impl Default for RecCfg {
             nest_frame_sides: false,
             nest_frame_roots: false,
             retf_head: None,
+            retf_nolazy: 0,
             stitch_min: 0,
             unroll: 0,
             max_depth: 0,
@@ -6383,6 +6386,7 @@ impl Rec {
     /// (the caller is not a plain Lua frame suspended after an `OP_CALL`, the frame is a vararg, closes upvalues, ...): the caller keeps
     /// the old behaviour. The recording ends at the first instruction of `C` after the pop (see `on_step`).
     fn retf(&mut self, vm: &Vm<'_>, i: Instruction, op: OpCode) -> R<Option<usize>> {
+        // (see `maybe_lazy_proto` at the end of the file)
         const NO: R<Option<usize>> = Ok(None);
         if cfg!(rustynail_lua54)
             || self.cfg.retfmax == 0
@@ -6410,6 +6414,14 @@ impl Rec {
             return NO;
         };
         let cp = ccl.proto();
+        // BUNDLE-K L1: never pop into a caller that may be lazy-aware (loop-free, non-vararg): its frames can be lazy, and the continuation after the pop
+        // would run in a trace that is not part of its region (`lazyci` is on by default)
+        if self.cfg.retf_nolazy != 0
+            && !mutants::active("retf_lazy_caller_ok")
+            && maybe_lazy_proto(&cp, self.cfg.retf_nolazy >= 2)
+        {
+            return NO;
+        }
         let ccode = cp.code();
         // C is suspended after an `OP_CALL`; F's function slot is its register A
         let sp = c_ci.r().savedpc as usize;
@@ -10737,4 +10749,32 @@ thread_local! {
 /// BUNDLE-E (`contok`): did a recording observe a self-call of the prototype at `key`?
 pub fn cont_ok(key: usize) -> bool {
     CONT_OK.with(|c| c.borrow().contains(&key))
+}
+
+/// Could the prototype be lazy-aware (`TrProto::lazy`: loop-free, non-vararg; the rest of the rule is dynamic)? A conservative superset, for `Rec::retf`.
+fn maybe_lazy_proto(p: &Proto, any_c: bool) -> bool {
+    if p.is_vararg() {
+        return false;
+    }
+    // (`lazyci` 1: only prototypes whose `CALL`s all want the same result count are lazy-aware)
+    if !any_c {
+        let mut cs = p
+            .code()
+            .iter()
+            .map(|&w| Instruction(w))
+            .filter(|i| i.opcode() == Some(OpCode::Call))
+            .map(|i| i.c());
+        let first = cs.next();
+        if !cs.all(|x| Some(x) == first) {
+            return false;
+        }
+    }
+    !p.code().iter().any(|&w| {
+        let i = Instruction(w);
+        match i.opcode() {
+            Some(OpCode::Forloop | OpCode::Tforloop) => true,
+            Some(OpCode::Jmp) => i.sj() < 0,
+            _ => false,
+        }
+    })
 }

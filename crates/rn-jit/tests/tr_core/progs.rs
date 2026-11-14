@@ -11300,6 +11300,27 @@ print(cnt, sum)
 "##,
     },
     Prog {
+        name: "cp1_lazy",
+        small: true,
+        src: r##"
+-- CP1 on a lazy chain (`lazyci`): a loop-free recursion (lazy-aware), run deeper and deeper with a full collection in between (the collector frees
+-- spare CallInfo nodes). The leaf at the deepest depth finds no successor node at the TR6b check of its native entry, and the lazy chain's
+-- `thread.ci` is stale there: the repair must extend the list behind the running frame.
+local cnt = 0
+local function tree(d)
+  if d == 0 then cnt = cnt + 1; return 1 end
+  return tree(d - 1) + tree(d - 1) + 1
+end
+local s = 0
+for round = 1, 12 do
+  for r = 1, 30 do s = s + tree(5 + round % 4) end
+  collectgarbage()
+  s = s + tree(9 + round % 3)
+end
+print(cnt, s)
+"##,
+    },
+    Prog {
         name: "c36_ci",
         small: true,
         src: r##"

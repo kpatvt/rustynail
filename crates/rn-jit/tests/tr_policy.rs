@@ -1860,6 +1860,25 @@ fn bs_process_defaults() {
     }
 }
 
+/// CP-S2 (a): `lazyci` is ON by default (`LAZYCI_PROCESS` = 1: lazy frames for loop-free recursions whose `CALL`s all want the same result count); 2 also
+/// takes the mixed-count ones (the tests of the leave helper); the knob is clamped to 2.
+#[test]
+fn cps2_lazyci_process_default() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, LAZYCI_PROCESS};
+    assert_eq!(LAZYCI_PROCESS, 1);
+    assert_eq!(TrConfig::for_mode(TrMode::On).limits.lazyci, 1);
+    for (env, want) in [
+        (None, 1),
+        (Some("lazyci=0"), 0),
+        (Some("lazyci=2"), 2),
+        (Some("lazyci=9"), 2),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.lazyci, want, "limits env {env:?}");
+    }
+}
+
 /// BUNDLE-P P1 / C45: the rule of [`rearm_young_ok`]: a head with at least `REARM_MIN_ENTRIES` entries is always entered; a younger one only when `rearmside` > 0, the
 /// family has that many installed side traces and (`rearmclean` = 1) the family is clean. Mutants `rearmside_never` (no young entry), `rearmside_any` (any young head once the
 /// knob is on; the clean test still applies), `rearmclean_ignores_faults` / `rearmclean_ignores_la` (`TrState::family_clean`: the programs of `tr_core::bp_rearmside_programs`).

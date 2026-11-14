@@ -10,7 +10,7 @@ below record which knobs were deleted or hard-wired), the code wins. Release num
 |---|---|---|---|
 | Second mid-tier JIT (Maglev-style, "J4F") | NO-GO (project decision); no written analysis of it is kept in this repository | -- | the J4 gates (`docs/JIT_BENCH.md`) and the interpreter study (`docs/INTERP_STUDY.md`: even an infinitely fast interpreter gains 11.7%) show the remaining time is in trace quality and library calls, not in a missing tier |
 | Nested loops | `nest=2` (linking exits from inlined frames), `nest=0`; data-dependent callee loops under the `loopany` guard (`lua_lexer`); side-recording nest links (`sidenest`, shipped) | A3, A25, C10, C38 | `nest=2` and a lower `stitchmin` did not pass the 3% gate; `lua_lexer` stays 2.6x LuaJIT |
-| Lazy `CallInfo` frames | `lazyci` (L1) built, OFF; L2 (callee-identity hoist) and L3 (transition diet) not built | C55 | L1 misses its gate (`fib` 0.92, `binary_trees` +6% cycles); L2/L3 only pay on top of an L1 that is on |
+| Lazy `CallInfo` frames | `lazyci` (L1) ON by default since C70 (`lazyci=0` off, `=2` also mixed-result-count prototypes); L2 (callee-identity hoist) not built (C70) | C55, C70 | fib 0.89 instructions / 0.90 cycles; L2 only reachable with a per-entry-kind body (C70) |
 | Array loops | `aidx` and `bhoist` built (`bhoist` on, `aidx` off); single loop variable, dead-slot snapshot pruning, folded memory operands not built | C56 | `matmul` is cache-bound; no free register for `aidx` to pay |
 | Coroutines | no trace crosses `coroutine.yield`/`resume`/`wrap` (a recording that reaches them aborts `CFunc`); resume/yield fast path; coroutine bodies are traced between yields | C9 | one micro program at 2x LuaJIT (`lib/co_yield`), estimated -1..2% geomean |
 | Library calls on trace, left | `table.concat`, `string.format` with float/`%g`/`%q`/`%5.2f` items, `table.sort`, general `gsub`/`gmatch`/`match` shapes, `tonumber(s, base)`, positional `table.insert`/`table.remove` (with a position argument: stays a plain C call) | C61, C37, C48, C49 | each is a few percent of the cycles of the programs that hit it (C61 census); C37 (a generic recorded C call) stopped at design |
@@ -2394,3 +2394,40 @@ valid when both are in the same state (check the `[trace] recorded/installed` li
 **Not built (open).** Making the recorder insensitive to GC phase (e.g. count `Alloc`-site exits that are GC-driven separately from data-driven exits, or make the hot-exit counter and the `FnShort`
 probe independent of the collector state) would remove a 20 .. 25 % swing on these two programs (and probably others). It is a policy change in the heuristics that every other program's trace set depends on,
 so it needs the full 223-program gate; not attempted in this pass.
+
+
+### C70: CALL-PROTOCOL STAGE 2 (2026-11-13, base d56d844): (a) `lazyci` ON SHIPPED, (b) identity hoist NOT BUILT
+
+Method: release `rn-cli`, equal-length binary directories and identical script paths (`bn0` base, `bn1` new, `dup` = second column of `bn1`), `RUSTYNAIL_SEED=0`, all 223 programs, `scripts/bench_session.py` (CPUs 3-7, siblings idle), min of 3, `scripts/bench_k_lazy_report.py`; instructions are exact, cycles carry the layout lottery (C46: rows with equal instructions move in the `dup` column).
+
+* **(a) `lazyci` ON (SHIPPED).** `LAZYCI_PROCESS` = 1. Four fixes were needed (C55 listed only the first):
+  1. **CP1 on the lazy chain (C55 e).** `room_ci_check_rec` no longer excludes the lazy chain: the repair helper `jit_tr_ci_spare` extends the list behind its `ci` argument (`r13`, the running frame; `State::ensure_spare_ci_after`, `extend_ci_after`), not behind the stale `thread.ci`.
+     `binary_trees` 1.060 -> 1.003 instructions (the 2.8 M leaves after `shrink_ci` are gone). Test `tr_core::cp1_lazy_programs` (program `cp1_lazy`: repair counter >= 1 in every mode), mutant `recci_lazy_stale` (repair behind `thread.ci`) caught.
+  2. **`retf` was switched off for every prototype when `lazyci` was on** (`retf = 0` in both recorder configurations). With the knob ON that cost `programs/heapsort` 1.83x instructions, `jit-trace/field_rw` 1.088, `float_poly` 1.047, `int_sum` 1.020, `bigint_rsa` 1.021. Now only traces of a lazy-aware root lose `RETF`.
+     That is not sufficient: a trace of a non-lazy callee that pops (`RETF`) into a caller that is lazy-aware continues in a trace outside that caller's region (crash in `tr_core::deep_recursion`, SIGSEGV). `Rec::retf` therefore refuses to pop into a caller that may be lazy-aware (`maybe_lazy_proto`: non-vararg, no loop opcode / backward jump, and for `lazyci=1` all `CALL`s with one result count;
+     a conservative superset of `TrProto::lazy`). Mutant `retf_lazy_caller_ok` (guard off) is caught by `tr_core::twins_always_and_on`. The `n_retf_*` tests that assert an installed `RETF` trace (their callers are loop-free) run with `lazyci=0`.
+  3. **Mixed result counts.** A prototype whose `CALL`s want different result counts has no in-line leave loop (`lazy_cs` is `None`): every exit with lazy frames called the Rust helper (`awfy/list` +5.8 % instructions). `lazyci=1` (the default) now makes only prototypes with a single `CALL` result count lazy-aware; `lazyci=2` is the old behaviour (all tests of the leave helper and the observer programs run with `=2`).
+  4. Tests: `tr_policy::cps2_lazyci_process_default`; `tr_core` lazy programs use `lazyci=2`.
+  Result (all 223, new/base): instructions geomean 0.9998, cycles 0.998; no program above +1.5 % instructions (`coro_generators` +1.5 %, `towers` +1.2 %, `cd` +1.0 %, `astar_jumper` +0.6 %). The programs above +3 % cycles at equal instructions are the lottery (`towers` 1.04 / median 1.08, `binary_trees` 1.04 / median 0.99).
+  | program | instructions base -> new (M) | ratio | cycles base -> new (M) | ratio |
+  |---|---|---|---|---|
+  | programs/fib | 9227 -> 8211 | 0.890 | 1418 -> 1277 | 0.900 |
+  | programs/binary_trees | 9910 -> 9937 | 1.003 | 1961 -> 2039 | 1.040 (median 0.991) |
+  | awfy/permute | 253.8 -> 253.8 | 1.000 | 47.1 -> 46.0 | 0.977 |
+  | awfy/towers | 192.4 -> 194.8 | 1.012 | 49.1 -> 51.1 | 1.040 |
+  | awfy/queens, programs/queens | 541 / 5783 (equal) | 1.000 | 100.5 / 1886 (equal) | 0.999 / 1.000 |
+  | apps/expr_lang | 616.2 -> 616.2 | 1.000 | 155.8 -> 152.4 | 0.978 |
+  | corpus2/dev/coro_generators | 4076 -> 4139 | 1.015 | 1263 -> 1293 | 1.023 |
+  | corpus/class_middleclass | 2500.5 -> 2502.4 | 1.001 | 493.4 -> 496.0 | 1.005 |
+  | corpus/lua_lexer | 5216 (equal) | 1.000 | 1256 -> 1245 | 0.991 |
+  | awfy/list | 658.8 -> 660.7 | 1.003 | 138.3 -> 137.6 | 0.995 |
+  | programs/heapsort | 3139 (equal) | 1.000 | 1667 -> 1635 | 0.981 |
+  Gates run: fmt, clippy `-D warnings` of `rn-core` + `rn-jit` (all targets, `trace`, `tr_mutants`, `t15_oracle`) on 5.5 and 5.4, tr_record, tr_policy, tr_exit, tr_asm, `tr_core` (200 passed, `mutants_are_caught_by_live_programs` skipped), mutant runner `TR_MUT_ONLY=lazy_,recci_,retf_lazy` (registry 647 -> 649, all caught),
+  jit-diff seeds 1..100 modes off tr tron (5.5: 0 diffs; 5.4: 2 diffs, seeds 82 / 92, a `math.random` vs `type` traceback name that is present with `lazyci=0` too), jit-diff set `bk` seeds 1..60 `lazyci=2` modes off tr trstorm trstack (5.5), vm_corpus.
+  Not run: the 5.4 `tr_*` test binaries, ASan, GC-stress official suite and fuzz with the new default, the full mutant registry, `t15_oracle` binaries.
+* **(b) callee-identity hoist: NOT BUILT.** Why (analysis of the dumped fib traces; the per-call cost is the 16-instruction chain `SLOAD fn; UREF; UVREL; UGE; ULOAD; EQ` in the entry trace and in the continuation trace, once per push):
+  - It is redundant after a native self-push, but only inside the region: it must stay at every outer entry. The chain sits *after* the `n < 2` guard of the body (the leaf exits before it), so a plain second loop label cannot skip it (the child's POLL, BUDGET, type guard and base-case guard must run first).
+    Moving the chain to the front would run it for every leaf (half of all calls). The workable form is a second copy of the body prefix for inner entries (poll, budget, `SLOAD n`, the guard) that ends with `V2 = SLOAD fn; V0 = V2` and jumps behind the chain (about -11 instructions per internal call), plus the same for the continuation trace's inner entry.
+  - Soundness needs a family invariant: no `SETUPVAL` of the callee's upvalue in any trace of the family. A `SETUPVAL` in an inlined callee of another closure can alias the upvalue object (traces guard callees by prototype, not closure instance), so the check cannot be made at record time of one trace; it needs a family flag, invalidation of installed traces when a later recording stores an upvalue, mutants for both entry kinds and the chain-in-continuation case. That is a bundle of its own.
+  - Cheaper fragments of the same chain (not built): the second `closure -> upvals -> uv.v` walk of `ULOAD` after `UREF` (2 instructions) and the 3-instruction `UVREL` (`lea; sub; mov`, 1-2 instructions): about 4 of 115 instructions per fib call.
+  Retest trigger: a per-entry-kind body (the prefix copy above) or a family-level upvalue-store tracker.

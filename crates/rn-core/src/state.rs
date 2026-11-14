@@ -604,11 +604,23 @@ unsafe fn stack_init(th: *mut Thread, mem: &mut Mem) -> LuaResult<()> {
 /// `th` must be a live thread with an initialised `ci`.
 pub(crate) unsafe fn extend_ci(th: *mut Thread, mem: &mut Mem) -> LuaResult<*mut CallInfo> {
     // SAFETY: ST4.
+    unsafe { extend_ci_after(th, (*th).ci, mem) }
+}
+
+/// `extend_ci` behind an arbitrary node `cur` of the thread's list (a lazy frame of the JIT's native recursion is not `th.ci`).
+///
+/// # Safety
+/// `th` must be a live thread and `cur` a node of its `CallInfo` list.
+pub(crate) unsafe fn extend_ci_after(
+    th: *mut Thread,
+    cur: *mut CallInfo,
+    mem: &mut Mem,
+) -> LuaResult<*mut CallInfo> {
+    // SAFETY: ST4.
     unsafe {
         let raw = mem.alloc(std::mem::size_of::<CallInfo>())?;
         let ci = raw.as_ptr().cast::<CallInfo>();
         ci.write(CallInfo::blank());
-        let cur = (*th).ci;
         (*ci).next = (*cur).next;
         (*ci).previous = cur;
         (*cur).next = ci;
@@ -1433,9 +1445,19 @@ impl State {
     /// C36 (JIT): makes sure at least `n` `CallInfo` nodes follow the current frame (a trace entry needs them, `TR6b`), extending the chain like
     /// `luaE_extendCI` does for a call. Returns how many nodes it added, `None` if an allocation failed.
     pub fn ensure_spare_ci(&mut self, n: usize) -> Option<usize> {
+        let ci = self.ci();
+        // SAFETY: `ci` is the current frame.
+        unsafe { self.ensure_spare_ci_after(ci, n) }
+    }
+
+    /// `ensure_spare_ci` for the frame `ci` (the running frame of a lazy native chain, whose `thread.ci` is stale): `n` nodes behind it.
+    ///
+    /// # Safety
+    /// `ci` must be a node of this thread's `CallInfo` list.
+    pub unsafe fn ensure_spare_ci_after(&mut self, ci: Ci, n: usize) -> Option<usize> {
         let th = self.th_ptr();
         let mut have = 0;
-        let mut c = self.ci().next();
+        let mut c = ci.next();
         while let Some(x) = c {
             have += 1;
             if have >= n {
@@ -1446,7 +1468,7 @@ impl State {
         let mut added = 0;
         while have + added < n {
             // SAFETY: ST1/ST4 (as in `check_min_stack`).
-            if unsafe { extend_ci(th, &mut (*(*th).g).heap.mem) }.is_err() {
+            if unsafe { extend_ci_after(th, ci.as_ptr(), &mut (*(*th).g).heap.mem) }.is_err() {
                 return None;
             }
             added += 1;

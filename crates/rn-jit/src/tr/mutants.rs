@@ -553,6 +553,8 @@ pub const NAMES: &[&str] = &[
     // CP1: spare `CallInfo` repair at the TR6b check of natively entered frames
     "recci_never",
     "recci_short",
+    "recci_lazy_stale",
+    "retf_lazy_caller_ok",
     // CP2: frameless side traces without entry room checks when the parent covers them
     "side_nroom_skip",
     // C36: `domtop`
@@ -848,7 +850,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 647);
+        assert_eq!(NAMES.len(), 649);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
