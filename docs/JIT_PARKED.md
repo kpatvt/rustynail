@@ -2356,3 +2356,41 @@ exact within +-0.1 %), cycles on one pinned core (cores were shared with another
 * **CP5 (binary_trees leaf side trace `IntMiss`): NOT BUILT.** The side recording of `ItemCheck`'s leaf aborts in `table_for` (`tree[1]` on `{}`: key outside the array part and not in the hash part, `IntMiss`). The parked A15 knobs (`absmiss`, `ckey`) no longer exist in the code
   (`RUSTYNAIL_JIT_TRACE_LIMITS=absmiss=1` changes nothing: 9 801 405 911 vs 9 801 410 132 instructions), so the "cheap retest" is not cheap. It needs an integer-key `HMISS` (new aux form of `Hmiss`: key tag test plus a 64-bit compare, the chain from the integer main position, the
   `lsizenode` guard, the array-bound guard and the `__index` guard of the recorder's absent path), a recorder path in the integer get, tests and four mutants.
+
+## C69: `apps/expr_lang` +13 % instructions and `heldout/stream_closures` IPC drop vs the baseline (2026-11-13): NOT regressions, a path-dependent trace-formation lottery; nothing built
+
+Source: `bench/results/session-bm5/` (baseline 8a18eb3 vs HEAD 9a9b8ed, plain release, `RUSTYNAIL_SEED=0`, instructions min of 5, one pinned core).
+
+**Finding: the instruction count of both programs depends on the length of the script path.** The same binary, the same script copied
+to directories whose names differ by one character, gives step-like jumps (deterministic for a path, ASLR on or off):
+`apps/expr_lang`, relative path length 1..120 (40 samples each):
+
+| binary | counts (M instructions), sorted |
+|---|---|
+| baseline 8a18eb3 | 628 .. 636 (17 samples) and 738 .. 806 (23 samples); mean about 720 |
+| HEAD (cfe64cd) | 610 .. 620 (26 samples) and 734 .. 782 (14 samples); mean about 668 |
+
+So the baseline sits at ~630 on long paths and HEAD at ~615: HEAD is better in both states; the "+13 %" of bm5 compared a good baseline
+state with a bad HEAD state at that checkout's path length (`bench/apps` under a long worktree path). `JIT=off` is flat in the path
+(996 M at every length), `collectgarbage("stop")` at the top of the script makes the HEAD count flat too (768 M), and `RUSTYNAIL_GC_MODE=inc`
+has its own jumps at other lengths. Mechanism: the path string changes the allocation volume by a few bytes, hence the moment of the first GC steps;
+trace code exits when the collector has work (`Alloc` sites, write barriers), the per-exit counters reach the hot threshold a few exits
+earlier or later (`RUSTYNAIL_JIT_VERBOSE=2`: the first difference between a good and a bad run is `exit 10` and `exit 11` swapping order, and a head counter of 1204 against 1203), a
+function-entry probe fails (`FnShort`) or not, and from there the recorder forms different traces (e.g. `proto:93 pc 54` becomes a loop trace in one run and a `LeaveFrame`
+abort in the other; 36 recorded / 17 installed against 37 / 15; 1.07 M against 1.13 M trace exits). Chaotic, not a defect of one commit; a bisect on instructions at a fixed path
+only finds where the lottery re-drew. No commit was blamed: 59 commits between the two builds were not bisected one by one because the
+metric is not monotone in them.
+
+`heldout/stream_closures` has the same shape on HEAD only (HEAD, path length 1..140 step 6): good state 785 .. 860 Mcyc / 3.0 .. 3.2 G instructions, bad state
+890 .. 955 Mcyc / 3.55 .. 3.8 G; the baseline is flat at 880 .. 905 Mcyc / 3.82 .. 3.93 G (it forms the same traces at every length). bm5 caught HEAD in the bad
+state: -4 % instructions, +6 % cycles. Good state against baseline: 0.79x instructions, 0.90x cycles. The IPC "drop" is the composition of what was removed (the baseline's
+cheap, well-overlapped instructions went away: IPC 4.4 baseline, 3.9 HEAD in both states), not stalls: branch-misses are 1 M in all three runs, L1 load misses 20 M (baseline) / 14 M (HEAD good)
+/ 21 M (HEAD bad).
+
+**Consequence for measuring.** A single path is a single draw. Programs with a lottery (the ones above, `awfy/cd`, `lru_cache`, `astar_jumper`, `alloc_ctor`, `coroutines`: see the
+"layout lottery" lists in `PERF.md`) need the minimum (or median) over several script path lengths, e.g. 8 directories of 10..80 characters (build the names with `printf '%*s' N '' | tr ' ' d` after checking `N >= 0`). Comparing builds on one path length is only
+valid when both are in the same state (check the `[trace] recorded/installed` line of `RUSTYNAIL_JIT_VERBOSE=1`).
+
+**Not built (open).** Making the recorder insensitive to GC phase (e.g. count `Alloc`-site exits that are GC-driven separately from data-driven exits, or make the hot-exit counter and the `FnShort`
+probe independent of the collector state) would remove a 20 .. 25 % swing on these two programs (and probably others). It is a policy change in the heuristics that every other program's trace set depends on,
+so it needs the full 223-program gate; not attempted in this pass.

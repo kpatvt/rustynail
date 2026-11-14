@@ -8,7 +8,7 @@
 //! "pattern too complex" and the 32-capture limit behave as before. Malformed patterns are compiled to an error item at
 //! the position where the reference reports them (lazily, when matching reaches the item).
 use super::*;
-use std::cell::{Cell, UnsafeCell};
+use std::cell::Cell;
 use std::marker::PhantomData;
 
 pub(super) const I_END: u8 = 0;
@@ -433,18 +433,49 @@ const SLOTS: usize = 256;
 /// calls) holds a [`PinGuard`]: while a pin of this thread is alive `miss` writes nothing (the general matcher runs).
 /// Everything else finishes with its program before any foreign code can run (captures are copied out of the
 /// `MatchState` without touching the program).
-struct Cache {
-    slots: [Prog; SLOTS],
-    rr: usize,
+///
+/// The slot array (SLOTS programs, about 168 KB) is allocated on the first miss of a thread, not stored inline in the
+/// thread's TLS block: the C runtime zeroes the whole TLS block of the main thread at process start, which cost 41 page
+/// faults (about 30 k cycles, 20 us wall) on every launch of `rnlua`, pattern user or not. The hot path reads one
+/// thread-local pointer (null until the first miss; a null pointer makes the lookup a miss).
+struct CacheGuard;
+
+#[allow(unsafe_code)]
+impl Drop for CacheGuard {
+    fn drop(&mut self) {
+        let p = CACHE.get();
+        CACHE.set(std::ptr::null_mut());
+        if !p.is_null() {
+            // SAFETY: `p` came from `Box::into_raw` of a boxed slice of SLOTS programs in `cache_alloc`, and only this
+            // guard (one per thread, at thread exit) frees it; the pointer was just cleared so nothing can reach it.
+            drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(p, SLOTS)) });
+        }
+    }
 }
 
 thread_local! {
     // Accessed only by `lookup` / `miss` below; they never re-enter (compiling does not touch the cache).
-    static CACHE: UnsafeCell<Cache> = const { UnsafeCell::new(Cache { slots: [Prog::EMPTY; SLOTS], rr: 0 }) };
+    static CACHE: Cell<*mut Prog> = const { Cell::new(std::ptr::null_mut()) };
+    static RR: Cell<usize> = const { Cell::new(0) };
     static PINS: Cell<u32> = const { Cell::new(0) };
+    // Only its destructor matters: registered by the first `cache_alloc` of the thread.
+    static GUARD: CacheGuard = const { CacheGuard };
 }
 
-/// Marks that a `MatchState` of this thread holds a reference into the cache (see [`Cache`]). Not `Send`.
+/// The slot array of this thread, allocated on first use; `None` while the thread is being torn down.
+#[cold]
+#[inline(never)]
+fn cache_alloc() -> Option<*mut Prog> {
+    // Registers the destructor that frees the array; fails (and nothing is installed) while TLS is being destroyed.
+    GUARD.try_with(|_| ()).ok()?;
+    let mut v: Vec<Prog> = Vec::with_capacity(SLOTS);
+    v.resize_with(SLOTS, || Prog::EMPTY);
+    let p = Box::into_raw(v.into_boxed_slice()) as *mut Prog;
+    CACHE.set(p);
+    Some(p)
+}
+
+/// Marks that a `MatchState` of this thread holds a reference into the cache (see [`CacheGuard`]). Not `Send`.
 pub(super) struct PinGuard(bool, PhantomData<*const ()>);
 
 impl PinGuard {
@@ -477,15 +508,19 @@ pub(super) fn lookup(pat: &[u8]) -> Option<&'static Prog> {
         return None;
     }
     let set = ((addr >> 4) ^ len) & (SLOTS - 1) & !1;
-    // SAFETY: thread-local; slots are only written by `miss` when no pin is held (see `Cache`).
-    let c = CACHE.with(|c| unsafe { &*c.get() });
+    let base = CACHE.get();
+    if base.is_null() {
+        return miss(pat, set);
+    }
     for w in 0..2 {
-        let sl = &c.slots[set + w];
+        // SAFETY: `base` is this thread's array of SLOTS programs (`cache_alloc`) and `set + w < SLOTS`; slots are only
+        // written by `miss` when no pin is held (see `CacheGuard`).
+        let sl = unsafe { &*base.add(set + w) };
         if sl.addr == addr && sl.len == len && sl.state >= S_OK && same_bytes(&sl.key[..len], pat) {
             // a program that does not fit is remembered as such (the general matcher runs)
             if sl.state == S_OK {
                 // SAFETY: slots are rewritten only by `miss`, never while a pin of this thread is alive, and the
-                // callers that outlive foreign code hold a pin (see `Cache`); the reference does not leave the thread.
+                // callers that outlive foreign code hold a pin (see `CacheGuard`); the reference does not leave the thread.
                 return Some(unsafe { &*(sl as *const Prog) });
             }
             return None;
@@ -506,10 +541,14 @@ fn miss(pat: &[u8], set: usize) -> Option<&'static Prog> {
     }
     let addr = pat.as_ptr() as usize;
     let len = pat.len();
-    // SAFETY: no pin is held: nothing references the slots.
-    let c = CACHE.with(|c| unsafe { &mut *c.get() });
+    let mut base = CACHE.get();
+    if base.is_null() {
+        base = cache_alloc()?;
+    }
+    // SAFETY: no pin is held: nothing references the slots; `set + w < SLOTS` for w in 0..2 (`set` is even).
+    let slot = |w: usize| unsafe { &mut *base.add(set + w) };
     for w in 0..2 {
-        let sl = &mut c.slots[set + w];
+        let sl = slot(w);
         if sl.addr == addr && sl.len == len && sl.state != S_EMPTY {
             // seen before (`S_SEEN`), or a different string was compiled at this address
             let mut pg = compile(pat);
@@ -520,12 +559,13 @@ fn miss(pat: &[u8], set: usize) -> Option<&'static Prog> {
     }
     // first sight: prefer an empty or `Seen` slot; never evict both compiled forms of a set
     let w = (0..2)
-        .find(|&w| c.slots[set + w].state <= S_SEEN)
+        .find(|&w| slot(w).state <= S_SEEN)
         .unwrap_or_else(|| {
-            c.rr = c.rr.wrapping_add(1);
-            c.rr & 1
+            let rr = RR.get().wrapping_add(1);
+            RR.set(rr);
+            rr & 1
         });
-    let sl = &mut c.slots[set + w];
+    let sl = slot(w);
     sl.addr = addr;
     sl.len = len;
     sl.state = S_SEEN;
@@ -802,5 +842,34 @@ impl<'a> MatchState<'a> {
             }
         }
         NOM
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The slot array is allocated per thread on the first miss and freed when the thread exits: a thread that never
+    /// looks up a pattern allocates nothing, and every thread sees first sight, then a compiled hit.
+    #[test]
+    fn cache_is_per_thread_and_lazy() {
+        static PAT: &[u8] = b"%d+";
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    assert!(CACHE.get().is_null());
+                    assert!(lookup(PAT).is_none()); // first sight: allocates the array
+                    assert!(!CACHE.get().is_null());
+                    assert!(lookup(PAT).is_none()); // second sight: compiles
+                    assert!(lookup(PAT).is_some()); // hit
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        std::thread::spawn(|| assert!(CACHE.get().is_null()))
+            .join()
+            .unwrap();
     }
 }

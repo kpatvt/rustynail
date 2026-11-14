@@ -334,7 +334,7 @@ impl<'a> MatchState<'a> {
         self.start_filter_inner()
     }
 
-    /// Keep this state's compiled program valid across foreign code (see `patc::Cache`): call before running anything
+    /// Keep this state's compiled program valid across foreign code (see `patc::CacheGuard`): call before running anything
     /// that may call back into pattern matching (a `gsub` replacement function) or before keeping the state alive
     /// between match calls.
     pub fn pin_prog(&mut self) {

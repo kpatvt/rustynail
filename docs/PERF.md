@@ -2656,3 +2656,26 @@ The `off` column carries `upbar=1`: the difference between `off` and `new` is V1
 ### V3: float `%` (`t1q` bit 2): diagnosis, stays OFF
 
 `astar_jumper`, 5 runs min, `t1q=125` against `t1q=127` (same binary): **1657 -> 1814 Mcyc, 5027 -> 5338 Minstr**. Per-program counters (`RUSTYNAIL_JIT_VERBOSE=1`): with the bit off the `MODK` of `percolate_up` (line 22, `index % 2` on a float) exits 208938 times at 2599 cycles per stay (543 Mcyc, a third of the run); the stays are what the rearm machinery (R1) feeds on: `rearm: armed 124686 entered 105 missed 75533 restored 75638` with the bit off against `armed 131 entered 29 missed 2110 restored 2139` with it on, trace entries 3.49 M -> 3.81 M, trace exits 9.58 M -> 14.82 M, traces installed 22 -> 19, side traces installed 160 -> 183 (recorded 317 -> 283, failed 269 -> 188). So the helper removes the exits, the rearm tick that used to be armed by them is no longer armed (in tier-1 code the same loop runs without a trace entry), the entry gate that the rearm used to open stays shut, and the program runs in tier 1 + the interpreter-side remainder more than before: the +280 M instructions are not the helper (it executes ~209 k times) but the missing entries. This is the same mechanism as the `armm` result (a tier-1 continuation that keeps a loop out of its trace), and the same cure applies in principle (tick the rearm counter from the tier-1 `MODK` helper; or an inline integral-float fast path with an exit for the rest). **Not built, bit stays OFF:** cheap retest `RUSTYNAIL_JIT_TRACE_LIMITS=t1q=127` (`bq_mod` matrix and six mutants exist).
+
+## Startup of an empty script (2026-11-13)
+
+Measured with `perf stat -r 200 -e cycles:u,instructions:u,page-faults` and `hyperfine -N` on one pinned core (dev build `cargo build --release -p rn-cli`, glibc, dynamically linked).
+Before: 905 k cycles:u, 999.7 k instructions:u, 238 page faults; PUC 5.5 683 k cycles, 729.5 k instructions, 151 faults.
+
+Where the cycles go (`perf record` over 500 launches, cycles:u): the dynamic loader 39 % (PUC 40 %: glibc's own cost, 72 % / 80 % of the *instructions* of both are in `ld.so`), `rnlua` itself 28 %,
+`libc` 11 %, kernel entry/exit samples 12 %, `libgcc_s` 1 % (its constructor `__cpu_indicator_init`). Inside `rnlua` (about 200 k cycles against PUC's 144 k): string creation `Heap::new_str` 6 %
+(cold-cache chain walks of the string table), string-table growth `rehash` 2.3 % (128 -> 1024 slots while the libraries register), table inserts of the library registration ~4 %,
+the GC switch to generational mode and the final `lua_close` ~3 %, about 25 `getenv` calls (JIT knobs) ~1 %.
+
+**Found and fixed: 41 of the page faults were the 168 KB thread-local pattern cache.** `patc::CACHE` (256 compiled-pattern slots) lived inline in the thread-local storage block. glibc zeroes the whole TLS
+block of the main thread at process start (one `ld.so` instruction accounted for 41 faults), so every launch paid ~40 faults, ~30 k cycles and ~20 us wall whether it used patterns or not. The slot array is now allocated on the
+first pattern-cache miss of a thread (a thread-local pointer, null until then; a guard thread-local frees it at thread exit). Result: page faults 238 -> 196, cycles:u 905 k -> 875 k (-3.4 %), instructions 999.7 k -> 981 k,
+wall (hyperfine min of 3000 pinned launches) 342 -> 320 us (-6.5 %). The hit path gained one pointer load and a null test: pattern programs unchanged (`lib/find_cap` 578.7 -> 576.1 Mcyc, `find_pat` 269.6 -> 260.0, `gmatch_words` 178.3 -> 175.5, `gsub_fn` 176.9 -> 173.9;
+instructions +0.0..0.15 %). Test: `pattern::patc::tests::cache_is_per_thread_and_lazy`.
+
+**Measured and not taken:**
+* `MIN_STRTAB_SIZE` 128 -> 1024 (no regrowth during registration): -25 k cycles (-3 %), -12 k instructions, but it changes the collector's accounting (`collectgarbage("count")`, pacing, and with it the trace lottery of `JIT_PARKED.md` C69), wall unchanged within noise. Not behaviour-identical, skipped.
+* Skipping the object frees of `lua_close` before `process::exit` (about 2 %): the finalizers must still run and an ASan/LSan run would flag the leaked state; not worth the risk.
+* Static `libgcc` (drops `libgcc_s.so`: ~25 k cycles) or a static-pie executable (drops `ld.so`, ~270 k cycles, the real gap to PUC): the second breaks `dlopen` of C modules (the `rn-capi` exports are used by modules loaded with `require`), the first changes how the unwinder is linked; both are release-build decisions, not code changes. DT_RELR (`-z pack-relative-relocs`, 2786 relative relocations, 17 k cycles of relocation time) needs glibc >= 2.36 at run time.
+* Environment reads (`getenv` x ~25) could be batched into one `environ` scan (~10 k cycles, 1 %); not done.
+The remaining gap to PUC (905 k -> 875 k against 683 k cycles) is the dynamic loader (+60 k: one more library, 2786 relative relocations, 126 `GLOB_DAT` entries under `BIND_NOW`), the registration work above (+55 k) and kernel/page-fault effects of a larger image.
