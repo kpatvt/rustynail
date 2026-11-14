@@ -28,23 +28,27 @@ Known deviations are in `docs/STATUS.md` and `docs/ARCH.md`. Design notes: `docs
 
 ## Performance
 
-Geomean of CPU cycles over 223 benchmark programs (`bench/results/session-release/report.md`). Below 1 means
-rustynail is faster. Measured on an AMD Ryzen AI 7 350. Outputs match PUC on every program.
+Geomean of CPU cycles over 223 benchmark programs (`bench/results/session-final/report.md`; LuaJIT has a variant
+of 219 of them). Below 1 means rustynail is faster. Measured on an AMD Ryzen AI 7 350. Outputs match PUC on every
+program.
 
 | build | vs LuaJIT 2.1 | vs PUC Lua (same version) |
 |---|---|---|
-| Lua 5.5, plain | 0.995 | 0.230 |
-| Lua 5.5, PGO (the release build) | 0.905 | 0.210 |
-| Lua 5.4, plain | 1.184 | 0.268 |
-| Lua 5.4, PGO | 1.081 | 0.245 |
+| Lua 5.5, plain | 0.965 | 0.222 |
+| Lua 5.5, PGO (the release build) | 0.880 | 0.202 |
+| Lua 5.4, plain | 1.021 | 0.229 |
+| Lua 5.4, PGO | 0.934 | 0.210 |
 
-- Every 5.5 benchmark is faster than PUC 5.5. The JIT speeds 5.5 programs up about 3.2x over the same build with
-  the JIT off (2.8x on 5.4).
-- Startup of an empty script is 0.49 ms (PUC 5.5: 0.32 ms, LuaJIT: 0.38 ms). The stripped `rnlua` is about 3 MB.
-- 5.4 gets less out of the JIT: `rawget`/`rawset`/`next` and `#t` are not compiled, some integer-key table accesses
-  are not compiled, and metamethod-heavy code gains little.
-- Biggest gaps to LuaJIT on 5.5: `fib`, `raytrace`, `lua_lexer`, `classic_vector`, `tail_loop` (2.5-3.1x).
-  Open items are in `docs/JIT_PARKED.md`; older numbers and method are in `docs/PERF.md`.
+- Every 5.5 benchmark is faster than PUC 5.5 in the plain build (the slowest, `lib/os_clock`, is at 0.98x); with PGO
+  that one is on par. The JIT speeds 5.5 programs up about 3.3x over the same build with the JIT off (3.2x on 5.4).
+- Startup of an empty script is 0.47 ms. PUC 5.5 and LuaJIT start in about 0.27 ms by wall clock, which varies by
+  about 20% between runs; by cycles we use about 0.9 M against 0.7 M (PUC 5.5) and 0.8 M (LuaJIT). The stripped
+  `rnlua` is about 3 MB.
+- The 5.4 build costs about 6% more cycles than the 5.5 build on the same programs.
+- Biggest gaps to LuaJIT on 5.5 (PGO): `permute`, `raytrace`, `fib`, `lua_lexer`, `classic_vector` (2.4-3.0x).
+  Some programs depend on the length of the script path (a trace-formation effect, `docs/JIT_PARKED.md` C69), so
+  compare builds with identical paths. Open items are in `docs/JIT_PARKED.md`; older numbers and method are in
+  `docs/PERF.md`.
 
 ## Building
 
