@@ -47,6 +47,13 @@ Rules:
    a PID (`while kill -0 $PID`) or on a file that the command is guaranteed to write, with a
    bounded loop (`for i in $(seq 120); do ...; done`), never on a pattern.
 
+7. Never feed an unbounded source (`/dev/zero`, `/dev/urandom`, `yes`) into `head -c $N` with a computed `N`: a
+   negative `N` means "all but the last |N| bytes", so `head` buffers the endless stream until RAM and swap are gone
+   (three session crashes, 23 GB in the Konsole tab cgroup, no cap in effect). Build padding with
+   `printf '%*s' "$N" '' | tr ' ' q` after checking `N >= 0`, and `echo` computed sizes before using them in a loop.
+8. The cap must wrap every command that builds strings, reads big files or loops, not just the test binaries: an uncapped
+   helper in the same shell runs in the terminal's cgroup, and `oomd` kills the whole tab.
+
 ## Test harness gotchas
 - Tests in one binary run on parallel threads sharing a pid: temp dirs must be unique per call.
 - Compare outputs with `0x<hex>` addresses normalized; rnlua's stderr has a program-name
