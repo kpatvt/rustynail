@@ -1,0 +1,57 @@
+startup START Fri Nov 13 09:12:55 PM CST 2026
+cpu3:0.3%busy  cpu4:2.8%busy  cpu5:0.0%busy  cpu6:1.7%busy  cpu7:0.7%busy  cpu11:0.0%busy  cpu12:1.4%busy  cpu13:0.0%busy  cpu14:0.3%busy  cpu15:0.3%busy
+empty {'rn55plain': (977094, 7.33), 'rn55pgo': (1013276, 7.35), 'rn55plain_jitoff': (980942, 7.36), 'rn55nojit-build': (931273, 7.37), 'rn54plain': (1010863, 7.34), 'rn54pgo': (991984, 7.35), 'rn54nojit-build': (914486, 7.35), 'PUC55': (759860, 7.35), 'PUC54': (762885, 7.33), 'LuaJIT': (821023, 7.31)}
+print {'rn55plain': (1059856, 7.41), 'rn55pgo': (1029829, 7.38), 'rn55plain_jitoff': (1054148, 7.4), 'rn55nojit-build': (945880, 7.44), 'rn54plain': (1042448, 7.41), 'rn54pgo': (954015, 7.4), 'rn54nojit-build': (932184, 7.41), 'PUC55': (773300, 7.33), 'PUC54': (792817, 7.37), 'LuaJIT': (876860, 7.37)}
+loop1k {'rn55plain': (1514000, 7.35), 'rn55pgo': (1424242, 7.39), 'rn55plain_jitoff': (1101639, 7.39), 'rn55nojit-build': (1061569, 7.39), 'rn54plain': (1389214, 7.38), 'rn54pgo': (1408966, 7.4), 'rn54nojit-build': (1029667, 7.36), 'PUC55': (828282, 7.36), 'PUC54': (786926, 7.35), 'LuaJIT': (1018049, 7.37)}
+fib20 {'rn55plain': (2615628, 7.42), 'rn55pgo': (2437579, 7.42), 'rn55plain_jitoff': (2290295, 15.41), 'rn55nojit-build': (2250608, 7.4), 'rn54plain': (2562476, 15.45), 'rn54pgo': (2256253, 15.44), 'rn54nojit-build': (2235772, 7.39), 'PUC55': (1963844, 7.45), 'PUC54': (1966524, 7.42), 'LuaJIT': (1443334, 7.39)}
+tab_str {'rn55plain': (1271158, 7.39), 'rn55pgo': (1120305, 7.37), 'rn55plain_jitoff': (1120957, 7.38), 'rn55nojit-build': (1221439, 7.39), 'rn54plain': (1150388, 7.35), 'rn54pgo': (1207299, 7.4), 'rn54nojit-build': (1138843, 7.39), 'PUC55': (1028045, 7.41), 'PUC54': (978003, 7.39), 'LuaJIT': (1224550, 7.4)}
+dash_e {'rn55plain': 1023122, 'rn55pgo': 1001911, 'rn55plain_jitoff': 1006154, 'rn55nojit-build': 971714, 'rn54plain': 939127, 'rn54pgo': 985304, 'rn54nojit-build': 939367, 'PUC55': 695027, 'PUC54': 737610, 'LuaJIT': 850660}
+rss {'rn55plain': {'rss.lua': ['4256', '4256', '29.2900390625'], 'rss_fib.lua': ['5444', '5444', '32.00390625']}, 'rn55pgo': {'rss.lua': ['5088', '5088', '29.2900390625'], 'rss_fib.lua': ['5768', '5768', '32.00390625']}, 'rn55plain_jitoff': {'rss.lua': ['4304', '4304', '29.2900390625'], 'rss_fib.lua': ['4216', '4216', '32.00390625']}, 'rn55nojit-build': {'rss.lua': ['3792', '3792', '29.2587890625'], 'rss_fib.lua': ['3768', '3768', '31.95703125']}, 'rn54plain': {'rss.lua': ['4248', '4248', '30.7265625'], 'rss_fib.lua': ['5304', '5304', '33.4404296875']}, 'rn54pgo': {'rss.lua': ['4848', '4848', '30.7265625'], 'rss_fib.lua': ['5656', '5656', '33.4404296875']}, 'rn54nojit-build': {'rss.lua': ['3660', '3660', '30.6953125'], 'rss_fib.lua': ['3664', '3664', '33.3935546875']}, 'PUC55': {'rss.lua': ['2380', '2380', '20.24609375'], 'rss_fib.lua': ['2324', '2324', '21.2275390625']}, 'PUC54': {'rss.lua': ['2420', '2420', '23.205078125'], 'rss_fib.lua': ['2380', '2380', '24.3720703125']}, 'LuaJIT': {'rss.lua': ['2936', '2936', '48.236328125'], 'rss_fib.lua': ['3180', '3180', '58.533203125']}}
+hyperfine START Fri Nov 13 09:13:41 PM CST 2026
+Benchmark 1: rn55plain (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    533.0 µs  ±    36.8 µs     500.8 µs  …   695.0 µs
+  Memory         4.1 MiB ±     0.1 MiB      3.8 MiB …     4.3 MiB
+ 
+Benchmark 2: rn55pgo (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    541.6 µs  ±    38.7 µs     502.9 µs  …   731.7 µs            +1.6%
+  Memory         4.8 MiB ±     0.1 MiB      4.6 MiB …     5.1 MiB          +16.9%
+ 
+Benchmark 3: rn55nojit-build (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    505.9 µs  ±    31.8 µs     473.5 µs  …   657.3 µs            -5.1%
+  Memory         4.1 MiB ±     0.0 MiB      4.1 MiB …     4.1 MiB           +0.9%
+ 
+Benchmark 4: rn54plain (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    528.9 µs  ±    39.5 µs     492.6 µs  …   718.9 µs            -0.8%
+  Memory         4.6 MiB ±     0.0 MiB      4.6 MiB …     4.6 MiB          +13.1%
+ 
+Benchmark 5: rn54pgo (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    533.4 µs  ±    36.9 µs     500.6 µs  …   720.0 µs            +0.1%
+  Memory         4.7 MiB ±     0.1 MiB      4.6 MiB …     5.0 MiB          +14.8%
+ 
+Benchmark 6: PUC55 (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    353.4 µs  ±    46.4 µs     326.0 µs  …   685.9 µs           -33.7%  (1.5x faster)
+  Memory         4.8 MiB ±     0.0 MiB      4.8 MiB …     4.8 MiB          +17.8%
+ 
+Benchmark 7: PUC54 (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    337.1 µs  ±    41.9 µs     298.4 µs  …   580.5 µs           -36.8%  (1.6x faster)
+  Memory         6.1 MiB ±     0.0 MiB      6.1 MiB …     6.1 MiB          +48.2%  (1.5x more)
+ 
+Benchmark 8: LuaJIT (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    349.3 µs  ±    34.8 µs     310.6 µs  …   518.1 µs           -34.5%  (1.5x faster)
+  Memory         6.1 MiB ±     0.0 MiB      6.1 MiB …     6.1 MiB          +48.2%  (1.5x more)
+ 
+Benchmark 1: rn55plain-JIT=off (200 runs)
+                mean     ±       σ          min     …     max
+  Wall Time    384.5 µs  ±    32.4 µs     351.9 µs  …   548.9 µs
+  Memory         4.1 MiB ±     0.1 MiB      3.8 MiB …     4.3 MiB
+ 
+END Fri Nov 13 09:13:43 PM CST 2026
+cpu3:0.3%busy  cpu4:1.4%busy  cpu5:0.3%busy  cpu6:0.3%busy  cpu7:0.3%busy  cpu11:0.0%busy  cpu12:2.1%busy  cpu13:0.0%busy  cpu14:1.4%busy  cpu15:0.7%busy
