@@ -4018,6 +4018,45 @@ print(s)
 "##,
     },
     Prog {
+        name: "ctl_alias",
+        small: true,
+        src: r#"
+-- 5.4: the visible control variable of a numeric `for` and the internal index (loop optimiser: `ctl_pairs`). Forward recurrences through the
+-- previous iteration's store, and a body that rewrites the control variable and jumps back to the start of the body (only 5.4 can assign it:
+-- the chunk is compiled at run time, 5.5 skips it), so that the variable differs from the internal index at the head.
+local function rec(t, n, c, x) for i = 2, n do t[i] = t[i - 1] * c + x end end
+local function rec2(t, n) for i = 3, n do t[i] = (t[i - 1] + t[i - 2]) & 0xFFFFFF end end
+local function sum(t, n) local s = 0 for i = 1, n do s = s + t[i] * i end return s end
+local h = 0
+local t, u = {}, {}
+for i = 1, 40 do t[i] = 0.5; u[i] = i end
+for r = 1, 120 do
+  t[1] = r * 0.25; rec(t, 40, 0.999, 0.5)
+  u[1] = r; u[2] = 1; rec2(u, 40)
+  h = h + sum(u, 40) % 1000 + math.floor(t[40])
+end
+print(h)
+local src = [[
+  local t, n = ...
+  local s = 0
+  for i = 1, n do
+    ::top::
+    s = s + t[i]
+    if s % 7 == 3 and i < n - 5 then i = i + 3; goto top end
+  end
+  return s
+]]
+local f = load(src)
+if f then
+  local v = {}
+  for i = 1, 60 do v[i] = (i * i) % 11 end
+  local acc = 0
+  for r = 1, 80 do acc = acc + f(v, 60) + f(v, 20 + r % 30) end
+  print(acc)
+end
+"#,
+    },
+    Prog {
         name: "bl_mat",
         small: true,
         src: r#"

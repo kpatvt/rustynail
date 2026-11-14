@@ -156,6 +156,12 @@ struct Em<'a> {
     bhoist: bool,
     hoisted_ult: HashMap<usize, (Ref, Ref, i64)>,
     aidx_memo: HashMap<usize, u32>,
+    /// 5.4 (peeled layout): two entry `SLOAD`s whose slots hold the same final value at the end of the iteration (the control variable
+    /// `R[A+3]` and the internal index `R[A]` of a numeric `for`, see [`ctl_pairs`]), keyed by the index of the later one:
+    /// `src index -> (alias, canonical)`. The pre-roll guards that the two values are equal and the alias stands for the canonical one.
+    ctl_pair: HashMap<usize, (usize, usize)>,
+    /// The equality guards of `ctl_pair` not yet emitted (they follow the entry `SLOAD`s): `(alias, canonical, aux)`.
+    ctl_eq: Vec<(Ref, Ref, u32)>,
 }
 
 impl<'a> Em<'a> {
@@ -200,6 +206,8 @@ impl<'a> Em<'a> {
             bhoist: opts.bhoist != 0,
             hoisted_ult: HashMap::default(),
             aidx_memo: HashMap::default(),
+            ctl_pair: HashMap::default(),
+            ctl_eq: Vec::new(),
             peeling: false,
             aref_loaded: if opts.aidx != 0 {
                 let mut v = vec![false; rec.ir.ins.len()];
@@ -348,7 +356,11 @@ impl<'a> Em<'a> {
                 found.push((n, i.b, k0, c));
             }
         }
-        if found.is_empty() {
+        // (5.4: a single covered check is not worth the three guards of the pre-roll: loops that leave the trace after one or two iterations
+        // (`lib/type_call`, `lib/tsort_int`) cost 3-5 % more instructions with it, the long ones save one `ULT` per iteration; with two covered
+        // checks (a load and a store, two tables) the hoist pays for itself. 5.4 only because the alias of `ctl_pairs` made the hoist
+        // reachable for the loops of the control variable; 5.5 keeps its policy.)
+        if found.len() < if cfg!(rustynail_lua54) { 2 } else { 1 } {
             return Ok(());
         }
         // one snapshot at the loop top for all the guards of this loop
@@ -607,9 +619,33 @@ impl<'a> Em<'a> {
     }
 
     /// Emits (or reuses) the output of `src` instruction `n` and records it in `sub`.
+    /// Emits the pending `ctl_pair` equality guards.
+    fn flush_ctl_eq(&mut self) -> Result<(), Gave> {
+        for (a, c, aux) in std::mem::take(&mut self.ctl_eq) {
+            if !mutants::active("ctl_alias_no_guard") {
+                self.b.emit_flags(TOp::Eq, Ty::I64, F_GUARD, a, c, aux)?;
+            }
+        }
+        Ok(())
+    }
+
     fn copy_one(&mut self, n: usize) -> Result<(), Gave> {
         let i = self.src.ins[n];
         let before = self.b.ir.ins.len();
+        if !self.ctl_eq.is_empty()
+            && !matches!(
+                i.op,
+                TOp::Sload
+                    | TOp::Poll
+                    | TOp::Budget
+                    | TOp::Kint
+                    | TOp::Knum
+                    | TOp::Kpri
+                    | TOp::Kptr
+            )
+        {
+            self.flush_ctl_eq()?;
+        }
         // TR13.4 (header fields never change on a trace) and the bounds dedup hold only without these ops: give up
         if !opt_mem::header_safe_ins(&i, self.hdrlib) && !mutants::active("hdr_op_no_barrier") {
             return up(format!("header-mutating op {:?}", i.op));
@@ -919,8 +955,69 @@ impl<'a> Em<'a> {
             self.creator.insert(r, n);
         }
         self.sub[n] = r;
+        if !self.body && i.op == TOp::Sload {
+            if let Some(&(alias, canon)) = self.ctl_pair.get(&n) {
+                let (ra, rc) = (self.sub[alias], self.sub[canon]);
+                if TraceIr::is_ins(ra) && TraceIr::is_ins(rc) && ra != rc {
+                    let aux = guard_aux(aux_snap(self.b.ir.at(r).aux), 0);
+                    self.ctl_eq.push((ra, rc, aux));
+                    self.sub[alias] = rc;
+                }
+            }
+        }
         Ok(())
     }
+}
+
+/// 5.4: pairs of integer entry `SLOAD`s (`alias`, `canonical`) of a loop trace whose slots end every iteration holding the same value
+/// (the same ref in the writeback), so that in every iteration but the first they are equal by construction. Numeric `for` loops of
+/// 5.4 have two such slots: the visible control variable `R[A+3]` and the internal index `R[A]`, both stored by `FORLOOP`, and the body
+/// reads the first one. With one guard in the pre-roll (`alias == canonical`) the alias can stand for the canonical value, so that the
+/// loop's bounds-check hoisting (`plan_bhoist`) and the store-to-load forwarding see `t[i - 1]` through the same induction variable
+/// as the `FORLOOP`'s. Only `SLOAD`s next to each other qualify (nothing is emitted between them).
+/// Returns `src index of the later one -> (alias, canonical)`; the canonical slot is the lower one.
+fn ctl_pairs(rec: &Recorded) -> HashMap<usize, (usize, usize)> {
+    let mut out = HashMap::default();
+    if !cfg!(rustynail_lua54) {
+        return out;
+    }
+    let ir = &rec.ir;
+    // (slot, src index) of the entry loads of integers
+    let loads: Vec<(u16, usize)> = ir
+        .ins
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.op == TOp::Sload && i.t == Ty::Int && i.flags & F_GUARD != 0)
+        .map(|(n, i)| (i.a, n))
+        .collect();
+    for &(sa, na) in &loads {
+        let Some(ea) = rec.writeback.iter().find(|e| e.slot == sa) else {
+            continue;
+        };
+        if !TraceIr::is_ins(ea.r) {
+            continue;
+        }
+        // the lowest other slot with the same final value
+        let Some(&(sc, nc)) = loads.iter().find(|&&(s, _)| {
+            s < sa
+                && rec
+                    .writeback
+                    .iter()
+                    .any(|e| e.slot == s && e.r == ea.r && e.flags == ea.flags)
+        }) else {
+            continue;
+        };
+        let _ = sc;
+        let (lo, hi) = (na.min(nc), na.max(nc));
+        let plain = ir.ins[lo..=hi]
+            .iter()
+            .all(|i| matches!(i.op, TOp::Sload | TOp::Poll | TOp::Budget));
+        let same_snap = aux_snap(ir.ins[na].aux) == aux_snap(ir.ins[nc].aux);
+        if plain && same_snap && !out.contains_key(&hi) {
+            out.insert(hi, (na, nc));
+        }
+    }
+    out
 }
 
 /// The generic result of both layouts.
@@ -971,6 +1068,7 @@ fn emit_preroll(em: &mut Em<'_>) -> Result<(), Gave> {
     for n in 0..em.src.ins.len() {
         em.copy_one(n)?;
     }
+    em.flush_ctl_eq()?;
     // the loop state: the final value of every slot the iteration wrote
     for e in &em.rec.writeback {
         let r = em.operand(e.r);
@@ -1030,6 +1128,7 @@ fn roll(rec: &Recorded, opts: &TraceOpts, keep_snaps: bool) -> Result<Out, Gave>
 fn peel_loop(rec: &Recorded, opts: &TraceOpts) -> Result<Out, Gave> {
     let mut em = Em::new(rec, opts);
     em.peeling = true;
+    em.ctl_pair = ctl_pairs(rec);
     emit_preroll(&mut em)?;
     // TR3b (`+wb`): a slot the iteration writes and the next one never reads (no `SLOAD` of it) is stored at the end of the
     // pre-roll and of the body instead of being carried: no PHI, no entry in `S_H` or in the body's snapshots (the stack

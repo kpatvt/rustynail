@@ -4675,6 +4675,22 @@ fn bl_programs() {
     compare(jobs);
 }
 
+/// 5.4: the control-variable alias of a numeric `for` loop in the peeled layout (`opt_loop::ctl_pairs`): recurrences through the previous
+/// iteration's store, a control variable rewritten by the body. The mutant `ctl_alias_no_guard` drops the entry equality guard.
+#[test]
+fn ctl_alias_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for opts in ["", "+verify", "+exitstorm=3", "+randra=5 +verify"] {
+            jobs.push(Job::new("ctl_alias", trace).opts(opts));
+        }
+    }
+    let mut j = Job::new("ctl_alias", "always").budget(17);
+    j.limits = "bhoist=1".into();
+    jobs.push(j);
+    compare(jobs);
+}
+
 /// BUNDLE-L: the traces of the array programs are installed and entered with both knobs on, and the hoisted guards exist (`ir.hoisted`).
 #[test]
 fn bl_programs_enter_traces() {

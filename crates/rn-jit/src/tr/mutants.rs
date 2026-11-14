@@ -749,6 +749,8 @@ pub const NAMES: &[&str] = &[
     "bhoist_last_c_off",
     "bhoist_bound_variant",
     "bhoist_step_any",
+    // 5.4 gaps: the control-variable alias of a numeric `for` loop (`opt_loop::ctl_pairs`)
+    "ctl_alias_no_guard",
     // BUNDLE-Q (`t1q`): tier-1 `EQ` of objects answered without the interpreter, float `MOD` through `jit_fmod`
     "t1q_eq_same_false",
     "t1q_eq_nomm_true",

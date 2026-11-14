@@ -911,6 +911,30 @@ fn compare_case(seed: u64, st: &mut Counts, configs: &[(bool, bool, bool)], deep
                     }
                 }
             }
+            if base != got && peeled && cfg!(rustynail_lua54) {
+                // 5.4 (`ctl_pairs`): two entry loads whose slots end every iteration with the same value get an entry guard `EQ a, b` in the pre-roll;
+                // a model that starts them at different values leaves at the entry snapshot (the loop top) before running any iteration
+                let pcs: Vec<u32> = rec
+                    .ir
+                    .ins
+                    .iter()
+                    .filter(|i| {
+                        i.op == TOp::Eq
+                            && i.flags & F_GUARD != 0
+                            && TraceIr::is_ins(i.a)
+                            && TraceIr::is_ins(i.b)
+                            && rec.ir.at(i.a).op == TOp::Sload
+                            && rec.ir.at(i.b).op == TOp::Sload
+                    })
+                    .map(|i| rec.ir.snaps[aux_snap(i.aux) as usize].pc)
+                    .collect();
+                if let End::Exit { pc, .. } = &got.end {
+                    if pcs.contains(pc) {
+                        st.guarded += 1;
+                        continue;
+                    }
+                }
+            }
             assert_eq!(
                 base,
                 got,

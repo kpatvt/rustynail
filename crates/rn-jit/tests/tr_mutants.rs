@@ -3485,6 +3485,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_loop", "bhoist_keeps_the_checks_it_cannot_cover"), dl("tr_core", "bl_programs")],
     },
     Row {
+        name: "ctl_alias_no_guard",
+        owner: "5.4 gaps",
+        dets: &[d("tr_core", "ctl_alias_programs")],
+    },
+    Row {
         name: "bhoist_step_any",
         owner: "BUNDLE-L",
         dets: &[d("tr_loop", "bhoist_keeps_the_checks_it_cannot_cover"), dl("tr_core", "bl_programs")],
@@ -3639,6 +3644,7 @@ const V54_ONLY: &[&str] = &[
     "forloop54_no_ctl_copy",
     "alimit_touch",
     "tfor54_no_ctl_copy",
+    "ctl_alias_no_guard",
 ];
 
 /// Mutants whose injection site is compiled out of the 5.4 build (N7: the end of a traversal is recorded on 5.5 only; the 5.4 run skips them).
