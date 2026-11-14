@@ -2659,14 +2659,14 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "cp1_leaf_programs")],
     },
     Row {
-        name: "retf_lazy_caller_ok",
-        owner: "CP1L",
-        dets: &[d("tr_core", "twins_always_and_on")],
-    },
-    Row {
         name: "recci_lazy_stale",
         owner: "CP1L",
         dets: &[d("tr_core", "cp1_lazy_programs")],
+    },
+    Row {
+        name: "retf_lazy_caller_ok",
+        owner: "CP1L",
+        dets: &[d("tr_core", "twins_always_and_on")],
     },
     Row {
         name: "side_nroom_skip",
@@ -3486,15 +3486,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_loop", "bhoist_keeps_the_checks_it_cannot_cover"), dl("tr_core", "bl_programs")],
     },
     Row {
+        name: "bhoist_step_any",
+        owner: "BUNDLE-L",
+        dets: &[d("tr_loop", "bhoist_keeps_the_checks_it_cannot_cover"), dl("tr_core", "bl_programs")],
+    },
+    Row {
         name: "ctl_alias_no_guard",
         owner: "5.4 gaps",
         dets: &[d("tr_core", "ctl_alias_programs")],
     },
     Row {
-        name: "bhoist_step_any",
-        owner: "BUNDLE-L",
-        dets: &[d("tr_loop", "bhoist_keeps_the_checks_it_cannot_cover"), dl("tr_core", "bl_programs")],
-    },    Row {
         name: "t1q_eq_same_false",
         owner: "BUNDLE-Q",
         dets: &[d("tr_core", "bq_t1q_programs")],
