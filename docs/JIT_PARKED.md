@@ -2466,3 +2466,14 @@ Source: `bench/results/session-bm5` (`extra.md`, "Programs where 5.4 is relative
 * Earlier note (C63): the same conclusion at the instruction level (2387 M against 2413 M for `ref/54`).
 
 Gates run (5.4 and 5.5 unless noted): `cargo fmt --check`, clippy `-D warnings` of `rn-jit` (all targets) with `trace` and `tr_mutants`, `tr_core` (201 passed, `mutants_are_caught_by_live_programs` skipped), `tr_loop`, `tr_record`, `vm_corpus` (9 passed, with the reference runners), jit-diff seeds 1..100 modes off tr tron (5.5: 0 diffs; 5.4: seeds 82 / 92 as on the base), jit-diff set `bl` seeds 1..60 modes off tr tron trstorm (0 diffs on both), mutant `ctl_alias_no_guard` caught by `tr_core::ctl_alias_programs` (5.4 `tr_mutants` build). Not run: the full mutant registry, `t15_oracle` binaries, ASan, the 5.4 official suite with the JIT, fuzz, the other `tr_*` test binaries.
+
+## C72: mutant `lazy_mat_no_leave` is now detected (2026-11-13, base c8949fb)
+
+What it removes: the call `lazy_leave_seq(false, false)` at the head of the inline frame-rebuilding stub (`mat_stub`) of a lazy-aware trace. That sequence completes the lazy chain from the
+innermost lazy frame down to the region root (`top`, `kcache`, `trap`, `callstatus`), then sets `thread.ci`, `lazy_root` and `thread.top`. Without it the frames rebuilt above the chain are linked on top of
+a frame that still has the stale `top` / `kcache` of whichever node reuse left there (in `bk_lazy_programs` every stub entry that has a lazy frame has exactly one, the innermost; `callstatus` and `trap` are already
+right because the lazy push stores them). No program output depends on those two fields before the next leave, which is why output comparison never saw it (confirmed again with poisoning: a wrong or shifted `kcache` of
+the chain IS caught, but only when the poison also hits frames whose constants are read; the real stale value is never read). The state is observable, though: every Lua frame in the `thread.ci` chain must
+have `top = func + 1 + maxstacksize` and `kcache = proto.k`. `Heap::verify()` checks that now, and `tests/lazyci/bk_obs5.lua` (`bk_obs3` plus one collector step inside the inlined callee) runs under `RUSTYNAIL_GC_VERIFY=1`
+in `bk_lazy_programs`. The unmutated build passes it; the mutant aborts the child. The stale `top` is also a latent hazard the verifier now guards (the stack shrink of a collector cycle inside the callee is computed from `ci->top`).
+No equivalence proof is needed or claimed.

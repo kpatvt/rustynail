@@ -284,10 +284,17 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
     by unit tests. The 12 are in `V55_ONLY` with a comment.
   * `lazy_mat_no_leave`: survives on 5.5 AND 5.4 (also at the base commit; it is not a 5.4 item). A trap emitted at the skipped completion shows that `bk_obs3` (new, `tests/lazyci/bk_obs3.lua`:
     an exit inside an inlined callee of a native recursion, CallInfo nodes scrambled with tail-called frames and other constants before each run) and `r2_rec` execute the stub with lazy frames
-    above the root, yet nothing they print depends on the fields the completion writes. Not shown equivalent: listed in `UNDETECTED` of `tr_mutants.rs`, a documented gap. `bk_obs3` stays as coverage.
+    above the root, yet nothing they print depends on the fields the completion writes. `bk_obs3` stays as coverage (see below: detected since the verifier check).
     Re-investigated with a temporary instrumented build: at the skipped site `callstatus` and `trap` of the lazy frames are already correct (the lazy push stores them), `top` and `kcache` are
     stale; poisoning the completion with a wrong `callstatus` is caught by `bk_obs3`, poisoning `top`, `kcache` (zeroed constants) or `trap` alone is not caught by any `bk_lazy_programs` job, including the
-    new `bk_obs4` (table fields with constant string keys after each return). Still `UNDETECTED`; no equivalence proof (the unwritten fields are only read by a resumed frame, and the next leave completes the chain first).
+    new `bk_obs4` (table fields with constant string keys after each return).     **Now detected (both versions).** The previous detectors could not see it because the stale `top` / `kcache` belong to the frame the inlined callee returns to (the innermost lazy frame, 290-300 of the stub's
+    entries per `bk_lazy_programs` run have exactly that one stale frame, `badk=badtop=1`), and every program-visible read after the return (`return r`, the parent's constants) happens in a frame that is complete or does not read
+    a constant; the poisoning experiments that were tried changed no output. What IS observable is the state itself: the interpreter's invariant for a Lua frame in the `thread.ci` chain is
+    `top = func + 1 + maxstacksize` and `kcache = proto.k`. `Heap::verify()` (`RUSTYNAIL_GC_VERIFY=1`, after every collector step) now checks both for every Lua frame of every thread (`crates/rn-core/src/gc/mod.rs`, thread arm
+    of `verify_refs`); `tests/lazyci/bk_obs5.lua` (= `bk_obs3` with `collectgarbage("step", 0)` inside the inlined callee, i.e. between the exit and the next leave) runs under it in `bk_lazy_programs` (4 jobs). The unmutated build passes; with the
+    mutant the child aborts on the assertion. (The stress levels of `RUSTYNAIL_GC_STRESS` never reached the inline stub in the jobs tried, so `bk_obs5` uses explicit steps.) Without the verifier the `top` half is a latent memory hazard
+    rather than an observable one: a collector cycle inside the callee computes the stack shrink from the `ci->top` of the chain, and a stale small `top` of the resumed frame could let the stack shrink below that frame's registers.
+    The `UNDETECTED` list is gone (the mechanism was removed with its last entry).
   * `smi_black_skip`: was caught on 5.5 (`a1_setmt_old`) and survived on 5.4. Investigated: no collector bug and no masked barrier. Counting the calls of the barrier's slow path in the unmutated
     `a1_setmt_old` under GC stress 2 shows that the program never stores a white metatable into a black table during a mark phase on 5.4 (inc: 48 calls, all in the sweep phase, where the barrier is only
     an optimisation; gen: none, the metatables created by `pre` are old after the hundreds of per-safepoint young collections before `apply` runs), while on 5.5 there are 1716 mark-phase calls. So the

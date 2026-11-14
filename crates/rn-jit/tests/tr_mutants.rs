@@ -3442,6 +3442,7 @@ const TABLE: &[Row] = &[
     Row {
         name: "lazy_mat_no_leave",
         owner: "BUNDLE-K",
+        // (`bk_obs5` under the heap verifier's CallInfo-chain check; no program output depends on the fields it skips)
         dets: &[dl("tr_core", "bk_lazy_programs")],
     },
     Row {
@@ -3674,20 +3675,9 @@ const V55_ONLY: &[&str] = &[
     "retf_entry_checks_past",
     "retf_untraced_aborts",
     "retf_second_return_aborts",
+    // (CP1L: its detector asserts a RETF trace over a lazy caller, which 5.4 never installs)
+    "retf_lazy_caller_ok",
 ];
-
-/// Mutants that survive although their site is reached and the detector is valid: NOT shown equivalent, a documented gap (like `fside_room_ignored` in
-/// docs/JIT_TESTING.md). `lazy_mat_no_leave` (both versions): the inline frame-rebuilding stub of a lazy-aware trace skips the completion of the lazy chain
-/// below the root; `tr_core::bk_obs3` / `r2_rec` execute that stub with lazy frames above the root (a trap emitted at the site crashes both), but nothing
-/// they print depends on the fields the completion writes (`top`, `kcache`, `trap`, `callstatus`: the nodes are scrambled with other values before the
-/// run in `bk_obs3`). Investigated again (A4 follow-up): at the skipped site the leftover `callstatus` and `trap` of the lazy frames already equal the
-/// completed values (the lazy push stores them: 307 frames inspected, 0 differed), `top` and `kcache` are stale in about 98% of them; poisoning the
-/// completion with a wrong `callstatus` (+1 and `CIST_TAIL`) IS detected by `bk_obs3` (so the detectors are sensitive to these fields), but poisoning
-/// `top` (= `func`), `kcache` (a zeroed table) or `trap` (= 1) one at a time leaves every `bk_lazy_programs` job unchanged, also `bk_obs4` (the work after
-/// each return is done on table fields with constant string keys, which tier 1 reads through the `kcache` of the frame it resumes). No consumer of
-/// those fields is reached before the next leave completes the chain (the stale `lazy_root` makes it start at the old root); not proven equivalent.
-#[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
-const UNDETECTED: &[(&str, Option<bool>)] = &[("lazy_mat_no_leave", None)];
 
 /// Mutants that are equivalent since the same-table `table.move` pre-reads its source elements (BUNDLE-VA): the order of the stores no longer changes any value
 /// (it was the order of reads and stores that made an overlapping move wrong), and the table layout after the call is the same in both orders for every
@@ -4055,12 +4045,6 @@ mod runner {
             }
             if cfg!(rustynail_lua54) && V55_ONLY.contains(&r.name) {
                 continue; // a 5.5 mutant (N7): its site is not reached on 5.4
-            }
-            if UNDETECTED
-                .iter()
-                .any(|(n, only54)| *n == r.name && (only54.is_none() || cfg!(rustynail_lua54)))
-            {
-                continue; // a documented survivor, see `UNDETECTED`
             }
             if !injected(r.name) {
                 not_injected.push((r.name, r.owner));

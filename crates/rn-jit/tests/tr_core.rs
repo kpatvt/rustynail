@@ -4628,6 +4628,19 @@ fn bk_lazy_programs() {
             .opts("+verify")
             .env("RUSTYNAIL_GC_STRESS", "1"),
     );
+    // `bk_obs5`: a collector step inside the inlined callee, between the exit that rebuilt frames above the lazy chain and the next leave. The
+    // heap verifier (`RUSTYNAIL_GC_VERIFY=1`) checks the CallInfo chain of every thread (a Lua frame has `top = func + 1 + maxstacksize` and the
+    // `kcache` of its closure), which is what detects `lazy_mat_no_leave`: the frame the callee returns to keeps a stale `top` and `kcache`,
+    // nothing a program prints depends on them. (A GC stress level does not reach that stub: those jobs run without it.)
+    for trace in ["always", "on2"] {
+        for opts in ["", "+exitstorm=3"] {
+            jobs.push(
+                Job::new("bk_obs5", trace)
+                    .opts(opts)
+                    .env("RUSTYNAIL_GC_VERIFY", "1"),
+            );
+        }
+    }
     for l in ["unroll=4,maxdepth=6", "fnroot=1", "lazyci=0"] {
         let mut j = Job::new("bk_obs1", "always").opts("+verify");
         j.limits = format!("recnat=1,lazyci=2,{l}").replace("lazyci=2,lazyci=0", "lazyci=0");

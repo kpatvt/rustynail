@@ -634,7 +634,7 @@ the Y6 failure that could not be reproduced, and the 88 files `cargo fmt` would 
 ### Loose ends run (2026-11-13, base 86c114b)
 
 - **Full mutant runner**, 3 shards, `TR_MUT_JOBS=2 TR_CORE_JOBS=2`, one 8 GB scope, built once, from a normal build directory, output to files; about 50 minutes wall per version.
-  Registry 647. **5.5**: 639 ran, 638 caught, 1 survivor (`frame_side_never`); the 8 not run are `lazy_mat_no_leave` (`UNDETECTED`), `tmove_order_flip` (`EQUIVALENT`) and the six
+  Registry 647. **5.5**: 639 ran, 638 caught, 1 survivor (`frame_side_never`); the 8 not run were `lazy_mat_no_leave` (since detected by `bk_obs5`, see docs/RELEASE.md A4), `tmove_order_flip` (`EQUIVALENT`) and the six
   5.4-only mutants. **5.4**: 627 ran, 625 caught, 2 survivors (`frame_side_never`, `tnext_inl_array_end_skip`); the rest are the `V55_ONLY` and the two documented ones.
   * `frame_side_never` (both versions): `s1_frame_side_programs` only asserted at least 6 side traces, which the other exits of the program provide alone. The test now asserts side
     recordings started inside inlined frames (`Stats::side_framed`, printed as `framed N` on the `side traces:` line): 0 with the mutant, at least 3 without. Caught on both versions.
