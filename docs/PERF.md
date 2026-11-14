@@ -2686,3 +2686,16 @@ The remaining gap to PUC (905 k -> 875 k against 683 k cycles) is the dynamic lo
 Details, gates and the per-program table: docs/JIT_PARKED.md C70. Summary (all 223 programs, `RUSTYNAIL_SEED=0`, equal-length binary dirs, identical script paths, min of 3): instructions geomean 0.9998, cycles 0.998, no program above +1.5 % instructions.
 `programs/fib` 0.890 instructions / 0.900 cycles (1418 -> 1277 Mcyc), `binary_trees` 1.003 instructions (was 1.060 with the old `lazyci=1`), `awfy/permute` 1.000 / 0.977, `towers` 1.012 / 1.040 (lottery), `expr_lang` 1.000 / 0.978, `coro_generators` 1.015 / 1.023, `class_middleclass` 1.001 / 1.005, `lua_lexer` 1.000 / 0.991.
 Target `fib` 0.6 instructions was not reached: the identity hoist (C70 b) was not built.
+
+## Lua 5.4 gap work, round 2 (2026-11-13): control-variable alias for numeric `for` loops (5.4 traces), `load_big` and `concat_op_str` diagnosed
+
+Details, numbers and the retest triggers: `docs/JIT_PARKED.md` C71. Method: `perf stat instructions:u,cycles:u`, `RUSTYNAIL_SEED=0`, plain release builds, same script path and equal-length binary names, min of 7 (single programs) / one run (223-program geomeans).
+
+| program (5.4 build) | instructions before -> after (M) | cycles before -> after (M) | 5.5 build for comparison |
+|---|---|---|---|
+| `jit-trace/array_rec` | 8548 -> 5262 | 4513 -> 1820 | 5194 / 1796 |
+| `jit-trace/int_rec2` | 12690 -> 6716 | 1492 -> 690 | 6689 / 688 |
+
+* The peeled loop optimiser of the 5.4 build now treats the control variable `R[A+3]` and the internal index `R[A]` of a numeric `for` as one induction value (`opt_loop::ctl_pairs`: one entry guard in the pre-roll), so bounds-check hoisting and store-to-load forwarding work; 5.4 hoists only when at least two body checks are covered (single-check short-trip loops such as `lib/type_call` / `tsort_int` pay 3-5 % otherwise). 223 programs, new / base: 5.4 instructions 0.986, cycles 0.985 (17 programs more than 3 % fewer instructions, none more than +2.8 %); 5.5 instructions 1.0000, cycles 1.0003.
+* `programs/load_big`: no 5.4 gap; the reference 5.5 is 2.7x slower than the reference 5.4 on it (6566 M against 2415 M instructions), ours are equal (2386 M on 5.4, 2863 M on 5.5).
+* `lib/concat_op_str`: 5.4 collector pacing (30 % of the instructions in young collections); a larger nursery as on 5.5 gives -20 % there (`tpack` -31 %, `rep_sep` -14 %) but moves the trace-formation lottery of eight other programs (`queens` +28 %, `tremove_pop` +22 %, `expr_lang` +23 %): not kept.
