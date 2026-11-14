@@ -301,3 +301,22 @@ arguments just stored by the trace; the stores and loads are both 8 bytes, so un
     mutant was reached (black table, white metatable) but harmless there, which is also why the verifier said nothing. A deterministic program (`tr_core::a1_setmt_black` = `tests/vm/gc_17`, tests
     `setmt_black_barrier_programs`: generational, and incremental with one-unit steps) creates the interleaving on both versions: the unmutated build passes it (5.5 and 5.4, verify, exit storms, stress 1 and 2), the
     mutant fails it on both. The `UNDETECTED` entry is gone.
+
+## Verification A5 (2026-11-14): sanitizer, Miri, fuzz, PGO and 5.4 jit-diff pass on `9ef182b` (plus `b30e2eb`)
+
+Tree: main `9ef182b` (Bundles L/M/N, CP1/CP2, lazyci ON, C70-C72, pattern-cache lazy TLS, table spare capacity) plus one test-bookkeeping commit (`b30e2eb`, below); no production code changed.
+All commands under `systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0` with a timeout and stdin `/dev/null`, one heavy job at a time, scratch target directories (deleted afterwards).
+
+| Step | Command | Result |
+|---|---|---|
+| 1 ASan 5.5 | `scripts/asan.sh <dir>` | `ASAN OK` (official suite through rnlua and lua.c, 15 C API sections, sample C module) |
+| 1 ASan 5.4 | `LUA_VERSION=5.4 scripts/asan.sh <dir>` | `ASAN OK` |
+| 2 Miri (5.5, stacked borrows) | `scripts/miri.sh --jobs 4 core-lib core-it jit jit-trace` | `core-lib` 105/105 (table growth, heap, GC), `core-it` (`table_diff`) pass, `jit` 76/76; `jit-trace` 140/142: the 2 failures were the mutant-registry bookkeeping tests, not Miri findings (see below); no UB, no leak report |
+| 2 Miri, rn-std | `cargo miri test -p rn-std --lib -- pattern::patc::tests::cache_is_per_thread_and_lazy` | pass |
+| 3 Fuzz (300 s each, `--features trace`, ASan, `-rss_limit_mb=2500 -timeout=30`, seeds from `make_seeds.sh` + `make_jit_seeds.sh`) | `cargo +nightly fuzz run --target x86_64-unknown-linux-gnu --features trace <t>` | `lex_parse` 1.59 M runs, `undump` 3.67 M, `run_source` 240 k, `string_lib` 436 k, `table_ops` 740 k, `capi_calls` 87 k: all exit 0, no artifact |
+| 4 PGO release builds | `scripts/release-build.sh --out <dir>` and `--lua54` | both build (about 105 s each on this machine, 181 / 179 training runs, 0 failed); `strings -a rnlua rnluac \| grep -c -E "/home/\|<user>\|<host>"` = 0 for both series; `rnlua --version` shows `JIT: on`; hello script prints; official suite through the stripped PGO binary: 5.5 32 files and 5.4 31 files (`all.lua`, `heavy.lua` excluded), 0 failures |
+| 5 5.4 jit-diff `bk` | `RUSTYNAIL_SEED=0 JITDIFF_TSET=bk`, 5.4 PGO binary | see below |
+
+- **`b30e2eb` (real, test-side)**: `tr::mutants::tests::registry_is_the_frozen_list` expected 649 names (the registry has 650 since `ctl_alias_no_guard`, C71) and `tr_mutants::table_covers_the_registry_exactly_once` found the `TABLE` rows out of registry order (`ctl_alias_no_guard` after `bhoist_step_any`; `recci_lazy_stale` before `retf_lazy_caller_ok`). Both failed natively on main as well. Count and row order fixed; both pass under Miri.
+- **jit-diff `bk`, 5.4, seeds 1..300**: the 162 "slow skips" of the earlier sweep are all `trstack` (stackmove makes deep recursion quadratic: `SLOWSKIP` exists only for stack modes). Modes `off tr tron trstorm tremu trverify` (lockstep on, `TMO=120`): 300 seeds, 0 diffs, 0 timeouts, 0 skips (about 2 minutes). `off trstack` with `TMO=100` (300 s per stack run), seeds 1..121 before the run was stopped for time: 61 compared, 0 diffs; 60 still timed out at 300 s (the recursion and stack-overflow templates); seeds 122..300 not run in `trstack`. Seeds 82 and 92 (known base diff) fall into the stack timeouts here and are covered by the non-stack modes only.
+- **Not run**: Miri `interp` (the per-script `INTERP_ONLY` runs of `tables_18` / `tables_19` did not finish in 25 minutes under Miri; same limit as in "Verification A2"), Miri 5.4, `asan-jit.sh`, fuzz targets `jit_diff`, `trace_ir`, `buffer_ops`, the 5.4 fuzz build, `cargo test` suites.
