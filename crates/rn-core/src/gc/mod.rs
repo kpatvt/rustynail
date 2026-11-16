@@ -2512,7 +2512,7 @@ impl Heap {
                                 chk(&*(*th).stack.as_ptr().add(i), "stack value");
                             }
                             // the CallInfo chain of the thread: a Lua frame is complete (the interpreter's invariants:
-                            // `top = func + 1 + maxstacksize`, `kcache` = the constants of its closure). A frame the JIT pushed
+                            // `top >= func + 1 + maxstacksize`, `kcache` = the constants of its closure). A frame the JIT pushed
                             // lazily is above `ci` until a leave completes it, so a stale field here is a missing completion.
                             let mut ci = (*th).ci;
                             while !ci.is_null() && !(*ci).previous.is_null() {
@@ -2521,10 +2521,12 @@ impl Heap {
                                         (*(*th).stack.as_ptr().add((*ci).func.0)).as_lclosure()
                                     {
                                         let p = cl.proto();
-                                        assert_eq!(
-                                            (*ci).top.0,
-                                            (*ci).func.0 + 1 + usize::from(p.maxstacksize),
-                                            "Lua frame with a wrong `top`"
+                                        // `>=`: a hook (`luaD_hook`) and the stack-overflow / error paths raise `ci->top` for a while
+                                        // (by `LUA_MINSTACK` or the extra error space); only a frame that was never completed has less
+                                        assert!(
+                                            (*ci).top.0
+                                                >= (*ci).func.0 + 1 + usize::from(p.maxstacksize),
+                                            "Lua frame with a `top` below its frame size"
                                         );
                                         assert_eq!(
                                             (*ci).kcache,
