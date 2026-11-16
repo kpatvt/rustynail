@@ -84,13 +84,13 @@ TRONLY=${ASAN_TRACE_ONLY:-0} # 1: only the J5 trace parts (item 6)
 [ "$TRONLY" = 1 ] || { echo "== official suite, RUSTYNAIL_JIT=always"; suite always RUSTYNAIL_JIT=always; }
 [ "$TRONLY" = 1 ] || { echo "== official suite, RUSTYNAIL_JIT=on (threshold 2,20)"; suite on RUSTYNAIL_JIT=on RUSTYNAIL_JIT_THRESHOLD=2,20; }
 
-# --- tests/vm corpus: JIT off vs always must agree, and ASan must stay quiet
+# --- tests/vm corpus: JIT off vs always must agree, and ASan must stay quiet (RUSTYNAIL_SEED=0: tables_15_alimit_big_moves prints a hash that depends on the string-hash seed; the reference side is the seed-0 build)
 corpus() { # label env...  (compares against the JIT-off run under the same extra env)
   local label=$1; shift
   for f in tests/vm/*.lua; do
     b=$(basename "$f")
-    env RUSTYNAIL_JIT=off "$@" "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.off" 2>"$W/e.off"; r0=$?
-    env RUSTYNAIL_JIT=always "$@" "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.on" 2>"$W/e.on"; r1=$?
+    env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=off "$@" "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.off" 2>"$W/e.off"; r0=$?
+    env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=always "$@" "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.on" 2>"$W/e.on"; r1=$?
     if [ $r0 = 124 ] || [ $r1 = 124 ]; then echo "SKIP [$label] $b: timeout ($r0/$r1)"; continue; fi
     if grep -qE "ERROR: (Address|Leak)Sanitizer|SUMMARY: (Address|Leak)Sanitizer" "$W/e.on"; then echo "FAIL [$label] $b: sanitizer report"; head -20 "$W/e.on"; fail=1; continue; fi
     if [ $r0 != $r1 ] || ! diff -q <(norm "$W/o.off") <(norm "$W/o.on") >/dev/null || ! diff -q <(norm "$W/e.off") <(norm "$W/e.on") >/dev/null; then
@@ -106,8 +106,8 @@ corpus_t15() { # label opt
   local label=$1 opt=$2
   for f in tests/vm/*.lua; do
     b=$(basename "$f")
-    env RUSTYNAIL_JIT=off "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.off" 2>"$W/e.off"; r0=$?
-    env RUSTYNAIL_JIT=always RUSTYNAIL_JIT_T15=always RUSTYNAIL_JIT_OPT="$opt" "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.on" 2>"$W/e.on"; r1=$?
+    env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=off "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.off" 2>"$W/e.off"; r0=$?
+    env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=always RUSTYNAIL_JIT_T15=always RUSTYNAIL_JIT_OPT="$opt" "${CAP[@]}" timeout 300 "$A/rnlua" "$f" </dev/null >"$W/o.on" 2>"$W/e.on"; r1=$?
     if [ $r0 = 124 ] || [ $r1 = 124 ]; then echo "SKIP [$label] $b: timeout ($r0/$r1)"; continue; fi
     if grep -qE "ERROR: (Address|Leak)Sanitizer|SUMMARY: (Address|Leak)Sanitizer|internal error|SHADOW VERIFICATION" "$W/e.on"; then echo "FAIL [$label] $b: sanitizer / verification report"; head -20 "$W/e.on"; fail=1; continue; fi
     if [ $r0 != $r1 ] || ! diff -q <(norm "$W/o.off") <(norm "$W/o.on") >/dev/null || ! diff -q <(norm "$W/e.off") <(norm "$W/e.on") >/dev/null; then
@@ -127,8 +127,8 @@ corpus_small() { # label env...
   local label=$1; shift
   for f in $SMALL; do
     b=$(basename "$f")
-    env RUSTYNAIL_JIT=always "$@" "${CAP[@]}" timeout 600 "$A/rnlua" "$f" </dev/null >"$W/o.on" 2>"$W/e.on"; r1=$?
-    env RUSTYNAIL_JIT=off "$@" "${CAP[@]}" timeout 600 "$A/rnlua" "$f" </dev/null >"$W/o.off" 2>"$W/e.off"; r0=$?
+    env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=always "$@" "${CAP[@]}" timeout 600 "$A/rnlua" "$f" </dev/null >"$W/o.on" 2>"$W/e.on"; r1=$?
+    env RUSTYNAIL_SEED=0 RUSTYNAIL_JIT=off "$@" "${CAP[@]}" timeout 600 "$A/rnlua" "$f" </dev/null >"$W/o.off" 2>"$W/e.off"; r0=$?
     if [ $r0 = 124 ] || [ $r1 = 124 ]; then echo "SKIP [$label] $b: timeout"; continue; fi
     if grep -qE "ERROR: (Address|Leak)Sanitizer|SUMMARY: (Address|Leak)Sanitizer" "$W/e.on"; then echo "FAIL [$label] $b: sanitizer report"; head -20 "$W/e.on"; fail=1; continue; fi
     if [ $r0 != $r1 ] || ! diff -q <(norm "$W/o.off") <(norm "$W/o.on") >/dev/null; then

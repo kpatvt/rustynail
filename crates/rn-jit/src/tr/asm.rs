@@ -1567,23 +1567,61 @@ macro_rules! lean_lib {
 
 lean_lib!(
     /// BUNDLE-H: lean entry of `LIB char` / `char2` / `char3`.
-    jit_tr_lib_char, |st, kind, _fl, args| char_core(&mut st, kind, if mutants::active("libk_lean_char_args") { [args[0], args[0], args[1]] } else { args })
+    jit_tr_lib_char,
+    |st, kind, _fl, args| char_core(
+        &mut st,
+        kind,
+        if mutants::active("libk_lean_char_args") {
+            [args[0], args[0], args[1]]
+        } else {
+            args
+        }
+    )
 );
 lean_lib!(
     /// BUNDLE-H: lean entry of `LIB random` / `randf`.
-    jit_tr_lib_random, |st, kind, _fl, args| { let _ = &st; unsafe { random_core(kind, args) } }
+    jit_tr_lib_random,
+    |st, kind, _fl, args| {
+        let _ = &st;
+        unsafe { random_core(kind, args) }
+    }
 );
 lean_lib!(
     /// BUNDLE-H: lean entry of `LIB streq` / `strlt` / `strle`.
-    jit_tr_lib_cmp, |st, kind, fl, args| { let _ = &st; cmp_core(kind, fl, if mutants::active("libk_lean_cmp_swapped") { [args[1], args[0], args[2]] } else { args }) }
+    jit_tr_lib_cmp,
+    |st, kind, fl, args| {
+        let _ = &st;
+        cmp_core(
+            kind,
+            fl,
+            if mutants::active("libk_lean_cmp_swapped") {
+                [args[1], args[0], args[2]]
+            } else {
+                args
+            },
+        )
+    }
 );
 lean_lib!(
     /// BUNDLE-H: lean entry of `LIB lower` / `upper` / `reverse` / `rep` / `reps`.
-    jit_tr_lib_strfn, |st, kind, fl, args| strfn_core(&mut st, kind, fl, args)
+    jit_tr_lib_strfn,
+    |st, kind, fl, args| strfn_core(&mut st, kind, fl, args)
 );
 lean_lib!(
     /// BUNDLE-R (`libcall` bit 9): lean entry of `LIB find` / `finds`.
-    jit_tr_lib_find, |st, kind, fl, args| { let _ = &st; find_core(kind, fl, if mutants::active("libk_lean_find_swapped") { [args[1], args[0], args[2]] } else { args }) }
+    jit_tr_lib_find,
+    |st, kind, fl, args| {
+        let _ = &st;
+        find_core(
+            kind,
+            fl,
+            if mutants::active("libk_lean_find_swapped") {
+                [args[1], args[0], args[2]]
+            } else {
+                args
+            },
+        )
+    }
 );
 
 /// BUNDLE-H (`libcall` bit 1): the lean entry that serves `LIB` kind `kind`, if there is one.

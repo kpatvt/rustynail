@@ -18,12 +18,6 @@ fn root() -> PathBuf {
         .unwrap()
 }
 
-/// `target/<profile>` of this test binary.
-fn target_dir() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().to_path_buf()
-}
-
 /// A scratch directory unique to this test process.
 fn scratch() -> PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -35,20 +29,41 @@ fn scratch() -> PathBuf {
     .clone()
 }
 
-/// Build (once) and locate `librn_capi.a` for this profile.
+/// Build (once) and locate `librn_capi.a` for this profile. Cargo says where it put the library
+/// (`--message-format=json`): newer cargo versions keep test executables under `build/<pkg>/<hash>/out`,
+/// so the location cannot be derived from the path of this test binary.
 fn our_lib() -> PathBuf {
     static LIB: OnceLock<PathBuf> = OnceLock::new();
     LIB.get_or_init(|| {
-        let dir = target_dir();
+        let exe = std::env::current_exe().unwrap();
         let mut cmd = Command::new(env!("CARGO"));
-        cmd.args(["build", "-p", "rn-capi"]);
-        if dir.file_name().is_some_and(|d| d == "release") {
+        cmd.args([
+            "build",
+            "-p",
+            "rn-capi",
+            "--message-format=json-render-diagnostics",
+        ]);
+        if exe.components().any(|c| c.as_os_str() == "release") {
             cmd.arg("--release");
         }
         // a separate target dir would not contain the library we are looking for: use ours
-        let ok = cmd.current_dir(root()).status().is_ok_and(|s| s.success());
-        assert!(ok, "could not build rn-capi");
-        let lib = dir.join("librn_capi.a");
+        let out = cmd
+            .current_dir(root())
+            .stderr(Stdio::inherit())
+            .output()
+            .expect("cargo build -p rn-capi");
+        assert!(out.status.success(), "could not build rn-capi");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lib = text
+            .lines()
+            .filter(|l| l.contains("\"compiler-artifact\"") && l.contains("librn_capi.a"))
+            .filter_map(|l| {
+                let end = l.find("librn_capi.a\"")? + "librn_capi.a".len();
+                let start = l[..end].rfind('"')? + 1;
+                Some(PathBuf::from(&l[start..end]))
+            })
+            .next_back()
+            .expect("cargo did not report librn_capi.a");
         assert!(lib.exists(), "missing {}", lib.display());
         lib
     })
