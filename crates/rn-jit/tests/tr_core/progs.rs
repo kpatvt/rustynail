@@ -4568,6 +4568,39 @@ print(sv, t1.v, t2.v)
 "##,
     },
     Prog {
+        name: "b4_boolstore_ix",
+        small: true,
+        src: r##"
+-- B4-1 follow-up: boolean / nil stores through a register index (strided sieve loops, mixed with payload stores), including
+-- a store past the array end (the bounds guard exits mid-loop) and re-reads of the slots after the tag-only stores.
+local N = 400
+local out = {}
+for r = 1, 4 do
+  local f = {}
+  for i = 2, N do f[i] = true end
+  for i = 2, 20 do
+    if f[i] then for j = i * i, N, i do f[j] = false end end
+  end
+  local c = 0
+  for i = 2, N do if f[i] then c = c + 1 end end
+  for i = 1, N, 3 do f[i] = nil end
+  local d = 0
+  for i = 1, N do if f[i] == nil then d = d + 1 elseif f[i] == false then d = d + 1000 end end
+  for i = 1, N do f[i] = i * r end
+  for i = 1, N, 2 do f[i] = false end
+  local s = 0
+  for i = 1, N do local v = f[i]; if v then s = s + v end end
+  -- one past the end, and holes
+  for i = N - 5, N + 40 do f[i] = true end
+  for i = N + 60, N + 50, -1 do f[i] = false end
+  local n = 0
+  for k, v in pairs(f) do if v == true then n = n + 1 end end
+  out[#out + 1] = c .. ":" .. d .. ":" .. s .. ":" .. n .. ":" .. #f
+end
+print(table.concat(out, " "))
+"##,
+    },
+    Prog {
         name: "b4_backend",
         small: true,
         src: r##"

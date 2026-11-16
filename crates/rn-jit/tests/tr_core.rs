@@ -3303,6 +3303,7 @@ fn b2_programs() {
 fn b4_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
+    for name in ["b4_backend", "b4_boolstore_ix"] {
     for trace in ["always", "on2", "on"] {
         for (opts, budget) in [
             ("", 0),
@@ -3316,7 +3317,7 @@ fn b4_programs() {
             ("-fwd -cse -loop -sink", 0),
             ("+membudget +verify", 0),
         ] {
-            let mut j = Job::new("b4_backend", trace).opts(opts);
+            let mut j = Job::new(name, trace).opts(opts);
             if budget != 0 {
                 j = j.budget(budget);
             }
@@ -3324,13 +3325,14 @@ fn b4_programs() {
             jobs.push(j);
         }
         for gc in ["1", "2"] {
-            let mut j = Job::new("b4_backend", trace).env("RUSTYNAIL_GC_STRESS", gc);
+            let mut j = Job::new(name, trace).env("RUSTYNAIL_GC_STRESS", gc);
             j.limits = ON.into();
             jobs.push(j);
         }
-        let mut j = Job::new("b4_backend", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
+        let mut j = Job::new(name, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
         j.limits = ON.into();
         jobs.push(j);
+    }
     }
     let res = compare(jobs);
     for (j, o) in &res {

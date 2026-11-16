@@ -4823,6 +4823,11 @@ impl Cx<'_> {
             l => panic!("operand {l:?}"),
         }
         if let (true, Loc::G(u)) = (self.env.b2_arr, ops[1]) {
+            // nil / false / true under `nopay` write the tag byte only: no payload address is needed (the `mov V7; not V7`
+            // pair of `payload_scaled` would be dead).
+            if self.env.nopay && matches!(t, Ty::Nil | Ty::False | Ty::True) {
+                return Ok(());
+            }
             let m = self.payload_scaled(base, u);
             self.store_value_mi(m, ins.b, ops[2]);
             return Ok(());
