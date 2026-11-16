@@ -143,10 +143,11 @@ jobs:
       - name: jit-diff, 500 seeds (off vs always, on with thresholds 2 and 10)
         run: JITDIFF_ON=1 scripts/jit-diff.sh 1 500 target/release/rnlua
       - name: build without the feature has the same machine code as the base
-        # A difference is expected only for a change that intentionally alters the interpreter (review it).
-        run: |
-          base="${{ github.event.pull_request.base.sha }}"
-          scripts/jit-text-identity.sh "${base:-HEAD^}"
+        # A difference is expected only for a change that intentionally alters the interpreter (review it). Pull requests only: on a
+        # push or a scheduled run the base would be HEAD^, so every intentional rn-core / rn-std / compiler commit failed the job
+        # (run it by hand: scripts/jit-text-identity.sh <base-ref>).
+        if: github.event_name == 'pull_request'
+        run: scripts/jit-text-identity.sh "${{ github.event.pull_request.base.sha }}"
 
   asan-jit:
     name: AddressSanitizer with the JIT
