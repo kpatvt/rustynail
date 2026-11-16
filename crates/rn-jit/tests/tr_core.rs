@@ -3297,6 +3297,49 @@ fn b2_programs() {
     }
 }
 
+/// Q1: the in-place update of the last `ADD` of a body that feeds a back-edge swap (`prev = k; k = k + 1`), with genuine swaps and
+/// rotations beside it, in the trace modes with lockstep, exit storms, budgets, GC stress and the stack-move stress.
+/// Mutant `phi_inplace_nocopy`.
+#[test]
+fn q_phi_inplace_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("+exitstorm=7 +verify +randra=5", 0),
+            ("+randra=11 +verify", 0),
+            ("+randra=23 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+            ("+emurun +verify", 0),
+            ("-fwd -cse -loop -sink", 0),
+        ] {
+            let mut j = Job::new("q_phi_inplace", trace).opts(opts);
+            if budget != 0 {
+                j = j.budget(budget);
+            }
+            jobs.push(j);
+        }
+        for gc in ["1", "2"] {
+            jobs.push(Job::new("q_phi_inplace", trace).env("RUSTYNAIL_GC_STRESS", gc));
+        }
+        jobs.push(Job::new("q_phi_inplace", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "q_phi_inplace: traces did not run: {}",
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// B4-1: tag-only stores of nil / false / true (`nopay`) in the trace modes with lockstep, exit storms, budgets, GC stress and the
 /// stack-move stress (K3b: `nopay` is hard-wired on). Mutant `nopay_all_types`.
 #[test]

@@ -3635,6 +3635,11 @@ const TABLE: &[Row] = &[
         owner: "BUNDLE-V",
         dets: &[d("tr_asm", "hand_upvalue_tbar_calls_the_barrier_exactly_for_black_upvalues_and_white_values"), d("tr_core", "y5_upbar_black_programs")],
     },
+    Row {
+        name: "phi_inplace_nocopy",
+        owner: "BUNDLE-Q",
+        dets: &[d("tr_core", "q_phi_inplace_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

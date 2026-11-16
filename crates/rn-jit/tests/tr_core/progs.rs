@@ -4601,6 +4601,78 @@ print(table.concat(out, " "))
 "##,
     },
     Prog {
+        name: "q_phi_inplace",
+        small: true,
+        src: r##"
+-- Q1: the last instruction of a loop body is `x = a + b` and the back-edge carries `prev = a`: (prev, cur) = (cur, cur + k) in every
+-- argument order, genuine swaps and rotations next to it (they must stay correct), a second carried copy of the old value, and
+-- a mid-loop exit (the exit state must hold the values of the iteration that did not finish).
+local out = {}
+local function chk(...) out[#out + 1] = table.concat({ ... }, ",") end
+do local prev, k = 0, 1; for n = 1, 600 do prev = k; k = k + 1 end; chk(prev, k) end
+do local prev, k, s = 0, 1, 0; for n = 1, 600 do s = s + prev; prev = k; k = k + 3 end; chk(prev, k, s) end
+do local a, b = 5, 9; for n = 1, 601 do a, b = b, a end; chk(a, b) end
+do local a, b = 5, 9; for n = 1, 600 do a, b = b + 1, a end; chk(a, b) end
+do local a, b = 5, 9; for n = 1, 600 do a, b = b, a + 1 end; chk(a, b) end
+do local a, b = 0, 1; for n = 1, 80 do a, b = b, a + b end; chk(a, b) end
+do local a, b, c = 1, 2, 3; for n = 1, 601 do a, b, c = c, a, b + 1 end; chk(a, b, c) end
+do local a, b = 1, 2; for n = 1, 600 do local t = a; a = a + a; b = t end; chk(a % 1000003, b % 1000003) end
+do local a, b = 7, 1; for n = 1, 600 do local t = a; a = t + b; b = t end; chk(a, b) end
+do local a, b = 7, 1; for n = 1, 600 do local t = b; b = a; a = a + t end; chk(a, b) end
+do local a, b = 7, 1; for n = 1, 600 do local t = a; a = a + 2; b = t + b end; chk(a, b) end
+do local prev, k = 0, 1; local e; for n = 1, 700 do if n == 650 then e = prev * 1000 + k end; prev = k; k = k + 2 end; chk(prev, k, e) end
+do
+  local prev, k, hit = 0, 1, 0
+  for n = 1, 900 do
+    if k > 1500 then hit = hit + prev end
+    prev = k; k = k + 2
+  end
+  chk(prev, k, hit)
+end
+do local prev, k = math.maxinteger - 700, math.maxinteger - 600; for n = 1, 650 do prev = k; k = k + 1 end; chk(prev, k) end
+do local prev, k = 0, 1; for n = 1, 600 do prev = k; k = k + 0x7fffffff * 4 end; chk(prev, k) end
+-- `while` forms: the ADD is the last instruction of the body and the carried copy is read after the loop and by the exit
+do local prev, k = 0, 1; while k < 3000 do prev = k; k = k + 1 end; chk(prev, k) end
+do local s, prev, k = 0, 0, 1; while k < 9000 do s = s + prev; prev = k; k = k + 3 end; chk(s, prev, k) end
+do local prev, k, st = 0, 5, 7; while k < 20000 do prev = k; k = k + st end; chk(prev, k) end
+do local prev, k = 0, 3000; while k > -1 do prev = k; k = k - 1 end; chk(prev, k) end
+do local a, b, c = 0, 1, 700; while c ~= 0 do c = c - 1; a, b = b, a + b end; chk(a, b, c) end
+do local a, b, c = 3, 5, 701; while c ~= 0 do c = c - 1; b, a = a, b + a end; chk(a, b, c) end
+do local a, b, c = 3, 5, 701; while c ~= 0 do c = c - 1; b, a = a, a + b end; chk(a, b, c) end
+do local a, b, c = 3, 5, 701; while c ~= 0 do c = c - 1; local t = b; b = a; a = a + t end; chk(a, b, c) end
+do local a, b, c = 3, 5, 701; while c ~= 0 do c = c - 1; local t = b; b = a; a = t + a end; chk(a, b, c) end
+do local a, b, c = 3, 5, 701; while c ~= 0 do c = c - 1; local t = a; a = b; b = t + b end; chk(a, b, c) end
+do local a, b, c = 3, 5, 701; while c ~= 0 do c = c - 1; a, b = b + 1, a end; chk(a, b, c) end
+do local prev, k, hit = 0, 1, -1; while k < 5000 do if k == 4000 then hit = prev end; prev = k; k = k + 1 end; chk(prev, k, hit) end
+-- the `for` loop shape of bench/lib/sel_count (user variable copy + hidden index; the call's argument count is a loop-carried sum)
+local select = select
+local function f(...) return select("#", ...) end
+do local acc = 0; for o = 1, 30 do for k = 1, 512 do acc = acc + k * f(k, 2, 3, 4) end end; chk(acc) end
+do local acc, last = 0, 0; for o = 1, 30 do for k = 1, 512 do acc = acc + k * f(k, k); last = k end end; chk(acc, last) end
+do local acc = 0; for o = 1, 30 do for k = 512, 1, -1 do acc = acc + f(k, 2) + k end end; chk(acc) end
+do local acc = 0; for o = 1, 30 do for k = 3, 1500, 3 do acc = acc + k * f(k) end end; chk(acc) end
+do
+  local acc, seen = 0, 0
+  for o = 1, 30 do
+    for k = 1, 512 do
+      if o == 20 and k == 300 then seen = k * 10 + acc % 10 end
+      acc = acc + k * f(k, 2, 3)
+      if o == 29 and k == 400 then break end
+    end
+  end
+  chk(acc, seen)
+end
+do
+  local ok, e = pcall(function()
+    local acc = 0
+    for o = 1, 30 do for k = 1, 512 do acc = acc + k * f(k, 2); if o == 25 and k == 77 then error({ k, acc }) end end end
+  end)
+  chk(tostring(ok), e[1], e[2])
+end
+print(table.concat(out, " "))
+"##,
+    },
+    Prog {
         name: "b4_backend",
         small: true,
         src: r##"

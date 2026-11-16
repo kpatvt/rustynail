@@ -2658,6 +2658,7 @@ pub fn assemble(
         cx.bind(loop_l); // a side trace has no loop; the label is never referenced
         cx.count_iteration(); // `+verify`: a side trace counts its executions like a loop counts iterations
     }
+    let mut inplace = false;
     for i in 0..ir.ins.len() {
         if ir.rec_call.is_some() && i + 1 == ir.ins.len() {
             // P-M3: the placeholder exit of a native self-call (an always-failing guard) assembles to nothing; the push
@@ -2700,7 +2701,12 @@ pub fn assemble(
             cx.rec_ret_guards(i, rr)?;
         }
         cx.pre(i);
-        cx.ins(i, loop_l)?;
+        if !rolled && i + 1 == ir.ins.len() && cx.last_add_in_place(i) {
+            // (the last body instruction and the back-edge swap it feeds, emitted together: no back-edge moves remain)
+            inplace = true;
+        } else {
+            cx.ins(i, loop_l)?;
+        }
         cx.post(i);
         cx.track_tags(i);
     }
@@ -2710,7 +2716,7 @@ pub fn assemble(
                 cx.store_slot(e.slot, e.r, al.end_locs[k])?;
             }
         }
-    } else {
+    } else if !inplace {
         for m in &al.backedge_seq {
             cx.emit_move(*m);
         }
@@ -3633,6 +3639,44 @@ impl Cx<'_> {
 
     fn dst(&self, i: usize) -> Loc {
         self.al.ins[i].dst
+    }
+
+    /// Q1: the last instruction of a looped body is an integer `ADD` (`x = a + b`, `x` in `D`) whose back-edge moves are exactly the
+    /// 2-cycle `a <- D` (the PHI of `a` takes `x`), `D <- a` (the PHI living in `D` takes the old `a`): `mov D, a; add a, b` replaces
+    /// `mov D, a; add D, b; mov V7, D; mov D, a; mov a, V7` (the generic form of a swap). Emits it and returns true, or emits nothing
+    /// and returns false. Sound because no instruction follows (no guard reads `D` or the old `a` through a snapshot), `D` is read by
+    /// no other move and holds nothing the add still needs (`b != D`), and the add wraps (sets no flag any code reads).
+    fn last_add_in_place(&mut self, i: usize) -> bool {
+        let (ins, a) = (self.ir.ins[i], &self.al.ins[i]);
+        if ins.op != TOp::Add || ins.t != Ty::Int || !a.pre.is_empty() || !a.post.is_empty() || !a.stores.is_empty() {
+            return false;
+        }
+        let (Loc::G(d), Loc::G(x)) = (a.dst, a.ops[0]) else { return false };
+        let bloc = a.ops[1];
+        if d == x || d == 7 || x == 7 || bloc == Loc::G(d) {
+            return false;
+        }
+        if !matches!(bloc, Loc::G(_) | Loc::Const(_)) {
+            return false;
+        }
+        let live: Vec<&Move> = self
+            .al
+            .backedge_moves
+            .iter()
+            .filter(|m| m.dst != m.src && m.dst != Loc::None && m.src != Loc::None)
+            .collect();
+        let pat = live.len() == 2
+            && live.iter().any(|m| m.dst == Loc::G(x) && m.src == Loc::G(d))
+            && live.iter().any(|m| m.dst == Loc::G(d) && m.src == Loc::G(x));
+        if !pat {
+            return false;
+        }
+        if !mutants::active("phi_inplace_nocopy") {
+            self.push(Op::MovR(d, x));
+        }
+        let s = self.src(bloc, 7);
+        self.push(Op::Add(x, s));
+        true
     }
 
     fn ins(&mut self, i: usize, loop_l: L) -> Result<(), AsmError> {

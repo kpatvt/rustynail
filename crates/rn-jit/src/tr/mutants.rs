@@ -784,6 +784,8 @@ pub const NAMES: &[&str] = &[
     "bv_ret_first_nil",
     "upbar_skip",
     "upbar_asm_skip",
+    // BUNDLE-Q: in-place last PHI update
+    "phi_inplace_nocopy",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -852,7 +854,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 650);
+        assert_eq!(NAMES.len(), 651);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
