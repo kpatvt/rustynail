@@ -103,6 +103,10 @@ pub const NAMES: &[&str] = &[
     "side_budget_no_rem",
     "side_start_refund",
     "side_known_all",
+    "side_known_unmod_all",
+    "tagskip_all",
+    "tagskip_nil",
+    "tagskip_entry_fail",
     "exit_cell_ignored",
     "side_cell_stale",
     "side_family_flush_skip",
@@ -854,7 +858,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 651);
+        assert_eq!(NAMES.len(), 655);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -189,6 +189,10 @@ pub struct ExitSnap {
     pub seg_shift: u16,
     /// See `seg_shift`.
     pub seg_pops: u8,
+    /// A1: the slots the exit does not restore whose stack tag is provably the type of an unmodified `SLOAD` of the trace that
+    /// executed before every guard of this snapshot (see [`stack_ents`]): a side trace attached here inherits the types (no entry
+    /// check for them, unless the exit restores them itself) and a stub store of the same static tag is redundant. Empty for traces with native frames or segments.
+    pub ents: Vec<(u16, Ty)>,
 }
 
 /// One exit of a trace: the snapshot it restores and the class of the site (for the hot-exit policy, 3.3 / 7.9).
@@ -379,6 +383,58 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
             }
         })
         .collect()
+}
+
+/// A1: per snapshot, the slots whose stack value (tag included) is the one an `SLOAD` of the trace read: `(slot, type)` of every
+/// `SLOAD` that precedes every guard that uses the snapshot, unless the trace writes the slot to the stack itself (`SSTORE`).
+/// The stack is written only by exit stubs / the writeback / `SSTORE` (never between an entry check and the exit), so a slot
+/// the snapshot does not restore still holds the type its `SLOAD` saw. Entry checks run in IR order: a guard exits having
+/// executed only the earlier `SLOAD`s (the failing one is not its own predecessor). Traces with native frames or `RETF` segments
+/// get none (their frames move the base; a slot number is not stable). Slots of sunk tables are removed by the caller.
+pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
+    // (the helper below holds the exclusions)
+    let n = ir.snaps.len();
+    let mut out = vec![Vec::new(); n];
+    if ir.rec_call.is_some()
+        || ir.rec_ret.is_some()
+        || !ir.segs.is_empty()
+    {
+        return out;
+    }
+    let all = mutants::active("side_known_unmod_all");
+    let entry_fail = mutants::active("tagskip_entry_fail");
+    let mut first = vec![usize::MAX; n];
+    for (k, i) in ir.ins.iter().enumerate() {
+        if i.flags & F_GUARD != 0 {
+            let s = aux_snap(i.aux) as usize;
+            if s < n && first[s] == usize::MAX {
+                first[s] = k;
+            }
+        }
+    }
+    let stored: Vec<u16> = ir
+        .ins
+        .iter()
+        .filter(|i| i.op == TOp::Sstore)
+        .map(|i| i.aux as u16)
+        .collect();
+    for (s, o) in out.iter_mut().enumerate() {
+        if first[s] == usize::MAX {
+            continue;
+        }
+        for (k, i) in ir.ins.iter().enumerate() {
+            if i.op != TOp::Sload || i.a == u16::MAX || stored.contains(&i.a) {
+                continue;
+            }
+            // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one)
+            let all_here = all || (entry_fail && ir.ins[first[s]].op == TOp::Sload);
+            if (k < first[s] || all_here) && tag_of(i.t).is_some() && !o.iter().any(|&(sl, _)| sl == i.a)
+            {
+                o.push((i.a, i.t));
+            }
+        }
+    }
+    out
 }
 
 /// BUNDLE-O O0 (diagnostic): per snapshot, the bit set of guard classes that use it. Bits: 1 callee / identity (`EQREF`), 2 hash node
@@ -669,7 +725,20 @@ pub fn build_exits(
             root_code: seg.map_or(std::ptr::null(), |g| g.code as usize as *const u32),
             seg_shift: seg.map_or(0, |g| g.shift),
             seg_pops: seg.map_or(0, |g| g.pops),
+            ents: Vec::new(),
         });
+    }
+    let ents = stack_ents(ir);
+    for (si, e) in ents.into_iter().enumerate() {
+        let sn = &mut out[si];
+        // a slot of a sunk table (or an alias) is written by the generic restore with a type the `SLOAD` did not see; the slots of
+        // `slots` stay: their stack tag after the exit is the snapshot's (and the stub's store of it is redundant if equal)
+        let sunk_slot = |slot: u16| {
+            sn.sunk
+                .iter()
+                .any(|t| t.slot == slot || t.aliases.contains(&slot))
+        };
+        sn.ents = e.into_iter().filter(|&(sl, _)| !sunk_slot(sl)).collect();
     }
     let pre = pre_roll_snaps(ir);
     let descs = (0..out.len())
@@ -839,7 +908,9 @@ pub fn inline_stub_ops_via(s: &ExitSnap, vb: Loc, cell: Option<u64>) -> Vec<Op> 
             off: i32::from(e.slot) * 16 + off,
         };
         // the whole 8-byte tag word, as `restore` writes it (the upper bytes are zero: `tag` is below 0x100)
-        if e.tag == TAG_DYN_STR {
+        if tag_store_redundant(s, e) {
+            // the stack already holds exactly this tag (see `tag_store_redundant`)
+        } else if e.tag == TAG_DYN_STR {
             // N5: the variant of the string is read from its header: `tag = tt | ctb`
             match e.src {
                 ValSrc::Reg(r) => v.push(Op::Ld {
@@ -961,6 +1032,51 @@ pub fn inline_stub_ops_via(s: &ExitSnap, vb: Loc, cell: Option<u64>) -> Vec<Op> 
     }
     v.push(Op::JmpR(7));
     v
+}
+
+/// B1: every `(slot, type)` of an `SLOAD` of the trace whose slot the trace never writes with `SSTORE`: before the writeback at the
+/// end of a rolled iteration (and of a side trace) the stack still holds those tags (every `SLOAD` of the iteration ran). Empty under
+/// the same exclusions as [`stack_ents`].
+pub fn wb_ents(ir: &TraceIr) -> Vec<(u16, Ty)> {
+    if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<(u16, Ty)> = Vec::new();
+    for i in &ir.ins {
+        if i.op == TOp::Sload
+            && i.a != u16::MAX
+            && tag_of(i.t).is_some()
+            && !ir.ins.iter().any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
+            && !out.iter().any(|&(sl, _)| sl == i.a)
+        {
+            out.push((i.a, i.t));
+        }
+    }
+    out
+}
+
+/// Is a store of tag `tag` into `slot` redundant given the stack tags `ents` (see [`wb_ents`], [`stack_ents`])?
+pub fn tag_redundant(ents: &[(u16, Ty)], slot: u16, tag: u8) -> bool {
+    if mutants::active("tagskip_all") {
+        return ents.iter().any(|&(sl, _)| sl == slot);
+    }
+    if mutants::active("tagskip_nil") && tag == LUA_VNIL {
+        // (nil is "any nil variant" for a load: taken for a match with whatever type the slot was loaded as)
+        return ents.iter().any(|&(sl, _)| sl == slot);
+    }
+    tag != TAG_DYN_STR
+        && tag != LUA_VNIL
+        && ents
+            .iter()
+            .any(|&(sl, t)| sl == slot && t != Ty::Nil && tag_of(t) == Some(tag))
+}
+
+/// B1: is the tag store of restore entry `e` of `s` redundant? The stack tag of the slot is provably `e.tag` already: an unmodified
+/// `SLOAD` of the slot (executed before the exit) has the type of the value, a static non-nil tag (nil has variants; a dynamic string
+/// tag is read from the object). Tag words are only ever written as whole words or single bytes from a tag below 0x100 on
+/// top of zero upper bytes (`Value` has no other constructor), so skipping the word store keeps the upper bytes zero.
+fn tag_store_redundant(s: &ExitSnap, e: &SlotRestore) -> bool {
+    tag_redundant(&s.ents, e.slot, e.tag)
 }
 
 /// H2: may the inline stub of this snapshot rebuild its frames itself (`frame_mat_ops`)? Plain or tail Lua frames of a

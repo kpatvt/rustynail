@@ -2046,6 +2046,8 @@ struct Cx<'a> {
     /// B2 (`b2tag`): node addresses (refs of `HREFK` / `HREFV`) whose value tag byte is known at this point of the straight-line
     /// code (an earlier checked `HLOAD` of that type or an `HSTORE` of it).
     ktag: Vec<(Ref, u8)>,
+    /// B1: the stack tags the trace's `SLOAD`s saw ([`exit::wb_ents`]): a writeback store of the same static tag is redundant.
+    wb_ents: Vec<(u16, Ty)>,
     /// B4-3 (`hkfuse`): the `HLOAD` (instruction index) whose value-tag check the preceding `HREFK` already did (one 16-bit compare of
     /// the value tag byte and the key tag byte).
     hk_fused: Option<usize>,
@@ -2436,7 +2438,9 @@ impl Cx<'_> {
                 None => return unsup(format!("writeback of a value of type {t:?}")),
             },
         };
-        self.st(W::B8, fm(slot, 0), Src::Imm(i32::from(tag)));
+        if !exit::tag_redundant(&self.wb_ents, slot, tag) {
+            self.st(W::B8, fm(slot, 0), Src::Imm(i32::from(tag)));
+        }
         match loc {
             Loc::Const(c) => {
                 let b = self.kbits_of(c);
@@ -2585,6 +2589,7 @@ pub fn assemble(
         mat_frames: Vec::new(),
         mat_codes: Vec::new(),
         ktag: Vec::new(),
+        wb_ents: exit::wb_ents(ir),
         hk_fused: None,
         hk_cold: Vec::new(),
         rec_ci_cold: Vec::new(),

@@ -663,6 +663,38 @@ const TABLE: &[Row] = &[
         ],
     },
     Row {
+        name: "side_known_unmod_all",
+        owner: "A1",
+        dets: &[
+            dl("tr_core", "mutant_probe_live_programs"),
+            dl("tr_core", "a1_stack_tag_programs"),
+        ],
+    },
+    Row {
+        name: "tagskip_all",
+        owner: "A1",
+        dets: &[
+            dl("tr_core", "mutant_probe_live_programs"),
+            dl("tr_core", "a1_stack_tag_programs"),
+        ],
+    },
+    Row {
+        name: "tagskip_nil",
+        owner: "A1",
+        dets: &[
+            dl("tr_core", "mutant_probe_live_programs"),
+            dl("tr_core", "a1_stack_tag_programs"),
+        ],
+    },
+    Row {
+        name: "tagskip_entry_fail",
+        owner: "A1",
+        dets: &[
+            dl("tr_core", "mutant_probe_live_programs"),
+            dl("tr_core", "a1_stack_tag_programs"),
+        ],
+    },
+    Row {
         name: "exit_cell_ignored",
         owner: "F2a",
         dets: &[dl("tr_core", "side_traces_install_and_run")],

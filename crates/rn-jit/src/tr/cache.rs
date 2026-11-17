@@ -4407,10 +4407,19 @@ fn side_attempt(
         )
     });
     let known: Vec<(u16, super::ir::Ty)> = if snap.frames.is_empty() || virt {
-        snap.slots
+        let mut k: Vec<(u16, super::ir::Ty)> = snap
+            .slots
             .iter()
             .filter_map(|s| super::exit::ty_of_tag(s.tag).map(|t| (s.slot, t)))
-            .collect()
+            .collect();
+        // A1: the slots the exit leaves alone still hold the type of the parent's unmodified `SLOAD` of them
+        // (a prelude is entered through the head's dispatch cell, not through the exit: nothing the parent's entry checks passed is known)
+        for &(slot, t) in snap.ents.iter().filter(|_| !prelude) {
+            if !k.iter().any(|&(s, _)| s == slot) {
+                k.push((slot, t));
+            }
+        }
+        k
     } else {
         Vec::new()
     };

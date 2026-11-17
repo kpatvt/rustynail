@@ -337,6 +337,7 @@ fn scenario(w: &mut World, d: usize, rng: &mut Rng, area: &mut ExitArea) -> Scn 
         root_code: std::ptr::null(),
         seg_shift: 0,
         seg_pops: 0,
+        ents: Vec::new(),
         sunk: Vec::new(),
         // F4: a consumer of a multiple-result sequence re-executes with the interpreter's `top` (`thread.top = base + slot`); the shipped
         // programs only reach such an exit through the generic handler, so the restore is checked here directly (mutants `exit_top_ignored`,
@@ -523,6 +524,7 @@ fn vb_validity_is_one_rule() {
                 root_code: std::ptr::null(),
                 seg_shift: 0,
                 seg_pops: 0,
+                ents: Vec::new(),
                 sunk: Vec::new(),
                 top: None,
             };
@@ -562,6 +564,7 @@ fn restore_rejects_a_slot_beyond_the_stack() {
         root_code: std::ptr::null(),
         seg_shift: 0,
         seg_pops: 0,
+        ents: Vec::new(),
         sunk: Vec::new(),
         top: None,
     };
@@ -1176,6 +1179,7 @@ fn n_cap(st: &mut State) -> LuaResult<usize> {
         root_code: std::ptr::null(),
         seg_shift: 0,
         seg_pops: 0,
+        ents: Vec::new(),
         sunk: Vec::new(),
         top: None,
     };
@@ -2968,6 +2972,7 @@ mod handler {
                 root_code: std::ptr::null(),
                 seg_shift: 0,
                 seg_pops: 0,
+                ents: Vec::new(),
                 sunk: Vec::new(),
                 top: None,
             }],
@@ -3135,6 +3140,7 @@ mod handler {
                 root_code: std::ptr::null(),
                 seg_shift: 0,
                 seg_pops: 0,
+                ents: Vec::new(),
                 sunk: Vec::new(),
                 top: None,
             })
@@ -3202,6 +3208,7 @@ mod handler {
                     root_code: std::ptr::null(),
                     seg_shift: 0,
                     seg_pops: 0,
+                    ents: Vec::new(),
                     sunk: Vec::new(),
                     top: None,
                 })

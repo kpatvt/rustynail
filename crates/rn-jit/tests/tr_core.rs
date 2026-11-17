@@ -19,6 +19,8 @@
 //! every job's statistics).
 #![cfg(feature = "trace")]
 
+#[path = "tr_core/a1_progs.rs"]
+mod a1_progs;
 #[path = "tr_core/nr_progs.rs"]
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
@@ -26,6 +28,7 @@ mod progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 
+use a1_progs::A1_PROGS;
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
 use rn_core::state::{LuaState, LUA_MULTRET};
@@ -138,6 +141,7 @@ fn find(name: &str) -> &'static Prog {
         .iter()
         .chain(SINK_PROGS)
         .chain(NR_PROGS)
+        .chain(A1_PROGS)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
@@ -931,6 +935,7 @@ fn selected(small_only: bool) -> Vec<&'static Prog> {
         .iter()
         .chain(SINK_PROGS)
         .chain(NR_PROGS)
+        .chain(A1_PROGS)
         .filter(|p| !small_only || p.small)
         .filter(|p| only.as_ref().is_none_or(|o| p.name.contains(o.as_str())))
         .collect()
@@ -2387,7 +2392,7 @@ fn programs_are_deterministic() {
 fn dump_programs() {
     if let Ok(d) = std::env::var("TR_CORE_DUMP") {
         std::fs::create_dir_all(&d).expect("dir");
-        for p in PROGS.iter().chain(SINK_PROGS).chain(NR_PROGS) {
+        for p in PROGS.iter().chain(SINK_PROGS).chain(NR_PROGS).chain(A1_PROGS) {
             std::fs::write(format!("{d}/{}.lua", p.name), p.src).expect("write");
         }
     }
@@ -5037,6 +5042,34 @@ fn mutant_probe_live_programs() {
         jobs.push(Job::new(p, "always").env("RUSTYNAIL_GC_STRESS", "2"));
     }
     compare(jobs);
+}
+
+/// A1: the programs that expose a wrong stack tag (an exit or writeback tag store skipped although the slot's type changed) or a side
+/// trace's load that was wrongly left unchecked: they match the interpreter in the trace modes that exercise exits, and each installs
+/// side traces. Mutants `side_known_unmod_all`, `tagskip_all`, `tagskip_nil`, `tagskip_entry_fail`.
+#[test]
+fn a1_stack_tag_programs() {
+    let mut jobs = Vec::new();
+    for p in A1_PROGS {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p.name, trace));
+            jobs.push(Job::new(p.name, trace).opts("+verify"));
+            jobs.push(Job::new(p.name, trace).opts("+exitstorm=3"));
+            jobs.push(Job::new(p.name, trace).budget(17));
+        }
+        jobs.push(Job::new(p.name, "always").opts("-loop"));
+        jobs.push(Job::new(p.name, "always").env("RUSTYNAIL_GC_STRESS", "2"));
+    }
+    let res = compare(jobs);
+    for p in ["a1_poly_later_sload", "a1_type_change", "a1_nested_trips"] {
+        let side = res
+            .iter()
+            .filter(|(j, _)| j.prog == p && j.trace == "always" && j.opts.is_empty())
+            .map(|(_, o)| o.stats.side_installed)
+            .max()
+            .unwrap_or(0);
+        assert!(side >= 1, "{p}: no side trace was installed");
+    }
 }
 
 // ---- S0: allocation sinking (docs/JIT_TRACE.md 6.8) ----------------------------------------------------------------------------------
