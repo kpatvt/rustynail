@@ -107,6 +107,10 @@ pub const NAMES: &[&str] = &[
     "tagskip_all",
     "tagskip_nil",
     "tagskip_entry_fail",
+    "link2_sig_ignored",
+    "link2_cell_stale_after_flush",
+    "entry2_skip_entry_ok",
+    "entry2_no_poll",
     "exit_cell_ignored",
     "side_cell_stale",
     "side_family_flush_skip",
@@ -858,7 +862,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 655);
+        assert_eq!(NAMES.len(), 659);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

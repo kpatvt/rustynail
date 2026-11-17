@@ -691,6 +691,7 @@ fn base_env(w: &mut World) -> AsmEnv {
         budget_reg: vb_reg(),
         exit_cells: 0,
         side: None,
+        entry_tags: [0xFD; 256],
         vcell: 0,
         gc_cells: Default::default(),
         num_names: [0; 2],
@@ -1621,6 +1622,8 @@ fn hand_side_trace_link_polls_stores_the_budget_and_jumps_through_the_head_cell(
                 e.side = Some(SideEnv {
                     link_cell,
                     link_snap: s1,
+                    link2_cell: 0,
+                    link2_sig: 0,
                 })
             });
             if cnt < 3 {
@@ -1651,6 +1654,8 @@ fn hand_side_trace_link_polls_stores_the_budget_and_jumps_through_the_head_cell(
             e.side = Some(SideEnv {
                 link_cell,
                 link_snap: s1,
+                link2_cell: 0,
+                link2_sig: 0,
             })
         });
         assert_eq!(t, (TARGET + 0x40) as u64);
@@ -1748,6 +1753,10 @@ fn hand_entry_failure_bookkeeping_follows_the_free_peel_rule() {
             ident_kept: Cell::new(false),
             pre: Cell::new(0),
             rec_inner: Cell::new(0),
+            e2_code: Cell::new(0),
+            e2_sig_inst: Cell::new(0),
+            e2: Cell::new(0),
+            e2sig: Cell::new(0),
             rec: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
@@ -1818,6 +1827,155 @@ fn hand_entry_failure_bookkeeping_follows_the_free_peel_rule() {
             cfg!(miri) || expect_calls > 0,
             "the threshold was never reached"
         );
+    });
+}
+
+/// Like [`run_emu`], starting at `label`.
+fn run_emu_at(a: &Asm, label: u32, snaps: &[ExitSnap], w: &mut World, log: &RefCell<Log>) -> u64 {
+    let env = w.env();
+    let mut hl = Hlp {
+        snaps,
+        stack_size: PRE + NSLOT,
+        stack0: w.frame.as_mut_ptr().cast(),
+        root: w.ci.as_mut_ptr().cast(),
+        code: w.code.as_ptr(),
+        log,
+    };
+    let mut emu = Emu::new(&a.prog, label);
+    // SAFETY: as in `run_emu`.
+    let u = unsafe { emu.run(&a.prog, &[], &env, 3_000_000, &mut hl) };
+    assert!(matches!(u, Until::Stop(Stop::Unsupported)), "{u:?}");
+    emu.jmp_target().expect("a JmpR target")
+}
+
+/// A2: the second entry of a root runs the entry bookkeeping (`entry_ok`, `pending`) and the budget charge, and skips the type checks of the
+/// leading `SLOAD` run (and the poll, which the link does). Mutant `entry2_skip_entry_ok`.
+#[test]
+fn hand_entry2_skips_only_the_type_checks() {
+    both(|| {
+        let mut b = B::new();
+        let s0 = b.snap(0, &[]);
+        let s1 = b.snap(1, &[]);
+        b.poll(s0);
+        b.budget(1, s0);
+        b.sload(0, Ty::Int, s1);
+        b.sload(1, Ty::Num, s1);
+        let lp = b.ins(TOp::Loop, Ty::Nil, 0, NOREF, NOREF, 0);
+        b.ir.loop_at = Some(lp);
+        b.poll(s0);
+        b.budget(1000, s0); // never charged: leaves through snapshot 0 once the entry is past
+        let head = new_head();
+        let hp = std::ptr::addr_of!(*head) as u64;
+        for (types_ok, second) in [(true, false), (false, false), (true, true), (false, true)] {
+            let mut m = model_ints(&[5, 7]);
+            if types_ok {
+                m.slots[1] = Val::num(2.5);
+            } else {
+                m.slots[0] = Val::num(1.5);
+            }
+            let mut w = World::new(&m);
+            w.load(&m);
+            w.setup_ci(0);
+            w.set_cnt(10);
+            head.pending.set(1);
+            head.entry_ok.set(3);
+            head.entry_fail.set(0);
+            let mut ir = b.ir.clone();
+            ir.extent = 3;
+            let mut env = base_env(&mut w);
+            env.head = hp;
+            env.head_pc = 77;
+            let res = TestRes::linear(ir.snaps.len().max(1));
+            let (a, _al, snaps) =
+                compile(&ir, &[], None, &env, &res).unwrap_or_else(|e| panic!("{e}"));
+            let e2 = a
+                .entry2
+                .expect("a root with a leading SLOAD run has a second entry");
+            assert_eq!(a.e2_req, vec![(0, Ty::Int), (1, Ty::Num)]);
+            let log = RefCell::new(Log::default());
+            let t = run_emu_at(&a, if second { e2 } else { a.entry }, &snaps, &mut w, &log);
+            let tag = format!("types_ok {types_ok} second {second}");
+            if types_ok || second {
+                assert_eq!(
+                    snap_of(t),
+                    Some(s0),
+                    "{tag}: past the entry, out at the last budget"
+                );
+                assert_eq!(w.cnt(), 9, "{tag}: the budget of the loop top is charged once");
+                assert_eq!(
+                    (head.pending.get(), head.entry_ok.get()),
+                    (0, 4),
+                    "{tag}"
+                );
+            } else {
+                assert_eq!(snap_of(t), Some(s1), "{tag}: the entry check fails");
+                assert_eq!((head.pending.get(), head.entry_ok.get()), (1, 3), "{tag}");
+            }
+        }
+    });
+}
+
+/// A2: a side trace links to the second entry of the target root only while its chain proves the root's entry guards, the cell holds the
+/// signature it was compiled for and is not zero; the link keeps its poll. Mutants `link2_sig_ignored`, `entry2_no_poll`.
+#[test]
+fn hand_side_link2_needs_proof_signature_and_poll() {
+    use rn_jit::tr::asm::SideEnv;
+    #[repr(C)]
+    struct Two {
+        e2: Cell<usize>,
+        sig: Cell<u32>,
+    }
+    assert_eq!(
+        std::mem::offset_of!(Two, sig) - std::mem::offset_of!(Two, e2),
+        rn_jit::tr::cache::head_off::E2SIG - rn_jit::tr::cache::head_off::E2
+    );
+    both(|| {
+        const SLOW: usize = 0x7000_0000;
+        const FAST: usize = 0x7200_0000;
+        let sig = exit::e2_intern(&[(0, Ty::Int)]);
+        let sig_two = exit::e2_intern(&[(0, Ty::Int), (3, Ty::Num)]);
+        let mut b = B::new();
+        let s0 = b.snap(0, &[]);
+        let s1 = b.snap(0, &[]); // the link's poll
+        b.budget(3, s0);
+        b.sload(0, Ty::Int, s0); // the chain proves slot 0 is an int
+        let cell = Box::new(Cell::new(SLOW));
+        let link_cell = std::ptr::from_ref::<Cell<usize>>(&cell) as u64;
+        let two = Box::new(Two {
+            e2: Cell::new(FAST),
+            sig: Cell::new(sig),
+        });
+        let l2 = std::ptr::from_ref::<Two>(&two) as u64;
+        // (cell signature, compiled-for signature, interrupt flag, where the link goes)
+        let cases: [(u32, u32, u8, Option<usize>); 6] = [
+            (sig, sig, 0, Some(FAST)),
+            (sig + 1000, sig, 0, Some(SLOW)), // another root's entry guards: the plain dispatch
+            (0, sig, 0, Some(SLOW)),          // the head does not offer the entry (cell cleared)
+            (sig_two, sig_two, 0, Some(SLOW)), // slot 3 is not proven by the chain
+            (sig, sig, 1, None),              // the poll of the link is still there
+            (sig, 0, 0, Some(SLOW)),          // no second entry compiled against
+        ];
+        for (k, (cell_sig, want_sig, irq, to)) in cases.into_iter().enumerate() {
+            two.sig.set(cell_sig);
+            two.e2.set(if cell_sig == 0 { 0 } else { FAST });
+            let mut w = World::new(&model_ints(&[1]));
+            w.load(&model_ints(&[1]));
+            w.setup_ci(0);
+            w.irq[0] = irq;
+            w.set_cnt(100);
+            let (t, _, _, _) = exec(&b.ir, &mut w, |e| {
+                e.side = Some(SideEnv {
+                    link_cell,
+                    link_snap: s1,
+                    link2_cell: if want_sig == 0 { 0 } else { l2 },
+                    link2_sig: want_sig,
+                })
+            });
+            match to {
+                Some(addr) => assert_eq!(t, addr as u64, "case {k}"),
+                None => assert_eq!(snap_of(t), Some(s1), "case {k}: the poll"),
+            }
+        }
     });
 }
 
@@ -1922,6 +2080,10 @@ fn new_head() -> Box<rn_jit::tr::cache::HeadData> {
         ident_kept: Cell::new(false),
         pre: Cell::new(0),
         rec_inner: Cell::new(0),
+        e2_code: Cell::new(0),
+        e2_sig_inst: Cell::new(0),
+        e2: Cell::new(0),
+        e2sig: Cell::new(0),
         rec: Cell::new(0),
         lazy: Cell::new(false),
         deep: Cell::new(false),
@@ -2885,6 +3047,7 @@ mod e2e {
             budget_reg: vb_reg(),
             exit_cells: 0,
             side: None,
+            entry_tags: [0xFD; 256],
             vcell: 0,
             gc_cells: Default::default(),
             num_names: [0; 2],
@@ -2944,6 +3107,8 @@ mod e2e {
                 code: em.code,
                 entry_off,
                 inner_off: 0,
+                e2_off: 0,
+                e2_sig: 0,
                 rec_ret: false,
                 text: None,
                 hash: 0,

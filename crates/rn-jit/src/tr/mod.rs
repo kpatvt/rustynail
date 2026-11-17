@@ -1495,6 +1495,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         Some(si) if si.no_link => Some(asm::SideEnv {
             link_cell: 0,
             link_snap: si.link_snap,
+            link2_cell: 0,
+            link2_sig: 0,
         }),
         Some(si) => {
             // the link goes through the dispatch cell of the head the trace ends at (a prelude ends with a jump through
@@ -1523,9 +1525,31 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                 // the exit continues at the dispatch cell of the callee's head
                 snaps[si.link_snap as usize].link_cell = link_cell;
             }
+            // A2: the guard-free entry of the root the head has now (same prototype, a plain frameless link: no prelude, frames or segments)
+            let (link2_cell, link2_sig) = if !prelude
+                && si.link_proto.0 == root
+                && !si.frame_link
+                && !si.frameful
+                && act.side
+                && rec.ir.segs.is_empty()
+            {
+                cache::with_tr(st, tpr, |tp| {
+                    tp.head_index(si.link_pc).map(|i| {
+                        let h = tp.head(i);
+                        (&h.e2 as *const std::cell::Cell<usize> as u64, h.e2_sig_inst.get())
+                    })
+                })
+                .flatten()
+                .filter(|&(_, sig)| sig != 0)
+                .unwrap_or((0, 0))
+            } else {
+                (0, 0)
+            };
             Some(asm::SideEnv {
                 link_cell,
                 link_snap: si.link_snap,
+                link2_cell,
+                link2_sig,
             })
         }
     };
@@ -1644,6 +1668,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         budget_reg: vbreg,
         exit_cells: cells as u64,
         side: side_env,
+        entry_tags: side.map_or([0xFD; 256], |si| si.entry_tags),
         vcell: st.heap().virtual_cell() as u64,
         gc_cells: st.heap().jit_gc_cells(),
         num_names: [
@@ -1742,11 +1767,21 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     } else if emuverify {
         entry = emuverify_stub(&mut a.prog, a.entry, act.id.slot);
     }
+    // A2: the second entry exists only for the real program (the emulator stubs enter through `entry`)
+    let e2_label = if emurun || emuverify { None } else { a.entry2 };
     let t_x86 = phase::now();
     let em = x86::emit(&a.prog).map_err(|e| abort_err("x86", format!("x86: {e:?}")))?;
     phase::add(phase::X86, t_x86);
     let entry_off =
         em.label_off[entry as usize].ok_or_else(|| abort_err("x86", "entry unbound"))?;
+    let e2_off = e2_label
+        .and_then(|l| em.label_off[l as usize])
+        .unwrap_or(0);
+    let e2_sig = if e2_off != 0 {
+        exit::e2_intern(&a.e2_req)
+    } else {
+        0
+    };
     // Q3: the shape of the compile (IR + register allocation text, free of trace numbers and addresses of the
     // trace's own counters) identifies a re-compile that would repeat a flushed generation
     // (P-G: hashed from the structures; the text itself is built only for `RUSTYNAIL_JIT_DUMP`)
@@ -1764,6 +1799,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             code: em.code,
             entry_off,
             inner_off: a.inner.and_then(|l| em.label_off[l as usize]).unwrap_or(0),
+            e2_off,
+            e2_sig,
             rec_ret: ir.rec_ret.is_some(),
             text,
             hash,

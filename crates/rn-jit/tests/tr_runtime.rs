@@ -175,6 +175,8 @@ fn fake(counter: &AtomicU64, land: usize, handler: Option<(u64, u32, u32)>) -> T
         code: c::fake_trace_code(std::ptr::from_ref(counter) as usize, land, handler),
         entry_off: 0,
         inner_off: 0,
+        e2_off: 0,
+        e2_sig: 0,
         rec_ret: false,
         text: Some("fake trace".to_string()),
         hash: 0,
@@ -439,6 +441,29 @@ fn traced_head_dispatches_into_the_trace_and_pays_no_counter() {
     assert_eq!(h.ctr, 999);
     assert_eq!(exec(&mut st, "return f(100)"), "5050");
     assert_eq!(n.load(Ordering::Relaxed), 100);
+}
+
+/// A2: the cell a side trace's link takes to the guard-free second entry of a root is offered while the head is `Traced` (the dispatch cell is
+/// the root's entry) with the signature of the entry guards it skips, and is cleared with the trace. Mutant `link2_cell_stale_after_flush`.
+#[test]
+fn second_entry_cell_follows_the_head_and_is_cleared_by_a_flush() {
+    let (mut st, f, pc) = with_f(cfg_on(1000));
+    let n = AtomicU64::new(0);
+    let h = head(&mut st, f);
+    assert_eq!((h.e2, h.e2sig), (0, 0), "a Warm head offers nothing");
+    let id = c::begin_recording(&mut st, f, pc).expect("begin");
+    let land = head(&mut st, f).pcl_addr;
+    let mut ti = fake(&n, land, None);
+    ti.e2_off = 8;
+    ti.e2_sig = 7;
+    c::install(&mut st, id, ti).expect("install");
+    let h = head(&mut st, f);
+    assert_eq!(h.state, HeadState::Traced);
+    assert_eq!((h.e2, h.e2sig), (h.entry + 8, 7));
+    c::request_flush(&mut st, id, FlushWhy::Dep);
+    let h = head(&mut st, f);
+    assert_eq!(h.state, HeadState::Warm);
+    assert_eq!((h.e2, h.e2sig), (0, 0), "a flushed root offers no entry");
 }
 
 static HOT_CALLS: AtomicU64 = AtomicU64::new(0);
@@ -1407,6 +1432,8 @@ fn code_cap_flushes_all_traces_and_sets_a_global_penalty() {
         code: vec![0xCC; 2 << 20],
         entry_off: 0,
         inner_off: 0,
+        e2_off: 0,
+        e2_sig: 0,
         rec_ret: false,
         text: None,
         hash: 0,

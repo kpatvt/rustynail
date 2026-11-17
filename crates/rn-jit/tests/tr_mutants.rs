@@ -695,6 +695,35 @@ const TABLE: &[Row] = &[
         ],
     },
     Row {
+        name: "link2_sig_ignored",
+        owner: "A2",
+        dets: &[
+            d("tr_asm", "hand_side_link2_needs_proof_signature_and_poll"),
+            dl("tr_core", "a1_stack_tag_programs"),
+        ],
+    },
+    Row {
+        name: "link2_cell_stale_after_flush",
+        owner: "A2",
+        dets: &[d(
+            "tr_runtime",
+            "second_entry_cell_follows_the_head_and_is_cleared_by_a_flush",
+        )],
+    },
+    Row {
+        name: "entry2_skip_entry_ok",
+        owner: "A2",
+        dets: &[d("tr_asm", "hand_entry2_skips_only_the_type_checks")],
+    },
+    Row {
+        name: "entry2_no_poll",
+        owner: "A2",
+        dets: &[d(
+            "tr_asm",
+            "hand_side_link2_needs_proof_signature_and_poll",
+        )],
+    },
+    Row {
         name: "exit_cell_ignored",
         owner: "F2a",
         dets: &[dl("tr_core", "side_traces_install_and_run")],

@@ -1133,6 +1133,16 @@ pub struct HeadData {
     /// BUNDLE-K L1 (`lazyci`): the head belongs to a state whose native recursion is lazy: [`HeadData::rec`] is then the inner entry or 0
     /// (never the plain cell: a jump site of a lazy region leaves the region before it enters anything else).
     pub lazy: Cell<bool>,
+    /// A2: the guard-free second entry of the installed root trace (see `asm::Asm::entry2`; 0: none) and the interned signature
+    /// ([`exit::e2_intern`]) of the entry guards it skips.
+    pub e2_code: Cell<usize>,
+    /// See `e2_code`.
+    pub e2_sig_inst: Cell<u32>,
+    /// A2: the cell a side trace's link jumps through when its chain proves the entry guards: `e2_code` while the head is `Traced`
+    /// and `cell` is the root's entry itself (no prelude, no tracemove stub), else 0.
+    pub e2: Cell<usize>,
+    /// A2: the signature of `e2` (0 whenever `e2` is 0: a link compares it with the signature it was compiled for).
+    pub e2sig: Cell<u32>,
     /// J2-2: the site is recorded with the deep limits (`TrLimits::deep`): set once, when a recording of the head ended at the
     /// recursion / depth limit (never reset: the site gets exactly one deeper re-record).
     pub deep: Cell<bool>,
@@ -1156,6 +1166,10 @@ pub mod head_off {
     pub const ENTRY: usize = offset_of!(HeadData, entry);
     /// `rec` (BUNDLE-K L1: the plain `cell` of a head is at `rec - REC + CELL`).
     pub const REC: usize = offset_of!(HeadData, rec);
+    /// `e2` (A2).
+    pub const E2: usize = offset_of!(HeadData, e2);
+    /// `e2sig: u32` (A2).
+    pub const E2SIG: usize = offset_of!(HeadData, e2sig);
 }
 
 /// Abort count at which a head goes `Black` (3.3).
@@ -1214,6 +1228,10 @@ impl HeadData {
             pre: Cell::new(0),
             rec_inner: Cell::new(0),
             rec: Cell::new(0),
+            e2_code: Cell::new(0),
+            e2_sig_inst: Cell::new(0),
+            e2: Cell::new(0),
+            e2sig: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
         }
@@ -1254,6 +1272,19 @@ impl HeadData {
         };
         self.rec
             .set(if direct { self.rec_inner.get() } else { plain });
+        // A2: the guard-free entry is offered exactly while the dispatch cell is the root's entry
+        let d2 = self.state.get() == HeadState::Traced
+            && self.e2_code.get() != 0
+            && self.pre.get() == 0
+            && self.m_addr.get() == 0
+            && !self.lazy.get();
+        if d2 {
+            self.e2.set(self.e2_code.get());
+            self.e2sig.set(self.e2_sig_inst.get());
+        } else if !mutants::active("link2_cell_stale_after_flush") {
+            self.e2.set(0);
+            self.e2sig.set(0);
+        }
     }
 
     /// The counter fires after `n` more back-edges (`n <= 1`: at the next one).
@@ -1703,6 +1734,8 @@ impl TrProto {
         h.trace.set(None);
         h.entry.set(0);
         h.rec_inner.set(0);
+        h.e2_code.set(0);
+        h.e2_sig_inst.set(0);
         h.pre.set(0);
         h.entry_fail.set(0);
         h.entry_ok.set(0);
@@ -3156,6 +3189,10 @@ pub struct TraceInstall {
     pub entry_off: usize,
     /// P-M3: offset of the inner entry (native entries), 0 if the trace has none.
     pub inner_off: usize,
+    /// A2: offset of the guard-free second entry (see `asm::Asm::entry2`), 0 if none, and the interned signature of the guards it skips.
+    pub e2_off: usize,
+    /// See `e2_off`.
+    pub e2_sig: u32,
     /// P-M3: the trace ends with a native return.
     pub rec_ret: bool,
     /// `RUSTYNAIL_JIT_DUMP` text (IR and so on); written to `trace-<n>.txt` when a dump directory is set.
@@ -3536,6 +3573,12 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         } else {
             0
         });
+        h.e2_code.set(if ti.e2_off != 0 {
+            block_addr + ti.e2_off
+        } else {
+            0
+        });
+        h.e2_sig_inst.set(ti.e2_sig);
         h.trace.set(Some(id));
         tp.set_state(head, HeadState::Traced);
         if d.live.contains(&root) {
@@ -3625,7 +3668,8 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                     h.trace.set(None);
                     h.entry.set(0);
                     h.rec_inner.set(0);
-                    h.rec_inner.set(0);
+                    h.e2_code.set(0);
+                    h.e2_sig_inst.set(0);
                     h.pre.set(0);
                     tp.blacklist(t.head);
                     Penalty::Black
@@ -4414,7 +4458,10 @@ fn side_attempt(
             .collect();
         // A1: the slots the exit leaves alone still hold the type of the parent's unmodified `SLOAD` of them
         // (a prelude is entered through the head's dispatch cell, not through the exit: nothing the parent's entry checks passed is known)
-        for &(slot, t) in snap.ents.iter().filter(|_| !prelude) {
+        for &(slot, t) in snap
+            .ents
+            .iter()
+            .filter(|_| !prelude || mutants::active("tagskip_entry_fail")) {
             if !k.iter().any(|&(s, _)| s == slot) {
                 k.push((slot, t));
             }
@@ -6250,6 +6297,10 @@ pub struct HeadInfo {
     pub w_addr: usize,
     /// F5: the cell targets `W_H`.
     pub region_wait: bool,
+    /// A2: the guard-free second entry cell and its signature.
+    pub e2: usize,
+    /// A2: see `e2`.
+    pub e2sig: u32,
 }
 
 /// Snapshot of the heads of `pr`.
@@ -6277,6 +6328,8 @@ pub fn head_infos(st: &mut State, pr: ProtoRef) -> Vec<HeadInfo> {
                 trace: h.trace.get(),
                 w_addr: tp.ext[i].w_addr.get(),
                 region_wait: tp.ext[i].region_wait.get(),
+                e2: h.e2.get(),
+                e2sig: h.e2sig.get(),
             })
             .collect()
     })

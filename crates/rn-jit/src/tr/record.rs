@@ -422,7 +422,15 @@ pub struct SideInfo {
     pub start_proto: ProtoKey,
     /// S1: the trace starts inside inlined frames that are virtual at its entry (no entry checks).
     pub frameful: bool,
+    /// A2: the stack tag of every root-relative slot below 256 the parent chain guarantees when the trace is entered
+    /// ([`ENTRY_TAG_UNKNOWN`]: nothing; [`ENTRY_TAG_NIL`]: some nil variant; else the exact tag byte): `SideCfg::known`.
+    pub entry_tags: [u8; 256],
 }
+
+/// [`SideInfo::entry_tags`]: nothing is known about the slot.
+pub const ENTRY_TAG_UNKNOWN: u8 = 0xFD;
+/// [`SideInfo::entry_tags`]: the slot holds some nil variant.
+pub const ENTRY_TAG_NIL: u8 = 0xFE;
 
 /// The edge-registering hook of [`DepHooks`].
 pub type RegisterFn = Rc<dyn Fn(&mut State, &Proto) -> bool>;
@@ -2093,6 +2101,21 @@ impl Rec {
                 no_link: end_side,
                 start_proto: self.start_proto,
                 frameful: self.start_depth > 0,
+                entry_tags: {
+                    let mut t = [ENTRY_TAG_UNKNOWN; 256];
+                    if let Some(sd) = self.cfg.side.as_ref() {
+                        for &(slot, ty) in &sd.known {
+                            if let Some(c) = t.get_mut(usize::from(slot)) {
+                                *c = if ty == Ty::Nil {
+                                    ENTRY_TAG_NIL
+                                } else {
+                                    super::exit::tag_of(ty).unwrap_or(ENTRY_TAG_UNKNOWN)
+                                };
+                            }
+                        }
+                    }
+                    t
+                },
             });
         } else {
             self.b.ir.ins[bi].a = n as Ref;

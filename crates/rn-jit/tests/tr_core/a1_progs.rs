@@ -296,4 +296,25 @@ out[#out + 1] = tostring(ok2) .. ":" .. tostring(a2) .. ":" .. tostring(b2)
 print(table.concat(out, " "))
 "#,
     },
+    Prog {
+        name: "a1_prelude_known",
+        small: false,
+        src: r#"
+-- the prelude of a loop head is entered through the head's dispatch cell, not through the exit it was recorded from:
+-- it must check every slot it reads, also those its parent's earlier entry checks proved for the parent's own entry
+local function f(s, t, n)
+  for i = 1, n do s = s + t end
+  return s
+end
+local out = {}
+for k = 1, 10 do f(1, 2, 100) end
+for k = 1, 200 do f(1, 2.5, 100) end
+for k = 1, 3 do out[#out + 1] = tostring(f(1.5, 2.5, 100)) end
+for k = 1, 3 do out[#out + 1] = tostring(f(2^40, 0.5, 100)) end
+for k = 1, 3 do out[#out + 1] = tostring(f(3, 2.5, 100)) end
+for k = 1, 3 do out[#out + 1] = tostring(f(-0.0, 1, 100)) end
+for k = 1, 3 do out[#out + 1] = tostring(pcall(f, "7", 2.5, 100)) end
+print(table.concat(out, " "))
+"#,
+    },
 ];

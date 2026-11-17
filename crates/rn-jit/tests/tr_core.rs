@@ -5061,7 +5061,12 @@ fn a1_stack_tag_programs() {
         jobs.push(Job::new(p.name, "always").env("RUSTYNAIL_GC_STRESS", "2"));
     }
     let res = compare(jobs);
-    for p in ["a1_poly_later_sload", "a1_type_change", "a1_nested_trips"] {
+    for p in [
+        "a1_poly_later_sload",
+        "a1_type_change",
+        "a1_nested_trips",
+        "a1_prelude_known",
+    ] {
         let side = res
             .iter()
             .filter(|(j, _)| j.prog == p && j.trace == "always" && j.opts.is_empty())

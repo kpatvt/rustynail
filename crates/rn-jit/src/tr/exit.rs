@@ -426,7 +426,7 @@ pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
             if i.op != TOp::Sload || i.a == u16::MAX || stored.contains(&i.a) {
                 continue;
             }
-            // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one)
+            // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one, and a prelude inherits them)
             let all_here = all || (entry_fail && ir.ins[first[s]].op == TOp::Sload);
             if (k < first[s] || all_here) && tag_of(i.t).is_some() && !o.iter().any(|&(sl, _)| sl == i.a)
             {
@@ -1033,6 +1033,123 @@ pub fn inline_stub_ops_via(s: &ExitSnap, vb: Loc, cell: Option<u64>) -> Vec<Op> 
     v.push(Op::JmpR(7));
     v
 }
+
+/// A2: the leading run of a root trace's entry: `POLL`, `BUDGET`, then the checked `SLOAD`s that follow without anything in between.
+/// Returns the instruction index one past the run and the `(slot, type)` requirements the run's guards check; `None` when the trace has
+/// no such run (or is of a kind that has no guard-free second entry: native frames, `RETF` segments, function-entry roots).
+pub fn lead_run(ir: &TraceIr) -> Option<(usize, Vec<(u16, Ty)>)> {
+    if ir.rec_call.is_some()
+        || ir.rec_ret.is_some()
+        || ir.fn_root
+        || !ir.segs.is_empty()
+        || ir.ins.len() < 3
+        || ir.ins[0].op != TOp::Poll
+        || ir.ins[1].op != TOp::Budget
+    {
+        return None;
+    }
+    let mut req = Vec::new();
+    let mut end = 2;
+    while end < ir.ins.len() {
+        let i = &ir.ins[end];
+        if i.op != TOp::Sload
+            || i.flags & F_GUARD == 0
+            || aux_bits(i.aux) & 1 == 0
+            || i.a == u16::MAX
+            || tag_of(i.t).is_none()
+            || req.iter().any(|&(sl, _): &(u16, Ty)| sl == i.a)
+        {
+            break;
+        }
+        req.push((i.a, i.t));
+        end += 1;
+    }
+    (!req.is_empty()).then_some((end, req))
+}
+
+/// A2: the type signatures of the guard-free entries, interned: equal requirement lists get the same id (1-based; 0 = none).
+static E2_SIGS: std::sync::Mutex<Vec<Vec<(u16, Ty)>>> = std::sync::Mutex::new(Vec::new());
+
+/// Interns the requirement list `req` of a root's second entry.
+pub fn e2_intern(req: &[(u16, Ty)]) -> u32 {
+    let mut v = E2_SIGS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(i) = v.iter().position(|r| r == req) {
+        return i as u32 + 1;
+    }
+    v.push(req.to_vec());
+    v.len() as u32
+}
+
+/// The requirement list of interned signature `sig`.
+pub fn e2_req(sig: u32) -> Vec<(u16, Ty)> {
+    let v = E2_SIGS.lock().unwrap_or_else(|e| e.into_inner());
+    (sig as usize)
+        .checked_sub(1)
+        .and_then(|i| v.get(i))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The tag a writeback / `SSTORE` of ref `r` writes (as `Cx::store_slot` computes it); `None` for a type without a static tag.
+fn wb_tag(ir: &TraceIr, r: Ref) -> Option<u8> {
+    if TraceIr::is_const(r) {
+        match ir.k.get(usize::from(r).wrapping_sub(1)) {
+            Some(KVal::Ptr(_, PtrKind::LClosure)) => return Some(ctb(LUA_VLCL)),
+            Some(KVal::Ptr(_, PtrKind::Builtin)) => return Some(LUA_VLCF),
+            _ => {}
+        }
+    }
+    tag_of(ir.ty_of(r))
+}
+
+/// A2: does the stack at the end of the side trace `ir` (writeback `wb`, parent chain `entry` = `SideInfo::entry_tags`) provably satisfy
+/// every requirement `req` (the leading `SLOAD` run of the target root: slot `s` has the tag of type `t`; `Nil`: any nil variant)? The
+/// state of a slot is its writeback / `SSTORE` tag if the trace writes it, else the type of an `SLOAD` of it in the trace, else the
+/// parent chain's. A trace with native frames or segments proves nothing (slot numbers are not stable).
+pub fn link_proof(ir: &TraceIr, wb: &[SnapEntry], entry: &[u8; 256], req: &[(u16, Ty)]) -> bool {
+    if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
+        return false;
+    }
+    let mut st = *entry;
+    for i in &ir.ins {
+        if i.op == TOp::Sload && i.a < 256 && !ir.ins.iter().any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
+        {
+            st[usize::from(i.a)] = if i.t == Ty::Nil {
+                NIL_ANY
+            } else {
+                tag_of(i.t).unwrap_or(UNKNOWN_TAG)
+            };
+        }
+    }
+    let mut written = |slot: u16, tag: Option<u8>| {
+        if slot < 256 {
+            st[usize::from(slot)] = tag.unwrap_or(UNKNOWN_TAG);
+        }
+    };
+    for i in &ir.ins {
+        if i.op == TOp::Sstore {
+            written(i.aux as u16, wb_tag(ir, i.a));
+        }
+    }
+    for e in wb {
+        written(e.slot, wb_tag(ir, e.r));
+    }
+    req.iter().all(|&(slot, ty)| {
+        if slot >= 256 {
+            return false;
+        }
+        let have = st[usize::from(slot)];
+        if ty == Ty::Nil {
+            have == NIL_ANY || have == LUA_VNIL
+        } else {
+            tag_of(ty) == Some(have)
+        }
+    })
+}
+
+/// [`link_proof`] state markers (see `record::ENTRY_TAG_UNKNOWN` / `ENTRY_TAG_NIL`).
+const UNKNOWN_TAG: u8 = 0xFD;
+const NIL_ANY: u8 = 0xFE;
 
 /// B1: every `(slot, type)` of an `SLOAD` of the trace whose slot the trace never writes with `SSTORE`: before the writeback at the
 /// end of a rolled iteration (and of a side trace) the stack still holds those tags (every `SLOAD` of the iteration ran). Empty under

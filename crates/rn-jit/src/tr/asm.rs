@@ -132,6 +132,8 @@ pub struct AsmEnv {
     /// F2a: assemble a **side trace** (7.8): entered with the state of a tier-1 label restored, no head bookkeeping, no
     /// loop; ends with a link to another trace head through its dispatch cell.
     pub side: Option<SideEnv>,
+    /// A2: the stack tags the parent chain guarantees at the entry of a side trace (`record::SideInfo::entry_tags`; all `0xFD` otherwise).
+    pub entry_tags: [u8; 256],
     /// S0 (allocation sinking): address of the virtual-byte counter (`Heap::virtual_cell`); `TVIRT` adds its bytes to it
     /// (P-L: the only cell; the collector-visible total is the real bytes plus this counter). `0`: none (tests without
     /// sinking).
@@ -246,6 +248,12 @@ pub struct SideEnv {
     pub link_cell: u64,
     /// Snapshot of the poll before the link (the empty map at `H`, uncharged).
     pub link_snap: u32,
+    /// A2: address of `HeadData::e2` of the target head (the guard-free second entry of its root, `HeadData::e2sig` follows at
+    /// `head_off::E2SIG - head_off::E2`), or 0: the link always goes through `link_cell`. Set only when the chain of this trace proves the
+    /// entry guards of the root the head had when the trace was compiled (`exit::link_proof`).
+    pub link2_cell: u64,
+    /// A2: the signature of those entry guards (`exit::e2_intern`): the link takes the second entry only while the cell holds it.
+    pub link2_sig: u32,
 }
 
 impl AsmEnv {
@@ -282,6 +290,7 @@ impl Default for AsmEnv {
             budget_reg: None,
             exit_cells: 0,
             side: None,
+            entry_tags: [0xFD; 256],
             vcell: 0,
             gc_cells: Default::default(),
             num_names: [0; 2],
@@ -384,6 +393,11 @@ pub struct Asm {
     /// skipped: a native return / self-call has stored the budget word and keeps the budget register), `None` if the trace
     /// has none.
     pub inner: Option<L>,
+    /// A2: the guard-free second entry of a root trace: the entry bookkeeping, the budget charge and the leading run of `SLOAD`s without
+    /// their type checks (a link whose chain proves them jumps here; the poll was done by the link), then a jump behind the run.
+    pub entry2: Option<L>,
+    /// A2: the type checks `entry2` skips (`exit::lead_run`).
+    pub e2_req: Vec<(u16, Ty)>,
 }
 
 /// J1-1: the cold disambiguator of a fused `HREFK`+`HLOAD` pair with two exits.
@@ -2048,6 +2062,8 @@ struct Cx<'a> {
     ktag: Vec<(Ref, u8)>,
     /// B1: the stack tags the trace's `SLOAD`s saw ([`exit::wb_ents`]): a writeback store of the same static tag is redundant.
     wb_ents: Vec<(u16, Ty)>,
+    /// A2: the second entry's copy of the entry sequence is being emitted (`entry2_skip_entry_ok`).
+    in_e2: bool,
     /// B4-3 (`hkfuse`): the `HLOAD` (instruction index) whose value-tag check the preceding `HREFK` already did (one 16-bit compare of
     /// the value tag byte and the key tag byte).
     hk_fused: Option<usize>,
@@ -2590,6 +2606,7 @@ pub fn assemble(
         mat_codes: Vec::new(),
         ktag: Vec::new(),
         wb_ents: exit::wb_ents(ir),
+        in_e2: false,
         hk_fused: None,
         hk_cold: Vec::new(),
         rec_ci_cold: Vec::new(),
@@ -2655,6 +2672,16 @@ pub fn assemble(
         }
         cx.bind(past);
     }
+    // A2: the guard-free second entry of a plain root (not a side trace, prelude, native-frame trace, lazy region or first-iteration entry)
+    let e2plan = exit::lead_run(ir).filter(|_| {
+        env.side.is_none()
+            && !env.prelude
+            && env.head != 0
+            && !env.lazy
+            && !cx.first_flag
+            && inner.is_none()
+    });
+    let e2_after = cx.label();
     if rolled && env.side.is_none() {
         cx.head_pad();
         cx.bind(loop_l);
@@ -2705,6 +2732,9 @@ pub fn assemble(
             // and fail to the state at the start of the trace, where every register is free)
             cx.rec_ret_guards(i, rr)?;
         }
+        if e2plan.as_ref().is_some_and(|p| p.0 == i) {
+            cx.bind(e2_after);
+        }
         cx.pre(i);
         if !rolled && i + 1 == ir.ins.len() && cx.last_add_in_place(i) {
             // (the last body instruction and the back-edge swap it feeds, emitted together: no back-edge moves remain)
@@ -2714,6 +2744,9 @@ pub fn assemble(
         }
         cx.post(i);
         cx.track_tags(i);
+    }
+    if e2plan.as_ref().is_some_and(|p| p.0 == ir.ins.len()) {
+        cx.bind(e2_after);
     }
     if rolled {
         if !mutants::active("rolled_no_writeback") {
@@ -2739,7 +2772,7 @@ pub fn assemble(
     } else if let Some(sd) = env.side {
         // (P-E2: `link_cell == 0`: the trace ended with its always-taken exit, there is nothing to link to)
         if sd.link_cell != 0 {
-            cx.emit_link(sd)?;
+            cx.emit_link(sd, writeback)?;
         }
     } else {
         if cx.first_flag {
@@ -2748,6 +2781,32 @@ pub fn assemble(
         }
         cx.push(Op::Jmp(loop_l));
     }
+    // A2: the second entry sits behind the main code (nothing falls into it)
+    let (entry2, e2_req) = match e2plan {
+        Some((end, req)) => {
+            let e2 = cx.label();
+            cx.bind(e2);
+            cx.in_e2 = true;
+            cx.entry_checks(entry_fail)?;
+            cx.in_e2 = false;
+            if rolled {
+                cx.count_iteration();
+            }
+            // (the poll is the link's own; the budget charge is the root's: it exits through snapshot 0 like the main entry's)
+            for i in 1..end {
+                cx.pre(i);
+                if i == 1 {
+                    cx.ins(i, loop_l)?;
+                } else {
+                    cx.sload_g(i, false)?;
+                }
+                cx.post(i);
+            }
+            cx.push(Op::Jmp(e2_after));
+            (Some(e2), req)
+        }
+        None => (None, Vec::new()),
+    };
     cx.stubs_and_tail(
         entry_fail,
         (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(rec_fail),
@@ -2785,6 +2844,8 @@ pub fn assemble(
         hk_split,
         dbl,
         inner,
+        entry2,
+        e2_req,
     })
 }
 
@@ -2905,8 +2966,17 @@ impl Cx<'_> {
     /// whatever the head's dispatch cell says: the entry of its root trace (which re-checks its types), tier 1's
     /// counting stub, or `pcl[H]`. Nothing here refers to the code of another trace, so a flush of the target needs no
     /// patching (TR8).
-    fn emit_link(&mut self, sd: SideEnv) -> Result<(), AsmError> {
-        if !mutants::active("side_link_no_poll") {
+    fn emit_link(&mut self, sd: SideEnv, writeback: &[SnapEntry]) -> Result<(), AsmError> {
+        // A2: does the chain of this trace prove the entry guards of the target root (the ones its second entry skips)?
+        let link2 = sd.link2_cell != 0
+            && !self.env.lazy
+            && exit::link_proof(
+                self.ir,
+                writeback,
+                &self.env.entry_tags,
+                &exit::e2_req(sd.link2_sig),
+            );
+        if !mutants::active("side_link_no_poll") && !(link2 && mutants::active("entry2_no_poll")) {
             let x = self.poll_stub_label(sd.link_snap)?;
             self.poll_ops(x);
         }
@@ -2929,6 +2999,27 @@ impl Cx<'_> {
             let l = self.lz_leave_label(false);
             self.push(Op::Jmp(l));
             return Ok(());
+        }
+        if link2 {
+            // the second entry of the root, if it is still the one this trace was compiled against (same entry guards) and the head still
+            // dispatches to it; else the plain dispatch below
+            let slow = self.label();
+            self.push(Op::Mov(7, sd.link2_cell));
+            if !mutants::active("link2_sig_ignored") {
+                self.push(Op::BrM {
+                    cc: Cc::Ne,
+                    w: W::B4,
+                    m: rm(7, (super::cache::head_off::E2SIG - super::cache::head_off::E2) as i32),
+                    imm: sd.link2_sig as i32,
+                    to: slow,
+                });
+            }
+            self.ld(7, W::B8, rm(7, 0));
+            if mutants::active("link2_sig_ignored") {
+                self.br(Cc::Eq, 7, Src::Imm(0), slow);
+            }
+            self.push(Op::JmpR(7));
+            self.bind(slow);
         }
         self.push(Op::Mov(7, sd.link_cell));
         self.ld(7, W::B8, rm(7, 0));
@@ -3510,7 +3601,7 @@ impl Cx<'_> {
             );
         }
         // entry-ok bookkeeping (3.3): pending_before -> ext slot 0; pending = 0; entry_ok += 1 (saturating)
-        if self.env.head != 0 {
+        if self.env.head != 0 && !(self.in_e2 && mutants::active("entry2_skip_entry_ok")) {
             if self.first_flag {
                 let m = spill_m(self.ext_slot(FIRST_SLOT_K));
                 self.st(W::B8, m, Src::Imm(1));
@@ -3951,9 +4042,14 @@ impl Cx<'_> {
     // ---- SLOAD ----------------------------------------------------------------------------------------------------------
 
     fn sload(&mut self, i: usize) -> Result<(), AsmError> {
+        self.sload_g(i, true)
+    }
+
+    /// `SLOAD` `i`; `guard == false`: without its type check (the second entry of a root, A2).
+    fn sload_g(&mut self, i: usize, guard: bool) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
         let slot = ins.a;
-        if aux_bits(ins.aux) & 1 != 0 && !mutants::active("entry_no_typecheck") {
+        if guard && aux_bits(ins.aux) & 1 != 0 && !mutants::active("entry_no_typecheck") {
             let x = self.guard_label(i)?;
             let tag = match ins.t {
                 Ty::Nil => {
