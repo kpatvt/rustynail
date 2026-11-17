@@ -914,7 +914,7 @@ pub struct FrameLink { pub proto: ProtoKey, pub func_slot: u16, pub call_pc: u32
   register whose tag its static types already know, so the typed mid-block landing labels still verify the tags of **every**
   known register (`lower.rs`, P-X), dead ones included: an exit whose pruned register holds another tag than tier 1 assumes
   leaves to the interpreter at that pc (correct, slower); the filter "check live registers only" was tried and is unsound
-  (a payload-only store over a stale string tag corrupted the stack, `n5_str_variants`). `snapprune=0|1`
+  (a payload-only store over a stale string tag corrupted the stack, `n5_str_variants`). `snapprune=0|1` (default 1)
   (`RUSTYNAIL_JIT_TRACE_LIMITS`); `snapprune=2` is a measurement-only experiment that also prunes dead *locals* (not
   conforming: `debug.getlocal` of a dead local shows a stale value). Mutants `prune_live_temp`, `prune_local`,
   `prune_collectable`, `prune_loop_carried`, `prune_after_call`; the old `snap_prune_dead` prunes everything unconditionally.
