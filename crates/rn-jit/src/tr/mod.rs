@@ -650,6 +650,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         pcall: true,
         landcache: true,
         storm_step: storm_step(st, cfg.limits.allocguard),
+        snapprune: cfg.limits.snapprune != 0,
+        snapprune_locals: cfg.limits.snapprune >= 2,
         ..RecCfg::default()
     };
     match record::arm(st, ci, pc, rc) {
@@ -843,6 +845,8 @@ pub fn driver_start_side(
         max_ins: if deep { cfg.limits.deepins as usize } else { 0 },
         storm_step: storm_step(st, cfg.limits.allocguard),
         cloreuse: cfg.limits.cloreuse != 0,
+        snapprune: cfg.limits.snapprune != 0,
+        snapprune_locals: cfg.limits.snapprune >= 2,
         ..RecCfg::default()
     };
     let token = record::arm(st, ci, start.pc, rc)?;

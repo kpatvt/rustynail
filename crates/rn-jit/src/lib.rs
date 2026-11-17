@@ -30,6 +30,8 @@ pub mod emu;
 #[cfg(feature = "jit")]
 pub mod ir;
 #[cfg(feature = "jit")]
+pub mod live;
+#[cfg(feature = "jit")]
 pub mod lower;
 #[cfg(feature = "jit")]
 pub mod rt;

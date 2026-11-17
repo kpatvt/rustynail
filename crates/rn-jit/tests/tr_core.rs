@@ -7716,6 +7716,67 @@ fn a1_inline_newref() {
     }
 }
 
+/// F4: bytecode-liveness pruning of the dead numeric temporaries of snapshots (`snapprune=1`, docs/JIT_TRACE.md TR3 / D7): expressions with
+/// temporaries live across guards and exits, calls, varargs, loops, coroutines, errors, hooks (the named locals stay exact), collectables kept
+/// alive by dead slots and nbody-like float code, in every trace mode against the interpreter. Detector of the mutants `prune_live_temp`,
+/// `prune_local`, `prune_collectable`, `prune_loop_carried` and `prune_after_call`.
+#[test]
+fn f4_prune_programs() {
+    let progs = [
+        "jit_f4_temps_exits",
+        "jit_f4_calls",
+        "jit_f4_varargs",
+        "jit_f4_loops",
+        "jit_f4_hooks",
+        "jit_f4_coro",
+        "jit_f4_errors",
+        "jit_f4_gc",
+        "jit_f4_nbody",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace).limits_s("snapprune=1").opts("+verify"));
+            jobs.push(Job::new(p, trace).limits_s("snapprune=1"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("snapprune=1")
+                    .opts("+exitstorm=3 +verify"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("snapprune=1")
+                    .opts("+exitstorm=7 +verify +randra=5"),
+            );
+            jobs.push(Job::new(p, trace).limits_s("snapprune=1").opts("-loop"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("snapprune=1")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("snapprune=1")
+                    .env("RUSTYNAIL_GC_STRESS", "1")
+                    .env("RUSTYNAIL_GC_VERIFY", "1"),
+            );
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        // (the coroutine program yields through native frames: its traces abort, it only checks the results)
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.prog != "jit_f4_coro"
+        {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// S1: hot guard exits inside inlined frames (plain, tail and metamethod frames, depth 1..4, closures of one prototype with different
 /// upvalues, result adjustments, errors with tracebacks, a coroutine, stack growth under virtual frames, a hook installed in the middle,
 /// eight-way branching, argument type changes, vararg frames that are kept out) get side traces whose frames stay virtual: the

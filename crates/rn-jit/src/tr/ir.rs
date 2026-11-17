@@ -784,6 +784,34 @@ pub struct TraceIr {
     /// BUNDLE-L B: the pre-roll holds the hoisted bounds guards of a counted loop (`opt_loop::Em::plan_bhoist`): a persistent failure of them
     /// re-records the head without the hoist (`HeadData::nohoist`).
     pub hoisted: bool,
+    /// F4 (`snapprune`): per pc of the root prototype, the registers a snapshot before that pc may leave out when they hold a
+    /// number ([`crate::live::prunable`]); `None`: snapshots are complete (TR3). Only snapshots of the root frame without
+    /// inlined frames are pruned ([`PruneInfo::applies`]).
+    pub prune: Option<std::sync::Arc<PruneInfo>>,
+}
+
+/// F4: what the snapshot pruning needs ([`TraceIr::prune`]).
+#[derive(Clone, Debug, Default)]
+pub struct PruneInfo {
+    /// `dead[pc]`: the registers of the root frame that are dead temporaries before `pc`.
+    pub dead: Vec<crate::live::Set>,
+}
+
+impl PruneInfo {
+    /// May an entry of slot `slot` holding a value of type `ty` be left out of a snapshot `s` (the state before `s.pc` in the
+    /// root frame, no inlined frames, no open top)? Only plain entries holding numbers or `nil` / booleans: never a
+    /// collectable, a function slot or a sunk table.
+    pub fn drops(&self, s: &Snap, e: &SnapEntry, ty: Ty) -> bool {
+        s.nframes == 0
+            && s.frame == 0
+            && s.top == 0
+            && e.flags == 0
+            && matches!(ty, Ty::Int | Ty::Num | Ty::Nil | Ty::False | Ty::True)
+            && self
+                .dead
+                .get(s.pc as usize)
+                .is_some_and(|d| crate::live::has(d, u32::from(e.slot)))
+    }
 }
 
 /// P-M3: the native `RETURN1` that ends a continuation or return trace: the frame must have been called for exactly one
@@ -833,6 +861,7 @@ impl TraceIr {
         self.depth = 0;
         self.counts.clear();
         self.fn_root = false;
+        self.prune = None;
         self.rec_call = None;
         self.rec_ret = None;
     }

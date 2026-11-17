@@ -3701,6 +3701,31 @@ const TABLE: &[Row] = &[
         owner: "BUNDLE-Q",
         dets: &[d("tr_core", "q_phi_inplace_programs")],
     },
+    Row {
+        name: "prune_live_temp",
+        owner: "F4",
+        dets: &[d("tr_core", "f4_prune_programs")],
+    },
+    Row {
+        name: "prune_local",
+        owner: "F4",
+        dets: &[d("tr_core", "f4_prune_programs")],
+    },
+    Row {
+        name: "prune_collectable",
+        owner: "F4",
+        dets: &[d("tr_ir", "prune_snaps_drops_only_dead_numbers")],
+    },
+    Row {
+        name: "prune_loop_carried",
+        owner: "F4",
+        dets: &[d("tr_core", "f4_prune_programs")],
+    },
+    Row {
+        name: "prune_after_call",
+        owner: "F4",
+        dets: &[d("tr_core", "f4_prune_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

@@ -175,6 +175,10 @@ impl From<IrAbort> for AbortReason {
 /// Configuration of one recording.
 #[derive(Clone)]
 pub struct RecCfg {
+    /// F4 (`snapprune`): the snapshots of the root frame leave out the dead numeric temporaries (`snap::prune_snaps`).
+    pub snapprune: bool,
+    /// F4 experiment (`snapprune=2`): dead *locals* are pruned as well (`debug.getlocal` of a dead local then shows a stale value).
+    pub snapprune_locals: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -465,6 +469,8 @@ pub fn cache_hooks(id: super::cache::TrId, resolve: ResolveFn) -> DepHooks {
 impl Default for RecCfg {
     fn default() -> RecCfg {
         RecCfg {
+            snapprune: false,
+            snapprune_locals: false,
             hrefv: true,
             fold: true,
             cse: true,
@@ -2132,6 +2138,12 @@ impl Rec {
         }
         if mutants::active("snap_prune_dead") {
             snap::prune_dead(&mut self.b.ir, &self.meta, &self.sm.last_read);
+        }
+        if self.cfg.snapprune && self.segs.is_empty() {
+            // SAFETY: the root frame's prototype is alive for the whole recording (its closure runs in the root frame).
+            let p = unsafe { &*(self.frames[0].proto as *const Proto) };
+            self.b.ir.prune = snap::prune_info(p, self.cfg.snapprune_locals);
+            snap::prune_snaps(&mut self.b.ir);
         }
         let mut ir = std::mem::take(&mut self.b.ir);
         ir.counts = vec![n];

@@ -55,6 +55,8 @@ pub enum TrPref {
 
 /// P-F: the process default of [`TrLimits::sidemin`].
 pub const SIDEMIN_PROCESS: u32 = 4;
+/// F4: the process default of [`TrLimits::snapprune`] (also the struct default).
+pub const SNAPPRUNE_PROCESS: u32 = 0;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
@@ -565,6 +567,9 @@ pub struct TrLimits {
     /// (clamped to 64): the tick enters compiled code only at a head with an installed root trace (budgeted per head), without touching warm-up, start gate
     /// or head counters, and restores the formation countdown (0 = the tick counts down a whole period) (default [`REARM_PROCESS`]).
     pub rearm: u32,
+    /// F4 (`snapprune`): the snapshots of a trace's root frame leave out the dead numeric temporaries (`snap::prune_snaps`; docs/JIT_TRACE.md TR3 / D7): 0 = off, 1 = on (default
+    /// [`SNAPPRUNE_PROCESS`]).
+    pub snapprune: u32,
 }
 
 impl Default for TrLimits {
@@ -658,6 +663,7 @@ impl Default for TrLimits {
             pollr15: POLLR15_PROCESS,
             xregs: XREGS_PROCESS,
             rearm: REARM_PROCESS,
+            snapprune: SNAPPRUNE_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -825,6 +831,7 @@ impl TrLimits {
                 "pollr15" => l.pollr15 = v.min(2),
                 "xregs" => l.xregs = v.min(3),
                 "rearm" => l.rearm = v.min(64),
+                "snapprune" => l.snapprune = v.min(2),
                 _ => bad.push(w.to_string()),
             }
         }

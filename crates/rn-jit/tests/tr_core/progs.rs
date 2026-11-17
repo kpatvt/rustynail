@@ -15593,4 +15593,49 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/tables_19_move_grow_same.lua"),
     },
+    Prog {
+        name: "jit_f4_temps_exits",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_01_temps_exits.lua"),
+    },
+    Prog {
+        name: "jit_f4_calls",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_02_calls.lua"),
+    },
+    Prog {
+        name: "jit_f4_varargs",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_03_varargs.lua"),
+    },
+    Prog {
+        name: "jit_f4_loops",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_04_loops.lua"),
+    },
+    Prog {
+        name: "jit_f4_hooks",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_05_hooks.lua"),
+    },
+    Prog {
+        name: "jit_f4_coro",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_06_coro.lua"),
+    },
+    Prog {
+        name: "jit_f4_errors",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_07_errors.lua"),
+    },
+    Prog {
+        name: "jit_f4_gc",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_08_gc.lua"),
+    },
+    Prog {
+        name: "jit_f4_nbody",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f4_09_nbody.lua"),
+    },
 ];

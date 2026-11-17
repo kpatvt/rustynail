@@ -467,6 +467,19 @@ impl<'a> Em<'a> {
         if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
             return up("too many snapshots");
         }
+        // F4: the entries the loop state adds (the slots earlier iterations wrote) are pruned like the recorded ones
+        let kept: Vec<SnapEntry>;
+        let entries = match &self.src.prune {
+            Some(p) => {
+                kept = entries
+                    .iter()
+                    .copied()
+                    .filter(|e| !snap::may_drop(p, &s, e, self.b.ir.ty_of(e.r)))
+                    .collect();
+                &kept[..]
+            }
+            None => entries,
+        };
         let n = self.b.ir.snapshot(s, entries);
         self.b.ir.frames.extend_from_slice(links);
         self.snap_step.push(step);

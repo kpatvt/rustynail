@@ -897,6 +897,27 @@ pub struct FrameLink { pub proto: ProtoKey, pub func_slot: u16, pub call_pc: u32
   object's lifetime, changing finalizer timing, weak-table contents and `collectgarbage("count")`. Sole relaxation:
   with sinking on (F8), dead or out-of-scope slots may differ as TR29.2(c) allows (decision D7); with `-sink` TR3 holds
   exactly.
+- **TR3 relaxation F4 (`snapprune`, user-approved relaxation of TR3 / D7 for dead numeric temporaries).** A snapshot taken
+  before the instruction at `pc` of the **root frame** (no inlined frames, no open `top`, a trace without `RETF` segments)
+  leaves out an entry when (1) its slot is a *temporary*: at or above the active locals of `pc - 1 ..= pc + 1` per
+  `Proto::locvars` (a prototype without local-variable debug information, or with `TBC`, is never pruned), and not a
+  register an inner closure captures; (2) the slot is *dead* at `pc`: no path of the bytecode CFG reads it before writing it
+  (`live.rs`; every open range, `CALL`/`RETURN`/`SETLIST B=0`, generic-`for`, `CLOSE`, `VARARGPREP` and unknown opcode counts
+  as reading every register from `A` up, definitions count only when unconditional); (3) the recorded value is a number
+  (`Int`, `Num`) or `nil` / a boolean. Collectables (strings, tables, closures, userdata, threads), function slots and sunk
+  tables are never pruned, and neither is any local that is active around `pc`. The exit restore leaves the slot as it is
+  (stale, never read before it is rewritten, by the liveness proof). The loop optimiser prunes the entries it adds for earlier
+  iterations by the same rule, so a loop PHI that only fed such entries disappears (`opt_loop::Em::new_snap`). Observable:
+  `debug.getlocal` of a dead numeric *temporary* inside a hook that fires right after an exit may show a stale value
+  (PUC does not specify the contents of temporaries; the locals of the function stay exact). The collector marks only below the
+  running top and clears above it, so a stale slot does not change object lifetimes. Tier 1 writes only the payload of a
+  register whose tag its static types already know, so the typed mid-block landing labels still verify the tags of **every**
+  known register (`lower.rs`, P-X), dead ones included: an exit whose pruned register holds another tag than tier 1 assumes
+  leaves to the interpreter at that pc (correct, slower); the filter "check live registers only" was tried and is unsound
+  (a payload-only store over a stale string tag corrupted the stack, `n5_str_variants`). `snapprune=0|1`
+  (`RUSTYNAIL_JIT_TRACE_LIMITS`); `snapprune=2` is a measurement-only experiment that also prunes dead *locals* (not
+  conforming: `debug.getlocal` of a dead local shows a stale value). Mutants `prune_live_temp`, `prune_local`,
+  `prune_collectable`, `prune_loop_carried`, `prune_after_call`; the old `snap_prune_dead` prunes everything unconditionally.
 - **Cost of TR3 (v1.3, full-build requirement).** Every slot written in an iteration, inlined-callee temporaries
   included, must be restorable at the exits of the *next* iteration until it is redefined, so in the peeled layout its
   value stays live across the back-edge as a PHI even when the next iteration never reads it: register pressure,

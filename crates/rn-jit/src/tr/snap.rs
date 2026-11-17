@@ -191,6 +191,59 @@ pub fn prune_dead(ir: &mut TraceIr, meta: &[SnapMeta], last_read: &[i32]) {
     }
 }
 
+/// F4 (`snapprune`): the pruning data of the root prototype `p` (`None`: nothing may be pruned for it). The mutants
+/// `prune_live_temp`, `prune_local` and `prune_loop_carried` / `prune_after_call` build a deliberately wrong analysis.
+pub fn prune_info(p: &rn_core::func::Proto, locals: bool) -> Option<std::sync::Arc<PruneInfo>> {
+    let f = crate::live::Faults {
+        no_backedges: mutants::active("prune_loop_carried"),
+        open_empty: mutants::active("prune_after_call"),
+        ignore_live: mutants::active("prune_live_temp"),
+        ignore_locals: locals
+            || mutants::active("prune_local")
+            || mutants::active("prune_loop_carried"),
+    };
+    crate::live::prunable_with(p, f).map(|dead| std::sync::Arc::new(PruneInfo { dead }))
+}
+
+/// May the entry `e` (a value of type `ty`) be left out of snapshot `s`? [`PruneInfo::drops`], with mutant
+/// `prune_collectable` (a table or string temporary is dropped too).
+pub fn may_drop(p: &PruneInfo, s: &Snap, e: &SnapEntry, ty: Ty) -> bool {
+    if mutants::active("prune_collectable") && matches!(ty, Ty::Tab | Ty::ShrStr | Ty::LngStr) {
+        return s.nframes == 0
+            && s.frame == 0
+            && s.top == 0
+            && e.flags == 0
+            && p.dead
+                .get(s.pc as usize)
+                .is_some_and(|d| crate::live::has(d, u32::from(e.slot)));
+    }
+    p.drops(s, e, ty)
+}
+
+/// F4: leaves the dead numeric temporaries out of the maps of the snapshots of `ir` (see [`TraceIr::prune`]). The slots
+/// an exit does not restore keep whatever the stack holds, which the liveness proof says nothing reads.
+pub fn prune_snaps(ir: &mut TraceIr) {
+    let Some(p) = ir.prune.clone() else {
+        return;
+    };
+    let mut new_map: Vec<SnapEntry> = Vec::with_capacity(ir.snapmap.len());
+    let mut wins: Vec<(u32, u16)> = Vec::with_capacity(ir.snaps.len());
+    for s in &ir.snaps {
+        let (start, len) = s.map;
+        let at = new_map.len() as u32;
+        for e in &ir.snapmap[start as usize..start as usize + usize::from(len)] {
+            if !may_drop(&p, s, e, ir.ty_of(e.r)) {
+                new_map.push(*e);
+            }
+        }
+        wins.push((at, (new_map.len() as u32 - at) as u16));
+    }
+    ir.snapmap = new_map;
+    for (s, w) in ir.snaps.iter_mut().zip(wins) {
+        s.map = w;
+    }
+}
+
 /// An inlined frame as the recorder knows it when it takes a snapshot (5.5): what [`FrameLink`] stores plus the ref of
 /// the closure in the function slot (the `FUNC` entry of the map).
 #[derive(Clone, Copy, Debug)]

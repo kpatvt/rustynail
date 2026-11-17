@@ -928,3 +928,64 @@ fn retf_in_the_model_rebases_slots_and_uvrel() {
     m.retf_below.pop();
     assert!(run(&ir, &mut m).is_err());
 }
+
+/// F4: what `snap::prune_snaps` may leave out of a snapshot: only plain entries of the root frame whose slot is dead at the snapshot's pc
+/// and whose value is a number, `nil` or a boolean. Never a live slot, a collectable (a hook's `debug.getlocal` and the collector see the
+/// slots of the whole frame), a function slot, a sunk table or any entry of a snapshot with inlined frames or an open top. Detector of
+/// the mutant `prune_collectable`.
+#[test]
+fn prune_snaps_drops_only_dead_numbers() {
+    use rn_jit::tr::snap::prune_snaps;
+    use std::sync::Arc;
+    let mut ir = TraceIr::default();
+    let k_int = ir.kint(7);
+    let k_num = ir.knum(2.5);
+    let mut tab = |slot: u16, t: Ty| {
+        ir.ins.push(Ins {
+            op: TOp::Sload,
+            t,
+            flags: 0,
+            a: slot,
+            b: 0,
+            prev: NOREF,
+            aux: 0,
+        });
+        REF_BIAS + (ir.ins.len() - 1) as Ref
+    };
+    let (r_tab, r_str, r_nil) = (tab(0, Ty::Tab), tab(1, Ty::ShrStr), tab(2, Ty::Nil));
+    let e = |slot: u16, r: Ref, flags: u8| SnapEntry { slot, r, flags };
+    // slots 3..=9 are dead at pc 0; slot 5 is live, slot 9 a function slot
+    let entries = [
+        e(0, r_tab, 0),
+        e(1, r_str, 0),
+        e(2, r_nil, 0),
+        e(3, k_int, 0),
+        e(4, k_num, 0),
+        e(5, k_num, 0),
+        e(6, r_tab, SNAP_SUNK),
+        e(9, r_tab, SNAP_FUNC),
+    ];
+    let mut dead = [0u64; 4];
+    for s in [0, 1, 2, 3, 4, 6, 9] {
+        dead[0] |= 1 << s;
+    }
+    ir.prune = Some(Arc::new(PruneInfo { dead: vec![dead] }));
+    let plain = Snap::default();
+    let framed = Snap {
+        nframes: 1,
+        ..Snap::default()
+    };
+    let open_top = Snap {
+        top: 3,
+        ..Snap::default()
+    };
+    for s in [plain, framed, open_top] {
+        ir.snapshot(s, &entries);
+    }
+    prune_snaps(&mut ir);
+    let slots = |n: u32| -> Vec<u16> { ir.snap_entries(n).iter().map(|e| e.slot).collect() };
+    // nil and numbers that are dead go; the table and the string (dead too), the live number, the sunk table and the function slot stay
+    assert_eq!(slots(0), vec![0, 1, 5, 6, 9]);
+    assert_eq!(slots(1), vec![0, 1, 2, 3, 4, 5, 6, 9]);
+    assert_eq!(slots(2), vec![0, 1, 2, 3, 4, 5, 6, 9]);
+}
