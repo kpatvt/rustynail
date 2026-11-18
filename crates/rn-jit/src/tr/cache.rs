@@ -66,7 +66,7 @@ pub const HKADDR_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
 pub const SHAPEGUARD_PROCESS: u32 = 1;
 /// R1 (`regcarry`): the process default of [`TrLimits::regcarry`] (also the struct default).
-pub const REGCARRY_PROCESS: u32 = 0;
+pub const REGCARRY_PROCESS: u32 = 1;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).

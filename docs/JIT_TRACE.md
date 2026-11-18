@@ -2048,7 +2048,7 @@ site sees many layouts (hidden-class polymorphism) are demoted after 48 misses a
 **What.** A trace-to-trace transition used to go through the stack: the exit stub of the parent stores the whole snapshot (tag and payload per slot), the side trace
 re-loads what it reads, writes back what it changed at its link, and the target root re-loads its leading `SLOAD` run behind the guard-free second entry. An `nbody`
 step makes six trace entries and five exits (the inner `j` loop averages two iterations, the outer iteration is a side trace that links back to the root), so most of
-its instructions beyond the arithmetic are these stores and loads. With `regcarry` (`RUSTYNAIL_JIT_TRACE_LIMITS=regcarry=N`; 0 = off (default), 1 = both halves,
+its instructions beyond the arithmetic are these stores and loads. With `regcarry` (`RUSTYNAIL_JIT_TRACE_LIMITS=regcarry=N`; 0 = off, 1 = both halves (default),
 2 = exits only, 3 = links only) a transition between two traces whose both ends are JIT code leaves the values in registers (or spill slots):
 
 * **Half B, link into the root (`HeadData::e3`).** The root that has a guard-free second entry (A2) also publishes a *third entry* `e3`: the point behind its leading
