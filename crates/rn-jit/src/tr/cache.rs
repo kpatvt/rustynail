@@ -601,6 +601,10 @@ pub struct TrLimits {
     pub regcarry: u32,
     /// S4 (`shapedemote`): shape-guard exits of one trace after which its family is re-recorded without shape guards (default [`SHAPE_DEMOTE`]).
     pub shapedemote: u32,
+    /// R1 (`carrymin`): the fewest carried slots a root needs to offer a third entry (default [`CARRY_MIN_SLOTS`]; the tests lower it).
+    pub carrymin: u32,
+    /// R1 (`carrylive`): 1 = carry only values the trace keeps live anyway (default), 0 = every unmodified leading `SLOAD` (the tests).
+    pub carrylive: u32,
 }
 
 impl Default for TrLimits {
@@ -700,6 +704,8 @@ impl Default for TrLimits {
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
+            carrymin: CARRY_MIN_SLOTS as u32,
+            carrylive: 1,
             regcarry: REGCARRY_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
@@ -874,6 +880,8 @@ impl TrLimits {
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,
+                "carrymin" => l.carrymin = v,
+                "carrylive" => l.carrylive = v.min(1),
                 "regcarry" => l.regcarry = v.min(3),
                 _ => bad.push(w.to_string()),
             }
@@ -3836,7 +3844,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
         }
         // R1: no exit of a flushed trace jumps into a side trace with registers any more
-        if t.cells.len() == 2 * m.snaps.len() && !mutants::active("carry_cells_kept") {
+        if t.cells.len() == 2 * m.snaps.len() {
             for c in &t.cells[m.snaps.len()..] {
                 c.set(0);
             }
@@ -3878,7 +3886,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
             // R1: the carry cell of the exit
             let ns = p.xmeta.as_ref().map_or(0, |m| m.snaps.len());
-            if ns != 0 && p.cells.len() == 2 * ns && !mutants::active("carry_cell_side_stale") {
+            if ns != 0 && p.cells.len() == 2 * ns {
                 if let Some(c) = p.cells.get(ns + k) {
                     c.set(0);
                 }
@@ -4379,13 +4387,7 @@ fn carry_slots(
             return Vec::new();
         }
         let src = match s.src {
-            ValSrc::Reg(r)
-                if (r != 10 || mutants::active("carry_r14_dst"))
-                    && r != 7
-                    && (ty != super::ir::Ty::Num) =>
-            {
-                CarrySrc::G(r)
-            }
+            ValSrc::Reg(r) if r != 10 && r != 7 && (ty != super::ir::Ty::Num) => CarrySrc::G(r),
             ValSrc::Xmm(x) if ty == super::ir::Ty::Num => CarrySrc::X(x),
             ValSrc::Spill(n) => CarrySrc::Spill(n),
             _ => return Vec::new(),

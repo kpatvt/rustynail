@@ -1281,7 +1281,7 @@ impl Resolver for Res {
 /// carried slot it does not name itself, and the exit restores it (tag and payload) like any other entry. Carried slots are the run's `Int` / `Num` / table
 /// slots that no `SSTORE` of the trace writes (an `SSTORE`d slot is omitted from snapshots because the stack holds its value: that would not be the
 /// `SLOAD`'s). Returns the carried slots (also in `ir.carry`); a trace with a snapshot shared by a guard of the run and a later one is left alone.
-fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
+fn carry_dense(ir: &mut ir::TraceIr, min: usize, live: bool) -> Vec<u16> {
     use ir::{aux_snap, SnapEntry, TOp, Ty, F_GUARD, REF_BIAS, SNAP_CARRY};
     ir.carry.clear();
     if ir.loop_at.is_none() {
@@ -1298,15 +1298,13 @@ fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
         .collect();
     let mut slots: Vec<(u16, ir::Ref)> = Vec::new();
     for (k, &(slot, ty)) in req.iter().enumerate() {
-        if matches!(ty, Ty::Int | Ty::Num | Ty::Tab)
-            && (!stored.contains(&slot) || mutants::active("carry_stored_slot"))
-        {
+        if matches!(ty, Ty::Int | Ty::Num | Ty::Tab) && !stored.contains(&slot) {
             slots.push((slot, REF_BIAS + (2 + k) as u16));
         }
     }
     // a dense entry keeps its `SLOAD`'s value live up to the last guard: carry only the values the trace keeps live anyway (used inside the loop body, which
     // holds them across the back-edge, or at or behind its last guard); the others would cost register pressure (spills) in every iteration
-    {
+    if live {
         let last_guard = ir
             .ins
             .iter()
@@ -1330,7 +1328,7 @@ fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
         });
     }
     // a root with few carried values gains too little from a carrying link to pay for the `stale` test on each of its exits
-    if slots.len() < cache::CARRY_MIN_SLOTS {
+    if slots.len() < min {
         return Vec::new();
     }
     let n = ir.snaps.len();
@@ -1533,7 +1531,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
         && matches!(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry }, 1 | 3);
     if carry_on {
-        carry_dense(&mut rec.ir);
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        let lim = unsafe { &(*crate::rt::data_ptr(st)).tr.cfg.limits };
+        carry_dense(&mut rec.ir, lim.carrymin as usize, lim.carrylive != 0);
     }
     if side.is_some() && !rec.ir.carry_in.is_empty() {
         carry_demote(

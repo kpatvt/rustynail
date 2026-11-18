@@ -8037,11 +8037,19 @@ fn r1_regcarry_programs() {
         "r1_gc_coroutine",
         "r1_many_slots",
         "r1_copy_slots",
+        "r1_live_many",
+        "r1_live_flip",
     ];
     let mut jobs = Vec::new();
     for p in progs {
         for trace in ["always", "on2"] {
-            for lim in ["regcarry=1", "regcarry=2", "regcarry=3", "regcarry=0"] {
+            for lim in [
+                "regcarry=1",
+                "regcarry=1,carrymin=1,carrylive=0",
+                "regcarry=2",
+                "regcarry=3,carrymin=1,carrylive=0",
+                "regcarry=0",
+            ] {
                 jobs.push(Job::new(p, trace).limits_s(lim));
                 jobs.push(Job::new(p, trace).limits_s(lim).opts("+verify"));
                 jobs.push(
@@ -8051,9 +8059,21 @@ fn r1_regcarry_programs() {
                 );
                 jobs.push(Job::new(p, trace).limits_s(lim).budget(17));
             }
-            jobs.push(Job::new(p, trace).limits_s("regcarry=1").opts("-loop"));
-            jobs.push(Job::new(p, trace).limits_s("regcarry=1").opts("+randra=3"));
-            jobs.push(Job::new(p, trace).limits_s("regcarry=1").opts("+wb"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("regcarry=1,carrymin=1,carrylive=0")
+                    .opts("-loop"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("regcarry=1,carrymin=1,carrylive=0")
+                    .opts("+randra=3"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("regcarry=1,carrymin=1,carrylive=0")
+                    .opts("+wb"),
+            );
             jobs.push(
                 Job::new(p, trace)
                     .limits_s("regcarry=1")
@@ -8067,7 +8087,7 @@ fn r1_regcarry_programs() {
         );
     }
     let res = compare(jobs);
-    for p in ["r1_nbody_pairs", "r1_error_locals"] {
+    for p in ["r1_nbody_pairs", "r1_live_many"] {
         let side = res
             .iter()
             .filter(|(j, _)| {

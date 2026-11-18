@@ -2107,5 +2107,10 @@ a carrying transition restores the carried slots, tag included**:
    any destination is written. The budget register is the same in both traces (`ra::BUDGET_GPR`, `membudget` off), else nothing carries.
 6. *Observers.* Exits to the interpreter see a complete stack (all of the above); a hook or error in the interpreter after an exit sees the state `restore` leaves, as before;
    `Heap::verify`, GC roots and coroutine yields need nothing (no GC point on a trace, TR9); the entry bookkeeping counters are updated once per entry as in the plain path.
-   Mutants (registered in `mutants::NAMES`): `carry_stored_slot`, `carry_plain_no_store`, `carry_drop_move`, `carry_in_drop_move`, `carry_store_dropped`,
-   `carry_exit_tag_skip`, `carry_no_stale_flag`, `carry_dense_skip`, `carry_link_tag_skip`, `carry_wb_prune_live`, `carry_demote_copied`.
+   Mutants (registered in `mutants::NAMES`, all caught by `tr_core::r1_regcarry_programs`): `carry_plain_no_store`, `carry_drop_move`, `carry_in_drop_move`,
+   `carry_store_dropped`, `carry_exit_tag_skip`, `carry_no_stale_flag`, `carry_dense_skip`, `carry_sig_ignored` (needs `r1_live_flip`: a re-recorded root), `carry_wb_prune_live`,
+   `carry_demote_copied`. Rules for which no live program was found that can tell (tried: all `r1_*` programs in every mode, budget 17, hooks, GC stress, exit storm), so
+   they have no mutant: the poll and the budget charge of the link (omitting one only delays a yield / hook / budget exhaustion by one transition, nothing observable
+   differs), the room check of the carry plan, `r14` as a carry destination, the flush of carry cells (a stale cell would need a flushed side trace re-entered through a
+   parent that keeps its stub), the link's tag store (the stack tags are right already in every program tried), `carry_stored_slot`. They are covered by the
+   argument above and by the `tr_asm` / `tr_exit` structural tests only.

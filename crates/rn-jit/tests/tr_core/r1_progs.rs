@@ -248,4 +248,99 @@ for k = 1, 60 do f(t, 12) end
 for _, n in ipairs { 12, 5, 1, 0 } do print(n, f(t, n)) end
 "#,
     },
+    Prog {
+        name: "r1_live_many",
+        small: false,
+        src: r#"
+local function work(t, n, bad)
+  local s1, s2, s3, s4 = 0.0, 0.0, 0.0, 0.0
+  local c = 0
+  for i = 1, n do
+    local row = t[i]
+    local a, b, d, e = row.a, row.b, row.d, row.e
+    local x1, x2, x3, x4 = a * 1.5, b * 2.5, d * 0.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x2
+      s2 = s2 + x2 - x3 * j
+      s3 = s3 + x3 + x4 * j
+      s4 = s4 + x4 - x1
+      c = c + 1
+    end
+    row.a = a + s1 * 1e-6; row.b = b - s2 * 1e-6; row.d = d + s3 * 1e-6; row.e = e + s4 * 1e-7
+    if i == bad then local q = row.missing + 1 end
+  end
+  return s1, s2, s3, s4, c
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40, -1) end
+local out = {}
+for _, bad in ipairs { 3, 17, 40, 1 } do
+  local ok, e = xpcall(work, function(m)
+    local r = {}
+    for l = 1, 16 do
+      local name, v = debug.getlocal(2, l)
+      if name then r[#r + 1] = name .. "=" .. (type(v) == "table" and "tbl" or tostring(v)) end
+    end
+    return table.concat(r, ",") .. " | " .. tostring(m)
+  end, t, 40, bad)
+  out[#out + 1] = tostring(ok) .. " " .. tostring(e)
+end
+print(table.concat(out, "\n"))
+print(work(t, 40, -1))
+"#,
+    },
+    Prog {
+        name: "r1_live_flip",
+        small: false,
+        src: r#"
+local function work(t, n, bad)
+  local s1, s2, s3, s4 = 0.0, 0.0, 0.0, 0.0
+  local c = 0
+  for i = 1, n do
+    local row = t[i]
+    local a, b, d, e = row.a, row.b, row.d, row.e
+    local x1, x2, x3, x4 = a * 1.5, b * 2.5, d * 0.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x2
+      s2 = s2 + x2 - x3 * j
+      s3 = s3 + x3 + x4 * j
+      s4 = s4 + x4 - x1
+      c = c + 1
+    end
+    row.a = a + s1 * 1e-6; row.b = b - s2 * 1e-6; row.d = d + s3 * 1e-6; row.e = e + s4 * 1e-7
+    if i == bad then local q = row.missing + 1 end
+  end
+  return s1, s2, s3, s4, c
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40, -1) end
+local out = {}
+for _, bad in ipairs { 3, 17, 40, 1 } do
+  local ok, e = xpcall(work, function(m)
+    local r = {}
+    for l = 1, 16 do
+      local name, v = debug.getlocal(2, l)
+      if name then r[#r + 1] = name .. "=" .. (type(v) == "table" and "tbl" or tostring(v)) end
+    end
+    return table.concat(r, ",") .. " | " .. tostring(m)
+  end, t, 40, bad)
+  out[#out + 1] = tostring(ok) .. " " .. tostring(e)
+end
+print(table.concat(out, "\n"))
+print(work(t, 40, -1))
+-- the types of the carried values change: entry checks fail, the root is re-recorded, links compiled against the old layout must not carry
+for i = 1, 40 do t[i].e = 2; t[i].d = i end
+for k = 1, 200 do work(t, 40, -1) end
+print(work(t, 40, -1))
+for _, bad in ipairs { 5, 33 } do
+  local ok, e = xpcall(work, function(m) return m end, t, 40, bad)
+  print(ok, e)
+end
+for i = 1, 40 do t[i].e = 0.75; t[i].d = i * 0.5 end
+for k = 1, 200 do work(t, 40, -1) end
+print(work(t, 40, -1))
+"#,
+    },
 ];

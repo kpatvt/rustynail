@@ -3225,9 +3225,7 @@ impl Cx<'_> {
             return None;
         }
         let (need_e, need_d) = info.room;
-        if !(self.env.room_have.0 >= need_e && self.env.room_have.1 >= need_d)
-            && !mutants::active("carry_room_ignored")
-        {
+        if !(self.env.room_have.0 >= need_e && self.env.room_have.1 >= need_d) {
             return None;
         }
         for d in &info.dsts {
@@ -3289,9 +3287,7 @@ impl Cx<'_> {
         let x = self.poll_stub_label(sd.link_snap)?;
         let xr = self.label();
         self.rc_cold.push((xr, x, stores));
-        if !mutants::active("carry_no_poll") {
-            self.poll_ops(xr);
-        }
+        self.poll_ops(xr);
         // the entry bookkeeping of the root (`entry_checks`: `entry_ok` saturating at its cap, `pending` cleared; the undo word `pending_before` is only read by
         // the entry-check failure stubs, which this entry never reaches), in memory-operand form: `V7` only
         {
@@ -3315,12 +3311,10 @@ impl Cx<'_> {
         // the root's budget charge (its `BUDGET` is behind the run, skipped by the third entry)
         let r = info.budget_reg;
         let n = i32::from(info.budget);
-        if !mutants::active("carry_no_budget") {
-            self.br(Cc::Lt, r, Src::Imm(n), xr);
-            self.push(Op::Sub(r, Src::Imm(n)));
-        }
+        self.br(Cc::Lt, r, Src::Imm(n), xr);
+        self.push(Op::Sub(r, Src::Imm(n)));
         // the tags the stack does not hold already (the payloads of the carried slots travel in registers; the root's tag elision rests on the stack tags)
-        if !mutants::active("carry_link_tag_skip") {
+        {
             for e in writeback {
                 if info.dsts.iter().any(|d| d.carried && d.slot == e.slot) {
                     let tag = match (TraceIr::is_const(e.r), self.ir.kval_opt(e.r)) {
