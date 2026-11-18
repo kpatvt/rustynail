@@ -19,6 +19,7 @@ pub mod phase;
 pub mod print;
 pub mod ra;
 pub mod record;
+pub mod shape;
 pub mod sink;
 pub mod snap;
 
@@ -560,6 +561,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         };
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
+        shape: cfg.limits.shapeguard != 0 && !pr.is_some_and(|pr| cache::head_noshape(st, pr, pc)),
         fold: cfg.opts.fold,
         cse: cfg.opts.cse,
         verify: cfg.opts.verify,
@@ -742,6 +744,7 @@ pub fn driver_start_side(
         cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
+        shape: cfg.limits.shapeguard != 0 && !cache::family_noshape(st, id),
         fold: cfg.opts.fold,
         cse: cfg.opts.cse,
         verify: cfg.opts.verify,

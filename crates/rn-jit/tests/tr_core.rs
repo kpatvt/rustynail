@@ -27,6 +27,8 @@ mod h1_progs;
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
 mod progs;
+#[path = "tr_core/s4_progs.rs"]
+mod s4_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 
@@ -39,6 +41,7 @@ use rn_core::status::Status;
 use rn_jit::tr::cache::{TrConfig, TrLimits, TrMode};
 use rn_jit::tr::TraceOpts;
 use rn_jit::{Config, Mode};
+use s4_progs::S4_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -147,6 +150,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(A1_PROGS)
         .chain(G1_SLOW)
         .chain(H1_PROGS)
+        .chain(S4_PROGS)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
@@ -7721,6 +7725,177 @@ fn a1_inline_newref() {
                 "{}: no trace ran: {}",
                 j.prog,
                 o.stats.line()
+            );
+        }
+    }
+}
+
+const S4_LIST: &[&str] = &[
+    "s4_nbody_like",
+    "s4_extra_keys",
+    "s4_nil_readd",
+    "s4_insert_midloop",
+    "s4_insert_every_iter",
+    "s4_many_instances",
+    "s4_fresh_tables",
+    "s4_gc_deadkey",
+    "s4_weak",
+    "s4_sizes",
+    "s4_shrink",
+    "s4_meta",
+    "s4_alternate",
+    "s4_late_id",
+    "s4_next_pairs",
+    "s4_tableops",
+    "s4_coro",
+    "s4_hooks",
+    "s4_errors",
+    "s4_strkeys",
+];
+
+/// The number after `key` in the `[trace] shape:` summary line of a child's stderr (0 when absent).
+fn shape_stat(stderr: &str, key: &str) -> u64 {
+    stderr
+        .lines()
+        .find(|l| l.starts_with("[trace] shape:"))
+        .and_then(|l| l.split(key).nth(1))
+        .and_then(|r| r.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// S4 (`shapeguard=1`): the `HREFK`s of a table are covered by one `HSHAPE` guard on the layout id of its node vector and skip the key compare. Programs
+/// with objects built identically, with other extra keys and insertion orders, fields deleted and re-added, keys added mid-loop, recycled nodes after a
+/// collection, weak tables, tables of 7 / 8 / 9 / 16 / 17 fields, shrinking tables, `__index` tables, instances in alternating order, ids that are computed
+/// after the trace was recorded, `next` with insertions, `table.insert` / `remove` / `move`, coroutines, hooks, errors and strings freed and re-created at the
+/// same address, in every trace mode, with exit storms, verification and the collector under stress, against the interpreter. Detector of the mutants
+/// `shape_guard_skipped`, `shape_id_reuse` and (with the IR test of `tr_record`) `shape_stale_across_rehash`.
+#[test]
+fn s4_shape_guard_programs() {
+    let mut jobs = Vec::new();
+    let l = "shapeguard=1";
+    for p in S4_LIST {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace).limits_s(l).opts("+verify"));
+            jobs.push(Job::new(p, trace).limits_s(l));
+            jobs.push(Job::new(p, trace).limits_s(l).opts("+exitstorm=3 +verify"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s(l)
+                    .opts("+exitstorm=7 +verify +randra=5"),
+            );
+            jobs.push(Job::new(p, trace).limits_s(l).budget(17));
+            jobs.push(Job::new(p, trace).limits_s(l).opts("-loop"));
+            jobs.push(Job::new(p, trace).limits_s(l).opts("-fwd -cse -loop -sink"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s(l)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            for gm in ["gen", "inc"] {
+                jobs.push(
+                    Job::new(p, trace)
+                        .limits_s(l)
+                        .env("RUSTYNAIL_GC_STRESS", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .limits_s(l)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("RUSTYNAIL_GC_VERIFY", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+            }
+        }
+        jobs.push(Job::new(p, "always").limits_s(l).opts("+emurun +verify"));
+        jobs.push(Job::new(p, "always").limits_s("shapeguard=1,hkaddr=0"));
+        jobs.push(Job::new(p, "always"));
+        jobs.push(Job::new(p, "t1"));
+    }
+    // `table.insert(t, k)` into a table that has hash fields diverges in the recorder's lockstep model on `main` too (TR17: "table 2 node N: VM 1, IR 3" after
+    // the first call; not caused by S4, reproduced with the knob off on the parent commit): its jobs run without `+verify`
+    jobs.retain(|j| !(j.prog == "s4_tableops" && j.opts.contains("+verify")));
+    compare(jobs);
+}
+
+/// S4: the shape guard is effective on identical objects (one id for the five bodies, the ids of the other four filled by the handler, no demotion) and a
+/// loop that gives its table a new layout every iteration, or reads fifty different layouts, is demoted to a recording without shape guards after a bounded
+/// number of handler exits (no storm: a handler call per iteration would be 1500 fills). Detector of the mutants `shape_demote_never` (no demotion) and
+/// `shape_miss_counts_hot` (a zero-id miss counts towards hotness: side traces form on the shape guard).
+#[test]
+fn s4_shape_guard_effectiveness_and_demotion() {
+    let l = "shapeguard=1";
+    let jobs = vec![
+        Job::new("s4_nbody_like", "always").limits_s(l),
+        Job::new("s4_nbody_like", "on2").limits_s(l),
+        Job::new("s4_insert_every_iter", "always").limits_s(l),
+        Job::new("s4_insert_every_iter", "on2").limits_s(l),
+        Job::new("s4_many_instances", "always").limits_s(l),
+        Job::new("s4_late_id", "always").limits_s(l),
+        Job::new("s4_fresh_tables", "always").limits_s(l),
+        Job::new("s4_fresh_tables", "on2").limits_s(l),
+    ];
+    let res = compare(jobs);
+    for (j, o) in &res {
+        let (ids, fills, dem) = (
+            shape_stat(&o.stderr, "ids made "),
+            shape_stat(&o.stderr, "filled by the handler "),
+            shape_stat(&o.stderr, "demoted "),
+        );
+        if j.prog == "s4_fresh_tables" {
+            // thirty tables, one id: the first visit of each leaves through the handler (a fill) and counts as nothing
+            let exits: u64 = o
+                .stderr
+                .lines()
+                .find_map(|l| l.strip_prefix("[trace] exits "))
+                .and_then(|r| r.split_whitespace().next())
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(u64::MAX);
+            assert!(
+                (20..=30).contains(&fills) && dem == 0 && exits <= 10,
+                "{}: ids {ids} fills {fills} demoted {dem} exits {exits}\n{}",
+                j.tag(),
+                tail(&o.stderr)
+            );
+        } else if j.prog == "s4_nbody_like" {
+            assert!(
+                ids >= 1 && (1..=8).contains(&fills) && dem == 0,
+                "{}: ids {ids} fills {fills} demoted {dem}\n{}",
+                j.tag(),
+                tail(&o.stderr)
+            );
+            // the same run without the knob: the shape guard adds no hot exit and no side trace of its own
+            let mut b = j.clone();
+            b.limits = "shapeguard=0".into();
+            let (_, ob) = compare(vec![b]).remove(0);
+            let line = |e: &str, key: &str| {
+                e.lines()
+                    .find(|l| l.contains(key))
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let hot = |e: &str| -> u64 {
+                line(e, "hot exits:")
+                    .split("other ")
+                    .nth(1)
+                    .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(0)
+            };
+            assert!(
+                hot(&o.stderr) <= hot(&ob.stderr),
+                "{}: the shape guard added hot exits: {} vs {}",
+                j.tag(),
+                line(&o.stderr, "hot exits:"),
+                line(&ob.stderr, "hot exits:")
+            );
+        } else {
+            assert!(
+                dem >= 1 && fills <= 4 * u64::from(rn_jit::tr::cache::SHAPE_DEMOTE),
+                "{}: ids {ids} fills {fills} demoted {dem}: no demotion\n{}",
+                j.tag(),
+                tail(&o.stderr)
             );
         }
     }

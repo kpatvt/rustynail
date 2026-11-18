@@ -94,7 +94,18 @@ pub fn dump(ir: &TraceIr) -> String {
                 }
             } else if i.op == TOp::Hrefk {
                 // F1: the bits are the recorded index of the node in the node vector
-                let _ = write!(s, " node={}", aux_bits(i.aux));
+                let _ = write!(
+                    s,
+                    " node={}{}",
+                    hrefk_idx(aux_bits(i.aux)),
+                    if aux_bits(i.aux) & HREFK_COVERED != 0 {
+                        " covered"
+                    } else {
+                        ""
+                    }
+                );
+            } else if i.op == TOp::Hshape {
+                let _ = write!(s, " lsize={}", aux_bits(i.aux));
             } else if i.op == TOp::Hmiss {
                 let (ix, d) = hmiss_unpack(aux_bits(i.aux));
                 let _ = write!(s, " node={ix} next={d}");
@@ -253,6 +264,20 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             "[trace] fnpromo: function heads promoted {}",
             s.fn_promoted
         );
+    }
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (ids, fills, dem) = (
+            super::shape::IDS_MADE.load(Relaxed),
+            super::shape::FILLS.load(Relaxed),
+            super::shape::DEMOTED.load(Relaxed),
+        );
+        if ids + fills + dem > 0 {
+            let _ = writeln!(
+                o,
+                "[trace] shape: layout ids made {ids} filled by the handler {fills} families demoted {dem}"
+            );
+        }
     }
     if s.inner_retried > 0 {
         let _ = writeln!(o, "[trace] innerretry: rounds started {}", s.inner_retried);

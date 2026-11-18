@@ -453,6 +453,7 @@ fn defines(op: TOp, fused: bool) -> bool {
         | TOp::Fcmp
         | TOp::Eqref
         | TOp::Hmiss
+        | TOp::Hshape
         | TOp::Poll
         | TOp::Budget
         | TOp::Astore

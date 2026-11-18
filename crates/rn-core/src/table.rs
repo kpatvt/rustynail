@@ -316,6 +316,36 @@ unsafe fn clear_layout_id(t: *mut Table) {
         }
     }
 }
+/// S4 (trace compiler): [`TableRef::layout_descriptor`] of a bare node vector (the exit handler of a shape guard knows the vector and its
+/// size, not the table).
+///
+/// # Safety
+/// `node` is the first node of a live hash part of `2^lsizenode` nodes.
+pub unsafe fn layout_descriptor_raw(node: *const Node, lsizenode: u8, out: &mut Vec<u64>) {
+    out.push(u64::from(lsizenode));
+    for i in 0..1usize << lsizenode {
+        // SAFETY: `i` is inside the node vector (contract).
+        let n = unsafe { &*node.add(i) };
+        if n.key_tt != LUA_TNIL {
+            out.push((i as u64) << 8 | u64::from(n.key_tt));
+            out.push(n.key.addr() as u64);
+        }
+    }
+}
+
+/// S4 (trace compiler): the layout-id slot of a bare node vector, `None` for a part without one (fewer than 8 nodes).
+///
+/// # Safety
+/// As [`layout_descriptor_raw`].
+pub unsafe fn layout_slot_of(node: *mut Node, lsizenode: u8) -> Option<*mut u64> {
+    if sized_hasid(lsizenode) {
+        // SAFETY: T2: the slot lives 16 bytes before the first node.
+        Some(unsafe { node.cast::<u8>().sub(LASTFREE_BYTES + LAYOUT_BYTES).cast() })
+    } else {
+        None
+    }
+}
+
 #[inline]
 unsafe fn gnode(t: *const Table, i: usize) -> *mut Node {
     // SAFETY: caller keeps i <= sizenode (T2).
@@ -1849,6 +1879,16 @@ impl TableRef {
             } else {
                 false
             }
+        }
+    }
+    /// S4 (trace compiler): the key layout of the hash part as words, appended to `out`: `lsizenode`, then for every node whose key is
+    /// not nil the pair `(index << 8 | key tag, key payload bits)`. Equal descriptors mean equal key layouts (dead keys included
+    /// with their own tag). Read-only.
+    pub fn layout_descriptor(self, out: &mut Vec<u64>) {
+        // SAFETY: handle invariant: `node` is the node vector of `2^lsizenode` nodes (the dummy node: one).
+        unsafe {
+            let t = self.as_ptr();
+            layout_descriptor_raw((*t).node, (*t).lsizenode, out);
         }
     }
     /// log2 of the node-vector size (0 for the shared dummy node, whose single node holds a dead key).

@@ -3797,6 +3797,42 @@ const TABLE: &[Row] = &[
         owner: "S4",
         dets: &[d("tr_shape", "shape_trace_newref_clears_the_id")],
     },
+    Row {
+        name: "shape_guard_skipped",
+        owner: "S4",
+        dets: &[
+            d("tr_record", "s4_covered_hrefks_are_dominated_by_their_shape_guard"),
+            dl("tr_core", "s4_shape_guard_programs"),
+        ],
+    },
+    Row {
+        name: "shape_stale_across_rehash",
+        owner: "S4",
+        dets: &[d("tr_record", "s4_covered_hrefks_are_dominated_by_their_shape_guard")],
+    },
+    Row {
+        name: "shape_header_fact_kept_over_alloc",
+        owner: "S4",
+        dets: &[d("tr_record", "s4_covered_hrefks_are_dominated_by_their_shape_guard")],
+    },
+    Row {
+        name: "shape_demote_never",
+        owner: "S4",
+        dets: &[dl("tr_core", "s4_shape_guard_effectiveness_and_demotion")],
+    },
+    Row {
+        name: "shape_id_reuse",
+        owner: "S4",
+        dets: &[
+            d("tr_shape", "shape_ids_are_content_addressed"),
+            dl("tr_core", "s4_shape_guard_programs"),
+        ],
+    },
+    Row {
+        name: "shape_miss_counts_hot",
+        owner: "S4",
+        dets: &[dl("tr_core", "s4_shape_guard_effectiveness_and_demotion")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

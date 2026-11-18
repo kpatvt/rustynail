@@ -2395,6 +2395,113 @@ fn constructor_keys_are_inserted_inline() {
     );
 }
 
+/// S4 (`shapeguard`): every `HREFK` marked covered (`HREFK_COVERED`: no key compare of its own) has an `HSHAPE` on the SAME node-vector reference before it, and
+/// the recorder guards a table after an insertion into it or an allocation again with a fresh node-vector load (a new reference) and its own `HSHAPE` (or leaves
+/// the `HREFK` plain). Detector of the mutants `shape_guard_skipped` (covered without a guard), `shape_stale_across_rehash` (a guard that survives an insertion
+/// into the table) and `shape_header_fact_kept_over_alloc` (a guard that survives allocations, which may run a collector step that clears dead keys).
+#[test]
+fn s4_covered_hrefks_are_dominated_by_their_shape_guard() {
+    let t8 = "{a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8}";
+    let progs = [
+        // two tables, several reads each
+        format!("local o = {t8} local p = {t8} local function f(n, s) ARM() for i = 1, n do s = s + o.a + o.h + p.b + p.c + o.d end return s end return f(5, 0)"),
+        // an insertion into the table between two reads
+        format!("local o = {t8} local function f(n, s) ARM() for i = 1, n do s = s + o.a + o.h o.x = i s = s + o.b end return s end return f(5, 0)"),
+        // an allocation (a string) between two reads
+        format!("local o = {t8} local function f(n, s) ARM() for i = 1, n do s = s + o.a local k = 'k' .. i s = s + o.h + #k end return s end return f(5, 0)"),
+        // a table allocated by the trace and a table of fewer than eight nodes: never covered
+        format!("local o = {t8} local small = {{x = 1, y = 2}} local function f(n, s) ARM() for i = 1, n do local t = {{u = i, v = 2}} s = s + t.u + small.y + o.a end return s end return f(5, 0)"),
+    ];
+    let mut covered_total = 0;
+    for (k, src) in progs.iter().enumerate() {
+        let cfg = RecCfg {
+            verify: true,
+            shape: true,
+            ..RecCfg::default()
+        };
+        let rc = record_src(&src.replace("ARM()", "arm()"), cfg);
+        let ir = closed(&rc).ir.clone();
+        let shapes = ir.ins.iter().filter(|i| i.op == TOp::Hshape).count();
+        for (x, i) in ir.ins.iter().enumerate() {
+            if i.op == TOp::Hshape {
+                assert!(
+                    TraceIr::is_ins(i.a)
+                        && ir.at(i.a).op == TOp::Fload
+                        && ir.at(i.a).b == Field::Node as Ref
+                        && ir.as_int(i.b).is_some_and(|v| v > 0 && v < 1 << 31),
+                    "program {k}: HSHAPE of a non-node or with a bad id\n{}",
+                    dump(&ir)
+                );
+                // the lsizenode guard precedes it (the id slot exists only from eight nodes on)
+                assert!(
+                    aux_bits(i.aux) >= 3
+                        && ir.ins[..x].iter().any(|g| g.op == TOp::Eq
+                            && TraceIr::is_ins(g.a)
+                            && ir.at(g.a).op == TOp::Fload
+                            && ir.at(g.a).b == Field::Lsizenode as Ref
+                            && ir.as_int(g.b) == Some(i64::from(aux_bits(i.aux)))),
+                    "program {k}: HSHAPE without the lsizenode guard\n{}",
+                    dump(&ir)
+                );
+            }
+            if i.op == TOp::Hrefk && aux_bits(i.aux) & HREFK_COVERED != 0 {
+                covered_total += 1;
+                assert!(
+                    ir.ins[..x]
+                        .iter()
+                        .any(|g| g.op == TOp::Hshape && g.a == i.a && g.flags & F_GUARD != 0),
+                    "program {k}: a covered HREFK %{x} without an HSHAPE on its node vector\n{}",
+                    dump(&ir)
+                );
+            }
+        }
+        match k {
+            0 => assert!(shapes >= 2, "program 0: {shapes} HSHAPEs\n{}", dump(&ir)),
+            1 => {
+                // the reads before the insertion are covered; the read after it is not (the layout is not an invariant of the trace)
+                let nr = ir.ins.iter().position(|i| i.op == TOp::Newref);
+                if let Some(nr) = nr {
+                    assert!(
+                        ir.ins[nr..]
+                            .iter()
+                            .all(|i| i.op != TOp::Hrefk || aux_bits(i.aux) & HREFK_COVERED == 0),
+                        "program 1: a covered HREFK after the insertion\n{}",
+                        dump(&ir)
+                    );
+                }
+                assert!(shapes >= 1, "program 1\n{}", dump(&ir));
+            }
+            2 => {
+                let cc = ir.ins.iter().position(|i| i.op == TOp::Concat);
+                if let Some(cc) = cc {
+                    assert!(
+                        ir.ins[cc..].iter().any(|i| i.op == TOp::Hshape),
+                        "program 2: no HSHAPE after the allocation\n{}",
+                        dump(&ir)
+                    );
+                }
+            }
+            _ => {
+                // only `o` (eight nodes, not allocated by the trace) is guarded
+                assert_eq!(shapes, 1, "program 3\n{}", dump(&ir));
+            }
+        }
+    }
+    assert!(covered_total >= 6, "{covered_total} covered HREFKs");
+    // the knob off: no HSHAPE, no covered HREFK
+    let src = format!("local o = {t8} local function f(n, s) arm() for i = 1, n do s = s + o.a + o.h end return s end return f(5, 0)");
+    let rc = record_src(&src, strict());
+    let ir = closed(&rc).ir.clone();
+    assert!(
+        !ir.ins
+            .iter()
+            .any(|i| i.op == TOp::Hshape
+                || (i.op == TOp::Hrefk && aux_bits(i.aux) & HREFK_COVERED != 0)),
+        "{}",
+        dump(&ir)
+    );
+}
+
 // ---- 5.4 ----------------------------------------------------------------------------------------------------------------
 
 // ---- mutants ------------------------------------------------------------------------------------------------------------

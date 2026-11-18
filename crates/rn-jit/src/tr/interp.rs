@@ -632,15 +632,29 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
             }
             TOp::Hrefk => {
                 // the node of constant key `b` at index `bits` of the node vector of table (node handle) `a`
-                let (h, key, ix) = (val!(i.a), val!(i.b), bits);
+                let (h, key, ix) = (val!(i.a), val!(i.b), hrefk_idx(bits));
+                let covered = bits & HREFK_COVERED != 0;
                 let Some(t) = h.checked_sub(1).and_then(|x| m.tables.get(x as usize)) else {
                     return bad(format!("bad table handle {h}"));
                 };
                 match t.nodes.get(&ix) {
                     Some(n) if n.key == key && !n.int => {}
+                    // S4: a covered HREFK has no compare of its own: the model holds the layout the dominating shape guard proved
+                    _ if covered => {}
                     _ => exit!(snap),
                 }
                 h << 32 | u64::from(ix)
+            }
+            TOp::Hshape => {
+                // S4: the model has no layout ids: it only checks the handle
+                let h = val!(i.a);
+                if h.checked_sub(1)
+                    .and_then(|x| m.tables.get(x as usize))
+                    .is_none()
+                {
+                    return bad(format!("bad table handle {h}"));
+                }
+                0
             }
             TOp::Hrefv => {
                 // N6: the node that holds the dynamic key `b` in the node vector (node handle) `a`: the model has no chain, so

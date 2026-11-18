@@ -63,6 +63,8 @@ pub const HSTOREGUARD_PROCESS: u32 = 1;
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
 pub const HKADDR_PROCESS: u32 = 1;
+/// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
+pub const SHAPEGUARD_PROCESS: u32 = 0;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
@@ -587,6 +589,11 @@ pub struct TrLimits {
     /// H1 (`hkaddr`): an `HREFK` whose users are all `HLOAD` / `HSTORE` addresses is fused into them (`ra::RaOpts::hkaddr`): the slot address is a displacement of
     /// the node register in the access, no `lea`: 0 = off, 1 = on (default [`HKADDR_PROCESS`]).
     pub hkaddr: u32,
+    /// S4 (`shapeguard`): a table's `HREFK`s are covered by ONE guard on the layout id of its node vector (`HSHAPE`, `shape.rs`) and skip their
+    /// key compare: 0 = off, 1 = on (default [`SHAPEGUARD_PROCESS`]).
+    pub shapeguard: u32,
+    /// S4 (`shapedemote`): shape-guard exits of one trace after which its family is re-recorded without shape guards (default [`SHAPE_DEMOTE`]).
+    pub shapedemote: u32,
 }
 
 impl Default for TrLimits {
@@ -684,6 +691,8 @@ impl Default for TrLimits {
             hstoreguard: HSTOREGUARD_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
+            shapeguard: SHAPEGUARD_PROCESS,
+            shapedemote: SHAPE_DEMOTE,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -855,6 +864,8 @@ impl TrLimits {
                 "hstoreguard" => l.hstoreguard = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
+                "shapeguard" => l.shapeguard = v.min(1),
+                "shapedemote" if v > 0 => l.shapedemote = v,
                 _ => bad.push(w.to_string()),
             }
         }
@@ -1145,6 +1156,8 @@ pub struct HeadData {
     pub ncallee: Cell<bool>,
     /// BUNDLE-L B (`bhoist`): the head is recorded without hoisted bounds guards (set when a root with hoisted guards was flushed as ineffective; never reset).
     pub nohoist: Cell<bool>,
+    /// S4 (`shapeguard`): the head's family took [`SHAPE_DEMOTE`] shape misses ([`shape_miss`]): it is recorded without shape guards from now on (never reset).
+    pub noshape: Cell<bool>,
     /// R1 (`rearm`): rearm entries still allowed before a short stay refunds nothing ([`REARM_BUDGET`] consecutive short ones end them for a while).
     pub rearm_budget: Cell<u8>,
     /// R1: refused rearm attempts since the budget ran out.
@@ -1259,6 +1272,7 @@ impl HeadData {
             dom_done: Cell::new(false),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
+            noshape: Cell::new(false),
             rearm_budget: Cell::new(REARM_BUDGET),
             rearm_wait: Cell::new(0),
             rearm_last: Cell::new(0),
@@ -2248,6 +2262,8 @@ struct Trace {
     chain_done: Vec<u8>,
     /// P3 (family roots): chain re-orders of the whole family so far.
     chain_n: u32,
+    /// S4: shape-guard exits (a layout id that was not computed yet, or another layout) of this trace so far ([`shape_miss`]).
+    shape_miss: u32,
     /// P3: per exit, the exits counted before the counter was re-based by [`chain_check`] (one count per exit).
     chain_off: Vec<u64>,
 }
@@ -3540,6 +3556,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         hoisted: false,
         chain_done: vec![0; nex],
         chain_n: 0,
+        shape_miss: 0,
         chain_off: vec![0; nex],
     });
     d.tr.active = None;
@@ -5380,6 +5397,77 @@ pub fn set_hoisted(st: &mut State, id: TrId, v: bool) {
     {
         t.hoisted = v;
     }
+}
+
+/// S4: shape misses (zero ids filled by the handler and different layouts) of one trace after which its family is re-recorded without shape guards.
+pub const SHAPE_DEMOTE: u32 = 48;
+
+/// S4: the exit handler of a shape-guard miss: the layout-id slot of the node vector `node` (`2^lsizenode` nodes) was 0 when the trace tested it; computes and stores the
+/// id. Returns the slot's value *before* (0 expected: the cold path of the guard only goes to the handler for a zero slot).
+///
+/// # Safety
+/// `node` is the first node of a live hash part of `2^lsizenode` nodes (the trace's guard just read its slot).
+pub unsafe fn shape_fill(node: *mut rn_core::table::Node, lsizenode: u8) -> u64 {
+    // SAFETY: contract of this function.
+    let before = unsafe { super::shape::slot_of(node, lsizenode) };
+    if before == 0 {
+        // SAFETY: contract of this function.
+        unsafe { super::shape::fill_node(node, lsizenode) };
+    }
+    before
+}
+
+/// S4: is the head `pc` of `pr` to be recorded without shape guards?
+pub fn head_noshape(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0)
+        .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).noshape.get()))
+        .unwrap_or(false)
+}
+
+/// S4: is the family of trace `id` (a side recording's parent) to be recorded without shape guards?
+pub fn family_noshape(st: &mut State, id: TrId) -> bool {
+    let d = d_of(st);
+    let (root, head) = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => (t.root, t.head),
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) => (r.root, r.head),
+        _ => return false,
+    };
+    tr_of(d, root).is_some_and(|tp| tp.head(head).noshape.get())
+}
+
+/// S4: trace `id` exited on its shape guard (`filled`: the layout id was not computed yet and the handler computed it; else another layout
+/// than the recorded one). Counts the miss; at [`SHAPE_DEMOTE`] the family is flushed and its head is recorded without shape guards (a loop
+/// that inserts into the tables it reads by field, or sees a different layout every time, must not pay a handler call per iteration).
+/// Returns whether the family was flushed.
+pub fn shape_miss(st: &mut State, id: TrId) -> bool {
+    let d = d_of(st);
+    let limit = d.tr.cfg.limits.shapedemote;
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot_mut(id)
+    else {
+        return false;
+    };
+    t.shape_miss = t.shape_miss.saturating_add(1);
+    if t.shape_miss < limit || mutants::active("shape_demote_never") {
+        return false;
+    }
+    t.shape_miss = 0;
+    super::shape::DEMOTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (root, head, family) = (t.root, t.head, t.family);
+    if let Some(tp) = tr_of(d, root) {
+        tp.head(head).noshape.set(true);
+    }
+    d.tr.stats.exit_other_hot += 1;
+    request_flush(st, family, FlushWhy::Rerec);
+    true
 }
 
 /// BUNDLE-L B: is the head `pc` of `pr` to be recorded without hoisted bounds guards?

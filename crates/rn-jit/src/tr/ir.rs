@@ -326,6 +326,21 @@ pub enum TOp {
     /// function slot is C's register `A`), `r14 = C.kcache`. No result; slots of the following instructions and snapshots are
     /// relative to C's base (`Snap::seg`). Never CSE'd, never moved, a barrier for every pass.
     Retf,
+    // ---- S4 additions (appended) ----
+    /// S4 shape guard: the 64-bit layout-id slot of the node vector `a` (an `FLOAD node` of a table with `2^lsizenode >= 8` nodes: the slot is the word at
+    /// `node - 16`, see `shape.rs`) equals the constant `b` (a `KINT`: an id below `2^31`). A guard (`aux` = [`guard_aux`], op bits = the `lsizenode` the
+    /// recorder guarded: the exit handler needs it to fill an id that was not computed yet); no result. It says "the key of node `i` of this vector is the
+    /// recorded key bits" for every `i` of the layout, so the `HREFK`s it covers carry [`HREFK_COVERED`] and skip their key compare. A pure guard of its
+    /// operands like `HREFK` (CSE'd with an identical one: the same node-vector reference cannot have changed layout between them).
+    Hshape,
+}
+
+/// S4: bit of the op bits of an [`TOp::Hrefk`]: a dominating [`TOp::Hshape`] on the same node vector proves that the node holds the key (no key compare);
+/// the low 15 bits are the node index.
+pub const HREFK_COVERED: u32 = 0x8000;
+/// S4: the node index of the op bits of an [`TOp::Hrefk`].
+pub const fn hrefk_idx(bits: u32) -> u32 {
+    bits & 0x7FFF
 }
 
 /// N2b: bit 8 of the op bits of a [`TOp::Retf`]: the `RETURN` has `k` (closes upvalues / to-be-closed variables): the guards add "no tbc
@@ -951,7 +966,7 @@ pub enum IrAbort {
 
 impl TOp {
     /// Number of operations (size of per-op tables).
-    pub const COUNT: usize = TOp::Retf as usize + 1;
+    pub const COUNT: usize = TOp::Hshape as usize + 1;
 
     /// Ops that are guards by definition (their `F_GUARD` flag is always set by the builder).
     pub const fn always_guard(self) -> bool {
@@ -1024,6 +1039,7 @@ impl TOp {
                 | TOp::Hrefk
                 | TOp::Hrefv
                 | TOp::Hmiss
+                | TOp::Hshape
                 | TOp::Uref
                 | TOp::Uvrel
                 | TOp::Calln
@@ -1113,6 +1129,7 @@ impl TOp {
             TOp::Hrefk => "HREFK",
             TOp::Hrefv => "HREFV",
             TOp::Hmiss => "HMISS",
+            TOp::Hshape => "HSHAPE",
             TOp::Lib => "LIB",
             TOp::Hload => "HLOAD",
             TOp::Hstore => "HSTORE",

@@ -1979,3 +1979,54 @@ facts were re-checked at `89963c6`.
     indirect jump, `pcl[H]` downstream of `D_H`; P6 and F5 acceptance.
 12. Dependency hole during recording: **accepted**: TR32 (edges at inline time, `DepFreed` abort, `TrId` generations);
     unreachable in the prototype (no recorded allocation), built in P3b/P6, tested in F3.
+
+## 15. Shape guards (S4, `shapeguard`)
+
+**What.** A hash part with at least 8 nodes has a 64-bit *layout id* slot in front of its node vector (rn-core `table.rs`: `[id @ node-16][lastfree @ node-8][nodes]`).
+`0` = not known; otherwise the id names the interned *descriptor* of the vector: `lsizenode` and, for every node whose key is not nil, `(node index, key tag, key bits)`
+(`TableRef::layout_descriptor`). Descriptors are content: equal layouts of different tables get the same id (the five `bodies[i]` of nbody share one), and an id never
+names an object. With `shapeguard=1` (`RUSTYNAIL_JIT_TRACE_LIMITS`; default in the process: see `SHAPEGUARD_PROCESS`) the recorder emits, per table access, after the
+`lsizenode` guard and `FLOAD node`, one guard `HSHAPE node, #id` (`cmp qword [node-16], id; jne cold`, op bits = `lsizenode`) with the id of the table's layout at record
+time, and marks the `HREFK`s of that node vector `HREFK_COVERED`: they assemble without key-tag and key compares (the `HLOAD` after them checks its own value tag).
+Per `HREFK` that is about 2 instructions fewer (movabs + cmp + the fused 16-bit tag compare become one byte compare), per table visit about 2 more (the guard); nbody
+-397 instructions per step (-16 %).
+
+**Soundness argument.**
+
+1. *The slot is cleared at every change of which key lives in which node* (rn-core `clear_layout_id`: `insertkey` free-main-position and collide-move paths, GC
+   `clearkey` of dead keys including weak-table clears, a rehash allocates a fresh vector born with 0, the trace's inline `NEWREF`); `tests_shape.rs` / `tr_shape.rs` and
+   the mutants `shape_*` pin each clear. So `slot == id` means the vector has had the descriptor's layout since the id was stored, and `HSHAPE` passing means the same
+   facts the covered `HREFK` compares (tag and bits of the key at node `i`).
+2. *Which tables the guard may stand in for.* `HSHAPE` is a pure guard of its operands like `HREFK` (CSE'd with an identical one; hoisted into the pre-roll when
+   its node-vector reference is loop invariant). Two `HSHAPE` / `HREFK` that share a node-vector *reference* are separated by no instruction that is not header safe
+   (`opt_mem::header_safe`): a node-vector `FLOAD` is a header fact that is dropped at `NEWREF` / `TNEW` / `SNEW` / `CONCAT` / `TSET` / `TLEN` / unsafe `LIB`
+   (every operation that can insert a key into a table or run a collector step that clears dead keys), and a reload gets a new reference that needs its own `HSHAPE`.
+   The header-safe ops never insert a key and never run a collector step (`HDRSUB` strings allocate without a step; `TVIRT` only counts bytes; `HSTORE` writes the
+   value of an existing key; a nil store leaves the key in its node). Detectors: `tr_record::s4_covered_hrefks_are_dominated_by_their_shape_guard` (every covered
+   `HREFK` has an `HSHAPE` on the same node-vector reference, also after an insertion and after an allocation) and the mutants `shape_guard_skipped`,
+   `shape_stale_across_rehash`, `shape_header_fact_kept_over_alloc`.
+3. **Key constants and address reuse (the ABA question).** The descriptor contains key *addresses*. They are never dereferenced and the argument does not need them to
+   stay unique: the id is a function of the bits only. A table whose slot holds `id` has, in node `i`, a key whose tag and bits are the descriptor's (point 1). If the
+   string that had lived at that address was freed and another string allocated there, a table that holds the new string at that node has the same descriptor, the same
+   id, and the guard asserts exactly what it asserts for the old one: "node `i` holds a key with these bits". That is the same statement the `HREFK` compare it replaces
+   makes, and it is used exactly as before: the key constant of the trace is either a proto constant (pinned by the proto: a trace is flushed before its prototype is
+   freed, TR32) or a string seen at record time that an `EQREF` guard compares with the register (a live string at that address), and a node that references the
+   address holds a live string (`clearkey` runs, and clears the slot, before a key string can be freed). Both sides of every comparison are live objects, so an
+   equal address is the same object. A stale descriptor therefore cannot make a trace accept a different key: the worst case is a table that legitimately has the
+   same bits. The interning map is never flushed and ids are never reused (monotonic from 1, below `2^31`: the guard compares against a sign-extended 32-bit
+   immediate; at `2^31 - 1` or 4096 distinct descriptors no new id is made, `layout_id` answers 0 and the recorder emits no shape guard). Mutant `shape_id_reuse`.
+4. *A table whose slot is 0 at the guard* (its id was never computed: a table built after the trace was recorded, or one whose layout changed): the cold path of the
+   guard stores the node vector and its `lsizenode` in the exit area and leaves through the generic stub tagged `EXIT_SHAPE`; the handler computes and stores the id
+   (`shape::fill_node`), restores the snapshot like any exit and lands in the interpreter at the snapshot's pc, so the next entry passes the guard. It does **not** count the
+   exit towards hotness (no side trace forms on a shape guard; mutant `shape_miss_counts_hot`).
+5. *Exit storms.* Every shape-guard exit that reaches the handler (zero id or another layout) is counted per trace (`cache::shape_miss`); at `SHAPE_DEMOTE` (48) the
+   family is flushed and its root head is recorded without shape guards from then on (`HeadData::noshape`; plain `HREFK`s: the pre-S4 behaviour, side traces on the key
+   compares included). A loop that inserts a key every iteration, reads fifty layouts through one site, or visits many fresh tables is therefore bounded to 48 handler
+   exits (mutant `shape_demote_never`; `tr_core::s4_shape_guard_effectiveness_and_demotion`). Tables that an insertion of the same recording went into, tables the
+   trace allocated (their layout is built by the trace and owned by the sinking analysis) and tables with fewer than 8 or more than 64 nodes get no guard.
+
+**Cost model / when it loses.** One extra guard per table visit and one handler call per distinct table whose id is not computed yet (nbody: four). Programs whose hot
+site sees many layouts (hidden-class polymorphism) are demoted after 48 misses and run as before. `layout_id` scans at most 64 nodes.
+
+**Tests.** `tr_core::s4_shape_guard_programs` (19 programs x trace modes x exit storms / verification / GC stress), `s4_shape_guard_effectiveness_and_demotion`,
+`tr_record::s4_covered_hrefks_are_dominated_by_their_shape_guard`, `tr_shape::shape_ids_are_content_addressed`, and the rn-core clears (`tests_shape.rs`).

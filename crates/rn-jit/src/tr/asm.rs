@@ -2019,6 +2019,8 @@ struct Stub {
     entry: bool,
     /// P-L: the stub of a poll exit (always generic, tagged `exit::EXIT_POLL`).
     poll: bool,
+    /// S4: the stub of a shape-guard exit with a zero layout id (always generic, tagged `exit::EXIT_SHAPE`).
+    shape: bool,
     label: L,
 }
 
@@ -2081,6 +2083,8 @@ struct Cx<'a> {
     /// J1-1: the fused pairs whose two guards leave through different snapshots: a failed 16-bit compare jumps to a cold
     /// disambiguator (`cmp byte [node + KEY_TT], tag; jne hrefk_exit; jmp hload_exit`), so each guard keeps its own exit (and class).
     hk_cold: Vec<HkCold>,
+    /// S4: the cold paths of the `HSHAPE` guards: `(label, node register, shape stub, lsizenode)`.
+    shape_cold: Vec<(L, V, L, u8)>,
     /// CP1: the out-of-line spare-`CallInfo` repairs of the TR6b checks of natively entered frames: (slow label, resume label).
     rec_ci_cold: Vec<(L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
@@ -2347,7 +2351,7 @@ impl Cx<'_> {
         if let Some(s) = self
             .stubs
             .iter()
-            .find(|s| s.snap == snap && s.entry == entry && !s.poll)
+            .find(|s| s.snap == snap && s.entry == entry && !s.poll && !s.shape)
         {
             return Ok(s.label);
         }
@@ -2356,6 +2360,7 @@ impl Cx<'_> {
             snap,
             entry,
             poll: false,
+            shape: false,
             label,
         });
         Ok(label)
@@ -2412,6 +2417,27 @@ impl Cx<'_> {
             snap,
             entry: false,
             poll: true,
+            shape: false,
+            label,
+        });
+        Ok(label)
+    }
+
+    /// S4: the label of the shape-miss stub of `snap`: a generic stub whose exit number carries `exit::EXIT_SHAPE` (the cold path of an `HSHAPE`
+    /// has stored the node vector and its size in the exit area).
+    fn shape_stub_label(&mut self, snap: u32) -> Result<L, AsmError> {
+        if (snap as usize) >= self.snaps.len() {
+            return incons(format!("snapshot {snap} has no exit"));
+        }
+        if let Some(s) = self.stubs.iter().find(|s| s.snap == snap && s.shape) {
+            return Ok(s.label);
+        }
+        let label = self.p.label();
+        self.stubs.push(Stub {
+            snap,
+            entry: false,
+            poll: false,
+            shape: true,
             label,
         });
         Ok(label)
@@ -2624,6 +2650,7 @@ pub fn assemble(
         e2n: None,
         hk_fused: None,
         hk_cold: Vec::new(),
+        shape_cold: Vec::new(),
         rec_ci_cold: Vec::new(),
         bud_cold: Vec::new(),
         hk_fused_n: 0,
@@ -2973,6 +3000,7 @@ impl Cx<'_> {
             | TOp::Hrefk
             | TOp::Hrefv
             | TOp::Hmiss
+            | TOp::Hshape
             | TOp::Kint
             | TOp::Knum
             | TOp::Kpri
@@ -3972,6 +4000,7 @@ impl Cx<'_> {
             TOp::Hrefk => self.hrefk(i)?,
             TOp::Hrefv => self.hrefv(i)?,
             TOp::Hmiss => self.hmiss(i)?,
+            TOp::Hshape => self.hshape(i)?,
             TOp::Hload => self.hload(i)?,
             TOp::Hstore => self.hstore(i)?,
             TOp::Uload | TOp::Ustore | TOp::Uvrel => self.uop(i)?,
@@ -5059,6 +5088,10 @@ impl Cx<'_> {
         {
             return None;
         }
+        // S4: a covered `HREFK` has no key compare to fuse the value tag with: the `HLOAD` checks its own tag
+        if self.hk_covered(i) {
+            return None;
+        }
         if matches!(l.t, Ty::Nil) {
             return None;
         }
@@ -5073,6 +5106,47 @@ impl Cx<'_> {
             }
         }
         tag_of(l.t).map(|t| (t, split))
+    }
+
+    /// S4: is the `HREFK` at `i` covered by a shape guard, and is this assembly one that honours it (the B2 form: the non-B2 form compares the key)?
+    fn hk_covered(&self, i: usize) -> bool {
+        self.env.b2_hk
+            && self.ir.ins[i].op == TOp::Hrefk
+            && aux_bits(self.ir.ins[i].aux) & HREFK_COVERED != 0
+    }
+
+    /// `HSHAPE node, #id` (S4): the layout-id slot of the node vector (the word at `node - 16`) equals `id`: `cmp qword [node - 16], id; jne cold`. The cold path (out
+    /// of line, registers as at the compare) leaves through the handler (`exit::EXIT_SHAPE`: it fills a zero id, counts the miss towards the demotion of the
+    /// family, does not count the exit towards hotness). The recorder guarded `lsizenode >= 3` (the slot exists) before the node vector was loaded.
+    fn hshape(&mut self, i: usize) -> Result<(), AsmError> {
+        let ins = self.ir.ins[i];
+        let ops = self.ops(i);
+        let Loc::Const(kr) = ops[1] else {
+            return unsup("HSHAPE with an id that is not a constant");
+        };
+        let id = match fits(self.kbits_of(kr) as i64) {
+            Some(v) if v > 0 => v,
+            _ => return unsup("HSHAPE id outside 1..2^31"),
+        };
+        if !matches!(ops[0], Loc::G(_)) {
+            return unsup("HSHAPE of a node vector that is not in a register");
+        }
+        let ls = aux_bits(ins.aux) as u8;
+        // (the ordinary exit label: the `+exitstorm` check of the guard is emitted here, and the stub exists for the storm's jump)
+        let x = self.guard_label(i)?;
+        let _ = x;
+        let n = self.reg(ops[0], 7);
+        let stub = self.shape_stub_label(aux_snap(ins.aux))?;
+        let cold = self.label();
+        self.shape_cold.push((cold, n, stub, ls));
+        self.push(Op::BrM {
+            cc: Cc::Ne,
+            w: W::B8,
+            m: rm(n, -(node::LAYOUT_ID_BYTES as i32)),
+            imm: id,
+            to: cold,
+        });
+        Ok(())
     }
 
     /// J1-1: the exit of the `HLOAD` guard at `i + 1` may be taken at the `HREFK` at `i` (see [`Cx::hk_fuse_tag`]).
@@ -5121,7 +5195,7 @@ impl Cx<'_> {
         if h.op != TOp::Hrefk {
             return incons("a fused address of an HLOAD / HSTORE is not an HREFK");
         }
-        let idx = i64::from(aux_bits(h.aux));
+        let idx = i64::from(hrefk_idx(aux_bits(h.aux)));
         let Some(mut off) = fits(idx * node::SIZE as i64) else {
             return unsup("HREFK slot index");
         };
@@ -5137,7 +5211,7 @@ impl Cx<'_> {
     fn hrefk(&mut self, i: usize) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
         let ops = self.ops(i);
-        let idx = i64::from(aux_bits(ins.aux));
+        let idx = i64::from(hrefk_idx(aux_bits(ins.aux)));
         let off = match fits(idx * node::SIZE as i64) {
             Some(o) => o,
             None => return unsup("HREFK slot index"),
@@ -5152,6 +5226,8 @@ impl Cx<'_> {
             // B2: the three checks read the node through displacements; the result is one `lea` (nothing when it is the node
             // itself)
             let at = |o: usize| rm(n, off + o as i32);
+            // S4: a dominating `HSHAPE` proved the key at this node: no key tag, no key compare
+            let covered = self.hk_covered(i);
             if let Some((tag, split)) = self.hk_fuse_tag(i) {
                 // B4-3: key tag (byte +9) and the value tag of the `HLOAD` that follows (byte +8) in one 16-bit compare
                 let want = if mutants::active("hkfuse_tag_skip") {
@@ -5182,7 +5258,7 @@ impl Cx<'_> {
                 });
                 self.hk_fused = Some(i + 1);
                 self.hk_fused_n += 1;
-            } else {
+            } else if !covered {
                 self.push(Op::BrM {
                     cc: Cc::Ne,
                     w: W::B1,
@@ -5191,7 +5267,7 @@ impl Cx<'_> {
                     to: x,
                 });
             }
-            if !mutants::active("hrefk_key_skip") {
+            if !covered && !mutants::active("hrefk_key_skip") {
                 if n != 7 && self.env.hk_key64 {
                     // H3-F: the 64-bit key address in one compare against a register (`movabs v7, key; cmp [node + KEY], v7; jne`:
                     // two micro-ops, the two 32-bit memory-immediate compares were four)
@@ -7549,6 +7625,15 @@ impl Cx<'_> {
             });
             self.push(Op::Jmp(vx));
         }
+        // S4: the cold paths of the shape guards (registers as at the failed compare): the node vector and its size go to the exit area and the exit
+        // through the handler (`exit::EXIT_SHAPE`)
+        for (label, node, stub, ls) in std::mem::take(&mut self.shape_cold) {
+            self.bind(label);
+            let m = |off: usize| area_m(exit_area::ARGS + off);
+            self.st(W::B8, m(8), Src::V(node));
+            self.st(W::B8, m(16), Src::Imm(i32::from(ls)));
+            self.push(Op::Jmp(stub));
+        }
         // P2-3a: the refund stubs of the budget (registers and flags are dead at the exit; only the budget register changes)
         for (label, exit, n) in std::mem::take(&mut self.bud_cold) {
             self.bind(label);
@@ -7578,9 +7663,9 @@ impl Cx<'_> {
         let mut k = 0;
         // stubs are only requested while the instructions are assembled, so the list is final here
         while k < self.stubs.len() {
-            let (snap, entry, label, poll) = {
+            let (snap, entry, label, poll, shape) = {
                 let s = &self.stubs[k];
-                (s.snap, s.entry, s.label, s.poll)
+                (s.snap, s.entry, s.label, s.poll, s.shape)
             };
             k += 1;
             self.nstubs += 1;
@@ -7591,6 +7676,10 @@ impl Cx<'_> {
             self.bind(label);
             if poll {
                 self.generic_stub(snap, false, true, &mut shared);
+                continue;
+            }
+            if shape {
+                self.generic_stub_flags(snap, exit::EXIT_SHAPE, &mut shared);
                 continue;
             }
             if entry {
@@ -7771,9 +7860,13 @@ impl Cx<'_> {
     }
 
     fn generic_stub(&mut self, snap: u32, entry: bool, poll: bool, shared: &mut Option<L>) {
-        let exitno = snap
-            | if entry { exit::EXIT_ENTRY } else { 0 }
-            | if poll { exit::EXIT_POLL } else { 0 };
+        let flags =
+            if entry { exit::EXIT_ENTRY } else { 0 } | if poll { exit::EXIT_POLL } else { 0 };
+        self.generic_stub_flags(snap, flags, shared);
+    }
+
+    fn generic_stub_flags(&mut self, snap: u32, flags: u32, shared: &mut Option<L>) {
+        let exitno = snap | flags;
         let ops = exit::generic_stub_ops(self.env.trace_id, exitno, self.env.shared_exit);
         self.push(ops[0]);
         self.push(ops[1]);

@@ -507,7 +507,7 @@ pub fn guard_kinds(ir: &TraceIr) -> Vec<u16> {
         let fld = |r: Ref| TraceIr::is_ins(r) && matches!(ir.at(r).op, TOp::Fload | TOp::Band);
         out[s] |= match i.op {
             TOp::Eqref => 1,
-            TOp::Hrefk | TOp::Hrefv | TOp::Hmiss => 2,
+            TOp::Hrefk | TOp::Hrefv | TOp::Hmiss | TOp::Hshape => 2,
             TOp::Hload if aux_bits(i.aux) & 1 != 0 => 4,
             TOp::Eq | TOp::Ne if fld(i.a) => 8,
             TOp::Sload | TOp::Aload | TOp::Uload if aux_bits(i.aux) & 1 != 0 => 16,
@@ -923,8 +923,14 @@ pub const EXIT_ENTRY: u32 = 1 << 31;
 /// `INTERRUPT` and the hooks (landing address 0, as for a side recording).
 pub const EXIT_POLL: u32 = 1 << 30;
 
+/// Bit 29 of `ExitArea.exitno` (S4): the exit is a *shape guard* (`HSHAPE`) miss: the cold path of the guard stored the node vector (`args[1]`) and its `lsizenode`
+/// (`args[2]`) and went through the generic stub. The handler fills the slot when it is 0 (`shape::fill_node`: the table's id was not computed yet, the next entry passes
+/// the guard), restores the snapshot like any exit and does NOT count it towards hotness (no side trace forms on a shape guard); the shape misses of a trace are counted
+/// separately (`cache::shape_miss`) and demote the family to a recording without shape guards.
+pub const EXIT_SHAPE: u32 = 1 << 29;
+
 /// Every flag bit of `ExitArea.exitno`.
-pub const EXIT_FLAGS: u32 = EXIT_ENTRY | EXIT_POLL;
+pub const EXIT_FLAGS: u32 = EXIT_ENTRY | EXIT_POLL | EXIT_SHAPE;
 
 /// The two stores of a generic stub, as `(offset in the ExitArea, width)`: `trace_id` then `exitno`, both `B4`.
 pub const GENERIC_STUB_STORES: [(usize, W); 2] =
@@ -1938,6 +1944,20 @@ pub fn is_hot(site: ExitSite, n: u32, hot: u32) -> bool {
 /// # Safety
 /// The contract of [`restore`]; `meta.counters` (when non-null) points at `meta.exits.len()` live cells.
 pub unsafe fn exit_core(meta: &ExitMeta, ctx: &RestoreCtx, area: &mut ExitArea) -> CoreOut {
+    // SAFETY: contract of this function.
+    unsafe { exit_core_ex(meta, ctx, area, true) }
+}
+
+/// [`exit_core`]; `count == false`: the exit is restored but not counted (S4: a shape guard whose id was just filled).
+///
+/// # Safety
+/// As [`exit_core`].
+pub unsafe fn exit_core_ex(
+    meta: &ExitMeta,
+    ctx: &RestoreCtx,
+    area: &mut ExitArea,
+    count_it: bool,
+) -> CoreOut {
     let entry = area.exitno & EXIT_ENTRY != 0;
     let exitno = area.exitno & !EXIT_FLAGS;
     let ex = meta.exits[exitno as usize];
@@ -1975,7 +1995,7 @@ pub unsafe fn exit_core(meta: &ExitMeta, ctx: &RestoreCtx, area: &mut ExitArea) 
     };
     area.args[0] = land;
     let mut count = 0;
-    if !meta.counters.is_null() {
+    if !meta.counters.is_null() && count_it {
         // SAFETY: `counters` points at `exits.len()` cells owned by the (live) trace and `exitno` indexed `exits`.
         let c = unsafe { &*meta.counters.add(exitno as usize) };
         let old = c.get();
@@ -2071,8 +2091,23 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         // SAFETY: `ncalls` is `&thread.ncalls` of the live thread (contract).
         unsafe { ctx.ncalls.read() }
     };
+    // S4: a shape-guard exit: fill the layout id of the node vector the cold path stored; an id that was 0 is not an exit of the trace's own making (not counted)
+    let mut shape_miss = false;
+    let mut count_it = true;
+    if area.exitno & EXIT_SHAPE != 0 {
+        // SAFETY: the cold path of the guard stored the live node vector and its `lsizenode` (`args[1]`, `args[2]`).
+        let before = unsafe {
+            cache::shape_fill(
+                area.args[1] as *mut rn_core::table::Node,
+                area.args[2] as u8,
+            )
+        };
+        shape_miss = true;
+        // MUTANT `shape_miss_counts_hot`: the miss of a zero id counts towards hotness like an ordinary exit
+        count_it = before == 0 && mutants::active("shape_miss_counts_hot");
+    }
     // SAFETY: contract of this function.
-    let out = unsafe { exit_core(meta, &ctx, area) };
+    let out = unsafe { exit_core_ex(meta, &ctx, area, count_it) };
     {
         let sn = &meta.snaps[meta.exits[out.exitno as usize].snap as usize];
         if !sn.sunk.is_empty() {
@@ -2109,6 +2144,9 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
     let mut flushed = false;
     let mut side_started = false;
     let mut interp_rem = 0u32;
+    if shape_miss {
+        flushed = cache::shape_miss(&mut st, id);
+    }
     if out.site == ExitSite::Alloc && !out.entry {
         // P-B: the exit-storm rule (allocation exits that come about once per iteration give the loop back to tier 1)
         // SAFETY: `budget` is the live budget word (contract).

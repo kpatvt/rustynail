@@ -345,6 +345,7 @@ pub fn header_safe(op: TOp) -> bool {
         | TOp::Hrefk
         | TOp::Hrefv
         | TOp::Hmiss
+        | TOp::Hshape
         | TOp::Hload
         // F1: a store to an EXISTING key whose old value is not nil (the op's own guard): the node vector, the array,
         // the metatable and the flag-cache of every table stay as they are (`invalidate_tm_cache` belongs to

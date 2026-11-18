@@ -260,3 +260,78 @@ fn shape_library_paths() {
         }
     }
 }
+
+/// S4: the layout ids of `rn_jit::tr::shape` are content addressed: equal layouts of different tables get one id, different layouts different ids, an
+/// insertion clears the slot and the next computation finds the new layout's id, parts without a slot (fewer than eight nodes) and parts that are too large
+/// get none. Detector of the mutant `shape_id_reuse` (an id that names two layouts).
+#[test]
+fn shape_ids_are_content_addressed() {
+    use rn_jit::tr::shape::layout_id;
+    init();
+    let mut h = Heap::new(0).unwrap();
+    let build = |h: &mut Heap, keys: &[&str], nodes: u32| {
+        let t = h.new_table().unwrap();
+        t.resize(h, 0, nodes).unwrap();
+        for (i, k) in keys.iter().enumerate() {
+            let k = s(h, k);
+            t.set(h, &k, &Value::int(i as i64)).unwrap();
+        }
+        t
+    };
+    let base = ["x", "y", "z", "vx", "vy", "vz", "mass"];
+    let a = build(&mut h, &base, 8);
+    let b = build(&mut h, &base, 8);
+    assert_eq!(a.layout_id(), 0, "born 0");
+    let ia = layout_id(a);
+    assert!(ia != 0 && ia < 1 << 31, "{ia}");
+    assert_eq!(a.layout_id(), ia, "stored in the slot");
+    assert_eq!(layout_id(b), ia, "identical layouts, one id");
+    assert_eq!(layout_id(a), ia, "stable");
+    // other key sets and other node counts: other ids, pairwise different unless the layouts are equal
+    let sets: Vec<Vec<&str>> = vec![
+        base.to_vec(),
+        vec!["x", "y", "z", "vx", "vy", "vz", "m2"],
+        vec!["x", "y", "z", "vx", "vy", "vz"],
+        vec!["x", "y", "z"],
+        vec!["p", "q", "r", "s", "t", "u", "v", "w"],
+        vec!["w", "v", "u", "t", "s", "r", "q", "p"],
+        vec!["a", "b", "c", "d", "e", "f", "g", "h", "i"],
+    ];
+    let mut ids = Vec::new();
+    for ks in &sets {
+        let t = build(&mut h, ks, 8);
+        let t2 = build(&mut h, ks, 16);
+        ids.push((layout_id(t), t));
+        ids.push((layout_id(t2), t2));
+    }
+    for (i, x) in ids.iter().enumerate() {
+        for y in &ids[i + 1..] {
+            let same = x.1.lsizenode() == y.1.lsizenode()
+                && (0..1usize << x.1.lsizenode()).all(|n| x.1.node_key(n) == y.1.node_key(n));
+            assert_eq!(
+                x.0 == y.0,
+                same,
+                "ids {} {} ({} / {} nodes)",
+                x.0,
+                y.0,
+                1 << x.1.lsizenode(),
+                1 << y.1.lsizenode()
+            );
+        }
+    }
+    // an insertion clears the slot; the next computation interns the new layout
+    let t = build(&mut h, &base, 16);
+    let before = layout_id(t);
+    assert_eq!(t.layout_id(), before);
+    let k = s(&mut h, "late");
+    t.set(&mut h, &k, &Value::int(1)).unwrap();
+    assert_eq!(t.layout_id(), 0, "an insertion clears the id");
+    let after = layout_id(t);
+    assert!(after != 0 && after != before, "{before} {after}");
+    // no slot below eight nodes, none above the size limit
+    let small = build(&mut h, &["x", "y"], 2);
+    assert_eq!(layout_id(small), 0);
+    let big = h.new_table().unwrap();
+    big.resize(&mut h, 0, 256).unwrap();
+    assert_eq!(layout_id(big), 0);
+}

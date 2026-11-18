@@ -182,6 +182,9 @@ pub struct RecCfg {
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
+    /// S4 (`shapeguard`): a table's `HREFK`s are covered by one `HSHAPE` guard on its layout id and skip the key compare (`TrLimits::shapeguard`; off for a
+    /// family that was demoted, `cache::shape_miss`).
+    pub shape: bool,
     /// Constant folding while recording (`-fold`).
     pub fold: bool,
     /// CSE while recording (`-cse`).
@@ -474,6 +477,7 @@ impl Default for RecCfg {
             snapprune: false,
             snapprune_locals: false,
             hrefv: true,
+            shape: false,
             fold: true,
             cse: true,
             wait_head: false,
@@ -1199,6 +1203,11 @@ struct Rec {
     last_tset: usize,
     /// MUTANT `hstore_mt_stale`: tables whose `__newindex` guard was recorded once.
     hs_guarded: Vec<Ref>,
+    /// S4: the tables (addresses) that an insertion of this recording went into: later accesses to them carry no shape guard (the layout is not an
+    /// invariant of the trace).
+    shape_dirty: Vec<usize>,
+    /// MUTANTS `shape_stale_across_rehash` / `shape_header_fact_kept_over_alloc`: tables guarded once, with the IR position of the guard.
+    shape_guarded: Vec<(usize, usize)>,
     /// F4 (TR22b relaxed): the root-relative slot the interpreter's `thread.top` holds after the instruction just recorded
     /// (a producer of a multiple-result sequence: `CALL C=0`, a `RETURN` into one, an intrinsic with `C=0`); the lockstep
     /// compares it with the VM and the next step moves it to `top_in`.
@@ -1422,6 +1431,8 @@ impl Rec {
             ls_tnew: HashMap::default(),
             last_tset: 0,
             hs_guarded: Vec::new(),
+            shape_dirty: Vec::new(),
+            shape_guarded: Vec::new(),
             top_rel: None,
             top_in: None,
             mm_bridge: None,
@@ -1617,6 +1628,8 @@ impl Rec {
         self.ls_tabs.clear();
         self.ls_tnew.clear();
         self.last_tset = 0;
+        self.shape_dirty.clear();
+        self.shape_guarded.clear();
         self.top_rel = None;
         self.top_in = None;
         self.pcall = None;
@@ -2940,10 +2953,18 @@ impl Rec {
                 let t = h
                     .checked_sub(1)
                     .and_then(|x| self.model.tables.get(x as usize))?;
+                let bits = hrefk_idx(bits);
                 match t.nodes.get(&bits) {
                     Some(n) if n.key == key && !n.int => Some(h << 32 | u64::from(bits)),
                     _ => None,
                 }
+            }
+            TOp::Hshape => {
+                // S4: the model has no layout ids (the recorded id held on the real table when the guard was recorded): it only checks the handle
+                let h = self.val_bits(ins.a);
+                h.checked_sub(1)
+                    .and_then(|x| self.model.tables.get(x as usize))?;
+                Some(0)
             }
             TOp::Hmiss => {
                 let (h, key) = two(self)?;
@@ -4328,7 +4349,70 @@ impl Rec {
             // N6: a dynamic key (an instruction's value, never an interned constant): the walk finds the node at run time
             return self.guard(TOp::Hrefv, Ty::P64, node, kref, u32::from(tbl.lsizenode()));
         }
-        self.guard(TOp::Hrefk, Ty::P64, node, kref, idx as u32)
+        let mut bits = idx as u32;
+        if self.shape_wanted(t, tbl) {
+            if self.shape_cover(node, tbl)? {
+                bits |= HREFK_COVERED;
+            }
+        }
+        self.guard(TOp::Hrefk, Ty::P64, node, kref, bits)
+    }
+
+    /// S4: may the `HREFK`s of `tbl` (the table reference `t`) be covered by a shape guard? The knob is on, the table has an id slot and a bounded size, the
+    /// table is not one this trace allocated (its layout is built by the trace, and the sinking analysis owns its node vector), and no insertion into it
+    /// was recorded before (the layout is then not what the recorder saw at the start; a trace that inserts into the tables it reads by field keeps the
+    /// plain `HREFK`s, and one that does it in a later part of the iteration is demoted by `cache::shape_miss`).
+    fn shape_wanted(&mut self, t: Ref, tbl: TableRef) -> bool {
+        if !self.cfg.shape || !super::shape::eligible(tbl.lsizenode()) {
+            return false;
+        }
+        if TraceIr::is_ins(t) && self.b.ir.at(t).op == TOp::Tnew {
+            return false;
+        }
+        !self.shape_dirty.contains(&(tbl.as_ptr() as usize))
+            || mutants::active("shape_stale_across_rehash")
+    }
+
+    /// S4: a key insertion (`NEWREF`, `TSET`) into `tbl` was recorded.
+    fn shape_note_insert(&mut self, tbl: TableRef) {
+        let k = tbl.as_ptr() as usize;
+        if !self.shape_dirty.contains(&k) {
+            self.shape_dirty.push(k);
+        }
+    }
+
+    /// S4: the shape guard of `node` (the `FLOAD node` of the table `t`): `HSHAPE node, #id` with the id of the layout the table has now (computed and stored
+    /// when its slot is 0). `false` (no guard, nothing covered) when no id can be made.
+    fn shape_cover(&mut self, node: Ref, tbl: TableRef) -> R<bool> {
+        let id = super::shape::layout_id(tbl);
+        if id == 0 {
+            return Ok(false);
+        }
+        // MUTANT `shape_guard_skipped`: the `HREFK` is marked covered, the guard is not emitted
+        if mutants::active("shape_guard_skipped") {
+            return Ok(true);
+        }
+        // MUTANTS `shape_stale_across_rehash` (a guard survives an insertion into the table) and `shape_header_fact_kept_over_alloc` (a guard survives
+        // allocations, which may run a collector step that clears dead keys): the second access of a table reference reuses the first guard
+        if mutants::active("shape_stale_across_rehash")
+            || mutants::active("shape_header_fact_kept_over_alloc")
+        {
+            let key = tbl.as_ptr() as usize;
+            if let Some(&(_, at)) = self.shape_guarded.iter().find(|&&(r, _)| r == key) {
+                let ins_since = &self.b.ir.ins[at.min(self.b.ir.ins.len())..];
+                let inserted = ins_since
+                    .iter()
+                    .any(|i| matches!(i.op, TOp::Newref | TOp::Tset));
+                if mutants::active("shape_stale_across_rehash") || !inserted {
+                    return Ok(true);
+                }
+            }
+            self.shape_guarded.retain(|&(r, _)| r != key);
+            self.shape_guarded.push((key, self.b.ir.ins.len()));
+        }
+        let kid = self.kint(id as i64);
+        self.guard(TOp::Hshape, Ty::I64, node, kid, u32::from(tbl.lsizenode()))?;
+        Ok(true)
     }
 
     /// The node of `key` in the table `tv` (a table value; `Metamethod` for anything else: an index operation on a
@@ -4804,6 +4888,7 @@ impl Rec {
         let r = self
             .b
             .emit_flags(TOp::Tset, Ty::I64, 0, t.0, key, u32::from(val.0))?;
+        self.shape_note_insert(tbl);
         self.last_tset = self.b.ir.ins.len();
         if !self.cfg.lockstep {
             self.ls_tabs.push_back(Some(tbl));
@@ -4898,6 +4983,7 @@ impl Rec {
             Some((aux, _)) => self.b.emit(TOp::Newref, Ty::P64, t.0, key.0, aux)?,
             None => self.ins(TOp::Newref, Ty::P64, t.0, key.0)?,
         };
+        self.shape_note_insert(tbl);
         let z = self.kint(0);
         if !mutants::active("newref_ne_guard_skip") {
             self.guard(TOp::Ne, Ty::I64, n, z, 0)?;
@@ -8411,6 +8497,7 @@ fn pcall_pure(op: TOp) -> bool {
             | TOp::Hrefv
             | TOp::Hload
             | TOp::Hmiss
+            | TOp::Hshape
             | TOp::Uvrel
     )
 }

@@ -817,6 +817,13 @@ pub const NAMES: &[&str] = &[
     "shape_gc_deadkey_reuse",
     "shape_weak_clear_skip",
     "shape_nr_id_skip",
+    // S4 (`shapeguard`): the shape guard (`HSHAPE`) of the recorder, the interning of ids and the exit policy
+    "shape_guard_skipped",
+    "shape_stale_across_rehash",
+    "shape_header_fact_kept_over_alloc",
+    "shape_demote_never",
+    "shape_id_reuse",
+    "shape_miss_counts_hot",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -891,7 +898,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 676);
+        assert_eq!(NAMES.len(), 682);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
