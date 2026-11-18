@@ -760,6 +760,7 @@ pub fn driver_start_side(
             max_extent: start.max_extent,
             max_ci: start.max_ci,
             frame_min: cfg.limits.framemin,
+            carry: start.carry.clone(),
         }),
         loop_unroll: cfg.limits.loopunroll,
         // C38 slice 1: a side recording that reaches a callee loop head with a root trace ends with the frame-linking exit
@@ -1274,6 +1275,100 @@ impl Resolver for Res {
     }
 }
 
+/// R1 (`regcarry`): makes every snapshot a root's guard-free second entry can leave through *dense* in the slots of the leading `SLOAD` run. A link that
+/// enters the root behind the run (`HeadData::e3`) hands the run's values over in registers and does not write the stack, so the stack slots of those
+/// values may be stale from there on: each snapshot used by a guard behind the run gets a `SNAP_CARRY` entry (slot -> the unmodified `SLOAD`) for every
+/// carried slot it does not name itself, and the exit restores it (tag and payload) like any other entry. Carried slots are the run's `Int` / `Num` / table
+/// slots that no `SSTORE` of the trace writes (an `SSTORE`d slot is omitted from snapshots because the stack holds its value: that would not be the
+/// `SLOAD`'s). Returns the carried slots (also in `ir.carry`); a trace with a snapshot shared by a guard of the run and a later one is left alone.
+fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
+    use ir::{aux_snap, SnapEntry, TOp, Ty, F_GUARD, REF_BIAS, SNAP_CARRY};
+    ir.carry.clear();
+    if mutants::active("carry_off") || ir.loop_at.is_none() {
+        return Vec::new();
+    }
+    let Some((end, req)) = exit::lead_run(ir) else {
+        return Vec::new();
+    };
+    let stored: Vec<u16> = ir
+        .ins
+        .iter()
+        .filter(|i| i.op == TOp::Sstore)
+        .map(|i| i.aux as u16)
+        .collect();
+    let mut slots: Vec<(u16, ir::Ref)> = Vec::new();
+    for (k, &(slot, ty)) in req.iter().enumerate() {
+        if matches!(ty, Ty::Int | Ty::Num | Ty::Tab)
+            && (!stored.contains(&slot) || mutants::active("carry_stored_slot"))
+        {
+            slots.push((slot, REF_BIAS + (2 + k) as u16));
+        }
+    }
+    if slots.is_empty() {
+        return Vec::new();
+    }
+    let n = ir.snaps.len();
+    // which snapshots are used by guards of the run (index < end) and which behind it
+    let (mut before, mut after) = (vec![false; n], vec![false; n]);
+    for (k, i) in ir.ins.iter().enumerate() {
+        if i.flags & F_GUARD != 0 {
+            let s = aux_snap(i.aux) as usize;
+            if s < n {
+                if k < end {
+                    before[s] = true;
+                } else {
+                    after[s] = true;
+                }
+            }
+        }
+    }
+    // a snapshot shared by a guard of the run and a later one (the entry snapshot: callee identity guards placed behind the run keep it) is copied for the
+    // later guards
+    for s in 0..n {
+        if before[s] && after[s] {
+            let (snap, entries) = (ir.snaps[s], ir.snap_entries(s as u32).to_vec());
+            let ns = ir.snapshot(snap, &entries);
+            for (k, i) in ir.ins.iter_mut().enumerate() {
+                if k >= end && i.flags & F_GUARD != 0 && aux_snap(i.aux) as usize == s {
+                    i.aux = ir::guard_aux(ns, ir::aux_bits(i.aux));
+                }
+            }
+            before.push(false);
+            after.push(true);
+            after[s] = false;
+        }
+    }
+    for s in 0..ir.snaps.len() {
+        if !after[s] {
+            continue;
+        }
+        let old: Vec<SnapEntry> = ir.snap_entries(s as u32).to_vec();
+        let mut new: Vec<SnapEntry> = slots
+            .iter()
+            .filter(|&&(slot, _)| !old.iter().any(|e| e.slot == slot))
+            .map(|&(slot, r)| SnapEntry {
+                slot,
+                r,
+                flags: SNAP_CARRY,
+            })
+            .collect();
+        if new.is_empty() {
+            continue;
+        }
+        new.extend(old);
+        ir.snaps[s].map = (ir.snapmap.len() as u32, new.len() as u16);
+        ir.snapmap.extend(new);
+    }
+    ir.carry = slots.iter().map(|&(s, _)| s).collect();
+    ir.carry.clone()
+}
+
+/// R1: is `regcarry` on for this state?
+fn carry_limit(st: &mut State) -> bool {
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    matches!(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry }, 1 | 2)
+}
+
 fn pipeline(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr> {
     let t0 = phase::now();
     let r = pipeline_inner(st, act, rec);
@@ -1326,6 +1421,54 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         // H1: forwarding / load CSE on the rolled segment of a side or stitched trace
         opt_loop::run_fwd(&mut rec, opts).map_err(|e| abort_err("pass", e))?;
     }
+    // R1: dense snapshots for a root that a carrying link can enter
+    let carry_on = side.is_none()
+        && !stitched
+        && !act.prelude
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        && matches!(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry }, 1 | 3);
+    if carry_on {
+        carry_dense(&mut rec.ir);
+    }
+    if let Some(si) = side.filter(|_| !rec.ir.carry_in.is_empty()) {
+        // R1 (half A): the carry entry skips the room checks of the plain entry: the trace may not need more than the parent's checks guarantee
+        if (rec.ir.extent > act.max_extent || rec.ir.depth > act.max_ci)
+            && !mutants::active("carry_room_ignored")
+        {
+            return Err(abort_err(
+                "carry-room",
+                format!(
+                    "extent {} > {} or depth {} > {}",
+                    rec.ir.extent, act.max_extent, rec.ir.depth, act.max_ci
+                ),
+            ));
+        }
+        // the writeback stores the slots the parent's exit left stale too (carried loads stand for them); the dead numeric temporaries among them are left
+        // out like F4 leaves them out of a snapshot at the link's pc
+        if !si.no_link && !si.frame_link {
+            if let Some(pi) = rec.ir.prune.clone() {
+                let ls = rec.ir.snaps[si.link_snap as usize];
+                let ir = &rec.ir;
+                let carried = |r: ir::Ref| {
+                    ir::TraceIr::is_ins(r) && {
+                        let i = ir.at(r);
+                        i.op == ir::TOp::Sload && ir::aux_bits(i.aux) & ir::SLOAD_CARRIED != 0
+                    }
+                };
+                let keep: Vec<bool> = rec
+                    .writeback
+                    .iter()
+                    .map(|e| {
+                        !(carried(e.r)
+                            && (pi.drops(&ls, e, ir.ty_of(e.r))
+                                || mutants::active("carry_wb_prune_live")))
+                    })
+                    .collect();
+                let mut k = keep.into_iter();
+                rec.writeback.retain(|_| k.next().unwrap_or(true));
+            }
+        }
+    }
     let ir = &rec.ir;
     if cache::verbose_aborts() {
         eprintln!(
@@ -1365,10 +1508,55 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         xregs: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.xregs } as u8,
         // SAFETY: as above.
         hkaddr: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.hkaddr } != 0,
+        carry_at: if ir.carry.is_empty() {
+            0
+        } else {
+            exit::lead_run(ir).map_or(0, |r| r.0)
+        },
         ..RaOpts::from_trace(opts)
     };
+    // R1: a side trace that may link to the third entry of the root of its head wants its writeback values in the registers the root holds them in
+    let end_hints: Vec<ra::Loc> = match side {
+        Some(si)
+            if matches!(
+                // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+                unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry },
+                1 | 3
+            ) && !si.no_link
+                && !si.frame_link
+                && !si.frameful
+                && si.link_proto.0 == act.root
+                && ir.loop_at.is_none() =>
+        {
+            // SAFETY: the root prototype is live (running frame).
+            let rootp = unsafe { &*(act.root as *const rn_core::func::Proto) };
+            let sig = cache::proto_ref(rootp)
+                .and_then(|pr| {
+                    cache::with_tr(st, pr, |tp| {
+                        tp.head_index(si.link_pc)
+                            .map(|i| tp.head(i).e3_sig_inst.get())
+                    })
+                    .flatten()
+                })
+                .unwrap_or(0);
+            match exit::carry_info(sig) {
+                Some(info) if sig != 0 => rec
+                    .writeback
+                    .iter()
+                    .map(|e| {
+                        info.dsts
+                            .iter()
+                            .find(|d| d.slot == e.slot)
+                            .map_or(ra::Loc::None, |d| d.reg)
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    };
     let t_ra = phase::now();
-    let mut al = ra::allocate(ir, &end, &ropts).map_err(|e| {
+    let mut al = ra::allocate_hinted(ir, &end, &end_hints, &ropts).map_err(|e| {
         abort_err(
             match e {
                 ra::RaError::Phi => "phi",
@@ -1388,13 +1576,19 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             xregs: ropts.xregs & !2,
             ..ropts.clone()
         };
-        if let Ok(a2) = ra::allocate(ir, &end, &without) {
+        if let Ok(a2) = ra::allocate_hinted(ir, &end, &end_hints, &without) {
             if a2.carried_spills(ir) <= al.carried_spills(ir) {
                 al = a2;
             }
         }
     }
     phase::add(phase::RA, t_ra);
+    if act.verbose >= 2 && !ir.carry_in.is_empty() {
+        eprintln!(
+            "[trace] carry-in: parent locs {:?}; allocation {:?}; writeback {:?}",
+            ir.carry_in, al.carry, rec.writeback
+        );
+    }
     // tier-1 label addresses of the root and every inlined prototype (TR4: the code version installed now)
     let mut res = Res {
         protos: HashMap::new(),
@@ -1487,6 +1681,17 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                 .collect::<Vec<_>>()
         );
     }
+    // R1: the carry cells of the exits (zero until a side trace compiled for register-carried entry is attached), behind the exit cells
+    let carry_exits_on = carry_limit(st)
+        && vbreg == Some(ra::BUDGET_GPR)
+        && ir.rec_call.is_none()
+        && ir.rec_ret.is_none()
+        && ir.segs.is_empty()
+        && !cache::proto_lazy(st, rpr);
+    if carry_exits_on {
+        let n = init.len();
+        init.extend(std::iter::repeat(0).take(n));
+    }
     let cells = cache::alloc_exit_cells(st, act.id, &init)
         .ok_or_else(|| abort_err("cells", "alloc_exit_cells"))?;
     let (head, pcl) = if act.side {
@@ -1509,6 +1714,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         .ok_or_else(|| abort_err("no-head", format!("pc {pc}")))?;
         (head, pcl)
     };
+    let mut carry_env = (0u64, 0u32);
     let side_env = match side {
         None => None,
         // P-E2: a side trace that ends with its always-taken exit before the root `RETURN` has no link target
@@ -1568,6 +1774,23 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             } else {
                 (0, 0)
             };
+            // R1: the root's third entry, offered to a link that may carry (`regcarry`)
+            // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+            if link2_cell != 0 && matches!(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry }, 1 | 3)
+            {
+                carry_env = cache::with_tr(st, tpr, |tp| {
+                    tp.head_index(si.link_pc).map(|i| {
+                        let h = tp.head(i);
+                        if h.e3_code.get() != 0 && h.e3_sig_inst.get() != 0 {
+                            (h as *const HeadData as u64, h.e3_sig_inst.get())
+                        } else {
+                            (0, 0)
+                        }
+                    })
+                })
+                .flatten()
+                .unwrap_or((0, 0));
+            }
             Some(asm::SideEnv {
                 link_cell,
                 link_snap: si.link_snap,
@@ -1771,6 +1994,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         libcall: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.libcall },
         sink_stub: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkstub != 0 },
         mat_fn: exit::jit_tr_mat as *const () as usize as u64,
+        carry_head: carry_env.0,
+        carry_sig: carry_env.1,
+        carry_exits: carry_exits_on,
     };
     let t_asm = phase::now();
     let mut a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env).map_err(|e| {
@@ -1815,6 +2041,31 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     } else {
         0
     };
+    // R1: the third entry (only for the real program, like the second)
+    let (e3_off, e3_sig) = match a.entry3 {
+        Some(l) if e2_off != 0 && !emurun && !emuverify && !a.carry.is_empty() => {
+            match (em.label_off[l as usize], vbreg) {
+                (Some(off), Some(r)) if off != 0 => (
+                    off,
+                    exit::carry_intern(exit::CarryInfo {
+                        dsts: a.carry.clone(),
+                        budget: a.carry_budget,
+                        budget_reg: r,
+                        room: (ir.extent, ir.depth),
+                        e2sig: e2_sig,
+                    }),
+                ),
+                _ => (0, 0),
+            }
+        }
+        _ => (0, 0),
+    };
+    if act.verbose >= 2 && (e3_off != 0 || carry_env.1 != 0) {
+        eprintln!(
+            "[trace] carry: root e3 {e3_off:#x} sig {e3_sig} dsts {:?}; link to sig {} (head {:#x})",
+            a.carry, carry_env.1, carry_env.0
+        );
+    }
     // Q3: the shape of the compile (IR + register allocation text, free of trace numbers and addresses of the
     // trace's own counters) identifies a re-compile that would repeat a flushed generation
     // (P-G: hashed from the structures; the text itself is built only for `RUSTYNAIL_JIT_DUMP`)
@@ -1835,6 +2086,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             e2_off,
             e2n_off,
             e2_sig,
+            e3_off,
+            e3_sig,
+            ce_off: if emurun || emuverify {
+                0
+            } else {
+                a.entry_c
+                    .and_then(|l| em.label_off[l as usize])
+                    .unwrap_or(0)
+            },
             rec_ret: ir.rec_ret.is_some(),
             text,
             hash,

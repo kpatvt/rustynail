@@ -191,6 +191,9 @@ pub struct RaOpts {
     /// H1 (`hkaddr`): an `HREFK` whose users are all `HLOAD` / `HSTORE` addresses is *fused* into them like an `AREF`: no register and no `lea`, the
     /// users address `[node + idx * 24 + field]` and the node operand stays live up to them.
     pub hkaddr: bool,
+    /// R1 (`regcarry`): the index of the first instruction behind the leading `SLOAD` run of a root (`exit::lead_run`): the allocator records where the
+    /// run's values are before that instruction ([`Allocation::carry`]). 0: nothing is recorded.
+    pub carry_at: usize,
 }
 
 impl Default for RaOpts {
@@ -202,6 +205,7 @@ impl Default for RaOpts {
             reserve_gpr: None,
             xregs: 0,
             hkaddr: false,
+            carry_at: 0,
         }
     }
 }
@@ -244,6 +248,8 @@ pub struct Allocation {
     /// Location, at the end of the body (before the back-edge moves), of each ref of `end_uses` given to
     /// [`allocate`] (same order).
     pub end_locs: Vec<Loc>,
+    /// R1: with [`RaOpts::carry_at`] set: per live leading `SLOAD` (ref, register holding it before instruction `carry_at`, spill slots that hold it).
+    pub carry: Vec<(Ref, Loc, Vec<u16>)>,
     /// Helper-call sites in instruction order.
     pub calls: Vec<CallSite>,
     /// Spill slots used (`0..nspill`), not counting [`SCRATCH_SPILL`].
@@ -625,12 +631,14 @@ struct Ra<'a> {
     cur_i: usize,
     evicted: Mask,
     phis: Vec<usize>,
+    carry: Vec<(Ref, Loc, Vec<u16>)>,
     top: Vec<Vec<Loc>>,
     end_loc: Vec<Loc>,
     invariants: Vec<usize>,
     entry_moves: Vec<Move>,
     calls: Vec<CallSite>,
     deferred: Vec<u16>,
+    end_hints: Vec<Loc>,
 }
 
 type R<T> = Result<T, RaError>;
@@ -643,6 +651,17 @@ fn bad<T>(s: impl Into<String>) -> R<T> {
 /// trace (before the back-edge moves), e.g. the TR3b writeback values; their locations come back in
 /// [`Allocation::end_locs`].
 pub fn allocate(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> Result<Allocation, RaError> {
+    allocate_hinted(ir, end_uses, &[], opts)
+}
+
+/// [`allocate`] with a preferred register for each ref of `end_uses` (`Loc::G` / `Loc::X`; anything else, or a missing entry, is no hint): R1, a carrying
+/// link wants the values where the target root holds them, so that its moves vanish.
+pub fn allocate_hinted(
+    ir: &TraceIr,
+    end_uses: &[Ref],
+    end_hints: &[Loc],
+    opts: &RaOpts,
+) -> Result<Allocation, RaError> {
     let n = ir.ins.len();
     let l = ir.loop_at.map(idx);
     if let Some(l) = l {
@@ -911,12 +930,14 @@ pub fn allocate(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> Result<Allocat
         cur_i: 0,
         evicted: Mask::default(),
         phis,
+        carry: Vec::new(),
         top: vec![Vec::new(); n],
         end_loc: vec![Loc::None; n],
         invariants: Vec::new(),
         entry_moves: Vec::new(),
         calls: Vec::new(),
         deferred: Vec::new(),
+        end_hints: end_hints.to_vec(),
     };
     ra.run(end_uses, weak)
 }
@@ -1175,9 +1196,23 @@ impl Ra<'_> {
         }
         // locations of the values live at the end of the body
         let mut ends: Vec<Ref> = self.phis.iter().map(|&p| ir.ins[p].b).collect();
+        let nphi = ends.len();
         ends.extend_from_slice(end_uses);
-        for &r in &ends {
-            self.end_loc_of(r)?;
+        // R1: a carried load prefers the register the parent's exit map holds the value in (the carry entry's move then vanishes)
+        for k in 0..self.n {
+            if ir.ins[k].op == TOp::Sload && aux_bits(ir.ins[k].aux) & SLOAD_CARRIED != 0 {
+                if let Some(&(_, src)) = ir.carry_in.iter().find(|(s, _)| *s == ir.ins[k].a) {
+                    match src {
+                        CarrySrc::G(n) if !self.is_x[k] => self.vals[k].hint = n,
+                        CarrySrc::X(n) if self.is_x[k] => self.vals[k].hint = n,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        for (k, &r) in ends.iter().enumerate() {
+            let hint = k.checked_sub(nphi).and_then(|j| self.end_hints.get(j).copied());
+            self.end_loc_of(r, hint.unwrap_or(Loc::None))?;
         }
         for &p in &self.phis.clone() {
             let b = ir.ins[p].b;
@@ -1198,9 +1233,15 @@ impl Ra<'_> {
             match ir.ins[i].op {
                 TOp::Loop => self.cross_loop(i)?,
                 TOp::Phi => self.def_phi(i)?,
+                // R1: a carried load defines nothing where it stands: its value lives from the start of the trace
+                TOp::Sload if aux_bits(ir.ins[i].aux) & SLOAD_CARRIED != 0 => {}
                 _ => self.process(i)?,
             }
+            if self.opts.carry_at != 0 && i == self.opts.carry_at {
+                self.capture_carry();
+            }
         }
+        self.capture_carried_loads();
         if !self.open.is_empty() {
             return bad("snapshot left open");
         }
@@ -1285,9 +1326,60 @@ impl Ra<'_> {
             backedge_seq,
             backedge_after: after,
             end_locs,
+            carry: std::mem::take(&mut self.carry),
             calls: self.calls,
             nspill: self.next_slot as u16,
         })
+    }
+
+    /// R1 (half A): the locations of the carried loads at the start of the trace.
+    fn capture_carried_loads(&mut self) {
+        let ir = self.ir;
+        let mut out = Vec::new();
+        for k in 0..self.n {
+            if ir.ins[k].op != TOp::Sload || aux_bits(ir.ins[k].aux) & SLOAD_CARRIED == 0 {
+                continue;
+            }
+            let x = self.is_x[k];
+            let reg = if self.vals[k].reg != NOREG {
+                Self::rloc(x, self.vals[k].reg)
+            } else {
+                Loc::None
+            };
+            let mut slots = self.vals[k].slots.clone();
+            slots.extend(self.vals[k].perm.iter().copied());
+            if reg == Loc::None && slots.is_empty() {
+                continue;
+            }
+            out.push((rf(k), reg, slots));
+        }
+        if !out.is_empty() {
+            self.carry = out;
+        }
+    }
+
+    /// R1: the state of the leading `SLOAD` run's values at the point before instruction `carry_at` (called after that instruction is processed).
+    fn capture_carry(&mut self) {
+        let ir = self.ir;
+        let mut out = Vec::new();
+        for k in 2..self.opts.carry_at.min(self.n) {
+            if ir.ins[k].op != TOp::Sload || !self.defines[k] {
+                continue;
+            }
+            let x = self.is_x[k];
+            let reg = if self.vals[k].reg != NOREG {
+                Self::rloc(x, self.vals[k].reg)
+            } else {
+                Loc::None
+            };
+            let mut slots = self.vals[k].slots.clone();
+            slots.extend(self.vals[k].perm.iter().copied());
+            if reg == Loc::None && slots.is_empty() {
+                continue; // dead behind the run
+            }
+            out.push((rf(k), reg, slots));
+        }
+        self.carry = out;
     }
 
     /// Chooses the whole-body homes of the loop-invariant values (pre-roll values the body uses).
@@ -1370,7 +1462,7 @@ impl Ra<'_> {
     }
 
     /// Location at the end of the body of `r`, allocating it if needed.
-    fn end_loc_of(&mut self, r: Ref) -> R<Loc> {
+    fn end_loc_of(&mut self, r: Ref, hint: Loc) -> R<Loc> {
         if r == NOREF {
             return bad("NOREF at the end");
         }
@@ -1390,7 +1482,12 @@ impl Ra<'_> {
         } else if self.vals[v].reg != NOREG {
             Self::rloc(x, self.vals[v].reg)
         } else {
-            match self.alloc_temp(x, Mask::default(), NOREG, false)? {
+            let h = match hint {
+                Loc::G(n) if !x => n,
+                Loc::X(n) if x => n,
+                _ => self.vals[v].hint,
+            };
+            match self.alloc_temp(x, Mask::default(), h, false)? {
                 Some(reg) => {
                     self.take_reg(v, reg);
                     Self::rloc(x, reg)

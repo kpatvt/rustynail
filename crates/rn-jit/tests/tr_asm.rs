@@ -740,6 +740,9 @@ fn base_env(w: &mut World) -> AsmEnv {
             0
         },
         fpool_off: (exit_area::FROM_R15 as usize + exit_area::SIZE + 8) as i32,
+        carry_head: 0,
+        carry_sig: 0,
+        carry_exits: false,
     }
 }
 
@@ -3195,6 +3198,9 @@ mod e2e {
             poll_off: None,
             fpool: 0,
             fpool_off: 0,
+            carry_head: 0,
+            carry_sig: 0,
+            carry_exits: false,
         };
         let a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env)
             .map_err(|e| format!("asm: {e:?}"))?;
@@ -3215,6 +3221,9 @@ mod e2e {
                 inner_off: 0,
                 e2_off: 0,
                 e2n_off: 0,
+                e3_off: 0,
+                e3_sig: 0,
+                ce_off: 0,
                 e2_sig: 0,
                 rec_ret: false,
                 text: None,

@@ -405,6 +405,8 @@ pub struct SideCfg {
     pub max_ci: u8,
     /// H1: fewest bytecodes of a side trace with frames that ends at a stitching exit (`TrLimits::framemin`).
     pub frame_min: u32,
+    /// R1 (`regcarry`): the slots the parent's exit hands over in registers (`SideStart::carry`): slot, type, where the exit map has the value. Empty: none.
+    pub carry: Vec<(u16, Ty, CarrySrc)>,
 }
 
 /// What a closed side recording adds to [`Recorded`].
@@ -2014,8 +2016,28 @@ impl Rec {
             let (r, _) = self.rd_slot(vm, slot)?;
             self.frames[k].cref = r;
         }
-        // snapshot 0: the state at H before anything is charged (POLL and BUDGET exits land on pcl[H])
-        let sm0 = SlotMap::new(if d0 == 0 { self.nslots } else { self.sm.len() });
+        // R1: the slots the parent's exit hands over in registers are defined first (unchecked, position-less loads): every snapshot, snapshot 0 included,
+        // and the writeback name them, as the stack holds nothing for them
+        let mut sm0 = SlotMap::new(if d0 == 0 { self.nslots } else { self.sm.len() });
+        if let Some(sd) = self.cfg.side.as_ref().filter(|_| d0 == 0) {
+            let carry = sd.carry.clone();
+            for (slot, ty, src) in carry {
+                self.need_ext(usize::from(slot) + 1)?;
+                sm0.grow(usize::from(slot) + 1);
+                let r = self.b.emit_raw(Ins {
+                    op: TOp::Sload,
+                    t: ty,
+                    flags: 0,
+                    a: slot,
+                    b: 0,
+                    prev: NOREF,
+                    aux: SLOAD_CARRIED << 16,
+                })?;
+                self.sm.def(usize::from(slot), r);
+                sm0.def(usize::from(slot), r);
+                self.b.ir.carry_in.push((slot, src));
+            }
+        }
         let frames0 = if mutants::active("fside_frames_dropped") {
             Vec::new()
         } else {

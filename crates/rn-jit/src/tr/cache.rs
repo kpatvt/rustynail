@@ -65,6 +65,8 @@ pub const GUARDDIET_PROCESS: u32 = 1;
 pub const HKADDR_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
 pub const SHAPEGUARD_PROCESS: u32 = 1;
+/// R1 (`regcarry`): the process default of [`TrLimits::regcarry`] (also the struct default).
+pub const REGCARRY_PROCESS: u32 = 0;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
@@ -592,6 +594,11 @@ pub struct TrLimits {
     /// S4 (`shapeguard`): a table's `HREFK`s are covered by ONE guard on the layout id of its node vector (`HSHAPE`, `shape.rs`) and skip their
     /// key compare: 0 = off, 1 = on (default [`SHAPEGUARD_PROCESS`]).
     pub shapeguard: u32,
+    /// R1 (`regcarry`): register-carrying transitions (docs/JIT_TRACE.md section 16): the link at the end of a side trace hands the values the
+    /// target root's leading `SLOAD`s would load in the registers (spill slots) the root's allocation holds them in, jumping to `HeadData::e3`
+    /// instead of storing them to the stack and re-loading them; the root's snapshots restore those slots at every exit (dense). 0 = off, 1 = on
+    /// (default [`REGCARRY_PROCESS`]).
+    pub regcarry: u32,
     /// S4 (`shapedemote`): shape-guard exits of one trace after which its family is re-recorded without shape guards (default [`SHAPE_DEMOTE`]).
     pub shapedemote: u32,
 }
@@ -693,6 +700,7 @@ impl Default for TrLimits {
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
+            regcarry: REGCARRY_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -866,6 +874,7 @@ impl TrLimits {
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,
+                "regcarry" => l.regcarry = v.min(3),
                 _ => bad.push(w.to_string()),
             }
         }
@@ -1191,6 +1200,14 @@ pub struct HeadData {
     pub e2n_code: Cell<usize>,
     /// See `e2n_code`.
     pub e2n: Cell<usize>,
+    /// R1 (`regcarry`): the third entry of the installed root trace (see `asm::Asm::entry3`; 0: none) and the interned [`exit::CarryInfo`] it was compiled with.
+    pub e3_code: Cell<usize>,
+    /// See `e3_code`.
+    pub e3_sig_inst: Cell<u32>,
+    /// R1: the cell a carrying link jumps through: `e3_code` exactly while `e2` is `e2_code` (the guard-free entries are offered), else 0.
+    pub e3: Cell<usize>,
+    /// R1: the signature of `e3` (0 whenever `e3` is 0: a link compares it with the signature it was compiled for).
+    pub e3sig: Cell<u32>,
     /// J2-2: the site is recorded with the deep limits (`TrLimits::deep`): set once, when a recording of the head ended at the
     /// recursion / depth limit (never reset: the site gets exactly one deeper re-record).
     pub deep: Cell<bool>,
@@ -1220,6 +1237,10 @@ pub mod head_off {
     pub const E2SIG: usize = offset_of!(HeadData, e2sig);
     /// `e2n: usize` (G1).
     pub const E2N: usize = offset_of!(HeadData, e2n);
+    /// `e3: usize` (R1).
+    pub const E3: usize = offset_of!(HeadData, e3);
+    /// `e3sig: u32` (R1).
+    pub const E3SIG: usize = offset_of!(HeadData, e3sig);
 }
 
 /// Abort count at which a head goes `Black` (3.3).
@@ -1285,6 +1306,10 @@ impl HeadData {
             e2sig: Cell::new(0),
             e2n_code: Cell::new(0),
             e2n: Cell::new(0),
+            e3_code: Cell::new(0),
+            e3_sig_inst: Cell::new(0),
+            e3: Cell::new(0),
+            e3sig: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
         }
@@ -1339,6 +1364,13 @@ impl HeadData {
             self.e2.set(0);
             self.e2sig.set(0);
             self.e2n.set(0);
+        }
+        if d2 && self.e3_code.get() != 0 && self.e2n_code.get() != 0 {
+            self.e3.set(self.e3_code.get());
+            self.e3sig.set(self.e3_sig_inst.get());
+        } else if !mutants::active("carry_cell_stale_after_flush") {
+            self.e3.set(0);
+            self.e3sig.set(0);
         }
     }
 
@@ -1792,6 +1824,8 @@ impl TrProto {
         h.e2_code.set(0);
         h.e2n_code.set(0);
         h.e2_sig_inst.set(0);
+        h.e3_code.set(0);
+        h.e3_sig_inst.set(0);
         h.pre.set(0);
         h.entry_fail.set(0);
         h.entry_ok.set(0);
@@ -3253,6 +3287,12 @@ pub struct TraceInstall {
     pub e2n_off: usize,
     /// See `e2_off`.
     pub e2_sig: u32,
+    /// R1: offset of the third entry (see `asm::Asm::entry3`), 0 if none, and the interned [`exit::CarryInfo`] of the run's values there.
+    pub e3_off: usize,
+    /// See `e3_off`.
+    pub e3_sig: u32,
+    /// R1: offset of the carry entry of a side trace compiled for register-carried entry (see `asm::Asm::entry_c`), 0 if none.
+    pub ce_off: usize,
     /// P-M3: the trace ends with a native return.
     pub rec_ret: bool,
     /// `RUSTYNAIL_JIT_DUMP` text (IR and so on); written to `trace-<n>.txt` when a dump directory is set.
@@ -3578,6 +3618,13 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
                 if let Some(c) = p.cells.get(sl.exit as usize) {
                     c.set(entry);
                 }
+                // R1: the carry cell of the exit (behind the exit cells, `Cx::inline_stub`)
+                let ns = p.xmeta.as_ref().map_or(0, |m| m.snaps.len());
+                if ti.ce_off != 0 && ns != 0 && p.cells.len() == 2 * ns {
+                    if let Some(c) = p.cells.get(ns + sl.exit as usize) {
+                        c.set(block_addr + ti.ce_off);
+                    }
+                }
             }
         }
         if sl.prelude {
@@ -3645,6 +3692,12 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
             0
         });
         h.e2_sig_inst.set(ti.e2_sig);
+        h.e3_code.set(if ti.e3_off != 0 && ti.e2_off != 0 {
+            block_addr + ti.e3_off
+        } else {
+            0
+        });
+        h.e3_sig_inst.set(ti.e3_sig);
         h.trace.set(Some(id));
         tp.set_state(head, HeadState::Traced);
         if d.live.contains(&root) {
@@ -3738,6 +3791,8 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                     h.e2_code.set(0);
                     h.e2n_code.set(0);
                     h.e2_sig_inst.set(0);
+                    h.e3_code.set(0);
+                    h.e3_sig_inst.set(0);
                     h.pre.set(0);
                     tp.blacklist(t.head);
                     Penalty::Black
@@ -3764,6 +3819,12 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
         for (c, sn) in t.cells.iter().zip(&m.snaps) {
             if sn.land_addr != 0 && !mutants::active("flush_keeps_cells") {
                 c.set(sn.land_addr as usize);
+            }
+        }
+        // R1: no exit of a flushed trace jumps into a side trace with registers any more
+        if t.cells.len() == 2 * m.snaps.len() && !mutants::active("carry_cells_kept") {
+            for c in &t.cells[m.snaps.len()..] {
+                c.set(0);
             }
         }
     }
@@ -3800,6 +3861,13 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
             if let Some(c) = p.exits.get(k) {
                 c.set(0);
+            }
+            // R1: the carry cell of the exit
+            let ns = p.xmeta.as_ref().map_or(0, |m| m.snaps.len());
+            if ns != 0 && p.cells.len() == 2 * ns && !mutants::active("carry_cell_side_stale") {
+                if let Some(c) = p.cells.get(ns + k) {
+                    c.set(0);
+                }
             }
             // (P3: the counts before a re-base of the counter belong to the flushed side trace's chain)
             if let Some(o) = p.chain_off.get_mut(k) {
@@ -4008,6 +4076,9 @@ pub struct SideStart {
     pub ubump: u32,
     /// N3a: record without `RETF` (an earlier recording from this exit that used it failed).
     pub no_retf: bool,
+    /// R1 (`regcarry`): the slots the exit's inline stub hands over in registers when a carry entry is attached (slot, type, where the exit map has the value);
+    /// empty when the exit does not carry.
+    pub carry: Vec<(u16, super::ir::Ty, super::ir::CarrySrc)>,
 }
 
 /// S1: one inlined frame of the exit a side recording starts in (the fields of `exit::FrameRestore` the recorder needs).
@@ -4231,6 +4302,67 @@ pub fn child_room(extent: u16, depth: u8, seg_shift: u16, seg_pops: u8) -> (u16,
             depth.saturating_add(seg_pops)
         },
     )
+}
+
+/// R1 (`regcarry`): the slots of exit `k` of trace `id` (snapshot `snap`) a side trace may take over in the registers of the exit map, with their types and
+/// locations; empty when the exit cannot carry. The parent must have carry cells (`asm::AsmEnv::carry_exits`), the stub must not touch anything the side
+/// trace would find changed (no frames, sunk tables, `top`, constants as sources), and every slot needs a static type.
+fn carry_slots(
+    d: &mut JitData,
+    id: TrId,
+    k: u32,
+    snap: &super::exit::ExitSnap,
+    virt: bool,
+    prelude: bool,
+) -> Vec<(u16, super::ir::Ty, super::ir::CarrySrc)> {
+    use super::exit::ValSrc;
+    use super::ir::CarrySrc;
+    if !matches!(d.tr.cfg.limits.regcarry, 1 | 2)
+        || virt
+        || prelude
+        || !snap.frames.is_empty()
+        || !snap.sunk.is_empty()
+        || snap.top.is_some()
+        || !snap.usable
+        || snap.seg_pops != 0
+        || snap.slots.is_empty()
+    {
+        return Vec::new();
+    }
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(id)
+    else {
+        return Vec::new();
+    };
+    let Some(m) = t.xmeta.as_ref() else {
+        return Vec::new();
+    };
+    if m.cells.is_null() || t.cells.len() != 2 * m.snaps.len() || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR) {
+        return Vec::new();
+    }
+    let _ = k;
+    let mut out = Vec::new();
+    for s in &snap.slots {
+        let Some(ty) = super::exit::ty_of_tag(s.tag).filter(|t| !matches!(t, super::ir::Ty::Nil | super::ir::Ty::False | super::ir::Ty::True)) else {
+            return Vec::new();
+        };
+        if s.tag == super::exit::TAG_DYN_STR || s.slot >= super::ir::SNAP_PSEUDO || s.func {
+            return Vec::new();
+        }
+        let src = match s.src {
+            ValSrc::Reg(r) if r != 10 && r != 7 && (ty != super::ir::Ty::Num) => CarrySrc::G(r),
+            ValSrc::Xmm(x) if ty == super::ir::Ty::Num => CarrySrc::X(x),
+            ValSrc::Spill(n) => CarrySrc::Spill(n),
+            _ => return Vec::new(),
+        };
+        if out.iter().any(|&(sl, _, _)| sl == s.slot) {
+            return Vec::new();
+        }
+        out.push((s.slot, ty, src));
+    }
+    out
 }
 
 fn side_attempt(
@@ -4583,6 +4715,7 @@ fn side_attempt(
         base + sbump2_extra(d.tr.cfg.limits.sbump2, last, fails, !frames.is_empty())
     };
     let no_retf = matches!(d_of(st).tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.noretf.get(k as usize).copied().unwrap_or(false));
+    let carry = carry_slots(d_of(st), id, k, snap, virt, prelude);
     match start(
         st,
         ci,
@@ -4596,6 +4729,7 @@ fn side_attempt(
             max_ci: pdepth,
             ubump,
             no_retf,
+            carry,
         },
     ) {
         Some(rem) => HotAction::Interp(rem),

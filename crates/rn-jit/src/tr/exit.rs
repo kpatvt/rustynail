@@ -422,6 +422,10 @@ pub fn entry_ents(ir: &TraceIr, entry: &[u8; 256]) -> Vec<(u16, Ty)> {
         {
             continue;
         }
+        // R1: the stack tag of a slot the parent's exit handed over in a register is not the parent's
+        if ir.carry_in.iter().any(|&(s, _)| s == slot) && !mutants::active("carry_ents_kept") {
+            continue;
+        }
         let slot = if mutants::active("entry_inherit_wrong_slot") {
             slot ^ 1
         } else {
@@ -463,6 +467,10 @@ pub fn stack_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<Vec<(u16, T
         }
         for (k, i) in ir.ins.iter().enumerate() {
             if i.op != TOp::Sload || i.a == u16::MAX || stored.contains(&i.a) {
+                continue;
+            }
+            // R1: a carried load stands for a slot whose stack tag may be stale
+            if aux_bits(i.aux) & SLOAD_CARRIED != 0 && !mutants::active("carry_ents_kept") {
                 continue;
             }
             // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one, and a prelude inherits them)
@@ -803,6 +811,19 @@ pub fn build_exits_ex(
                 .any(|t| t.slot == slot || t.aliases.contains(&slot))
         };
         sn.ents = e.into_iter().filter(|&(sl, _)| !sunk_slot(sl)).collect();
+        // R1: a dense (`SNAP_CARRY`) entry restores a slot whose stack tag may be stale when the trace was entered with the value in a register:
+        // its tag is always stored (and a side trace attached here learns the type from the restore itself)
+        if !mutants::active("carry_tag_elided") {
+            let dense: Vec<u16> = ir
+                .snap_entries(si as u32)
+                .iter()
+                .filter(|e| e.flags & SNAP_CARRY != 0)
+                .map(|e| e.slot)
+                .collect();
+            if !dense.is_empty() {
+                sn.ents.retain(|&(sl, _)| !dense.contains(&sl));
+            }
+        }
     }
     let pre = pre_roll_snaps(ir);
     let descs = (0..out.len())
@@ -1180,6 +1201,59 @@ pub fn e2_req(sig: u32) -> Vec<(u16, Ty)> {
         .unwrap_or_default()
 }
 
+/// R1 (`regcarry`): where the allocation of a root holds the value of one leading `SLOAD` at the point behind the leading run (`HeadData::e3`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CarryDst {
+    /// The stack slot the `SLOAD` reads.
+    pub slot: u16,
+    /// Its type (the tag the entry check proved).
+    pub ty: Ty,
+    /// The register the value is in at the entry (`Loc::None`: only in spill slots, or dead there).
+    pub reg: Loc,
+    /// The spill slots that hold the value (the reloads behind the entry read them).
+    pub spills: Vec<u16>,
+    /// The slot is dense in every snapshot of the root (`TraceIr::carry`): a carrying link need not write it to the stack.
+    pub carried: bool,
+}
+
+/// R1: what a link needs to know about the root it enters through `HeadData::e3`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CarryInfo {
+    /// The live leading `SLOAD`s, in program order.
+    pub dsts: Vec<CarryDst>,
+    /// The `n` of the root's `BUDGET` (the link charges it: the entry skips the root's own charge).
+    pub budget: u16,
+    /// The budget register of the root (`AsmEnv::budget_reg`); a link of a trace with another register (or none) does not carry.
+    pub budget_reg: u8,
+    /// The room `(extent, depth)` the guard-free entry past its room checks needs (as `e2_room`).
+    pub room: (u16, u8),
+    /// The interned signature of the root's guard-free entry (`e2_intern_room`): a layout is only valid for the entry guards it was built with.
+    pub e2sig: u32,
+}
+
+/// R1: the interned [`CarryInfo`]s (1-based ids; 0 = none).
+static CARRY_SIGS: std::sync::Mutex<Vec<std::sync::Arc<CarryInfo>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Interns `info`: equal layouts get the same id.
+pub fn carry_intern(info: CarryInfo) -> u32 {
+    let mut v = CARRY_SIGS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(i) = v.iter().position(|r| **r == info) {
+        return i as u32 + 1;
+    }
+    v.push(std::sync::Arc::new(info));
+    v.len() as u32
+}
+
+/// The layout of interned id `sig`.
+pub fn carry_info(sig: u32) -> Option<std::sync::Arc<CarryInfo>> {
+    let v = CARRY_SIGS.lock().unwrap_or_else(|e| e.into_inner());
+    (sig as usize)
+        .checked_sub(1)
+        .and_then(|i| v.get(i))
+        .cloned()
+}
+
 /// The tag a writeback / `SSTORE` of ref `r` writes (as `Cx::store_slot` computes it); `None` for a type without a static tag.
 fn wb_tag(ir: &TraceIr, r: Ref) -> Option<u8> {
     if TraceIr::is_const(r) {
@@ -1201,8 +1275,14 @@ pub fn link_proof(ir: &TraceIr, wb: &[SnapEntry], entry: &[u8; 256], req: &[(u16
         return false;
     }
     let mut st = *entry;
+    for &(slot, _) in &ir.carry_in {
+        if slot < 256 && !mutants::active("carry_ents_kept") {
+            st[usize::from(slot)] = UNKNOWN_TAG;
+        }
+    }
     for i in &ir.ins {
         if i.op == TOp::Sload
+            && aux_bits(i.aux) & SLOAD_CARRIED == 0
             && i.a < 256
             && !ir
                 .ins
@@ -1275,6 +1355,7 @@ fn wb_ents_own(ir: &TraceIr) -> Vec<(u16, Ty)> {
         if i.op == TOp::Sload
             && i.a != u16::MAX
             && tag_of(i.t).is_some()
+            && (aux_bits(i.aux) & SLOAD_CARRIED == 0 || mutants::active("carry_ents_kept"))
             && !ir
                 .ins
                 .iter()

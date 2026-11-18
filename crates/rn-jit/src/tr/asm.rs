@@ -243,6 +243,16 @@ pub struct AsmEnv {
     pub fpool: u64,
     /// P2-3c: displacement from `r15` of `FPool::bits[0]`.
     pub fpool_off: i32,
+    /// R1 (`regcarry`): address of the `HeadData` of the head a side trace's link ends at, when a register-carrying link may be compiled
+    /// (`carry_sig != 0`); 0 otherwise.
+    pub carry_head: u64,
+    /// R1: the interned [`exit::CarryInfo`] of the root the head had when the side trace was compiled (0: none): the link carries values
+    /// only while `HeadData::e3sig` still holds it.
+    pub carry_sig: u32,
+    /// R1: the inline stubs of this trace first look at the carry cell of their exit (`exit_cells + 8 * (snaps + k)`): a side trace compiled for
+    /// register-carried entry has put its carry entry there, and the stub jumps to it with the values still in the registers of the exit map, without
+    /// storing them to the stack.
+    pub carry_exits: bool,
 }
 
 /// The link at the end of a side trace (7.8, TR22).
@@ -341,6 +351,9 @@ impl Default for AsmEnv {
             poll_off: None,
             fpool: 0,
             fpool_off: 0,
+            carry_head: 0,
+            carry_sig: 0,
+            carry_exits: false,
         }
     }
 }
@@ -407,6 +420,16 @@ pub struct Asm {
     pub e2_req: Vec<(u16, Ty)>,
     /// G1: the guard-free second entry past its room checks (`entry2`'s sibling for links whose chain proves at least the room it needs).
     pub entry2n: Option<L>,
+    /// R1 (`regcarry`): the third entry of a root: the point behind the leading `SLOAD` run (a carrying link has put the run's values where the allocation
+    /// holds them, [`Asm::carry`], charged the budget and done the entry bookkeeping). `None` unless `carry` is not empty.
+    pub entry3: Option<L>,
+    /// R1 (half A): the carry entry of a side trace whose parent's exit hands values over in registers (`TraceIr::carry_in`): moves them to where the allocation holds
+    /// the carried loads, then joins the plain entry behind its loads. `None`: the trace has no carried loads or cannot be entered like that.
+    pub entry_c: Option<L>,
+    /// R1: where the run's live values are at `entry3`.
+    pub carry: Vec<exit::CarryDst>,
+    /// R1: the `n` of the root's `BUDGET` (the carrying link charges it).
+    pub carry_budget: u16,
 }
 
 /// J1-1: the cold disambiguator of a fused `HREFK`+`HLOAD` pair with two exits.
@@ -2089,6 +2112,9 @@ struct Cx<'a> {
     rec_ci_cold: Vec<(L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
     bud_cold: Vec<(L, L, i32)>,
+    /// R1: the cold exits of a carrying link: `(label, poll stub, stores)`: the carried writeback entries are stored (they are not on the stack yet), then
+    /// control continues in the stub of the poll at the head.
+    rc_cold: Vec<(L, L, Vec<(u16, Ref, Loc)>)>,
     /// J1-1: number of `HREFK`+`HLOAD` pairs fused (`Asm::hk_fused`).
     hk_fused_n: u32,
     hk_split_n: u32,
@@ -2653,6 +2679,7 @@ pub fn assemble(
         shape_cold: Vec::new(),
         rec_ci_cold: Vec::new(),
         bud_cold: Vec::new(),
+        rc_cold: Vec::new(),
         hk_fused_n: 0,
         hk_split_n: 0,
         dbl: Vec::new(),
@@ -2724,6 +2751,30 @@ pub fn assemble(
             && inner.is_none()
     });
     let e2_after = cx.label();
+    // R1 (half A): the carried loads of a side trace: the plain entry loads them from the stack (the parent's exit stub has stored them), the carry entry
+    // moves them from the parent's registers; both continue at `start_l`
+    let carried: Vec<(Ref, Loc, Vec<u16>)> = if ir.carry_in.is_empty() {
+        Vec::new()
+    } else {
+        al.carry.clone()
+    };
+    for (r, reg, spills) in &carried {
+        let slot = ir.at(*r).a;
+        match reg {
+            Loc::G(d) => cx.ld(*d, W::B8, fm(slot, 8)),
+            Loc::X(d) => cx.push(Op::LdF {
+                dst: *d,
+                m: fm(slot, 8),
+            }),
+            _ => {}
+        }
+        for s in spills {
+            cx.ld(7, W::B8, fm(slot, 8));
+            cx.st(W::B8, spill_m(*s), Src::V(7));
+        }
+    }
+    let start_l = cx.label();
+    cx.bind(start_l);
     if rolled && env.side.is_none() {
         cx.head_pad();
         cx.bind(loop_l);
@@ -2792,7 +2843,19 @@ pub fn assemble(
     }
     if rolled {
         if !mutants::active("rolled_no_writeback") {
+            // R1: the entries a carrying link hands over in registers are stored on the plain path of the link (`emit_link`)
+            let rplan = match env.side {
+                Some(sd) if sd.link_cell != 0 => cx.carry_plan(sd, writeback),
+                _ => None,
+            };
             for (k, e) in writeback.iter().enumerate() {
+                if rplan
+                    .as_ref()
+                    .is_some_and(|c| c.dsts.iter().any(|d| d.carried && d.slot == e.slot))
+                    && !mutants::active("carry_store_always")
+                {
+                    continue;
+                }
                 cx.store_slot(e.slot, e.r, al.end_locs[k])?;
             }
         }
@@ -2826,7 +2889,7 @@ pub fn assemble(
     // A2: the second entry sits behind the main code (nothing falls into it)
     let mut entry2n = None;
     let (entry2, e2_req) = match e2plan {
-        Some((end, req)) => {
+        Some((end, ref req)) => {
             let e2 = cx.label();
             cx.bind(e2);
             cx.in_e2 = true;
@@ -2850,10 +2913,92 @@ pub fn assemble(
                 cx.post(i);
             }
             cx.push(Op::Jmp(e2_after));
-            (Some(e2), req)
+            (Some(e2), req.clone())
         }
         None => (None, Vec::new()),
     };
+    // R1 (half A): the carry entry of a side trace
+    let mut entry_c = None;
+    if env.side.is_some()
+        && !carried.is_empty()
+        && env.budget_reg.is_some()
+        && !env.lazy
+        && ir.rec_call.is_none()
+        && ir.rec_ret.is_none()
+        && ir.segs.is_empty()
+    {
+        let l = cx.label();
+        cx.bind(l);
+        let mut moves: Vec<Move> = Vec::new();
+        for (r, reg, spills) in &carried {
+            let slot = ir.at(*r).a;
+            let Some(&(_, src)) = ir.carry_in.iter().find(|(s, _)| *s == slot) else {
+                return incons("a carried load without a parent location");
+            };
+            let src = match src {
+                CarrySrc::G(n) => Loc::G(n),
+                CarrySrc::X(n) => Loc::X(n),
+                CarrySrc::Spill(n) => Loc::Spill(n),
+            };
+            if *reg != Loc::None {
+                moves.push(Move { dst: *reg, src });
+            }
+            for s in spills {
+                moves.push(Move {
+                    dst: Loc::Spill(*s),
+                    src,
+                });
+            }
+        }
+        if mutants::active("carry_in_drop_move") && !moves.is_empty() {
+            moves.remove(0);
+        }
+        let mut busy: u32 = 0;
+        for m in &moves {
+            for l in [m.dst, m.src] {
+                if let Loc::X(x) = l {
+                    busy |= 1 << x;
+                }
+            }
+        }
+        let xscratch = (0..16u8).find(|&x| busy >> x & 1 == 0);
+        for m in super::ra::sequentialise_x(&moves, SCRATCH_SPILL, xscratch) {
+            cx.emit_move(m);
+        }
+        cx.push(Op::Jmp(start_l));
+        entry_c = Some(l);
+    }
+    // R1: the third entry (see `Asm::entry3`): the label behind the leading run, with where the allocation holds the run's values
+    let mut entry3 = None;
+    let mut carry = Vec::new();
+    let mut carry_budget = 0;
+    if e2plan.is_some()
+        && !rolled
+        && !ir.carry.is_empty()
+        && env.budget_reg.is_some()
+        && env.side.is_none()
+        && !al.carry.is_empty()
+        && ir.ins[1].op == TOp::Budget
+    {
+        for (r, reg, spills) in &al.carry {
+            let ins = ir.at(*r);
+            carry.push(exit::CarryDst {
+                slot: ins.a,
+                ty: ins.t,
+                reg: *reg,
+                spills: spills.clone(),
+                carried: ir.carry.contains(&ins.a),
+            });
+        }
+        // (`r14` holds the constants pointer of tier 1 whenever a trace is left; a value there would be clobbered by the reload)
+        if carry.iter().any(|d| d.reg == Loc::G(10)) && !mutants::active("carry_r14_dst") {
+            carry.clear();
+        }
+        if !carry.is_empty() {
+            entry3 = Some(e2_after);
+            carry_budget = ir.ins[1].a;
+        }
+    }
     cx.stubs_and_tail(
         entry_fail,
         (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(rec_fail),
@@ -2894,6 +3039,10 @@ pub fn assemble(
         entry2,
         e2_req,
         entry2n,
+        entry3,
+        entry_c,
+        carry,
+        carry_budget,
     })
 }
 
@@ -3015,7 +3164,202 @@ impl Cx<'_> {
     /// whatever the head's dispatch cell says: the entry of its root trace (which re-checks its types), tier 1's
     /// counting stub, or `pcl[H]`. Nothing here refers to the code of another trace, so a flush of the target needs no
     /// patching (TR8).
+    /// R1 (`regcarry`): may the link of this side trace hand its values to the root's third entry in registers? Returns the layout the root was compiled
+    /// with. Everything the plain second entry needs must be proven (types by the chain, the room), the budget register must be the same, and every value
+    /// the root's run loads from a slot this trace writes must have the type the run checks.
+    fn carry_plan(
+        &self,
+        sd: SideEnv,
+        writeback: &[SnapEntry],
+    ) -> Option<std::sync::Arc<exit::CarryInfo>> {
+        if self.env.carry_sig == 0
+            || self.env.carry_head == 0
+            || sd.link2_cell == 0
+            || self.env.lazy
+            || !self.env.guarddiet
+            || self.env.side.is_none()
+        {
+            return None;
+        }
+        let info = exit::carry_info(self.env.carry_sig)?;
+        if self.env.budget_reg != Some(info.budget_reg) {
+            return None;
+        }
+        if !exit::link_proof(
+            self.ir,
+            writeback,
+            &self.env.entry_tags,
+            &exit::e2_req(sd.link2_sig),
+        ) {
+            return None;
+        }
+        let (need_e, need_d) = info.room;
+        if !(self.env.room_have.0 >= need_e && self.env.room_have.1 >= need_d) {
+            return None;
+        }
+        for d in &info.dsts {
+            if let Some(e) = writeback.iter().find(|e| e.slot == d.slot) {
+                let t = self.ir.ty_of(e.r);
+                let ok = match d.ty {
+                    Ty::Nil | Ty::False | Ty::True => true,
+                    _ => {
+                        tag_of(t).is_some()
+                            && tag_of(t) == tag_of(d.ty)
+                            && (t == Ty::Num) == (d.ty == Ty::Num)
+                    }
+                };
+                if !ok {
+                    return None;
+                }
+            }
+        }
+        Some(info)
+    }
+
+    /// R1: the carrying path of a link (see [`Cx::carry_plan`]); on a signature mismatch control continues at the plain path, which first
+    /// stores the carried entries that the early writeback left out.
+    fn emit_carry_link(
+        &mut self,
+        sd: SideEnv,
+        writeback: &[SnapEntry],
+        info: &exit::CarryInfo,
+    ) -> Result<(), AsmError> {
+        let plain = self.label();
+        let head = self.env.carry_head;
+        let e3 = head + head_off::E3 as u64;
+        // the root the head has now is the one this trace was compiled against
+        self.push(Op::Mov(7, e3));
+        if !mutants::active("carry_sig_ignored") {
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B4,
+                m: rm(7, (head_off::E3SIG - head_off::E3) as i32),
+                imm: self.env.carry_sig as i32,
+                to: plain,
+            });
+        }
+        // the exits of the carrying path store the carried entries (they are not on the stack) and continue in the stub of the poll
+        let stores: Vec<(u16, Ref, Loc)> = writeback
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| info.dsts.iter().any(|d| d.carried && d.slot == e.slot))
+            .map(|(k, e)| (e.slot, e.r, self.al.end_locs[k]))
+            .collect();
+        let x = self.poll_stub_label(sd.link_snap)?;
+        let xr = self.label();
+        self.rc_cold.push((xr, x, stores));
+        if !mutants::active("carry_no_poll") {
+            self.poll_ops(xr);
+        }
+        // the entry bookkeeping of the root (`entry_checks`), with `V0` / `V1` saved around it
+        {
+            let (m0, m1) = (spill_m(self.ext_slot(2)), spill_m(self.ext_slot(3)));
+            self.st(W::B8, m0, Src::V(0));
+            self.st(W::B8, m1, Src::V(1));
+            self.push(Op::Mov(0, head));
+            self.ld(1, W::B4, rm(0, head_off::PENDING as i32));
+            self.st(W::B8, spill_m(self.ext_slot(0)), Src::V(1));
+            self.st(W::B4, rm(0, head_off::PENDING as i32), Src::Imm(0));
+            self.ld(1, W::B4, rm(0, head_off::ENTRY_OK as i32));
+            let skip = self.label();
+            self.br(Cc::Ge, 1, Src::Imm(super::cache::ENTRY_OK_CAP as i32), skip);
+            self.push(Op::Add(1, Src::Imm(1)));
+            self.st(W::B4, rm(0, head_off::ENTRY_OK as i32), Src::V(1));
+            self.bind(skip);
+            self.ld(0, W::B8, m0);
+            self.ld(1, W::B8, m1);
+        }
+        // the root's budget charge (its `BUDGET` is behind the run, skipped by the third entry)
+        let r = info.budget_reg;
+        let n = i32::from(info.budget);
+        if !mutants::active("carry_no_budget") {
+            self.br(Cc::Lt, r, Src::Imm(n), xr);
+            self.push(Op::Sub(r, Src::Imm(n)));
+        }
+        // the values: a parallel move from where this trace holds them to where the root holds them, then the stack loads (slots this trace left alone)
+        let mut moves: Vec<Move> = Vec::new();
+        let mut zeros: Vec<Loc> = Vec::new();
+        let mut loads: Vec<(u16, Vec<Loc>)> = Vec::new();
+        for d in &info.dsts {
+            let mut targets: Vec<Loc> = Vec::new();
+            if d.reg != Loc::None {
+                targets.push(d.reg);
+            }
+            targets.extend(d.spills.iter().map(|&s| Loc::Spill(s)));
+            if targets.is_empty() {
+                continue;
+            }
+            if matches!(d.ty, Ty::Nil | Ty::False | Ty::True) {
+                zeros.extend(targets);
+                continue;
+            }
+            match writeback.iter().position(|e| e.slot == d.slot) {
+                Some(k) => {
+                    let src = self.al.end_locs[k];
+                    for t in targets {
+                        moves.push(Move { dst: t, src });
+                    }
+                }
+                None => loads.push((d.slot, targets)),
+            }
+        }
+        if mutants::active("carry_drop_move") && !moves.is_empty() {
+            moves.remove(0);
+        }
+        let mut busy: u32 = 0;
+        for m in &moves {
+            for l in [m.dst, m.src] {
+                if let Loc::X(x) = l {
+                    busy |= 1 << x;
+                }
+            }
+        }
+        let xscratch = (0..16u8).find(|&x| busy >> x & 1 == 0);
+        for m in super::ra::sequentialise_x(&moves, SCRATCH_SPILL, xscratch) {
+            self.emit_move(m);
+        }
+        for t in zeros {
+            match t {
+                Loc::G(d) => self.push(Op::Mov(d, 0)),
+                Loc::Spill(k) => self.st(W::B8, spill_m(k), Src::Imm(0)),
+                _ => {}
+            }
+        }
+        for (slot, targets) in loads {
+            for t in targets {
+                match t {
+                    Loc::G(d) => self.ld(d, W::B8, fm(slot, 8)),
+                    Loc::X(d) => self.push(Op::LdF {
+                        dst: d,
+                        m: fm(slot, 8),
+                    }),
+                    Loc::Spill(k) => {
+                        self.ld(7, W::B8, fm(slot, 8));
+                        self.st(W::B8, spill_m(k), Src::V(7));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.push(Op::Mov(7, e3));
+        self.ld(7, W::B8, rm(7, 0));
+        self.push(Op::JmpR(7));
+        self.bind(plain);
+        // the plain path: the entries the early writeback left out
+        if !mutants::active("carry_plain_no_store") {
+            for (k, e) in writeback.iter().enumerate() {
+                if info.dsts.iter().any(|d| d.carried && d.slot == e.slot) {
+                    self.store_slot(e.slot, e.r, self.al.end_locs[k])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn emit_link(&mut self, sd: SideEnv, writeback: &[SnapEntry]) -> Result<(), AsmError> {
+        if let Some(info) = self.carry_plan(sd, writeback) {
+            self.emit_carry_link(sd, writeback, &info)?;
+        }
         // A2: does the chain of this trace prove the entry guards of the target root (the ones its second entry skips)?
         let link2 = sd.link2_cell != 0
             && !self.env.lazy
@@ -4128,6 +4472,10 @@ impl Cx<'_> {
     fn sload_g(&mut self, i: usize, guard: bool) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
         let slot = ins.a;
+        if aux_bits(ins.aux) & SLOAD_CARRIED != 0 {
+            // R1: a carried load is placed by the entry sequences
+            return Ok(());
+        }
         if guard && aux_bits(ins.aux) & 1 != 0 && !mutants::active("entry_no_typecheck") {
             let x = self.guard_label(i)?;
             let tag = match ins.t {
@@ -7634,6 +7982,14 @@ impl Cx<'_> {
             self.st(W::B8, m(16), Src::Imm(i32::from(ls)));
             self.push(Op::Jmp(stub));
         }
+        // R1: the cold exits of a carrying link
+        for (label, x, stores) in std::mem::take(&mut self.rc_cold) {
+            self.bind(label);
+            for (slot, r, loc) in stores {
+                self.store_slot(slot, r, loc)?;
+            }
+            self.push(Op::Jmp(x));
+        }
         // P2-3a: the refund stubs of the budget (registers and flags are dead at the exit; only the budget register changes)
         for (label, exit, n) in std::mem::take(&mut self.bud_cold) {
             self.bind(label);
@@ -8384,6 +8740,34 @@ impl Cx<'_> {
                     });
                 }
             }
+        }
+        if self.env.carry_exits
+            && cell.is_some()
+            && !entry_check
+            && !frame_cell
+            && es.frames.is_empty()
+            && es.sunk.is_empty()
+            && es.top.is_none()
+            && es.usable
+            && self.env.budget_reg.is_some()
+            && !es
+                .slots
+                .iter()
+                .any(|s| matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_)) || s.tag == exit::TAG_DYN_STR)
+        {
+            // R1: a side trace compiled for register-carried entry takes over with the values where the exit map has them (the budget register
+            // holds `vb`; the stub's `vb + refund` goes to the register instead of the budget word)
+            let ac = self.env.exit_cells + 8 * (self.snaps.len() as u64 + u64::from(snap));
+            let normal = self.label();
+            self.push(Op::Mov(7, ac));
+            self.ld(7, W::B8, rm(7, 0));
+            self.br(Cc::Eq, 7, Src::Imm(0), normal);
+            if es.refund != 0 && !mutants::active("carry_exit_no_refund") {
+                let r = self.env.budget_reg.expect("checked above");
+                self.push(Op::Add(r, Src::Imm(es.refund)));
+            }
+            self.push(Op::JmpR(7));
+            self.bind(normal);
         }
         if let (true, Some(c)) = (frame_cell, cell) {
             // S1: an exit with virtual-able frames continues through its cell only once a side trace is attached (the cell

@@ -699,6 +699,13 @@ pub const SNAP_SFVAL: u8 = 16;
 pub const SNAP_SALIAS: u8 = 8;
 /// [`SnapEntry::flags`] (BUNDLE-2, `sinkmt`): `slot` = [`SNAP_PSEUDO`], `r` = the metatable of the preceding `SNAP_SUNK` table (set after its fields).
 pub const SNAP_SMT: u8 = 32;
+/// [`SnapEntry::flags`] (R1, `regcarry`): a *dense* entry: the slot holds the unmodified leading `SLOAD` of a root whose guard-free entry may be taken with the
+/// value in a register (the stack slot can be stale there), so every exit of the root restores it, with its tag (never elided).
+pub const SNAP_CARRY: u8 = 64;
+/// [`TOp::Sload`] op bits (`aux_bits`) of a *carried* load (R1, half A): the slot's value is handed over in a register by the exit of the parent trace
+/// (`TraceIr::carry_in`), the stack slot may be stale. The load is an unchecked, position-less definition at the start of the trace: it emits no code
+/// where it stands (the entry sequence loads it from the stack, or moves it from the parent's location).
+pub const SLOAD_CARRIED: u32 = 2;
 /// Any of the sunk-table entry kinds.
 pub const SNAP_SUNK_ANY: u8 = SNAP_SUNK | SNAP_SFKEY | SNAP_SFVAL | SNAP_SALIAS | SNAP_SMT;
 /// `slot` values at or above this are not stack slots (the field entries of a sunk table).
@@ -805,6 +812,23 @@ pub struct TraceIr {
     /// number ([`crate::live::prunable`]); `None`: snapshots are complete (TR3). Only snapshots of the root frame without
     /// inlined frames are pruned ([`PruneInfo::applies`]).
     pub prune: Option<std::sync::Arc<PruneInfo>>,
+    /// R1 (`regcarry`): the slots (of the leading `SLOAD` run) whose value a register-carrying entry hands over without writing the stack: every snapshot
+    /// used after the run restores them (`SNAP_CARRY` entries, `mod::carry_dense`); empty for every other trace.
+    pub carry: Vec<u16>,
+    /// R1 (`regcarry`, half A): a side trace entered with the exit's values in the parent's registers: the stack slots its carried `SLOAD`s stand for and where
+    /// the parent's exit map has their values (in the order of the carried loads); empty for every other trace.
+    pub carry_in: Vec<(u16, CarrySrc)>,
+}
+
+/// R1: where the exit map of a parent trace holds the value of a slot a side trace takes over in a register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CarrySrc {
+    /// General register `V<n>`.
+    G(u8),
+    /// Double register `X<n>`.
+    X(u8),
+    /// Spill slot `n`.
+    Spill(u16),
 }
 
 /// F4: what the snapshot pruning needs ([`TraceIr::prune`]).
