@@ -102,6 +102,9 @@ pub struct SlotRestore {
     pub src: ValSrc,
     /// The slot is a function slot of an inlined frame (informational: it is restored like any other).
     pub func: bool,
+    /// R1 (`regcarry`): a dense (`SNAP_CARRY`) entry: the stack holds this slot's value unless a register-carrying link entered the root (its
+    /// `HeadData::stale` flag is set): the inline stub of a root stores it only behind that flag test.
+    pub dense: bool,
 }
 
 /// What an inlined frame needs to be rebuilt as `pre_call_lua_fast` / the tier-1 flat call would have built it (5.5).
@@ -773,6 +776,7 @@ pub fn build_exits_ex(
                 tag,
                 src,
                 func: e.flags & SNAP_FUNC != 0,
+                dense: e.flags & SNAP_CARRY != 0,
             });
         }
         out.push(ExitSnap {

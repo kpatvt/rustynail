@@ -1208,6 +1208,10 @@ pub struct HeadData {
     pub e3: Cell<usize>,
     /// R1: the signature of `e3` (0 whenever `e3` is 0: a link compares it with the signature it was compiled for).
     pub e3sig: Cell<u32>,
+    /// R1: set by every carrying link before it enters through `e3`: the stack slots of the root's carried (dense) values may be stale. The inline exit stubs of the
+    /// root store the dense entries only while it is set (and clear it); a plain stack store of them is always sound (an unset flag, or one left set by an exit through
+    /// the handler, means the stack is complete or the store writes the value it holds).
+    pub stale: Cell<u32>,
     /// J2-2: the site is recorded with the deep limits (`TrLimits::deep`): set once, when a recording of the head ended at the
     /// recursion / depth limit (never reset: the site gets exactly one deeper re-record).
     pub deep: Cell<bool>,
@@ -1241,6 +1245,8 @@ pub mod head_off {
     pub const E3: usize = offset_of!(HeadData, e3);
     /// `e3sig: u32` (R1).
     pub const E3SIG: usize = offset_of!(HeadData, e3sig);
+    /// `stale: u32` (R1).
+    pub const STALE: usize = offset_of!(HeadData, stale);
 }
 
 /// Abort count at which a head goes `Black` (3.3).
@@ -1310,6 +1316,7 @@ impl HeadData {
             e3_sig_inst: Cell::new(0),
             e3: Cell::new(0),
             e3sig: Cell::new(0),
+            stale: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
         }
@@ -3601,6 +3608,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
     });
     d.tr.active = None;
     d.tr.live_traces += 1;
+    let hot_exit = d.tr.cfg.hot_exit;
     if let Some(sl) = side {
         // TR8: the parent's exit continues in the new trace from now on; nothing of the parent's code changes
         d.tr.stats.side_installed += 1;
@@ -3623,6 +3631,12 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
                 if ti.ce_off != 0 && ns != 0 && p.cells.len() == 2 * ns {
                     if let Some(c) = p.cells.get(ns + sl.exit as usize) {
                         c.set(block_addr + ti.ce_off);
+                        // the stub of the exit tests its carry cell only when the counter equals the divert value (`Cx::inline_stub`): park it there
+                        // (a flush of this side trace clears the cell: the divert then reaches the handler like the one at the hot count)
+                        if let Some(x) = p.exits.get(sl.exit as usize) {
+                            let hot1 = hot_exit.clamp(1, i32::MAX as u32) - 1;
+                            x.set(hot1 | (x.get() & EXIT_BLACK_BIT));
+                        }
                     }
                 }
             }
@@ -3822,7 +3836,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
         }
         // R1: no exit of a flushed trace jumps into a side trace with registers any more
-        if t.cells.len() == 2 * m.snaps.len() {
+        if t.cells.len() == 2 * m.snaps.len() && !mutants::active("carry_cells_kept") {
             for c in &t.cells[m.snaps.len()..] {
                 c.set(0);
             }
@@ -3864,7 +3878,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
             // R1: the carry cell of the exit
             let ns = p.xmeta.as_ref().map_or(0, |m| m.snaps.len());
-            if ns != 0 && p.cells.len() == 2 * ns {
+            if ns != 0 && p.cells.len() == 2 * ns && !mutants::active("carry_cell_side_stale") {
                 if let Some(c) = p.cells.get(ns + k) {
                     c.set(0);
                 }
@@ -4310,7 +4324,7 @@ pub fn child_room(extent: u16, depth: u8, seg_shift: u16, seg_pops: u8) -> (u16,
 fn carry_slots(
     d: &mut JitData,
     id: TrId,
-    k: u32,
+    _k: u32,
     snap: &super::exit::ExitSnap,
     virt: bool,
     prelude: bool,
@@ -4339,13 +4353,18 @@ fn carry_slots(
     let Some(m) = t.xmeta.as_ref() else {
         return Vec::new();
     };
+    // (`regcarry=1`: the side trace is only worth a carry entry if the family's root has a third entry for its link to carry into)
+    if d.tr.cfg.limits.regcarry == 1
+        && !tr_of(d, t.root).is_some_and(|tp| tp.head(t.head).e3_sig_inst.get() != 0)
+    {
+        return Vec::new();
+    }
     if m.cells.is_null()
         || t.cells.len() != 2 * m.snaps.len()
         || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR)
     {
         return Vec::new();
     }
-    let _ = k;
     let mut out = Vec::new();
     for s in &snap.slots {
         let Some(ty) = super::exit::ty_of_tag(s.tag).filter(|t| {
@@ -4360,7 +4379,13 @@ fn carry_slots(
             return Vec::new();
         }
         let src = match s.src {
-            ValSrc::Reg(r) if r != 10 && r != 7 && (ty != super::ir::Ty::Num) => CarrySrc::G(r),
+            ValSrc::Reg(r)
+                if (r != 10 || mutants::active("carry_r14_dst"))
+                    && r != 7
+                    && (ty != super::ir::Ty::Num) =>
+            {
+                CarrySrc::G(r)
+            }
             ValSrc::Xmm(x) if ty == super::ir::Ty::Num => CarrySrc::X(x),
             ValSrc::Spill(n) => CarrySrc::Spill(n),
             _ => return Vec::new(),
@@ -4373,6 +4398,10 @@ fn carry_slots(
     }
     out
 }
+
+/// R1: the fewest carried (dense) slots a root needs to offer a third entry: with fewer, the `stale` test on each of its exits costs more than the stores and
+/// loads a carrying link saves (measured: `mandelbrot` +0.6 %, `richards` +0.8 % with one or two).
+pub const CARRY_MIN_SLOTS: usize = 4;
 
 fn side_attempt(
     st: &mut State,

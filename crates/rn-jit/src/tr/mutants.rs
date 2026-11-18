@@ -831,6 +831,15 @@ pub const NAMES: &[&str] = &[
     "carry_in_drop_move",
     "carry_store_dropped",
     "carry_exit_tag_skip",
+    "carry_no_stale_flag",
+    "carry_dense_skip",
+    "carry_sig_ignored",
+    "carry_no_poll",
+    "carry_no_budget",
+    "carry_room_ignored",
+    "carry_r14_dst",
+    "carry_cells_kept",
+    "carry_cell_side_stale",
     "carry_link_tag_skip",
     "carry_wb_prune_live",
     "carry_demote_copied",
@@ -908,7 +917,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 691);
+        assert_eq!(NAMES.len(), 700);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

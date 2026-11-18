@@ -249,6 +249,8 @@ pub struct AsmEnv {
     /// R1: the interned [`exit::CarryInfo`] of the root the head had when the side trace was compiled (0: none): the link carries values
     /// only while `HeadData::e3sig` still holds it.
     pub carry_sig: u32,
+    /// R1: address of `HeadData::stale` of this root, when its snapshots have dense entries (`TraceIr::carry`): the inline exit stubs store those only behind a test of it; 0 otherwise.
+    pub stale_flag: u64,
     /// R1: the inline stubs of this trace first look at the carry cell of their exit (`exit_cells + 8 * (snaps + k)`): a side trace compiled for
     /// register-carried entry has put its carry entry there, and the stub jumps to it with the values still in the registers of the exit map, without
     /// storing them to the stack.
@@ -355,6 +357,7 @@ impl Default for AsmEnv {
             fpool_off: 0,
             carry_head: 0,
             carry_sig: 0,
+            stale_flag: 0,
             carry_exits: false,
             carry_entry: false,
         }
@@ -2118,6 +2121,10 @@ struct Cx<'a> {
     /// R1: the cold exits of a carrying link: `(label, poll stub, stores)`: the carried writeback entries are stored (they are not on the stack yet), then
     /// control continues in the stub of the poll at the head.
     rc_cold: Vec<(L, L, Vec<(u16, Ref, Loc)>)>,
+    /// R1: the cold blocks of the dense stores of the inline exit stubs of a root: `(label, back, stores)`: clear `HeadData::stale` (`V7` holds its address), store, jump back.
+    dense_cold: Vec<(L, L, Vec<Op>)>,
+    /// R1 (half A): the cold blocks of the carry paths of exit stubs that divert through the exit counter: `(label, generic twin, carry cell, exit map)`.
+    carry_slow: Vec<(L, L, u64, ExitSnap)>,
     /// J1-1: number of `HREFK`+`HLOAD` pairs fused (`Asm::hk_fused`).
     hk_fused_n: u32,
     hk_split_n: u32,
@@ -2683,6 +2690,8 @@ pub fn assemble(
         rec_ci_cold: Vec::new(),
         bud_cold: Vec::new(),
         rc_cold: Vec::new(),
+        dense_cold: Vec::new(),
+        carry_slow: Vec::new(),
         hk_fused_n: 0,
         hk_split_n: 0,
         dbl: Vec::new(),
@@ -3216,7 +3225,9 @@ impl Cx<'_> {
             return None;
         }
         let (need_e, need_d) = info.room;
-        if !(self.env.room_have.0 >= need_e && self.env.room_have.1 >= need_d) {
+        if !(self.env.room_have.0 >= need_e && self.env.room_have.1 >= need_d)
+            && !mutants::active("carry_room_ignored")
+        {
             return None;
         }
         for d in &info.dsts {
@@ -3251,13 +3262,23 @@ impl Cx<'_> {
         let e3 = head + head_off::E3 as u64;
         // the root the head has now is the one this trace was compiled against
         self.push(Op::Mov(7, e3));
-        self.push(Op::BrM {
-            cc: Cc::Ne,
-            w: W::B4,
-            m: rm(7, (head_off::E3SIG - head_off::E3) as i32),
-            imm: self.env.carry_sig as i32,
-            to: plain,
-        });
+        if !mutants::active("carry_sig_ignored") {
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B4,
+                m: rm(7, (head_off::E3SIG - head_off::E3) as i32),
+                imm: self.env.carry_sig as i32,
+                to: plain,
+            });
+        }
+        // the stack slots of the root's dense values are stale from here on (its inline exit stubs store them behind this flag; `V7` is still the `e3` cell)
+        if !mutants::active("carry_no_stale_flag") {
+            self.st(
+                W::B4,
+                rm(7, (head_off::STALE - head_off::E3) as i32),
+                Src::Imm(1),
+            );
+        }
         // the exits of the carrying path store the carried entries (they are not on the stack) and continue in the stub of the poll
         let stores: Vec<(u16, Ref, Loc)> = writeback
             .iter()
@@ -3268,7 +3289,9 @@ impl Cx<'_> {
         let x = self.poll_stub_label(sd.link_snap)?;
         let xr = self.label();
         self.rc_cold.push((xr, x, stores));
-        self.poll_ops(xr);
+        if !mutants::active("carry_no_poll") {
+            self.poll_ops(xr);
+        }
         // the entry bookkeeping of the root (`entry_checks`: `entry_ok` saturating at its cap, `pending` cleared; the undo word `pending_before` is only read by
         // the entry-check failure stubs, which this entry never reaches), in memory-operand form: `V7` only
         {
@@ -3292,8 +3315,10 @@ impl Cx<'_> {
         // the root's budget charge (its `BUDGET` is behind the run, skipped by the third entry)
         let r = info.budget_reg;
         let n = i32::from(info.budget);
-        self.br(Cc::Lt, r, Src::Imm(n), xr);
-        self.push(Op::Sub(r, Src::Imm(n)));
+        if !mutants::active("carry_no_budget") {
+            self.br(Cc::Lt, r, Src::Imm(n), xr);
+            self.push(Op::Sub(r, Src::Imm(n)));
+        }
         // the tags the stack does not hold already (the payloads of the carried slots travel in registers; the root's tag elision rests on the stack tags)
         if !mutants::active("carry_link_tag_skip") {
             for e in writeback {
@@ -8217,6 +8242,20 @@ impl Cx<'_> {
                 self.generic_stub(snap, entry, false, &mut shared);
             }
         }
+        for (label, back, ops) in std::mem::take(&mut self.dense_cold) {
+            self.bind(label);
+            self.st(W::B4, rm(7, 0), Src::Imm(0));
+            if !mutants::active("carry_dense_skip") {
+                for op in ops {
+                    self.push(op);
+                }
+            }
+            self.push(Op::Jmp(back));
+        }
+        for (label, generic_l, ac, es) in std::mem::take(&mut self.carry_slow) {
+            self.bind(label);
+            self.emit_carry_path(&es, ac, generic_l);
+        }
         self.emit_lazy_leave_blocks();
         let chains = std::mem::take(&mut self.mat_frames);
         let labels: Vec<L> = self.mat_shared.iter().map(|(_, l)| *l).collect();
@@ -8669,6 +8708,47 @@ impl Cx<'_> {
     }
 
     /// The inline stub of `snap` with the exit counter and the hot divert to `generic_l` (7.6).
+    /// R1 (half A): the carry path of an exit stub: when the carry cell at `ac` is set (a side trace compiled for register-carried entry is attached), the
+    /// stub stores nothing but the tags the stack does not hold, adds the refund to the budget register and jumps to the carry entry with every value where the
+    /// exit map has it; else control continues at `normal`.
+    fn emit_carry_path(&mut self, es: &ExitSnap, ac: u64, normal: L) {
+        self.push(Op::Mov(7, ac));
+        self.ld(7, W::B8, rm(7, 0));
+        self.br(Cc::Eq, 7, Src::Imm(0), normal);
+        // the payloads travel in registers; a tag the stack does not hold already is stored (the side trace's tag elision and the proofs of its link rest on
+        // the stack tags of the exit map being right)
+        if !mutants::active("carry_exit_tag_skip") {
+            for e in &es.slots {
+                if !exit::tag_store_redundant(es, e) {
+                    self.st(W::B8, fm(e.slot, 0), Src::Imm(i32::from(e.tag)));
+                    match e.src {
+                        ValSrc::Reg(r) => self.st(W::B8, fm(e.slot, 8), Src::V(r)),
+                        ValSrc::Xmm(x) => self.push(Op::StF {
+                            m: fm(e.slot, 8),
+                            src: x,
+                        }),
+                        ValSrc::Spill(k) => {
+                            self.ld(7, W::B8, spill_m(k));
+                            self.st(W::B8, fm(e.slot, 8), Src::V(7));
+                        }
+                        ValSrc::Imm(_) => unreachable!("checked by the eligibility test"),
+                    }
+                }
+            }
+        }
+        if es.refund != 0 {
+            let r = self
+                .env
+                .budget_reg
+                .expect("checked by the eligibility test");
+            self.push(Op::Add(r, Src::Imm(es.refund)));
+        }
+        // (`V7` held the cell: the spill copies above used it; load it again)
+        self.push(Op::Mov(7, ac));
+        self.ld(7, W::B8, rm(7, 0));
+        self.push(Op::JmpR(7));
+    }
+
     fn inline_stub(
         &mut self,
         es: &ExitSnap,
@@ -8682,12 +8762,48 @@ impl Cx<'_> {
         if let (Some(site), Some(c)) = (mat, cell) {
             return self.mat_stub(es, snap, generic_l, site, c);
         }
-        let full = exit::inline_stub_ops_via(es, self.env.vb(), cell);
         let mut bare = es.clone();
         bare.slots.clear();
         let tail = exit::inline_stub_ops_via(&bare, self.env.vb(), cell);
+        // R1: the dense entries of a root (`SlotRestore::dense`) are stored behind a test of `HeadData::stale` (cold block), not on every exit
+        let dense_on = self.env.stale_flag != 0 && es.slots.iter().any(|s| s.dense);
+        let mut es_p = es.clone();
+        let mut dense_ops: Vec<Op> = Vec::new();
+        if dense_on {
+            let mut es_d = es.clone();
+            es_d.slots.retain(|s| s.dense);
+            es_p.slots.retain(|s| !s.dense);
+            let fd = exit::inline_stub_ops_via(&es_d, self.env.vb(), cell);
+            assert!(fd.ends_with(&tail), "inline stub layout");
+            dense_ops = fd[..fd.len() - tail.len()].to_vec();
+        }
+        let full = exit::inline_stub_ops_via(&es_p, self.env.vb(), cell);
         assert!(full.ends_with(&tail), "inline stub layout");
         let head = &full[..full.len() - tail.len()];
+        // R1: the carry path of the stub (see below)
+        // (only through the counter's divert: a pre-roll site or a chain site spends its counter test on its own rules, and an inline carry test would cost every exit)
+        let carry_ok = self.env.carry_exits
+            && self.env.counters != 0
+            && !self
+                .chain_snaps
+                .get(snap as usize)
+                .copied()
+                .unwrap_or(false)
+            && cell.is_some()
+            && !entry_check
+            && !frame_cell
+            && es.frames.is_empty()
+            && es.sunk.is_empty()
+            && es.top.is_none()
+            && es.usable
+            && self.env.budget_reg.is_some()
+            && !es.slots.iter().any(|s| {
+                matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_)) || s.tag == exit::TAG_DYN_STR
+            });
+        // R1 (half A): `regcarry` leaves the exit's counter at the divert value once a side trace compiled for register-carried entry is attached
+        // (`cache::install`): the equality test against it then lands in the cold block that looks at the carry cell, and the carry path costs the
+        // other exits nothing. (An exit that takes the carry path is not counted: the counter stays at the divert value.)
+        let slow_l: Option<L> = carry_ok.then(|| self.label());
         if self.env.counters != 0 {
             // a scratch register that no slot of this snapshot reads
             let used: Vec<u8> = es
@@ -8731,7 +8847,7 @@ impl Cx<'_> {
                 self.ld(sr, W::B4, rm(7, 0));
                 // `Eq`: the divert fires exactly once (the handler's count reaches `hot_exit`); afterwards the inline path
                 // counts on (a `Ge` here would send every later exit through the handler)
-                self.br(Cc::Eq, sr, Src::Imm(hot1), generic_l);
+                self.br(Cc::Eq, sr, Src::Imm(hot1), slow_l.unwrap_or(generic_l));
                 if !entry_check && self.pre_snaps[snap as usize] {
                     // Q2: every INEFF_EXITS-th exit of a pre-roll site goes through the handler (the ineffective-trace
                     // rule, `cache::pre_exit_check`); the handler counts that exit, so divert before the store
@@ -8757,7 +8873,7 @@ impl Cx<'_> {
                         w: W::B4,
                         m: rm(7, 0),
                         imm: hot1,
-                        to: generic_l,
+                        to: slow_l.unwrap_or(generic_l),
                     });
                 }
                 if chain_site && !mutants::active("chain_stub_no_test") {
@@ -8778,56 +8894,14 @@ impl Cx<'_> {
                 }
             }
         }
-        if self.env.carry_exits
-            && cell.is_some()
-            && !entry_check
-            && !frame_cell
-            && es.frames.is_empty()
-            && es.sunk.is_empty()
-            && es.top.is_none()
-            && es.usable
-            && self.env.budget_reg.is_some()
-            && !es.slots.iter().any(|s| {
-                matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_)) || s.tag == exit::TAG_DYN_STR
-            })
-        {
+        if carry_ok {
             // R1: a side trace compiled for register-carried entry takes over with the values where the exit map has them (the budget register
             // holds `vb`; the stub's `vb + refund` goes to the register instead of the budget word)
             let ac = self.env.exit_cells + 8 * (self.snaps.len() as u64 + u64::from(snap));
-            let normal = self.label();
-            self.push(Op::Mov(7, ac));
-            self.ld(7, W::B8, rm(7, 0));
-            self.br(Cc::Eq, 7, Src::Imm(0), normal);
-            // the payloads travel in registers; a tag the stack does not hold already is stored (the side trace's tag elision and the proofs of its link rest on
-            // the stack tags of the exit map being right)
-            if !mutants::active("carry_exit_tag_skip") {
-                for e in &es.slots {
-                    if !exit::tag_store_redundant(es, e) {
-                        self.st(W::B8, fm(e.slot, 0), Src::Imm(i32::from(e.tag)));
-                        match e.src {
-                            ValSrc::Reg(r) => self.st(W::B8, fm(e.slot, 8), Src::V(r)),
-                            ValSrc::Xmm(x) => self.push(Op::StF {
-                                m: fm(e.slot, 8),
-                                src: x,
-                            }),
-                            ValSrc::Spill(k) => {
-                                self.ld(7, W::B8, spill_m(k));
-                                self.st(W::B8, fm(e.slot, 8), Src::V(7));
-                            }
-                            ValSrc::Imm(_) => unreachable!("checked by the eligibility test"),
-                        }
-                    }
-                }
-            }
-            if es.refund != 0 {
-                let r = self.env.budget_reg.expect("checked above");
-                self.push(Op::Add(r, Src::Imm(es.refund)));
-            }
-            // (`V7` held the cell: the spill copies above used it; load it again)
-            self.push(Op::Mov(7, ac));
-            self.ld(7, W::B8, rm(7, 0));
-            self.push(Op::JmpR(7));
-            self.bind(normal);
+            let Some(l) = slow_l else {
+                return incons("a carrying exit stub without its counter divert");
+            };
+            self.carry_slow.push((l, generic_l, ac, es.clone()));
         }
         if let (true, Some(c)) = (frame_cell, cell) {
             // S1: an exit with virtual-able frames continues through its cell only once a side trace is attached (the cell
@@ -8838,6 +8912,20 @@ impl Cx<'_> {
                 self.ld(7, W::B8, rm(7, 0));
                 self.br(Cc::Eq, 7, Src::Imm(0), generic_l);
             }
+        }
+        if dense_on {
+            // R1: a carrying link has left the stack slots of the dense entries stale: store them (and clear the flag) in the cold block, else skip
+            let (cold, back) = (self.label(), self.label());
+            self.push(Op::Mov(7, self.env.stale_flag));
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B4,
+                m: rm(7, 0),
+                imm: 0,
+                to: cold,
+            });
+            self.bind(back);
+            self.dense_cold.push((cold, back, dense_ops));
         }
         for op in head {
             self.push(*op);

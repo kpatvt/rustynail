@@ -300,6 +300,7 @@ fn scenario(w: &mut World, d: usize, rng: &mut Rng, area: &mut ExitArea) -> Scn 
             tag,
             src,
             func: false,
+            dense: false,
         });
         slots.push((s, tag, val));
     }
@@ -554,6 +555,7 @@ fn restore_rejects_a_slot_beyond_the_stack() {
             tag: LUA_VNIL,
             src: ValSrc::Imm(0),
             func: false,
+            dense: false,
         }],
         frames: vec![],
         refund: 0,
@@ -1162,6 +1164,7 @@ fn n_cap(st: &mut State) -> LuaResult<usize> {
             tag,
             src,
             func: false,
+            dense: false,
         });
         mapped.push(slot as u16);
     }

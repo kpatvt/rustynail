@@ -3865,6 +3865,51 @@ const TABLE: &[Row] = &[
         dets: &[dl("tr_core", "r1_regcarry_programs")],
     },
     Row {
+        name: "carry_no_stale_flag",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_dense_skip",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_sig_ignored",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_no_poll",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_no_budget",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_room_ignored",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_r14_dst",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_cells_kept",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_cell_side_stale",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
         name: "carry_link_tag_skip",
         owner: "R1",
         dets: &[dl("tr_core", "r1_regcarry_programs")],

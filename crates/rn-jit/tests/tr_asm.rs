@@ -742,6 +742,7 @@ fn base_env(w: &mut World) -> AsmEnv {
         fpool_off: (exit_area::FROM_R15 as usize + exit_area::SIZE + 8) as i32,
         carry_head: 0,
         carry_sig: 0,
+        stale_flag: 0,
         carry_exits: false,
         carry_entry: false,
     }
@@ -3209,6 +3210,7 @@ mod e2e {
             fpool_off: 0,
             carry_head: 0,
             carry_sig: 0,
+            stale_flag: 0,
             carry_exits: false,
             carry_entry: false,
         };

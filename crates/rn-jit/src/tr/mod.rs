@@ -1304,7 +1304,33 @@ fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
             slots.push((slot, REF_BIAS + (2 + k) as u16));
         }
     }
-    if slots.is_empty() {
+    // a dense entry keeps its `SLOAD`'s value live up to the last guard: carry only the values the trace keeps live anyway (used inside the loop body, which
+    // holds them across the back-edge, or at or behind its last guard); the others would cost register pressure (spills) in every iteration
+    {
+        let last_guard = ir
+            .ins
+            .iter()
+            .rposition(|i| i.flags & F_GUARD != 0)
+            .unwrap_or(0);
+        let loop_idx = ir.loop_at.map(|r| usize::from(r - REF_BIAS));
+        let fused = vec![false; ir.ins.len()];
+        let mut last_use: std::collections::HashMap<ir::Ref, usize> =
+            std::collections::HashMap::new();
+        for i in 0..ir.ins.len() {
+            for r in ra::operand_refs(ir, &fused, i) {
+                if ir::TraceIr::is_ins(r) {
+                    last_use.insert(r, i);
+                }
+            }
+        }
+        slots.retain(|&(_, r)| {
+            last_use
+                .get(&r)
+                .is_some_and(|&u| u >= last_guard || loop_idx.is_some_and(|l| u > l))
+        });
+    }
+    // a root with few carried values gains too little from a carrying link to pay for the `stale` test on each of its exits
+    if slots.len() < cache::CARRY_MIN_SLOTS {
         return Vec::new();
     }
     let n = ir.snaps.len();
@@ -2075,6 +2101,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         mat_fn: exit::jit_tr_mat as *const () as usize as u64,
         carry_head: carry_env.0,
         carry_sig: carry_env.1,
+        stale_flag: if head != 0 && !ir.carry.is_empty() {
+            head + cache::head_off::STALE as u64
+        } else {
+            0
+        },
         carry_exits: carry_exits_on,
         // R1 (half A): the carry entry skips the room checks of the plain entry: the trace may not need more than the parent's checks guarantee
         carry_entry: rec.ir.extent <= act.max_extent && rec.ir.depth <= act.max_ci,

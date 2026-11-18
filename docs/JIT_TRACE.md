@@ -1991,6 +1991,13 @@ time, and marks the `HREFK`s of that node vector `HREFK_COVERED`: they assemble 
 Per `HREFK` that is about 2 instructions fewer (movabs + cmp + the fused 16-bit tag compare become one byte compare), per table visit about 2 more (the guard); nbody
 -397 instructions per step (-16 %).
 
+**Policy (what is carried).** A root offers `e3` only if at least `cache::CARRY_MIN_SLOTS` (4) of its leading `SLOAD`s are carried: fewer cost more in the per-exit
+`stale` test than a transition saves (`mandelbrot` +0.6 %, `richards` +0.8 % with one or two). Only values the trace keeps live anyway are carried (used inside the loop
+body or at/behind its last guard, `carry_dense`): a dense entry extends the live range of its `SLOAD` to every guard, and a carried value that was otherwise dead early
+cost spills in every iteration (`fannkuch`, `queens` +1 to 3 %). A side trace gets a carry entry only if the family root has a third entry
+(`cache::carry_slots`: else there is nothing to carry back into). Exit stubs of chain sites carry nothing. Measured design history (insns, programs/nbody 1M, fannkuch,
+queens): dense stores on every root exit -> +4 %/+4 %; a three-instruction carry-cell test on every inline exit -> +2 %/+2 %; the cold dispatch and the flag -> neutral.
+
 **Soundness argument.**
 
 1. *The slot is cleared at every change of which key lives in which node* (rn-core `clear_layout_id`: `insertkey` free-main-position and collide-move paths, GC
@@ -2051,11 +2058,15 @@ its instructions beyond the arithmetic are these stores and loads. With `regcarr
   the root's entry bookkeeping (`entry_ok`, `pending`: it is the root's entry), the root's `BUDGET n` charge (done by the link: the third entry is behind it), a
   parallel move from the locations of its writeback values (`end_locs`) to the root's locations (the allocator is told the root's registers as hints, so most moves are
   empty), loads from the stack for the slots the trace did not write, and `jmp [e3]`. A mismatching signature (the root was recompiled or flushed: `e3sig` is reset with `e2sig`) falls
-  to the plain path, which first stores the entries the early writeback left out.
+  to the plain path, which first stores the entries the early writeback left out. After the signature check the link sets `HeadData::stale` (one store).
 * **Half A, exit into a side trace (carry cells).** Behind the exit cells of a trace its allocation reserves one *carry cell* per snapshot (`cells[n + k]`, 0 until a
   side trace compiled for register-carried entry is attached). The inline stub of a frameless exit (no frames, no sunk tables, `top`, constants or dynamic strings in its
-  map; budget in the register) tests the cell after its counter and, if set, adds `refund` to the budget register and `jmp`s to the **carry entry** of the side trace
-  with every value where the exit map has it, storing nothing. The side trace was recorded with the slots of the exit map pre-defined as *carried loads*
+  map; budget in the register; not a chain site) costs nothing extra while no carrying side trace is attached: `cache::install` parks the counter of the exit at the
+  divert value (`hot_exit - 1`) when it sets the carry cell, so the stub's existing equality test (`cmp [ctr], hot-1; je`) lands in a *cold block* (`Cx::carry_slow`,
+  emitted behind the stubs) that looks at the cell: unset (the side trace was flushed, or the counter reached the value on its own) -> the generic twin as before; set ->
+  the carry path, which adds `refund` to the budget register and `jmp`s to the **carry entry** of the side trace with every value where the exit map has it, storing
+  only the tags the stack lacks. An exit that takes the carry path is therefore *not counted* (the counter stays at the divert value; the ineffective-trace rule and
+  the statistics see only the other exits of the site). The side trace was recorded with the slots of the exit map pre-defined as *carried loads*
   (`SLOAD` with `SLOAD_CARRIED`, unchecked, emitted before everything else, `SlotMap::def` on the slot): every snapshot of it, snapshot 0 included, and its writeback
   therefore name them; they occupy a register from the start of the trace (the allocator skips their definition and records where they live at the start,
   `capture_carried_loads`, hinted to the parent's registers). The plain entry of the side trace (through the exit cell, after the handler or a stub stored the
@@ -2066,7 +2077,13 @@ carrying transition the stack slots of the carried values are *stale*. Everythin
 no GC step, no hook, no error, no yield, no stack reallocation between an entry and the end of an exit handler), so it is enough that **every exit reachable after
 a carrying transition restores the carried slots, tag included**:
 
-1. *Roots (half B).* `mod::carry_dense` gives every snapshot used by a guard behind the leading run a `SNAP_CARRY` entry (slot -> the unmodified leading `SLOAD`) for
+1. *Roots (half B).* The cost of the dense entries is paid only behind a flag: `SlotRestore::dense` marks the entries `mod::carry_dense` added; the inline exit stub of a
+   root tests `HeadData::stale` (`Mov V7, &flag; cmp dword [V7], 0; jne cold`) and only then, in an out-of-line block (`Cx::dense_cold`), clears the flag and stores the dense
+   entries (payload; tag when not redundant), then jumps back; every other store of the stub is unconditional as before. The flag is set by every carrying link before it
+   enters through `e3` and is cleared only by that cold block *after* its stores, so "flag clear => the stack is complete for the dense slots" holds whenever a stub
+   reads it; a flag left set (an exit through the handler, `mat_stub`, `link_mat_stub` and the sunk/frame stubs store every slot including the dense ones
+   unconditionally) only makes a later stub store values the stack already holds. The carry path of half A (above) hands the dense slots over in registers like any
+   other slot of the exit map and leaves the flag set (the side trace's snapshots restore them). Beyond the flag, `mod::carry_dense` gives every snapshot used by a guard behind the leading run a `SNAP_CARRY` entry (slot -> the unmodified leading `SLOAD`) for
    each carried slot it does not name itself (carried = the run's `Int` / `Num` / table slots that no `SSTORE` of the trace writes: an `SSTORE`d slot is omitted from
    snapshots because the stack holds its value, which would not be the `SLOAD`'s). A snapshot shared by a guard of the run and a later one (the entry snapshot that
    hoisted callee guards keep) is copied for the later guards. The root's other uses of the stack are unchanged: it is entered from the interpreter with a complete
@@ -2090,6 +2107,5 @@ a carrying transition restores the carried slots, tag included**:
    any destination is written. The budget register is the same in both traces (`ra::BUDGET_GPR`, `membudget` off), else nothing carries.
 6. *Observers.* Exits to the interpreter see a complete stack (all of the above); a hook or error in the interpreter after an exit sees the state `restore` leaves, as before;
    `Heap::verify`, GC roots and coroutine yields need nothing (no GC point on a trace, TR9); the entry bookkeeping counters are updated once per entry as in the plain path.
-   Mutants: `carry_tag_elided`, `carry_ents_kept`, `carry_stored_slot`, `carry_off`, `carry_store_always`, `carry_plain_no_store`, `carry_sig_ignored`, `carry_no_poll`,
-   `carry_no_budget`, `carry_drop_move`, `carry_in_drop_move`, `carry_exit_no_refund`, `carry_r14_dst`, `carry_room_ignored`, `carry_wb_prune_live`, `carry_cells_kept`,
-   `carry_cell_side_stale`, `carry_cell_stale_after_flush`.
+   Mutants (registered in `mutants::NAMES`): `carry_stored_slot`, `carry_plain_no_store`, `carry_drop_move`, `carry_in_drop_move`, `carry_store_dropped`,
+   `carry_exit_tag_skip`, `carry_no_stale_flag`, `carry_dense_skip`, `carry_link_tag_skip`, `carry_wb_prune_live`, `carry_demote_copied`.
