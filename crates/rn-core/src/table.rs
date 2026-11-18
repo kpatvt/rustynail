@@ -19,7 +19,8 @@
 //! `asize * 9 + 4` bytes obtained from the heap's `Mem` at `array - asize * 8` (values at negative
 //! indices, `u32` hint at 0, tags from byte 4); (T2) `node` points to `2^lsizenode` initialised nodes
 //! (or to the shared immutable dummy node when `flags & BITDUMMY`); for `lsizenode >= 3` a `lastfree`
-//! pointer lives in the 8 bytes before `node` within the same allocation; (T3) node chains (`next`
+//! pointer lives in the 8 bytes before `node` within the same allocation and, in the 8 bytes before that, the S4 layout id
+//! (allocated but not counted by `collectgarbage('count')`); (T3) node chains (`next`
 //! offsets) stay inside the node array; (T4) table keys that are collectable point to live objects
 //! unless the key tag is `LUA_TDEADKEY` (then the pointer is only ever compared, never dereferenced).
 use crate::gc::{GcHeader, BLACKBIT, WHITEBITS};
@@ -456,7 +457,20 @@ pub fn new_table_bytes(nasize: u32, nhsize: u32) -> Option<usize> {
     Some(n)
 }
 
+/// Bytes of a hash part that `collectgarbage("count")`, the GC debt and the memory limit see: the nodes and the `lastfree` slot,
+/// as the reference counts them. The layout-id slot (S4) is allocated but not counted (`Mem::alloc_counted`), so every accounting
+/// the reference comparison tests (`tests/vm/table_growth_layout.lua`) is unchanged.
 fn sizehash_bytes(lsizenode: u8) -> usize {
+    (1usize << lsizenode) * std::mem::size_of::<Node>()
+        + if sized_haslastfree(lsizenode) {
+            LASTFREE_BYTES
+        } else {
+            0
+        }
+}
+
+/// Bytes actually allocated for a hash part: [`sizehash_bytes`] plus the uncounted layout-id slot.
+fn sizehash_alloc(lsizenode: u8) -> usize {
     (1usize << lsizenode) * std::mem::size_of::<Node>() + prefix_bytes(lsizenode)
 }
 
@@ -863,8 +877,10 @@ unsafe fn setnodevector(heap: &mut Heap, t: *mut Table, size: u32) -> Result<(),
             return Err(TableError::Overflow);
         }
         let n = 1usize << lsize;
-        let bytes = sizehash_bytes(lsize as u8);
-        let block = heap.mem.alloc(bytes)?.as_ptr();
+        let block = heap
+            .mem
+            .alloc_counted(sizehash_alloc(lsize as u8), sizehash_bytes(lsize as u8))?
+            .as_ptr();
         let node = block.add(prefix_bytes(lsize as u8)).cast::<Node>();
         if sized_haslastfree(lsize as u8) {
             *node.cast::<u8>().sub(LASTFREE_BYTES).cast::<*mut Node>() = node.add(n);
@@ -896,7 +912,11 @@ unsafe fn freehash(heap: &mut Heap, t: *mut Table) {
     unsafe {
         if !isdummy(t) {
             let base = (*t).node.cast::<u8>().sub(prefix_bytes((*t).lsizenode));
-            heap.mem.free(base, sizehash_bytes((*t).lsizenode));
+            heap.mem.free_counted(
+                base,
+                sizehash_alloc((*t).lsizenode),
+                sizehash_bytes((*t).lsizenode),
+            );
         }
     }
 }
@@ -1394,8 +1414,9 @@ unsafe fn resize_hash(heap: &mut Heap, t: *mut Table, nhsize: u32) -> Result<(),
                     let _ = done;
                 }
             }
-            heap.mem.free(
+            heap.mem.free_counted(
                 oldnode.cast::<u8>().sub(prefix_bytes(oldl)),
+                sizehash_alloc(oldl),
                 sizehash_bytes(oldl),
             );
         }

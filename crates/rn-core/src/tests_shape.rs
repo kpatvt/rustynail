@@ -533,7 +533,8 @@ fn randomized_layout_model() {
 
 #[test]
 fn byte_accounting_includes_the_slot() {
-    // 8 nodes: 24 * 8 + 8 (lastfree) + 8 (id); small parts carry no id (5.5: no lastfree either; 5.4: lastfree only)
+    // 8 nodes: 24 * 8 + 8 (lastfree) counted; the id slot is allocated but NOT counted (the reference's accounting is kept, S4)
+    // (small parts: 5.5 no lastfree; 5.4 lastfree only)
     let node = std::mem::size_of::<crate::table::Node>();
     let base = std::mem::size_of::<crate::table::Table>();
     let extra_small = if cfg!(rustynail_lua54) { 8 } else { 0 };
@@ -543,11 +544,11 @@ fn byte_accounting_includes_the_slot() {
     );
     assert_eq!(
         crate::table::new_table_bytes(0, 8),
-        Some(base + 8 * node + 16)
+        Some(base + 8 * node + 8)
     );
     assert_eq!(
         crate::table::new_table_bytes(0, 64),
-        Some(base + 64 * node + 16)
+        Some(base + 64 * node + 8)
     );
     let mut h = Heap::new(0).unwrap();
     for n in [1u32, 4, 8, 16, 32, 64] {
