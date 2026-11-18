@@ -940,6 +940,11 @@ pub struct FrameLink { pub proto: ProtoKey, pub func_slot: u16, pub call_pc: u32
   chain's: the same room argument as the rolled loop's back-edge, which does not re-check either). Interpreter and plain
   dispatch entries keep every check. `guarddiet=0|1` (default 1). Mutants `entry2_transitive_stale`, `entry_inherit_wrong_slot`,
   `room_skip_bigger_frame`.
+- **H1 (`hkaddr`): the `HREFK` address folded into its users.** An `HREFK` whose users are all `HLOAD` / `HSTORE` addresses (and whose node
+  operand is a register) is *fused* like an `AREF` (`ra::RaOpts::hkaddr`): it keeps its key / shape guards at its own position, defines no
+  register and emits no `lea`; its users read `[node + idx * 24 + field]` (`Cx::hk_base`), and the node operand stays live up to them
+  (`operand_refs` hands the users `[node, key, value]`). Any other user (snapshot, PHI, store value, loop end) unfuses it. nbody: 46 static
+  `lea` in its traces -> 7, -5.3 % instructions. `hkaddr=0|1` (default 1). Mutant `hrefk_fold_wrong_disp`.
 - **Cost of TR3 (v1.3, full-build requirement).** Every slot written in an iteration, inlined-callee temporaries
   included, must be restorable at the exits of the *next* iteration until it is redefined, so in the peeled layout its
   value stays live across the back-edge as a PHI even when the next iteration never reads it: register pressure,
