@@ -61,6 +61,8 @@ pub const SNAPPRUNE_PROCESS: u32 = 1;
 pub const HSTOREGUARD_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
+/// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
+pub const HKADDR_PROCESS: u32 = 1;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
@@ -582,6 +584,9 @@ pub struct TrLimits {
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
     pub guarddiet: u32,
+    /// H1 (`hkaddr`): an `HREFK` whose users are all `HLOAD` / `HSTORE` addresses is fused into them (`ra::RaOpts::hkaddr`): the slot address is a displacement of
+    /// the node register in the access, no `lea`: 0 = off, 1 = on (default [`HKADDR_PROCESS`]).
+    pub hkaddr: u32,
 }
 
 impl Default for TrLimits {
@@ -678,6 +683,7 @@ impl Default for TrLimits {
             snapprune: SNAPPRUNE_PROCESS,
             hstoreguard: HSTOREGUARD_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
+            hkaddr: HKADDR_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -848,6 +854,7 @@ impl TrLimits {
                 "snapprune" => l.snapprune = v.min(2),
                 "hstoreguard" => l.hstoreguard = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
+                "hkaddr" => l.hkaddr = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }

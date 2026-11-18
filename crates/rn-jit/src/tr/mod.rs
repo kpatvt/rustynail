@@ -1360,6 +1360,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         reserve_gpr: vbreg,
         // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
         xregs: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.xregs } as u8,
+        // SAFETY: as above.
+        hkaddr: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.hkaddr } != 0,
         ..RaOpts::from_trace(opts)
     };
     let t_ra = phase::now();

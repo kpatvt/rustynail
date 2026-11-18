@@ -21,6 +21,8 @@
 
 #[path = "tr_core/a1_progs.rs"]
 mod a1_progs;
+#[path = "tr_core/h1_progs.rs"]
+mod h1_progs;
 #[path = "tr_core/nr_progs.rs"]
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
@@ -29,6 +31,7 @@ mod progs;
 mod sink_progs;
 
 use a1_progs::{A1_PROGS, G1_SLOW};
+use h1_progs::H1_PROGS;
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
 use rn_core::state::{LuaState, LUA_MULTRET};
@@ -143,6 +146,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(NR_PROGS)
         .chain(A1_PROGS)
         .chain(G1_SLOW)
+        .chain(H1_PROGS)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
@@ -7836,6 +7840,69 @@ fn g1_guard_diet_programs() {
             .unwrap_or(0);
         assert!(side >= 1, "{p}: no side trace was installed");
     }
+}
+
+/// H1 (`hkaddr`): hash-field loads and stores through the `HREFK` address folded into the access (`[node + idx * 24 + field]`, no `lea`):
+/// every field position of a node vector, tables with the same fields in another node order (the key guards fail, side traces take over),
+/// field types changing, nil / deleted fields, rehashes, `__index` classes, `__newindex`, an nbody-like pair loop; every mode equals the
+/// interpreter with the fold on and off. Detector of the mutant `hrefk_fold_wrong_disp`.
+#[test]
+fn h1_hkaddr_programs() {
+    let progs = [
+        "h1_field_positions",
+        "h1_index_chain",
+        "h1_nbody_like",
+        "h1_store_kinds",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["hkaddr=1", "hkaddr=0"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).limits_s(lim).opts("+verify"));
+                jobs.push(
+                    Job::new(p, trace)
+                        .limits_s(lim)
+                        .opts("+exitstorm=3 +verify"),
+                );
+                jobs.push(Job::new(p, trace).limits_s(lim).budget(17));
+                jobs.push(Job::new(p, trace).limits_s(lim).opts("-loop"));
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("hkaddr=1")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+    }
+    compare(jobs);
+}
+
+/// C1: the callee identity guard of calls through an upvalue (an alias of `math.sqrt`, a Lua function, an open upvalue of a running frame,
+/// a closed one, `debug.setupvalue`, a reassigned global): every replacement of the callee (another function, `nil`, a table with `__call`)
+/// takes effect at the next call. Detector of the mutants `calleeguard_dropped` and `calleeguard_stale_across_call` (and the existing
+/// `callee_guard_skip` family).
+#[test]
+fn c1_callee_programs() {
+    let progs = [
+        "c1_upvalue_callee",
+        "c1_callee_midloop",
+        "c1_open_closed",
+        "c1_lua_callee",
+        "h1_nbody_like",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace));
+            jobs.push(Job::new(p, trace).opts("+verify"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
+            jobs.push(Job::new(p, trace).budget(17));
+            jobs.push(Job::new(p, trace).opts("-loop"));
+            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        }
+    }
+    compare(jobs);
 }
 
 /// F5: `HSTORE` into an existing field takes the `__newindex` guard of the table instead of the old-value check (`hstoreguard=1`):

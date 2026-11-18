@@ -188,6 +188,9 @@ pub struct RaOpts {
     /// P2 bundle 1 (`xregs`): bit 0 makes `V9` (`rbp`) allocatable, bit 1 `V10` (`r14`; never in a trace with a native frame push / pop,
     /// whose assembler reads `r14`). 0: neither.
     pub xregs: u8,
+    /// H1 (`hkaddr`): an `HREFK` whose users are all `HLOAD` / `HSTORE` addresses is *fused* into them like an `AREF`: no register and no `lea`, the
+    /// users address `[node + idx * 24 + field]` and the node operand stays live up to them.
+    pub hkaddr: bool,
 }
 
 impl Default for RaOpts {
@@ -198,6 +201,7 @@ impl Default for RaOpts {
             max_xmm_homes: 10,
             reserve_gpr: None,
             xregs: 0,
+            hkaddr: false,
         }
     }
 }
@@ -389,7 +393,7 @@ fn is_kconst(op: TOp) -> bool {
 fn is_mem(op: TOp) -> bool {
     matches!(
         op,
-        TOp::Aload | TOp::Astore | TOp::Uload | TOp::Ustore | TOp::Uvrel
+        TOp::Aload | TOp::Astore | TOp::Uload | TOp::Ustore | TOp::Uvrel | TOp::Hload | TOp::Hstore
     )
 }
 
@@ -425,7 +429,7 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
             if op == TOp::Aload {
                 // BUNDLE-L A: the complemented index of the address, if it has one
                 [ar.a, ar.b, ar.third().unwrap_or(NOREF)]
-            } else if matches!(op, TOp::Uload | TOp::Uvrel) {
+            } else if matches!(op, TOp::Uload | TOp::Uvrel | TOp::Hload) {
                 [ar.a, ar.b, NOREF]
             } else {
                 [ar.a, ar.b, b]
@@ -459,7 +463,7 @@ fn defines(op: TOp, fused: bool) -> bool {
         | TOp::Tvirt
         | TOp::Sstore
         | TOp::Loop => false,
-        TOp::Aref | TOp::Uref => !fused,
+        TOp::Aref | TOp::Uref | TOp::Hrefk => !fused,
         _ => true,
     }
 }
@@ -735,7 +739,11 @@ pub fn allocate(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> Result<Allocat
     let mut fused: Vec<bool> = ir
         .ins
         .iter()
-        .map(|i| matches!(i.op, TOp::Aref | TOp::Uref))
+        .map(|i| {
+            matches!(i.op, TOp::Aref | TOp::Uref)
+                // H1: a `HREFK` of a node in a register (a constant node would need a scratch register at each user)
+                || (opts.hkaddr && i.op == TOp::Hrefk && TraceIr::is_ins(i.a))
+        })
         .collect();
     let unfuse = |fused: &mut Vec<bool>, r: Ref| {
         if TraceIr::is_ins(r) && idx(r) < fused.len() {

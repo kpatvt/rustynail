@@ -3767,6 +3767,11 @@ const TABLE: &[Row] = &[
             dl("tr_core", "g1_guard_diet_programs"),
         ],
     },
+    Row {
+        name: "hrefk_fold_wrong_disp",
+        owner: "H1",
+        dets: &[dl("tr_core", "h1_hkaddr_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

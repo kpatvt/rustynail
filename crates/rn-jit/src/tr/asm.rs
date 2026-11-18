@@ -5107,6 +5107,30 @@ impl Cx<'_> {
         win(a) == win(b) && self.al.snap_locs[sh] == self.al.snap_locs[sl]
     }
 
+    /// H1: the base register and the displacement of the node an `HLOAD` / `HSTORE` at `i` accesses: `(node, idx * 24)` when its address is a
+    /// fused `HREFK` (`ra::RaOpts::hkaddr`), else the address register and 0. `ops[0]` is the node register in both layouts.
+    fn hk_base(&self, i: usize, ops: &[Loc; 3]) -> Result<(V, i32, bool), AsmError> {
+        let Loc::G(base) = ops[0] else {
+            return unsup("HLOAD / HSTORE of a constant address");
+        };
+        let a = self.ir.ins[i].a;
+        if !TraceIr::is_ins(a) || !self.al.fused[usize::from(a - REF_BIAS)] {
+            return Ok((base, 0, false));
+        }
+        let h = self.ir.at(a);
+        if h.op != TOp::Hrefk {
+            return incons("a fused address of an HLOAD / HSTORE is not an HREFK");
+        }
+        let idx = i64::from(aux_bits(h.aux));
+        let Some(mut off) = fits(idx * node::SIZE as i64) else {
+            return unsup("HREFK slot index");
+        };
+        if mutants::active("hrefk_fold_wrong_disp") {
+            off += 8;
+        }
+        Ok((base, off, true))
+    }
+
     /// `HREFK node, key, idx`: `dst = node + idx * 24` after checking that this node holds the short-string key (tag
     /// and address). Everything goes through `V7`: the destination register may hold a value the exit restores, and
     /// it is written only after the guard has passed.
@@ -5194,6 +5218,10 @@ impl Cx<'_> {
                         });
                     }
                 }
+            }
+            if self.al.fused[i] {
+                // H1: fused into its `HLOAD` / `HSTORE` users: they address the slot through the node register
+                return Ok(());
             }
             let d = self.g(self.dst(i));
             if off != 0 {
@@ -5531,9 +5559,7 @@ impl Cx<'_> {
     fn hload(&mut self, i: usize) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
         let ops = self.ops(i);
-        let Loc::G(addr) = ops[0] else {
-            return unsup("HLOAD of a constant address");
-        };
+        let (addr, hk_off, _) = self.hk_base(i, &ops)?;
         // F3b: bit 1 selects the key fields of the node (the pseudo node of `TNEXT`)
         let (tt_off, val_off) = if aux_bits(ins.aux) & 2 != 0 {
             (node::KEY_TT, node::KEY)
@@ -5546,7 +5572,7 @@ impl Cx<'_> {
             match ins.t {
                 Ty::Nil => {
                     // any nil variant (nil, empty): `tag & 0x0F == 0`
-                    self.ld(7, W::B1, rm(addr, tt_off as i32));
+                    self.ld(7, W::B1, rm(addr, hk_off + tt_off as i32));
                     self.push(Op::And(7, Src::Imm(0x0F)));
                     self.br(Cc::Ne, 7, Src::Imm(0), x);
                 }
@@ -5555,7 +5581,7 @@ impl Cx<'_> {
                     let Some(tag) = tag_of(t) else {
                         return unsup(format!("HLOAD of type {t:?}"));
                     };
-                    self.ld(7, W::B1, rm(addr, tt_off as i32));
+                    self.ld(7, W::B1, rm(addr, hk_off + tt_off as i32));
                     self.push(Op::And(7, Src::Imm(ANYSTR_MASK)));
                     self.br(Cc::Ne, 7, Src::Imm(i32::from(tag & ANYSTR_MASK as u8)), x);
                 }
@@ -5566,14 +5592,14 @@ impl Cx<'_> {
                     self.push(Op::BrM {
                         cc: Cc::Ne,
                         w: W::B1,
-                        m: rm(addr, tt_off as i32),
+                        m: rm(addr, hk_off + tt_off as i32),
                         imm: i32::from(tag as i8),
                         to: x,
                     });
                 }
             }
         }
-        let m = rm(addr, val_off as i32);
+        let m = rm(addr, hk_off + val_off as i32);
         match self.dst(i) {
             Loc::G(d) => {
                 if matches!(ins.t, Ty::Nil | Ty::False | Ty::True) {
@@ -5593,15 +5619,14 @@ impl Cx<'_> {
     fn hstore(&mut self, i: usize) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
         let ops = self.ops(i);
-        let Loc::G(addr) = ops[0] else {
-            return unsup("HSTORE to a constant address");
-        };
+        let (addr, hk_off, fused) = self.hk_base(i, &ops)?;
+        let vloc = if fused { ops[2] } else { ops[1] };
         if ins.flags & F_GUARD != 0
             && aux_bits(ins.aux) & 1 != 0
             && !mutants::active("hstore_oldcheck_skip")
         {
             let x = self.guard_label(i)?;
-            self.ld(7, W::B1, rm(addr, node::VAL_TT as i32));
+            self.ld(7, W::B1, rm(addr, hk_off + node::VAL_TT as i32));
             self.push(Op::And(7, Src::Imm(0x0F)));
             self.br(Cc::Eq, 7, Src::Imm(0), x);
         }
@@ -5613,11 +5638,11 @@ impl Cx<'_> {
         if !known {
             self.st(
                 W::B1,
-                rm(addr, node::VAL_TT as i32),
+                rm(addr, hk_off + node::VAL_TT as i32),
                 Src::Imm(i32::from(tag)),
             );
         }
-        self.store_value(rm(addr, node::VAL as i32), ins.b, ops[1]);
+        self.store_value(rm(addr, hk_off + node::VAL as i32), ins.b, vloc);
         Ok(())
     }
 
