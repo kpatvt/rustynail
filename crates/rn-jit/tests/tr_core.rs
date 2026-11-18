@@ -7782,6 +7782,58 @@ fn f4_prune_programs() {
     }
 }
 
+/// F5: `HSTORE` into an existing field takes the `__newindex` guard of the table instead of the old-value check (`hstoreguard=1`):
+/// tables without a metatable, with a metatable lacking `__newindex`, with `__newindex` as a function and as a table; nil and non-nil
+/// slots; a metatable changed between iterations (`setmetatable`, a call in the middle, the metatable's own `__newindex` field);
+/// nil-then-store; nbody-like float updates. Detector of the mutants `hstore_nomt_check_skipped`, `hstore_mt_stale` and
+/// `hstore_known_nonnil_wrong`.
+#[test]
+fn f5_hstore_guard_programs() {
+    let progs = [
+        "jit_f5_kinds",
+        "jit_f5_setmt_midloop",
+        "jit_f5_mt_mutated",
+        "jit_f5_nil_then_store",
+        "jit_f5_nbody_like",
+        "jit_f5_known_nil",
+        "jit_f5_stale_mt",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace).limits_s("hstoreguard=1").opts("+verify"));
+            jobs.push(Job::new(p, trace).limits_s("hstoreguard=1"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("hstoreguard=1")
+                    .opts("+exitstorm=3 +verify"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("hstoreguard=1")
+                    .opts("+exitstorm=7 +verify +randra=5"),
+            );
+            jobs.push(Job::new(p, trace).limits_s("hstoreguard=1").opts("-loop"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("hstoreguard=1")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// S1: hot guard exits inside inlined frames (plain, tail and metamethod frames, depth 1..4, closures of one prototype with different
 /// upvalues, result adjustments, errors with tracebacks, a coroutine, stack growth under virtual frames, a hook installed in the middle,
 /// eight-way branching, argument type changes, vararg frames that are kept out) get side traces whose frames stay virtual: the

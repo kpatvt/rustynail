@@ -57,6 +57,8 @@ pub enum TrPref {
 pub const SIDEMIN_PROCESS: u32 = 4;
 /// F4: the process default of [`TrLimits::snapprune`] (also the struct default).
 pub const SNAPPRUNE_PROCESS: u32 = 1;
+/// F5: the process default of [`TrLimits::hstoreguard`] (also the struct default).
+pub const HSTOREGUARD_PROCESS: u32 = 0;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
@@ -570,6 +572,10 @@ pub struct TrLimits {
     /// F4 (`snapprune`): the snapshots of a trace's root frame leave out the dead numeric temporaries (`snap::prune_snaps`; docs/JIT_TRACE.md TR3 / D7): 0 = off, 1 = on (default
     /// [`SNAPPRUNE_PROCESS`]).
     pub snapprune: u32,
+    /// F5 (`hstoreguard`): an `HSTORE` into an existing node whose recorded value is not nil takes the `__newindex` guard of the table
+    /// (`FLOAD metatable == 0`, or the metatable's flag cache says no `__newindex`; CSE'd by the header-fact rules) instead of the per-store
+    /// exit on a nil old value: 0 = the old-value check, 1 = the metatable guard (default [`HSTOREGUARD_PROCESS`]).
+    pub hstoreguard: u32,
 }
 
 impl Default for TrLimits {
@@ -664,6 +670,7 @@ impl Default for TrLimits {
             xregs: XREGS_PROCESS,
             rearm: REARM_PROCESS,
             snapprune: SNAPPRUNE_PROCESS,
+            hstoreguard: HSTOREGUARD_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -832,6 +839,7 @@ impl TrLimits {
                 "xregs" => l.xregs = v.min(3),
                 "rearm" => l.rearm = v.min(64),
                 "snapprune" => l.snapprune = v.min(2),
+                "hstoreguard" => l.hstoreguard = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }

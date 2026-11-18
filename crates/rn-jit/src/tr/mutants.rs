@@ -801,6 +801,10 @@ pub const NAMES: &[&str] = &[
     // (`prune_loop_carried`: liveness without the back-edges and without the protection of the locals, so a value that the next iteration reads looks dead)
     "prune_loop_carried",
     "prune_after_call",
+    // F5 (`hstoreguard`): the `__newindex` guard that replaces the old-value check of `HSTORE`
+    "hstore_nomt_check_skipped",
+    "hstore_mt_stale",
+    "hstore_known_nonnil_wrong",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -869,7 +873,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 664);
+        assert_eq!(NAMES.len(), 667);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

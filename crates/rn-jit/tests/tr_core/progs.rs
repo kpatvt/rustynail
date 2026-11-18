@@ -15638,4 +15638,39 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/jit_f4_09_nbody.lua"),
     },
+    Prog {
+        name: "jit_f5_kinds",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_01_kinds.lua"),
+    },
+    Prog {
+        name: "jit_f5_setmt_midloop",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_02_setmt_midloop.lua"),
+    },
+    Prog {
+        name: "jit_f5_mt_mutated",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_03_mt_mutated.lua"),
+    },
+    Prog {
+        name: "jit_f5_nil_then_store",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_04_nil_then_store.lua"),
+    },
+    Prog {
+        name: "jit_f5_nbody_like",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_05_nbody_like.lua"),
+    },
+    Prog {
+        name: "jit_f5_known_nil",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_06_known_nil.lua"),
+    },
+    Prog {
+        name: "jit_f5_stale_mt",
+        small: true,
+        src: include_str!("../../../../tests/vm/jit_f5_07_stale_mt.lua"),
+    },
 ];

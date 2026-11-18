@@ -589,6 +589,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         rec_any: cfg.limits.recany != 0,
         cnum: true,
         nil_store: cfg.limits.nilstore != 0,
+        hstore_mt: cfg.limits.hstoreguard != 0,
         rec_seen: pr.is_some_and(|pr| cache::proto_recursive(st, pr))
             || (cfg.limits.contok >= 2 && cok),
         rec_only: cfg.limits.recnat != 0
@@ -830,6 +831,7 @@ pub fn driver_start_side(
         rec_any: cfg.limits.recany != 0,
         cnum: true,
         nil_store: cfg.limits.nilstore != 0,
+        hstore_mt: cfg.limits.hstoreguard != 0,
         rec_seen: cache::proto_recursive(st, pr),
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)

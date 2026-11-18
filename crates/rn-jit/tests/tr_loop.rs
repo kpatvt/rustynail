@@ -1503,6 +1503,37 @@ fn may_alias_tables_do_not_forward() {
     );
 }
 
+/// F5: the old-value check of an `HSTORE` is dropped only when the nearest access of the same node is a typed non-nil load or a
+/// store of a non-nil value: after a store of nil (here: store, store nil, store again) the third store of the iteration and of
+/// the next one keep their check (`hstore_known_nonnil_wrong`).
+#[test]
+fn hstore_after_a_nil_store_keeps_its_old_value_check() {
+    let mut rb = Rb::new(true, true);
+    let t = rb.cur[7];
+    let v = rb.cur[5];
+    let nil = rb.b.ir.konst(KVal::Pri(Ty::Nil));
+    rb.hstore(t, 0, v);
+    rb.hstore(t, 0, nil);
+    rb.hstore(t, 0, v);
+    rb.forloop(1);
+    let p = peel(&rb.finish());
+    let hs: Vec<&Ins> = p.ir.ins.iter().filter(|i| i.op == TOp::Hstore).collect();
+    assert_eq!(hs.len(), 6, "{}", dump(&p.ir));
+    let guarded = |i: &Ins| i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0;
+    // pre-roll: the first has no earlier access (checked), the second follows a non-nil store (dropped), the third follows nil (checked)
+    assert!(
+        guarded(hs[0]) && !guarded(hs[1]) && guarded(hs[2]),
+        "{}",
+        dump(&p.ir)
+    );
+    // body: the first follows the pre-roll's third store (dropped), the second too, the third follows nil again (checked)
+    assert!(
+        !guarded(hs[3]) && !guarded(hs[4]) && guarded(hs[5]),
+        "{}",
+        dump(&p.ir)
+    );
+}
+
 /// A store that may alias lies between two loads of one location: the second load is not the first (`cse_across_store`,
 /// `alias_may_as_no`), and a later may-alias store blocks the forwarding of an older store (`fwd_across_store`).
 #[test]

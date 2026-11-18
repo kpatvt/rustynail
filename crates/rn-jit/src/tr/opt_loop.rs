@@ -830,12 +830,16 @@ impl<'a> Em<'a> {
                     if self.fwd && aux_bits(ins.aux) & 1 != 0 {
                         if let Some(key) = opt_mem::locate(&self.b.ir, &ins) {
                             let known = match self.log.find(&self.b.ir, &key) {
-                                Some(Found::Store(v)) => self.b.ir.ty_of(v) != Ty::Nil,
+                                Some(Found::Store(v)) => {
+                                    self.b.ir.ty_of(v) != Ty::Nil
+                                        || mutants::active("hstore_known_nonnil_wrong")
+                                }
                                 Some(Found::Load(l)) => {
                                     let li = *self.b.ir.at(l);
-                                    li.flags & F_GUARD != 0
+                                    (li.flags & F_GUARD != 0
                                         && aux_bits(li.aux) & 1 != 0
-                                        && li.t != Ty::Nil
+                                        && li.t != Ty::Nil)
+                                        || mutants::active("hstore_known_nonnil_wrong")
                                 }
                                 None => false,
                             };

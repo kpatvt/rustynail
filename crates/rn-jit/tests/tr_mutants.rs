@@ -3726,6 +3726,24 @@ const TABLE: &[Row] = &[
         owner: "F4",
         dets: &[d("tr_core", "f4_prune_programs")],
     },
+    Row {
+        name: "hstore_nomt_check_skipped",
+        owner: "F5",
+        dets: &[d("tr_core", "f5_hstore_guard_programs")],
+    },
+    Row {
+        name: "hstore_mt_stale",
+        owner: "F5",
+        dets: &[d("tr_core", "f5_hstore_guard_programs")],
+    },
+    Row {
+        name: "hstore_known_nonnil_wrong",
+        owner: "F5",
+        dets: &[d(
+            "tr_loop",
+            "hstore_after_a_nil_store_keeps_its_old_value_check",
+        )],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

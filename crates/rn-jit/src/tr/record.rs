@@ -261,6 +261,8 @@ pub struct RecCfg {
     pub cnum: bool,
     /// R2: stores into existing hash nodes that hold nil are recorded (`TrLimits::nilstore`).
     pub nil_store: bool,
+    /// F5: an `HSTORE` into a node with a non-nil recorded value takes the `__newindex` guard of the table instead of the old-value check (`TrLimits::hstoreguard`).
+    pub hstore_mt: bool,
     /// R2: a native self-call of the root prototype was recorded before (`recany` gates native returns on it).
     pub rec_seen: bool,
     /// J2-2: most IR instructions of this recording (0 = the general limit): a deep recording's bound.
@@ -504,6 +506,7 @@ impl Default for RecCfg {
             rec_any: false,
             cnum: false,
             nil_store: false,
+            hstore_mt: false,
             rec_seen: false,
             max_ins: 0,
             pack: false,
@@ -1194,6 +1197,8 @@ struct Rec {
     /// A1: IR position of the latest `TSET` (its position in the hash part is data dependent): tables allocated before it are
     /// never given inline `NEWREF`s.
     last_tset: usize,
+    /// MUTANT `hstore_mt_stale`: tables whose `__newindex` guard was recorded once.
+    hs_guarded: Vec<Ref>,
     /// F4 (TR22b relaxed): the root-relative slot the interpreter's `thread.top` holds after the instruction just recorded
     /// (a producer of a multiple-result sequence: `CALL C=0`, a `RETURN` into one, an intrinsic with `C=0`); the lockstep
     /// compares it with the VM and the next step moves it to `top_in`.
@@ -1416,6 +1421,7 @@ impl Rec {
             ls_tabs: Default::default(),
             ls_tnew: HashMap::default(),
             last_tset: 0,
+            hs_guarded: Vec::new(),
             top_rel: None,
             top_in: None,
             mm_bridge: None,
@@ -4014,6 +4020,11 @@ impl Rec {
             // frame, not modelled)
             self.stale_above_frame();
             self.ins(TOp::Hstore, Ty::I64, hr, val.0)?;
+        } else if self.hstore_mt_ok(tbl) {
+            // F5: see `hash_set`
+            self.hstore_mt_guard(t.0, tbl)?;
+            self.first_store.get_or_insert(self.b.ir.ins.len());
+            self.ins(TOp::Hstore, Ty::I64, hr, val.0)?;
         } else {
             self.first_store.get_or_insert(self.b.ir.ins.len());
             self.guard(TOp::Hstore, Ty::I64, hr, val.0, 1)?;
@@ -4609,6 +4620,13 @@ impl Rec {
             // frame, not modelled)
             self.stale_above_frame();
             self.ins(TOp::Hstore, Ty::I64, hr, val.0)?;
+        } else if self.hstore_mt_ok(tbl) && self.nil_store_ok(tbl, key.1, val.1) {
+            // F5: the old-value check of the store is replaced by the `__newindex` guard of the table: a node that `HREFK` found (live key)
+            // takes a plain store whatever its old value, as long as the table has no `__newindex` (the same argument as the R2 nil store;
+            // the key is no event name, so the flag cache stays valid)
+            self.hstore_mt_guard(t.0, tbl)?;
+            self.first_store.get_or_insert(self.b.ir.ins.len());
+            self.ins(TOp::Hstore, Ty::I64, hr, val.0)?;
         } else {
             self.first_store.get_or_insert(self.b.ir.ins.len());
             self.guard(TOp::Hstore, Ty::I64, hr, val.0, 1)?;
@@ -4617,6 +4635,31 @@ impl Rec {
             self.ins(TOp::Tbar, Ty::I64, t.0, val.0)?;
         }
         Ok(())
+    }
+
+    /// F5 (`hstoreguard`): may an `HSTORE` into a node of `tbl` (recorded non-nil) use the `__newindex` guard instead of the old-value check?
+    /// The table has no metatable, or its flag cache says no `__newindex` (the guard of [`Rec::meta_guard`] can be recorded).
+    fn hstore_mt_ok(&self, tbl: TableRef) -> bool {
+        self.cfg.hstore_mt
+            && self.cfg.nil_store
+            && (mutants::active("hstore_nomt_check_skipped")
+                || TableRef::no_tm(tbl.metatable(), rn_core::meta::Tm::NewIndex))
+    }
+
+    /// F5: the `__newindex` guard of an elided old-value check. The metatable loads are `FLOAD`s of the table header: the header-fact rules
+    /// (`opt_mem::header_safe`) keep them alive across the instructions that cannot change a metatable or its flags and drop them at every
+    /// call, `SETMT`, insertion and allocation (MUTANT `hstore_mt_stale`: a table guarded once stays guarded for the whole recording).
+    fn hstore_mt_guard(&mut self, t: Ref, tbl: TableRef) -> R<()> {
+        if mutants::active("hstore_nomt_check_skipped") {
+            return Ok(());
+        }
+        if mutants::active("hstore_mt_stale") {
+            if self.hs_guarded.contains(&t) {
+                return Ok(());
+            }
+            self.hs_guarded.push(t);
+        }
+        self.meta_guard(t, tbl, rn_core::meta::Tm::NewIndex)
     }
 
     /// R2: may a store into an existing hash node that holds nil be recorded (`nilstore`)? The key must not be a metamethod name
