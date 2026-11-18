@@ -928,6 +928,18 @@ pub struct FrameLink { pub proto: ProtoKey, pub func_slot: u16, pub call_pc: u32
   (`__*`: the store of a nil slot invalidates the flag cache) and tables whose metatable may have `__newindex` keep the old
   check, which the loop optimiser still drops when the nearest access of the node is a typed non-nil load or a non-nil store.
   Mutants `hstore_nomt_check_skipped`, `hstore_mt_stale`, `hstore_known_nonnil_wrong`.
+- **G1 (`guarddiet`): the guard diet of the transitions of a chain.** The types a root's entry guards proved are inherited
+  through the whole chain root -> side -> side -> link, per slot, while no trace of the chain writes the slot (`SSTORE`;
+  nothing else writes the stack between an entry and an exit but the stubs and the writeback): the exit snapshots' `ents`
+  of a side trace now include the entry tags of its own start state (`exit::entry_ents`), so a child attached later knows
+  the slots its parent never touched, and the writeback of a side trace skips the tag stores of those slots (`wb_ents_ex`).
+  A link to the guard-free second entry also skips the room checks (TR6a / TR6b) when the chain's room is at least the
+  target's: the side trace's room is `max(parent's, own)` (it either needs no more than the parent promised or checks its own,
+  `AsmEnv::room_have`), the target's `(extent, depth)` is part of the interned signature the link compares, and the link
+  jumps to `HeadData::e2n`, the second entry past its room checks (the frame, its base and its spare `CallInfo` list are the
+  chain's: the same room argument as the rolled loop's back-edge, which does not re-check either). Interpreter and plain
+  dispatch entries keep every check. `guarddiet=0|1` (default 1). Mutants `entry2_transitive_stale`, `entry_inherit_wrong_slot`,
+  `room_skip_bigger_frame`.
 - **Cost of TR3 (v1.3, full-build requirement).** Every slot written in an iteration, inlined-callee temporaries
   included, must be restorable at the exits of the *next* iteration until it is redefined, so in the peeled layout its
   value stays live across the back-edge as a PHI even when the next iteration never reads it: register pressure,

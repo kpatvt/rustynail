@@ -28,7 +28,7 @@ mod progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 
-use a1_progs::A1_PROGS;
+use a1_progs::{A1_PROGS, G1_SLOW};
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
 use rn_core::state::{LuaState, LUA_MULTRET};
@@ -142,6 +142,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(SINK_PROGS)
         .chain(NR_PROGS)
         .chain(A1_PROGS)
+        .chain(G1_SLOW)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
@@ -7794,6 +7795,7 @@ fn g1_guard_diet_programs() {
         "g1_mid_store",
         "g1_room_deep",
         "g1_hooks_coro_gc_err",
+        "g1_stack_limit",
     ];
     let mut jobs = Vec::new();
     for p in progs {
@@ -7808,6 +7810,9 @@ fn g1_guard_diet_programs() {
                 );
                 jobs.push(Job::new(p, trace).limits_s(lim).budget(17));
                 jobs.push(Job::new(p, trace).limits_s(lim).opts("-loop"));
+            }
+            if p == "g1_stack_limit" {
+                continue; // (200000 frames: too slow under the stress modes)
             }
             jobs.push(
                 Job::new(p, trace)

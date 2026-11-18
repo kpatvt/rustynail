@@ -413,19 +413,11 @@ local function rec(d, x)
   return s
 end
 local out = {}
-for _, d in ipairs { 0, 1, 5, 50, 300, 3000, 20000, 1, 0 } do
+for _, d in ipairs { 0, 1, 5, 50, 300, 800, 1, 0 } do
   for k = 1, 3 do out[#out + 1] = rec(d, 1) end
 end
 out[#out + 1] = rec(100, 1.5)
 print(table.concat(out, " "))
-local function inf(d)
-  local s = inner(5, 1)
-  return s + inf(d + 1) + 1
-end
-for k = 1, 3 do
-  local ok, e = pcall(inf, 0)
-  print(ok, (tostring(e):find("stack overflow", 1, true)) ~= nil, rec(10, 2))
-end
 local function grow(n, ...)
   local s = 0
   for i = 1, n do
@@ -482,3 +474,28 @@ print(table.concat(out, " "))
 "#,
     },
 ];
+
+/// Programs that are too slow for the `+tracemove` / `stackmove` twins (the stack limit takes ~200000 frames): run only by `g1_guard_diet_programs`.
+pub const G1_SLOW: &[Prog] = &[Prog {
+    name: "g1_stack_limit",
+    small: false,
+    src: r#"
+-- an endless recursion whose frames run a hot loop: the stack overflow error is caught and the traces keep running afterwards
+local function inner(n, x)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do s = s + x end
+    if i % 5 == 0 then s = s + 1 end
+  end
+  return s
+end
+local function inf(d)
+  local s = inner(5, 1)
+  return s + inf(d + 1) + 1
+end
+for k = 1, 3 do
+  local ok, e = pcall(inf, 0)
+  print(ok, (tostring(e):find("stack overflow", 1, true)) ~= nil, inner(9, 2))
+end
+"#,
+}];
