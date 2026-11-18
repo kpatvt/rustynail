@@ -2274,6 +2274,11 @@ fn verify_probe(st: &mut State, id: TrId) {
             .add(exit_area::FROM_R15 as usize)
             .cast::<ExitArea>()
     };
+    // S4: a native shape-guard exit is not replayed: its handler has just filled the table's layout id, so the emulation (which reads the live table) would
+    // pass the guard that the native run missed and leave somewhere else
+    if real_area.exitno & exit::EXIT_SHAPE != 0 {
+        return;
+    }
     let mut fr = pre.frame;
     let mut hdr = pre.hdr;
     let stack_off = thr::stack_ptr_offset(st);
@@ -2330,6 +2335,15 @@ fn verify_probe(st: &mut State, id: TrId) {
             .add(exit_area::FROM_R15 as usize)
             .cast::<ExitArea>()
     };
+    // S4: the emulation reads the live tables, which the native run has already changed: an inline `NEWREF` cleared a layout id (the emulated shape guard
+    // misses where the native one passed), and a native shape-miss exit filled a zero id before this probe (the emulated guard passes where the native one
+    // missed). Such a pair of runs is not comparable (the exits agree up to the shape guard, which tests the table, not the trace's state).
+    if emu_area.trace_id == real_area.trace_id
+        && emu_area.exitno != real_area.exitno
+        && (emu_area.exitno | real_area.exitno) & exit::EXIT_SHAPE != 0
+    {
+        return;
+    }
     assert_eq!(
         (emu_area.trace_id, emu_area.exitno),
         (real_area.trace_id, real_area.exitno),

@@ -1985,7 +1985,7 @@ facts were re-checked at `89963c6`.
 **What.** A hash part with at least 8 nodes has a 64-bit *layout id* slot in front of its node vector (rn-core `table.rs`: `[id @ node-16][lastfree @ node-8][nodes]`).
 `0` = not known; otherwise the id names the interned *descriptor* of the vector: `lsizenode` and, for every node whose key is not nil, `(node index, key tag, key bits)`
 (`TableRef::layout_descriptor`). Descriptors are content: equal layouts of different tables get the same id (the five `bodies[i]` of nbody share one), and an id never
-names an object. With `shapeguard=1` (`RUSTYNAIL_JIT_TRACE_LIMITS`; default in the process: see `SHAPEGUARD_PROCESS`) the recorder emits, per table access, after the
+names an object. With `shapeguard=1` (`RUSTYNAIL_JIT_TRACE_LIMITS`, `shapeguard=0|1`, default 1) the recorder emits, per table access, after the
 `lsizenode` guard and `FLOAD node`, one guard `HSHAPE node, #id` (`cmp qword [node-16], id; jne cold`, op bits = `lsizenode`) with the id of the table's layout at record
 time, and marks the `HREFK`s of that node vector `HREFK_COVERED`: they assemble without key-tag and key compares (the `HLOAD` after them checks its own value tag).
 Per `HREFK` that is about 2 instructions fewer (movabs + cmp + the fused 16-bit tag compare become one byte compare), per table visit about 2 more (the guard); nbody
@@ -2020,10 +2020,15 @@ Per `HREFK` that is about 2 instructions fewer (movabs + cmp + the fused 16-bit 
    (`shape::fill_node`), restores the snapshot like any exit and lands in the interpreter at the snapshot's pc, so the next entry passes the guard. It does **not** count the
    exit towards hotness (no side trace forms on a shape guard; mutant `shape_miss_counts_hot`).
 5. *Exit storms.* Every shape-guard exit that reaches the handler (zero id or another layout) is counted per trace (`cache::shape_miss`); at `SHAPE_DEMOTE` (48) the
-   family is flushed and its root head is recorded without shape guards from then on (`HeadData::noshape`; plain `HREFK`s: the pre-S4 behaviour, side traces on the key
+   family is flushed (`shapedemote=N` changes the 48) and its root head is recorded without shape guards from then on (`HeadData::noshape`; plain `HREFK`s: the pre-S4 behaviour, side traces on the key
    compares included). A loop that inserts a key every iteration, reads fifty layouts through one site, or visits many fresh tables is therefore bounded to 48 handler
    exits (mutant `shape_demote_never`; `tr_core::s4_shape_guard_effectiveness_and_demotion`). Tables that an insertion of the same recording went into, tables the
    trace allocated (their layout is built by the trace and owned by the sinking analysis) and tables with fewer than 8 or more than 64 nodes get no guard.
+
+**Measured** (instructions, `perf stat`, seed 0, release build, knob 0 vs 1 on one binary): nbody (1M steps) 2486.6M -> 2089.8M (-16.0 %, 2487 -> 2090 per step), awfy/nbody
+-13.4 %; apps/raytrace +0.05 %, oop_methods -0.1 %, json -0.07 %, table_hash / binary_trees / spectral_norm / fib +-0.001 %; a loop that inserts a key every
+iteration -0.2 %; fifty instances with differing extra keys: +0.7 % over ten rotations of the instance order (single runs scatter -25 % .. +25 % either way: the
+demotion re-records the family at an arbitrary instance and the polymorphic trace tree of that site depends on it, with or without the knob).
 
 **Cost model / when it loses.** One extra guard per table visit and one handler call per distinct table whose id is not computed yet (nbody: four). Programs whose hot
 site sees many layouts (hidden-class polymorphism) are demoted after 48 misses and run as before. `layout_id` scans at most 64 nodes.
