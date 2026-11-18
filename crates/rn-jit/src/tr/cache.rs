@@ -58,7 +58,7 @@ pub const SIDEMIN_PROCESS: u32 = 4;
 /// F4: the process default of [`TrLimits::snapprune`] (also the struct default).
 pub const SNAPPRUNE_PROCESS: u32 = 1;
 /// F5: the process default of [`TrLimits::hstoreguard`] (also the struct default).
-pub const HSTOREGUARD_PROCESS: u32 = 0;
+pub const HSTOREGUARD_PROCESS: u32 = 1;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).

@@ -918,6 +918,16 @@ pub struct FrameLink { pub proto: ProtoKey, pub func_slot: u16, pub call_pc: u32
   (`RUSTYNAIL_JIT_TRACE_LIMITS`); `snapprune=2` is a measurement-only experiment that also prunes dead *locals* (not
   conforming: `debug.getlocal` of a dead local shows a stale value). Mutants `prune_live_temp`, `prune_local`,
   `prune_collectable`, `prune_loop_carried`, `prune_after_call`; the old `snap_prune_dead` prunes everything unconditionally.
+- **F5 (`hstoreguard`): the old-value check of `HSTORE`.** A store into an existing short-string or integer hash node whose
+  recorded value is not nil used to exit when the node's value is nil at run time (an insertion or a `__newindex` for the
+  interpreter). With `hstoreguard=1` (default) the store is unconditional and the recorder emits the TR14 `__newindex` guard of
+  the table instead (`FLOAD metatable == 0`, or `metatable != 0` and the flag-cache bit says no `__newindex`): a node that
+  `HREFK` found (live key) takes a plain raw store whatever its old value when no `__newindex` can run, exactly like the R2
+  nil store. The metatable/flags `FLOAD`s follow the header-fact rules (CSE'd and hoisted over header-safe instructions, dropped
+  at calls, `SETMT`, insertions, allocation), so a table is guarded once per stretch. Keys that may be metamethod names
+  (`__*`: the store of a nil slot invalidates the flag cache) and tables whose metatable may have `__newindex` keep the old
+  check, which the loop optimiser still drops when the nearest access of the node is a typed non-nil load or a non-nil store.
+  Mutants `hstore_nomt_check_skipped`, `hstore_mt_stale`, `hstore_known_nonnil_wrong`.
 - **Cost of TR3 (v1.3, full-build requirement).** Every slot written in an iteration, inlined-callee temporaries
   included, must be restorable at the exits of the *next* iteration until it is redefined, so in the peeled layout its
   value stays live across the back-edge as a PHI even when the next iteration never reads it: register pressure,
