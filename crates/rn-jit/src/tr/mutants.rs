@@ -811,6 +811,12 @@ pub const NAMES: &[&str] = &[
     "room_skip_bigger_frame",
     // H1 (`hkaddr`): the `HREFK` address folded into the access
     "hrefk_fold_wrong_disp",
+    // S4 (layout id of hash parts with >= 8 nodes): the clears at every key-change site (rn-core `table.rs`) and the inline NEWREF's
+    "shape_stamp_not_bumped_on_newkey",
+    "shape_collide_move_no_clear",
+    "shape_gc_deadkey_reuse",
+    "shape_weak_clear_skip",
+    "shape_nr_id_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -849,6 +855,12 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_hooked_head_no_trap(active("hooked_head_no_trap"));
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
+    rn_core::table::set_mut_shape(
+        u8::from(active("shape_stamp_not_bumped_on_newkey"))
+            | u8::from(active("shape_collide_move_no_clear")) << 1
+            | u8::from(active("shape_gc_deadkey_reuse")) << 2
+            | u8::from(active("shape_weak_clear_skip")) << 3,
+    );
     rn_core::jit_helpers::set_mut_c2_barrier_skip(active("c2setupval_barrier_skip"));
     rn_core::jit_helpers::set_mut_mm_ret_nc_skip(active("mmret_nc_skip"));
     rn_core::jit_helpers::set_mut_mm_ret_flag_false(active("mmret_flag_false"));
@@ -879,7 +891,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 671);
+        assert_eq!(NAMES.len(), 676);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

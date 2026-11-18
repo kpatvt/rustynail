@@ -3772,6 +3772,31 @@ const TABLE: &[Row] = &[
         owner: "H1",
         dets: &[dl("tr_core", "h1_hkaddr_programs")],
     },
+    Row {
+        name: "shape_stamp_not_bumped_on_newkey",
+        owner: "S4",
+        dets: &[d("tr_shape", "shape_clear_on_insert_and_collision")],
+    },
+    Row {
+        name: "shape_collide_move_no_clear",
+        owner: "S4",
+        dets: &[d("tr_shape", "shape_clear_on_insert_and_collision")],
+    },
+    Row {
+        name: "shape_gc_deadkey_reuse",
+        owner: "S4",
+        dets: &[d("tr_shape", "shape_clear_on_gc_dead_key_and_weak_clears")],
+    },
+    Row {
+        name: "shape_weak_clear_skip",
+        owner: "S4",
+        dets: &[d("tr_shape", "shape_clear_on_gc_dead_key_and_weak_clears")],
+    },
+    Row {
+        name: "shape_nr_id_skip",
+        owner: "S4",
+        dets: &[d("tr_shape", "shape_trace_newref_clears_the_id")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

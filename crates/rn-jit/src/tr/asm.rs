@@ -5917,6 +5917,14 @@ impl Cx<'_> {
             );
             self.store_const(rm(7, nb + node::KEY as i32), key);
         }
+        if plan.layout && !mutants::active("shape_nr_id_skip") {
+            // S4: the key set of the node vector changes: invalidate its layout id (slot at `node - 16`, 8-node parts only)
+            self.st(
+                W::B8,
+                rm(7, -(rn_core::jit_layout::node::LAYOUT_ID_BYTES as i32)),
+                Src::Imm(0),
+            );
+        }
         if plan.node != plan.main && !mutants::active("nr_next_skip") {
             self.st(
                 W::B4,
