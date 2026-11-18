@@ -3833,6 +3833,52 @@ const TABLE: &[Row] = &[
         owner: "S4",
         dets: &[dl("tr_core", "s4_shape_guard_effectiveness_and_demotion")],
     },
+    // R1 (`regcarry`): register-carrying transitions
+    Row {
+        name: "carry_stored_slot",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_plain_no_store",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_drop_move",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_in_drop_move",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_store_dropped",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_exit_tag_skip",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_link_tag_skip",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_wb_prune_live",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "carry_demote_copied",
+        owner: "R1",
+        dets: &[dl("tr_core", "r1_regcarry_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

@@ -2035,3 +2035,61 @@ site sees many layouts (hidden-class polymorphism) are demoted after 48 misses a
 
 **Tests.** `tr_core::s4_shape_guard_programs` (19 programs x trace modes x exit storms / verification / GC stress), `s4_shape_guard_effectiveness_and_demotion`,
 `tr_record::s4_covered_hrefks_are_dominated_by_their_shape_guard`, `tr_shape::shape_ids_are_content_addressed`, and the rn-core clears (`tests_shape.rs`).
+
+## 16. Register-carrying transitions (R1, `regcarry`)
+
+**What.** A trace-to-trace transition used to go through the stack: the exit stub of the parent stores the whole snapshot (tag and payload per slot), the side trace
+re-loads what it reads, writes back what it changed at its link, and the target root re-loads its leading `SLOAD` run behind the guard-free second entry. An `nbody`
+step makes six trace entries and five exits (the inner `j` loop averages two iterations, the outer iteration is a side trace that links back to the root), so most of
+its instructions beyond the arithmetic are these stores and loads. With `regcarry` (`RUSTYNAIL_JIT_TRACE_LIMITS=regcarry=N`; 0 = off (default), 1 = both halves,
+2 = exits only, 3 = links only) a transition between two traces whose both ends are JIT code leaves the values in registers (or spill slots):
+
+* **Half B, link into the root (`HeadData::e3`).** The root that has a guard-free second entry (A2) also publishes a *third entry* `e3`: the point behind its leading
+  `SLOAD` run (`exit::lead_run`), together with a layout `exit::CarryInfo` (per live leading `SLOAD`: slot, type, the register and the spill slots the allocation holds
+  its value in at that point, `ra::Allocation::carry`, captured by the allocator after it has processed the instruction behind the run). A side trace whose link was
+  compiled against that layout (`AsmEnv::carry_head` / `carry_sig`: the head's `e3sig` at compile time) ends with: signature check (`cmp [e3sig], sig`), the poll,
+  the root's entry bookkeeping (`entry_ok`, `pending`: it is the root's entry), the root's `BUDGET n` charge (done by the link: the third entry is behind it), a
+  parallel move from the locations of its writeback values (`end_locs`) to the root's locations (the allocator is told the root's registers as hints, so most moves are
+  empty), loads from the stack for the slots the trace did not write, and `jmp [e3]`. A mismatching signature (the root was recompiled or flushed: `e3sig` is reset with `e2sig`) falls
+  to the plain path, which first stores the entries the early writeback left out.
+* **Half A, exit into a side trace (carry cells).** Behind the exit cells of a trace its allocation reserves one *carry cell* per snapshot (`cells[n + k]`, 0 until a
+  side trace compiled for register-carried entry is attached). The inline stub of a frameless exit (no frames, no sunk tables, `top`, constants or dynamic strings in its
+  map; budget in the register) tests the cell after its counter and, if set, adds `refund` to the budget register and `jmp`s to the **carry entry** of the side trace
+  with every value where the exit map has it, storing nothing. The side trace was recorded with the slots of the exit map pre-defined as *carried loads*
+  (`SLOAD` with `SLOAD_CARRIED`, unchecked, emitted before everything else, `SlotMap::def` on the slot): every snapshot of it, snapshot 0 included, and its writeback
+  therefore name them; they occupy a register from the start of the trace (the allocator skips their definition and records where they live at the start,
+  `capture_carried_loads`, hinted to the parent's registers). The plain entry of the side trace (through the exit cell, after the handler or a stub stored the
+  state) loads them from the stack first; the carry entry moves them from `TraceIr::carry_in` (the parent's locations).
+
+**Soundness argument.** The one thing that changes is the invariant "the stack holds every slot that a snapshot does not name" (TR3, sparse snapshots): behind a
+carrying transition the stack slots of the carried values are *stale*. Everything that can observe the stack is an exit, and nothing else can run on a trace (TR1:
+no GC step, no hook, no error, no yield, no stack reallocation between an entry and the end of an exit handler), so it is enough that **every exit reachable after
+a carrying transition restores the carried slots, tag included**:
+
+1. *Roots (half B).* `mod::carry_dense` gives every snapshot used by a guard behind the leading run a `SNAP_CARRY` entry (slot -> the unmodified leading `SLOAD`) for
+   each carried slot it does not name itself (carried = the run's `Int` / `Num` / table slots that no `SSTORE` of the trace writes: an `SSTORE`d slot is omitted from
+   snapshots because the stack holds its value, which would not be the `SLOAD`'s). A snapshot shared by a guard of the run and a later one (the entry snapshot that
+   hoisted callee guards keep) is copied for the later guards. The root's other uses of the stack are unchanged: it is entered from the interpreter with a complete
+   stack, and the dense entries are equal to the stack there. The entry bookkeeping and budget of the plain second entry are replicated by the link; the poll and the
+   budget of the link exit through a cold stub that stores the carried writeback entries first (`Cx::rc_cold`) and continues in the ordinary poll stub of the link.
+   Those stores' tags are never elided: `build_exits` removes the dense slots from `ExitSnap::ents` (the tag the stack "provably" holds is the one of the guarded entry, which
+   a carrying entry did not write).
+2. *Side traces (half A).* A side trace entered through the carry entry has a stale stack for exactly the slots of the parent's exit map. All of them are defined by carried loads, so
+   every snapshot of the side trace and its writeback restore them (they are ordinary defs to the recorder); the F4 pruning of dead numeric temporaries applies to them
+   like to any def (the dead slot is never read before it is rewritten, so a stale value there is unobservable), also for the writeback at the link's pc
+   (`mod::pipeline_inner`). `stack_ents`, `entry_ents` and `wb_ents` exclude carried slots (no tag elision, no inherited type), `link_proof` treats them as unknown unless
+   the writeback names them. The carry entry skips the room checks of the plain entry, so a side trace with carried loads aborts (`carry-room`) when it needs more room
+   than the parent's checks guarantee (`max_extent` / `max_ci`).
+3. *Chains.* Root -> side -> root: the side trace's snapshots are dense in the parent's map, the root's in the carried slots of its run; a side trace attached to a side
+   trace takes over the exit map of its parent the same way. Nothing assumes that the stack is complete except the plain entries, and those are only reached after a
+   stub or the handler stored the state.
+4. *Flushes.* A carry cell is cleared when its parent or its side trace is flushed (`flush`, `carry_cells_kept` / `carry_cell_side_stale` mutants); `e3` / `e3sig` follow `e2` /
+   `e2sig` (a compiled link whose `e3sig` no longer matches takes the plain path). The layout is interned and immutable.
+5. *Registers.* `r14` (V10) is never a destination or a source (the reload of the constants pointer in front of every `JmpR` would clobber it); the stub's source registers
+   exclude the scratch `V7`; a spill slot source/destination is a slot of the one per-state spill area, and the parallel moves (`ra::sequentialise_x`) read every source before
+   any destination is written. The budget register is the same in both traces (`ra::BUDGET_GPR`, `membudget` off), else nothing carries.
+6. *Observers.* Exits to the interpreter see a complete stack (all of the above); a hook or error in the interpreter after an exit sees the state `restore` leaves, as before;
+   `Heap::verify`, GC roots and coroutine yields need nothing (no GC point on a trace, TR9); the entry bookkeeping counters are updated once per entry as in the plain path.
+   Mutants: `carry_tag_elided`, `carry_ents_kept`, `carry_stored_slot`, `carry_off`, `carry_store_always`, `carry_plain_no_store`, `carry_sig_ignored`, `carry_no_poll`,
+   `carry_no_budget`, `carry_drop_move`, `carry_in_drop_move`, `carry_exit_no_refund`, `carry_r14_dst`, `carry_room_ignored`, `carry_wb_prune_live`, `carry_cells_kept`,
+   `carry_cell_side_stale`, `carry_cell_stale_after_flush`.

@@ -1284,7 +1284,7 @@ impl Resolver for Res {
 fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
     use ir::{aux_snap, SnapEntry, TOp, Ty, F_GUARD, REF_BIAS, SNAP_CARRY};
     ir.carry.clear();
-    if mutants::active("carry_off") || ir.loop_at.is_none() {
+    if ir.loop_at.is_none() {
         return Vec::new();
     }
     let Some((end, req)) = exit::lead_run(ir) else {
@@ -1363,10 +1363,89 @@ fn carry_dense(ir: &mut ir::TraceIr) -> Vec<u16> {
     ir.carry.clone()
 }
 
+/// R1 (half A): a side trace recorded with a carried load for every slot of the parent's exit map keeps only the loads its instructions use. The others
+/// (slots it never reads: unchanged, or overwritten before any read) are dropped from the snapshots and the writeback, and the carry entry stores them to the
+/// stack from the parent's registers (`TraceIr::carry_store`): the trace is then as sparse as one entered through the plain stub, and the stack is complete
+/// behind the carry entry for them. A slot that no snapshot or writeback entry names (a dead temporary pruned by F4) needs no store at all.
+fn carry_demote(rec: &mut Recorded, link_snap: Option<u32>) {
+    use ir::{aux_bits, TOp, TraceIr, SLOAD_CARRIED};
+    let n = rec.ir.ins.len();
+    let fused = vec![false; n];
+    let mut used = vec![false; n];
+    for i in 0..n {
+        for r in ra::operand_refs(&rec.ir, &fused, i) {
+            if TraceIr::is_ins(r) {
+                used[usize::from(r - ir::REF_BIAS)] = true;
+            }
+        }
+    }
+    let mut dropped: Vec<(ir::Ref, u16)> = Vec::new();
+    for k in 0..n {
+        let i = rec.ir.ins[k];
+        let r = ir::REF_BIAS + k as u16;
+        // (a copy of the slot's value in another slot (`MOVE`) names the same ref: the load stays)
+        let copied = (0..rec.ir.snaps.len()).any(|s| {
+            rec.ir
+                .snap_entries(s as u32)
+                .iter()
+                .any(|e| e.r == r && e.slot != i.a)
+        }) || rec.writeback.iter().any(|e| e.r == r && e.slot != i.a);
+        // (a dead numeric temporary at the link's pc stays carried: it is left out of the writeback like F4 leaves it out of a snapshot, so it costs nothing on
+        // the hot path, while storing it at the entry would)
+        let dead_at_link = link_snap.is_some_and(|ls| {
+            rec.ir.prune.as_ref().is_some_and(|pi| {
+                let e = ir::SnapEntry {
+                    slot: i.a,
+                    r,
+                    flags: 0,
+                };
+                pi.drops(&rec.ir.snaps[ls as usize], &e, i.t)
+            })
+        });
+        if i.op == TOp::Sload
+            && aux_bits(i.aux) & SLOAD_CARRIED != 0
+            && !used[k]
+            && !dead_at_link
+            && (!copied || mutants::active("carry_demote_copied"))
+        {
+            dropped.push((r, i.a));
+        }
+    }
+    if dropped.is_empty() {
+        return;
+    }
+    for &(r, slot) in &dropped {
+        let named =
+            rec.ir.snapmap.iter().any(|e| e.r == r) || rec.writeback.iter().any(|e| e.r == r);
+        let Some(p) = rec.ir.carry_in.iter().position(|c| c.0 == slot) else {
+            continue;
+        };
+        let (_, src, tagok) = rec.ir.carry_in.remove(p);
+        if named {
+            let ty = rec.ir.ins[usize::from(r - ir::REF_BIAS)].t;
+            rec.ir.carry_store.push((slot, ty, src, tagok));
+        }
+    }
+    let gone: Vec<ir::Ref> = dropped.iter().map(|d| d.0).collect();
+    for s in 0..rec.ir.snaps.len() {
+        let old = rec.ir.snap_entries(s as u32).to_vec();
+        if !old.iter().any(|e| gone.contains(&e.r)) {
+            continue;
+        }
+        let new: Vec<ir::SnapEntry> = old.into_iter().filter(|e| !gone.contains(&e.r)).collect();
+        rec.ir.snaps[s].map = (rec.ir.snapmap.len() as u32, new.len() as u16);
+        rec.ir.snapmap.extend(new);
+    }
+    rec.writeback.retain(|e| !gone.contains(&e.r));
+}
+
 /// R1: is `regcarry` on for this state?
 fn carry_limit(st: &mut State) -> bool {
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
-    matches!(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry }, 1 | 2)
+    matches!(
+        unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry },
+        1 | 2
+    )
 }
 
 fn pipeline(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr> {
@@ -1430,19 +1509,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     if carry_on {
         carry_dense(&mut rec.ir);
     }
-    if let Some(si) = side.filter(|_| !rec.ir.carry_in.is_empty()) {
-        // R1 (half A): the carry entry skips the room checks of the plain entry: the trace may not need more than the parent's checks guarantee
-        if (rec.ir.extent > act.max_extent || rec.ir.depth > act.max_ci)
-            && !mutants::active("carry_room_ignored")
-        {
-            return Err(abort_err(
-                "carry-room",
-                format!(
-                    "extent {} > {} or depth {} > {}",
-                    rec.ir.extent, act.max_extent, rec.ir.depth, act.max_ci
-                ),
-            ));
-        }
+    if side.is_some() && !rec.ir.carry_in.is_empty() {
+        carry_demote(
+            &mut rec,
+            side.filter(|si| !si.no_link && !si.frame_link)
+                .map(|si| si.link_snap),
+        );
+    }
+    if let Some(si) = side.filter(|_| !rec.ir.carry_in.is_empty() || !rec.ir.carry_store.is_empty())
+    {
         // the writeback stores the slots the parent's exit left stale too (carried loads stand for them); the dead numeric temporaries among them are left
         // out like F4 leaves them out of a snapshot at the link's pc
         if !si.no_link && !si.frame_link {
@@ -1583,10 +1658,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         }
     }
     phase::add(phase::RA, t_ra);
-    if act.verbose >= 2 && !ir.carry_in.is_empty() {
+    if act.verbose >= 2 && (!ir.carry_in.is_empty() || !ir.carry_store.is_empty()) {
         eprintln!(
-            "[trace] carry-in: parent locs {:?}; allocation {:?}; writeback {:?}",
-            ir.carry_in, al.carry, rec.writeback
+            "[trace] carry-in: parent locs {:?}; stored at entry {:?}; allocation {:?}; writeback {:?}",
+            ir.carry_in, ir.carry_store, al.carry, rec.writeback
         );
     }
     // tier-1 label addresses of the root and every inlined prototype (TR4: the code version installed now)
@@ -1690,7 +1765,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         && !cache::proto_lazy(st, rpr);
     if carry_exits_on {
         let n = init.len();
-        init.extend(std::iter::repeat(0).take(n));
+        init.extend(std::iter::repeat_n(0, n));
     }
     let cells = cache::alloc_exit_cells(st, act.id, &init)
         .ok_or_else(|| abort_err("cells", "alloc_exit_cells"))?;
@@ -1776,7 +1851,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             };
             // R1: the root's third entry, offered to a link that may carry (`regcarry`)
             // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
-            if link2_cell != 0 && matches!(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry }, 1 | 3)
+            if link2_cell != 0
+                && matches!(
+                    unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcarry },
+                    1 | 3
+                )
             {
                 carry_env = cache::with_tr(st, tpr, |tp| {
                     tp.head_index(si.link_pc).map(|i| {
@@ -1997,6 +2076,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         carry_head: carry_env.0,
         carry_sig: carry_env.1,
         carry_exits: carry_exits_on,
+        // R1 (half A): the carry entry skips the room checks of the plain entry: the trace may not need more than the parent's checks guarantee
+        carry_entry: rec.ir.extent <= act.max_extent && rec.ir.depth <= act.max_ci,
     };
     let t_asm = phase::now();
     let mut a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env).map_err(|e| {

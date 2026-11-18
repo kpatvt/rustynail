@@ -743,6 +743,7 @@ fn base_env(w: &mut World) -> AsmEnv {
         carry_head: 0,
         carry_sig: 0,
         carry_exits: false,
+        carry_entry: false,
     }
 }
 
@@ -1765,6 +1766,10 @@ fn hand_entry_failure_bookkeeping_follows_the_free_peel_rule() {
             e2sig: Cell::new(0),
             e2n_code: Cell::new(0),
             e2n: Cell::new(0),
+            e3_code: Cell::new(0),
+            e3_sig_inst: Cell::new(0),
+            e3: Cell::new(0),
+            e3sig: Cell::new(0),
             rec: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
@@ -2191,6 +2196,10 @@ fn new_head() -> Box<rn_jit::tr::cache::HeadData> {
         e2sig: Cell::new(0),
         e2n_code: Cell::new(0),
         e2n: Cell::new(0),
+        e3_code: Cell::new(0),
+        e3_sig_inst: Cell::new(0),
+        e3: Cell::new(0),
+        e3sig: Cell::new(0),
         rec: Cell::new(0),
         lazy: Cell::new(false),
         deep: Cell::new(false),
@@ -3201,6 +3210,7 @@ mod e2e {
             carry_head: 0,
             carry_sig: 0,
             carry_exits: false,
+            carry_entry: false,
         };
         let a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env)
             .map_err(|e| format!("asm: {e:?}"))?;

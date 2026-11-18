@@ -816,8 +816,11 @@ pub struct TraceIr {
     /// used after the run restores them (`SNAP_CARRY` entries, `mod::carry_dense`); empty for every other trace.
     pub carry: Vec<u16>,
     /// R1 (`regcarry`, half A): a side trace entered with the exit's values in the parent's registers: the stack slots its carried `SLOAD`s stand for and where
-    /// the parent's exit map has their values (in the order of the carried loads); empty for every other trace.
-    pub carry_in: Vec<(u16, CarrySrc)>,
+    /// the parent's exit map has their values (in the order of the carried loads) and whether the stack holds their tag; empty for every other trace.
+    pub carry_in: Vec<(u16, CarrySrc, bool)>,
+    /// R1: the slots of the parent's exit map the side trace never reads (its carried loads were dropped by `mod::carry_demote`): the carry entry stores
+    /// them to the stack (slot, type, where the parent's exit map has the value, the stack already holds the tag).
+    pub carry_store: Vec<(u16, Ty, CarrySrc, bool)>,
 }
 
 /// R1: where the exit map of a parent trace holds the value of a slot a side trace takes over in a register.

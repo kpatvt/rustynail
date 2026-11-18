@@ -639,6 +639,7 @@ struct Ra<'a> {
     calls: Vec<CallSite>,
     deferred: Vec<u16>,
     end_hints: Vec<Loc>,
+    carried: Vec<bool>,
 }
 
 type R<T> = Result<T, RaError>;
@@ -938,6 +939,11 @@ pub fn allocate_hinted(
         calls: Vec::new(),
         deferred: Vec::new(),
         end_hints: end_hints.to_vec(),
+        carried: ir
+            .ins
+            .iter()
+            .map(|i| i.op == TOp::Sload && aux_bits(i.aux) & SLOAD_CARRIED != 0)
+            .collect(),
     };
     ra.run(end_uses, weak)
 }
@@ -1201,7 +1207,7 @@ impl Ra<'_> {
         // R1: a carried load prefers the register the parent's exit map holds the value in (the carry entry's move then vanishes)
         for k in 0..self.n {
             if ir.ins[k].op == TOp::Sload && aux_bits(ir.ins[k].aux) & SLOAD_CARRIED != 0 {
-                if let Some(&(_, src)) = ir.carry_in.iter().find(|(s, _)| *s == ir.ins[k].a) {
+                if let Some(&(_, src, _)) = ir.carry_in.iter().find(|(s, _, _)| *s == ir.ins[k].a) {
                     match src {
                         CarrySrc::G(n) if !self.is_x[k] => self.vals[k].hint = n,
                         CarrySrc::X(n) if self.is_x[k] => self.vals[k].hint = n,
@@ -1211,7 +1217,9 @@ impl Ra<'_> {
             }
         }
         for (k, &r) in ends.iter().enumerate() {
-            let hint = k.checked_sub(nphi).and_then(|j| self.end_hints.get(j).copied());
+            let hint = k
+                .checked_sub(nphi)
+                .and_then(|j| self.end_hints.get(j).copied());
             self.end_loc_of(r, hint.unwrap_or(Loc::None))?;
         }
         for &p in &self.phis.clone() {
@@ -1657,15 +1665,19 @@ impl Ra<'_> {
                     }
                 }
             }
-            let hint = if k == 0 {
-                match dst_loc {
-                    Loc::G(d) if !x => d,
-                    Loc::X(d) if x => d,
-                    _ => self.vals[v].hint,
-                }
-            } else {
-                self.vals[v].hint
-            };
+            let hint =
+                if self.carried.get(v).copied().unwrap_or(false) && self.vals[v].hint != NOREG {
+                    // R1: a carried load wants the register its parent's exit map holds the value in (the carry entry then moves nothing)
+                    self.vals[v].hint
+                } else if k == 0 {
+                    match dst_loc {
+                        Loc::G(d) if !x => d,
+                        Loc::X(d) if x => d,
+                        _ => self.vals[v].hint,
+                    }
+                } else {
+                    self.vals[v].hint
+                };
             if self.vals[v].reg != NOREG {
                 let reg = self.vals[v].reg;
                 self.vals[v].weak_only = false;
@@ -1761,7 +1773,7 @@ impl Ra<'_> {
                     excl.g |= self.cur.g;
                     excl.x |= self.cur.x;
                     if want_reg {
-                        if let Some(r) = self.alloc_temp(x, excl, NOREG, false)? {
+                        if let Some(r) = self.alloc_temp(x, excl, self.vals[v].hint, false)? {
                             self.take_reg(v, r);
                             self.vals[v].weak_only = true;
                             loc = Self::rloc(x, r);

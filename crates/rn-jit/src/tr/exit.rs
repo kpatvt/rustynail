@@ -422,10 +422,6 @@ pub fn entry_ents(ir: &TraceIr, entry: &[u8; 256]) -> Vec<(u16, Ty)> {
         {
             continue;
         }
-        // R1: the stack tag of a slot the parent's exit handed over in a register is not the parent's
-        if ir.carry_in.iter().any(|&(s, _)| s == slot) && !mutants::active("carry_ents_kept") {
-            continue;
-        }
         let slot = if mutants::active("entry_inherit_wrong_slot") {
             slot ^ 1
         } else {
@@ -467,10 +463,6 @@ pub fn stack_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<Vec<(u16, T
         }
         for (k, i) in ir.ins.iter().enumerate() {
             if i.op != TOp::Sload || i.a == u16::MAX || stored.contains(&i.a) {
-                continue;
-            }
-            // R1: a carried load stands for a slot whose stack tag may be stale
-            if aux_bits(i.aux) & SLOAD_CARRIED != 0 && !mutants::active("carry_ents_kept") {
                 continue;
             }
             // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one, and a prelude inherits them)
@@ -811,19 +803,6 @@ pub fn build_exits_ex(
                 .any(|t| t.slot == slot || t.aliases.contains(&slot))
         };
         sn.ents = e.into_iter().filter(|&(sl, _)| !sunk_slot(sl)).collect();
-        // R1: a dense (`SNAP_CARRY`) entry restores a slot whose stack tag may be stale when the trace was entered with the value in a register:
-        // its tag is always stored (and a side trace attached here learns the type from the restore itself)
-        if !mutants::active("carry_tag_elided") {
-            let dense: Vec<u16> = ir
-                .snap_entries(si as u32)
-                .iter()
-                .filter(|e| e.flags & SNAP_CARRY != 0)
-                .map(|e| e.slot)
-                .collect();
-            if !dense.is_empty() {
-                sn.ents.retain(|&(sl, _)| !dense.contains(&sl));
-            }
-        }
     }
     let pre = pre_roll_snaps(ir);
     let descs = (0..out.len())
@@ -1275,14 +1254,8 @@ pub fn link_proof(ir: &TraceIr, wb: &[SnapEntry], entry: &[u8; 256], req: &[(u16
         return false;
     }
     let mut st = *entry;
-    for &(slot, _) in &ir.carry_in {
-        if slot < 256 && !mutants::active("carry_ents_kept") {
-            st[usize::from(slot)] = UNKNOWN_TAG;
-        }
-    }
     for i in &ir.ins {
         if i.op == TOp::Sload
-            && aux_bits(i.aux) & SLOAD_CARRIED == 0
             && i.a < 256
             && !ir
                 .ins
@@ -1355,7 +1328,6 @@ fn wb_ents_own(ir: &TraceIr) -> Vec<(u16, Ty)> {
         if i.op == TOp::Sload
             && i.a != u16::MAX
             && tag_of(i.t).is_some()
-            && (aux_bits(i.aux) & SLOAD_CARRIED == 0 || mutants::active("carry_ents_kept"))
             && !ir
                 .ins
                 .iter()
@@ -1388,7 +1360,7 @@ pub fn tag_redundant(ents: &[(u16, Ty)], slot: u16, tag: u8) -> bool {
 /// `SLOAD` of the slot (executed before the exit) has the type of the value, a static non-nil tag (nil has variants; a dynamic string
 /// tag is read from the object). Tag words are only ever written as whole words or single bytes from a tag below 0x100 on
 /// top of zero upper bytes (`Value` has no other constructor), so skipping the word store keeps the upper bytes zero.
-fn tag_store_redundant(s: &ExitSnap, e: &SlotRestore) -> bool {
+pub fn tag_store_redundant(s: &ExitSnap, e: &SlotRestore) -> bool {
     tag_redundant(&s.ents, e.slot, e.tag)
 }
 

@@ -253,6 +253,8 @@ pub struct AsmEnv {
     /// register-carried entry has put its carry entry there, and the stub jumps to it with the values still in the registers of the exit map, without
     /// storing them to the stack.
     pub carry_exits: bool,
+    /// R1 (half A): the side trace may have a carry entry (it needs no more room than the checks of its parent guarantee: that entry skips the room checks).
+    pub carry_entry: bool,
 }
 
 /// The link at the end of a side trace (7.8, TR22).
@@ -354,6 +356,7 @@ impl Default for AsmEnv {
             carry_head: 0,
             carry_sig: 0,
             carry_exits: false,
+            carry_entry: false,
         }
     }
 }
@@ -2852,7 +2855,6 @@ pub fn assemble(
                 if rplan
                     .as_ref()
                     .is_some_and(|c| c.dsts.iter().any(|d| d.carried && d.slot == e.slot))
-                    && !mutants::active("carry_store_always")
                 {
                     continue;
                 }
@@ -2920,7 +2922,8 @@ pub fn assemble(
     // R1 (half A): the carry entry of a side trace
     let mut entry_c = None;
     if env.side.is_some()
-        && !carried.is_empty()
+        && env.carry_entry
+        && (!carried.is_empty() || !ir.carry_store.is_empty())
         && env.budget_reg.is_some()
         && !env.lazy
         && ir.rec_call.is_none()
@@ -2932,7 +2935,7 @@ pub fn assemble(
         let mut moves: Vec<Move> = Vec::new();
         for (r, reg, spills) in &carried {
             let slot = ir.at(*r).a;
-            let Some(&(_, src)) = ir.carry_in.iter().find(|(s, _)| *s == slot) else {
+            let Some(&(_, src, _)) = ir.carry_in.iter().find(|(s, _, _)| *s == slot) else {
                 return incons("a carried load without a parent location");
             };
             let src = match src {
@@ -2952,6 +2955,25 @@ pub fn assemble(
         }
         if mutants::active("carry_in_drop_move") && !moves.is_empty() {
             moves.remove(0);
+        }
+        // the slots the trace never reads: the parent's stub did not store them; the stack is complete from here on, as after the plain stub
+        if !mutants::active("carry_store_dropped") {
+            for &(slot, _ty, src, stubbed) in &ir.carry_store {
+                if stubbed {
+                    continue; // (the exit stub stored tag and payload)
+                }
+                match src {
+                    CarrySrc::G(n) => cx.st(W::B8, fm(slot, 8), Src::V(n)),
+                    CarrySrc::X(n) => cx.push(Op::StF {
+                        m: fm(slot, 8),
+                        src: n,
+                    }),
+                    CarrySrc::Spill(k) => {
+                        cx.ld(7, W::B8, spill_m(k));
+                        cx.st(W::B8, fm(slot, 8), Src::V(7));
+                    }
+                }
+            }
         }
         let mut busy: u32 = 0;
         for m in &moves {
@@ -2991,7 +3013,7 @@ pub fn assemble(
             });
         }
         // (`r14` holds the constants pointer of tier 1 whenever a trace is left; a value there would be clobbered by the reload)
-        if carry.iter().any(|d| d.reg == Loc::G(10)) && !mutants::active("carry_r14_dst") {
+        if carry.iter().any(|d| d.reg == Loc::G(10)) {
             carry.clear();
         }
         if !carry.is_empty() {
@@ -3229,15 +3251,13 @@ impl Cx<'_> {
         let e3 = head + head_off::E3 as u64;
         // the root the head has now is the one this trace was compiled against
         self.push(Op::Mov(7, e3));
-        if !mutants::active("carry_sig_ignored") {
-            self.push(Op::BrM {
-                cc: Cc::Ne,
-                w: W::B4,
-                m: rm(7, (head_off::E3SIG - head_off::E3) as i32),
-                imm: self.env.carry_sig as i32,
-                to: plain,
-            });
-        }
+        self.push(Op::BrM {
+            cc: Cc::Ne,
+            w: W::B4,
+            m: rm(7, (head_off::E3SIG - head_off::E3) as i32),
+            imm: self.env.carry_sig as i32,
+            to: plain,
+        });
         // the exits of the carrying path store the carried entries (they are not on the stack) and continue in the stub of the poll
         let stores: Vec<(u16, Ref, Loc)> = writeback
             .iter()
@@ -3248,33 +3268,50 @@ impl Cx<'_> {
         let x = self.poll_stub_label(sd.link_snap)?;
         let xr = self.label();
         self.rc_cold.push((xr, x, stores));
-        if !mutants::active("carry_no_poll") {
-            self.poll_ops(xr);
-        }
-        // the entry bookkeeping of the root (`entry_checks`), with `V0` / `V1` saved around it
+        self.poll_ops(xr);
+        // the entry bookkeeping of the root (`entry_checks`: `entry_ok` saturating at its cap, `pending` cleared; the undo word `pending_before` is only read by
+        // the entry-check failure stubs, which this entry never reaches), in memory-operand form: `V7` only
         {
-            let (m0, m1) = (spill_m(self.ext_slot(2)), spill_m(self.ext_slot(3)));
-            self.st(W::B8, m0, Src::V(0));
-            self.st(W::B8, m1, Src::V(1));
-            self.push(Op::Mov(0, head));
-            self.ld(1, W::B4, rm(0, head_off::PENDING as i32));
-            self.st(W::B8, spill_m(self.ext_slot(0)), Src::V(1));
-            self.st(W::B4, rm(0, head_off::PENDING as i32), Src::Imm(0));
-            self.ld(1, W::B4, rm(0, head_off::ENTRY_OK as i32));
             let skip = self.label();
-            self.br(Cc::Ge, 1, Src::Imm(super::cache::ENTRY_OK_CAP as i32), skip);
-            self.push(Op::Add(1, Src::Imm(1)));
-            self.st(W::B4, rm(0, head_off::ENTRY_OK as i32), Src::V(1));
+            self.push(Op::Mov(7, head));
+            self.push(Op::BrM {
+                cc: Cc::Ge,
+                w: W::B4,
+                m: rm(7, head_off::ENTRY_OK as i32),
+                imm: super::cache::ENTRY_OK_CAP as i32,
+                to: skip,
+            });
+            self.push(Op::AddM {
+                w: W::B4,
+                m: rm(7, head_off::ENTRY_OK as i32),
+                imm: 1,
+            });
             self.bind(skip);
-            self.ld(0, W::B8, m0);
-            self.ld(1, W::B8, m1);
+            self.st(W::B4, rm(7, head_off::PENDING as i32), Src::Imm(0));
         }
         // the root's budget charge (its `BUDGET` is behind the run, skipped by the third entry)
         let r = info.budget_reg;
         let n = i32::from(info.budget);
-        if !mutants::active("carry_no_budget") {
-            self.br(Cc::Lt, r, Src::Imm(n), xr);
-            self.push(Op::Sub(r, Src::Imm(n)));
+        self.br(Cc::Lt, r, Src::Imm(n), xr);
+        self.push(Op::Sub(r, Src::Imm(n)));
+        // the tags the stack does not hold already (the payloads of the carried slots travel in registers; the root's tag elision rests on the stack tags)
+        if !mutants::active("carry_link_tag_skip") {
+            for e in writeback {
+                if info.dsts.iter().any(|d| d.carried && d.slot == e.slot) {
+                    let tag = match (TraceIr::is_const(e.r), self.ir.kval_opt(e.r)) {
+                        (true, Some(KVal::Ptr(_, PtrKind::LClosure))) => Some(ctb(LUA_VLCL)),
+                        (true, Some(KVal::Ptr(_, PtrKind::Builtin))) => Some(LUA_VLCF),
+                        _ => tag_of(self.ir.ty_of(e.r)),
+                    };
+                    match tag {
+                        Some(g) if !exit::tag_redundant(&self.wb_ents, e.slot, g) => {
+                            self.st(W::B8, fm(e.slot, 0), Src::Imm(i32::from(g)));
+                        }
+                        Some(_) => {}
+                        None => return unsup("carried writeback of a value without a static tag"),
+                    }
+                }
+            }
         }
         // the values: a parallel move from where this trace holds them to where the root holds them, then the stack loads (slots this trace left alone)
         let mut moves: Vec<Move> = Vec::new();
@@ -8750,10 +8787,9 @@ impl Cx<'_> {
             && es.top.is_none()
             && es.usable
             && self.env.budget_reg.is_some()
-            && !es
-                .slots
-                .iter()
-                .any(|s| matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_)) || s.tag == exit::TAG_DYN_STR)
+            && !es.slots.iter().any(|s| {
+                matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_)) || s.tag == exit::TAG_DYN_STR
+            })
         {
             // R1: a side trace compiled for register-carried entry takes over with the values where the exit map has them (the budget register
             // holds `vb`; the stub's `vb + refund` goes to the register instead of the budget word)
@@ -8762,10 +8798,34 @@ impl Cx<'_> {
             self.push(Op::Mov(7, ac));
             self.ld(7, W::B8, rm(7, 0));
             self.br(Cc::Eq, 7, Src::Imm(0), normal);
-            if es.refund != 0 && !mutants::active("carry_exit_no_refund") {
+            // the payloads travel in registers; a tag the stack does not hold already is stored (the side trace's tag elision and the proofs of its link rest on
+            // the stack tags of the exit map being right)
+            if !mutants::active("carry_exit_tag_skip") {
+                for e in &es.slots {
+                    if !exit::tag_store_redundant(es, e) {
+                        self.st(W::B8, fm(e.slot, 0), Src::Imm(i32::from(e.tag)));
+                        match e.src {
+                            ValSrc::Reg(r) => self.st(W::B8, fm(e.slot, 8), Src::V(r)),
+                            ValSrc::Xmm(x) => self.push(Op::StF {
+                                m: fm(e.slot, 8),
+                                src: x,
+                            }),
+                            ValSrc::Spill(k) => {
+                                self.ld(7, W::B8, spill_m(k));
+                                self.st(W::B8, fm(e.slot, 8), Src::V(7));
+                            }
+                            ValSrc::Imm(_) => unreachable!("checked by the eligibility test"),
+                        }
+                    }
+                }
+            }
+            if es.refund != 0 {
                 let r = self.env.budget_reg.expect("checked above");
                 self.push(Op::Add(r, Src::Imm(es.refund)));
             }
+            // (`V7` held the cell: the spill copies above used it; load it again)
+            self.push(Op::Mov(7, ac));
+            self.ld(7, W::B8, rm(7, 0));
             self.push(Op::JmpR(7));
             self.bind(normal);
         }

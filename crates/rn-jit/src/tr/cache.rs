@@ -1368,7 +1368,7 @@ impl HeadData {
         if d2 && self.e3_code.get() != 0 && self.e2n_code.get() != 0 {
             self.e3.set(self.e3_code.get());
             self.e3sig.set(self.e3_sig_inst.get());
-        } else if !mutants::active("carry_cell_stale_after_flush") {
+        } else {
             self.e3.set(0);
             self.e3sig.set(0);
         }
@@ -3822,7 +3822,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
         }
         // R1: no exit of a flushed trace jumps into a side trace with registers any more
-        if t.cells.len() == 2 * m.snaps.len() && !mutants::active("carry_cells_kept") {
+        if t.cells.len() == 2 * m.snaps.len() {
             for c in &t.cells[m.snaps.len()..] {
                 c.set(0);
             }
@@ -3864,7 +3864,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             }
             // R1: the carry cell of the exit
             let ns = p.xmeta.as_ref().map_or(0, |m| m.snaps.len());
-            if ns != 0 && p.cells.len() == 2 * ns && !mutants::active("carry_cell_side_stale") {
+            if ns != 0 && p.cells.len() == 2 * ns {
                 if let Some(c) = p.cells.get(ns + k) {
                     c.set(0);
                 }
@@ -4078,7 +4078,7 @@ pub struct SideStart {
     pub no_retf: bool,
     /// R1 (`regcarry`): the slots the exit's inline stub hands over in registers when a carry entry is attached (slot, type, where the exit map has the value);
     /// empty when the exit does not carry.
-    pub carry: Vec<(u16, super::ir::Ty, super::ir::CarrySrc)>,
+    pub carry: Vec<(u16, super::ir::Ty, super::ir::CarrySrc, bool)>,
 }
 
 /// S1: one inlined frame of the exit a side recording starts in (the fields of `exit::FrameRestore` the recorder needs).
@@ -4314,7 +4314,7 @@ fn carry_slots(
     snap: &super::exit::ExitSnap,
     virt: bool,
     prelude: bool,
-) -> Vec<(u16, super::ir::Ty, super::ir::CarrySrc)> {
+) -> Vec<(u16, super::ir::Ty, super::ir::CarrySrc, bool)> {
     use super::exit::ValSrc;
     use super::ir::CarrySrc;
     if !matches!(d.tr.cfg.limits.regcarry, 1 | 2)
@@ -4339,13 +4339,21 @@ fn carry_slots(
     let Some(m) = t.xmeta.as_ref() else {
         return Vec::new();
     };
-    if m.cells.is_null() || t.cells.len() != 2 * m.snaps.len() || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR) {
+    if m.cells.is_null()
+        || t.cells.len() != 2 * m.snaps.len()
+        || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR)
+    {
         return Vec::new();
     }
     let _ = k;
     let mut out = Vec::new();
     for s in &snap.slots {
-        let Some(ty) = super::exit::ty_of_tag(s.tag).filter(|t| !matches!(t, super::ir::Ty::Nil | super::ir::Ty::False | super::ir::Ty::True)) else {
+        let Some(ty) = super::exit::ty_of_tag(s.tag).filter(|t| {
+            !matches!(
+                t,
+                super::ir::Ty::Nil | super::ir::Ty::False | super::ir::Ty::True
+            )
+        }) else {
             return Vec::new();
         };
         if s.tag == super::exit::TAG_DYN_STR || s.slot >= super::ir::SNAP_PSEUDO || s.func {
@@ -4357,10 +4365,11 @@ fn carry_slots(
             ValSrc::Spill(n) => CarrySrc::Spill(n),
             _ => return Vec::new(),
         };
-        if out.iter().any(|&(sl, _, _)| sl == s.slot) {
+        if out.iter().any(|&(sl, _, _, _)| sl == s.slot) {
             return Vec::new();
         }
-        out.push((s.slot, ty, src));
+        // (the stub of the carry path stores the entries whose tag the stack does not hold, tag and payload: the flag says "stored by the stub")
+        out.push((s.slot, ty, src, !super::exit::tag_store_redundant(snap, s)));
     }
     out
 }

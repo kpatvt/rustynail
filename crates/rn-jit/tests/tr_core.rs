@@ -27,6 +27,8 @@ mod h1_progs;
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
 mod progs;
+#[path = "tr_core/r1_progs.rs"]
+mod r1_progs;
 #[path = "tr_core/s4_progs.rs"]
 mod s4_progs;
 #[path = "tr_core/sink_progs.rs"]
@@ -36,6 +38,7 @@ use a1_progs::{A1_PROGS, G1_SLOW};
 use h1_progs::H1_PROGS;
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
+use r1_progs::R1_PROGS;
 use rn_core::state::{LuaState, LUA_MULTRET};
 use rn_core::status::Status;
 use rn_jit::tr::cache::{TrConfig, TrLimits, TrMode};
@@ -148,6 +151,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(SINK_PROGS)
         .chain(NR_PROGS)
         .chain(A1_PROGS)
+        .chain(R1_PROGS)
         .chain(G1_SLOW)
         .chain(H1_PROGS)
         .chain(S4_PROGS)
@@ -945,6 +949,7 @@ fn selected(small_only: bool) -> Vec<&'static Prog> {
         .chain(SINK_PROGS)
         .chain(NR_PROGS)
         .chain(A1_PROGS)
+        .chain(R1_PROGS)
         .filter(|p| !small_only || p.small)
         .filter(|p| only.as_ref().is_none_or(|o| p.name.contains(o.as_str())))
         .collect()
@@ -2406,6 +2411,7 @@ fn dump_programs() {
             .chain(SINK_PROGS)
             .chain(NR_PROGS)
             .chain(A1_PROGS)
+            .chain(R1_PROGS)
         {
             std::fs::write(format!("{d}/{}.lua", p.name), p.src).expect("write");
         }
@@ -8010,6 +8016,63 @@ fn g1_guard_diet_programs() {
         let side = res
             .iter()
             .filter(|(j, _)| j.prog == p && j.trace == "always" && j.opts.is_empty())
+            .map(|(_, o)| o.stats.side_installed)
+            .max()
+            .unwrap_or(0);
+        assert!(side >= 1, "{p}: no side trace was installed");
+    }
+}
+
+/// R1 (`regcarry`): register-carrying transitions. Nested loops whose inner loop is the root trace and whose outer iteration is a side trace that
+/// links back into it; values travel in registers over exits and links (exits only, links only, both: `regcarry=2 / 3 / 1`) and the programs observe the stack
+/// after exits: errors read with `debug.getlocal`, count hooks, GC steps, coroutine yields, type changes of carried slots, spill slots. Every mode equals the
+/// interpreter. Detector of the mutants `carry_*`.
+#[test]
+fn r1_regcarry_programs() {
+    let progs = [
+        "r1_nbody_pairs",
+        "r1_type_flip",
+        "r1_error_locals",
+        "r1_hook_locals",
+        "r1_gc_coroutine",
+        "r1_many_slots",
+        "r1_copy_slots",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["regcarry=1", "regcarry=2", "regcarry=3", "regcarry=0"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).limits_s(lim).opts("+verify"));
+                jobs.push(
+                    Job::new(p, trace)
+                        .limits_s(lim)
+                        .opts("+exitstorm=3 +verify"),
+                );
+                jobs.push(Job::new(p, trace).limits_s(lim).budget(17));
+            }
+            jobs.push(Job::new(p, trace).limits_s("regcarry=1").opts("-loop"));
+            jobs.push(Job::new(p, trace).limits_s("regcarry=1").opts("+randra=3"));
+            jobs.push(Job::new(p, trace).limits_s("regcarry=1").opts("+wb"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("regcarry=1")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+        jobs.push(
+            Job::new(p, "always")
+                .limits_s("regcarry=1")
+                .env("RUSTYNAIL_GC_STRESS", "1"),
+        );
+    }
+    let res = compare(jobs);
+    for p in ["r1_nbody_pairs", "r1_error_locals"] {
+        let side = res
+            .iter()
+            .filter(|(j, _)| {
+                j.prog == p && j.trace == "always" && j.opts.is_empty() && j.limits == "regcarry=1"
+            })
             .map(|(_, o)| o.stats.side_installed)
             .max()
             .unwrap_or(0);
