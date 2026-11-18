@@ -50,8 +50,27 @@ const MAXABITS: u32 = 31;
 const MAXASIZE: u64 = 1u64 << MAXABITS;
 const MAXHBITS: u32 = MAXABITS - 1;
 const MAXHSIZE: usize = 1usize << MAXHBITS;
-/// Size in bytes of the `lastfree` slot.
-const LIMBOX: usize = LASTFREE_BYTES;
+/// Size in bytes of the layout-id slot (S4), stored right before the `lastfree` slot (`node - 16`).
+pub const LAYOUT_BYTES: usize = 8;
+/// Does a hash part of `2^lsizenode` nodes carry a layout-id slot? Same rule in 5.5 and 5.4: at least 8 nodes (then the
+/// part is `[id][lastfree][nodes]`; 5.4 parts below 8 nodes are `[lastfree][nodes]`).
+#[inline(always)]
+const fn sized_hasid(lsizenode: u8) -> bool {
+    lsizenode >= LIMFORLAST
+}
+/// Bytes in front of the first node for a hash part of `2^lsizenode` nodes (layout id and/or `lastfree`).
+#[inline(always)]
+const fn prefix_bytes(lsizenode: u8) -> usize {
+    (if sized_haslastfree(lsizenode) {
+        LASTFREE_BYTES
+    } else {
+        0
+    }) + (if sized_hasid(lsizenode) {
+        LAYOUT_BYTES
+    } else {
+        0
+    })
+}
 /// Size in bytes of the `lastfree` slot, stored right before the first node (A1: the trace compiler writes it).
 pub const LASTFREE_BYTES: usize = 8;
 
@@ -105,6 +124,8 @@ pub struct InsertPlan {
     pub lastfree: Option<u8>,
     /// Header `flags` byte after the insertion.
     pub flags: u8,
+    /// The hash part has a layout-id slot (8 nodes): the insertion clears it (S4).
+    pub layout: bool,
 }
 
 /// The hash part as [`TableRef::hash_image`] reports it: per node `(key tag, key payload, chain link, value is empty)`, and the index
@@ -192,6 +213,48 @@ fn mut_tbl_move_meta_skip() -> bool {
     false
 }
 
+/// Test-only mutants of the layout-id clears (S4, feature `jit_trace_mut`): a bit mask, `1` `shape_stamp_not_bumped_on_newkey`
+/// (the free-main-position insert keeps the id), `2` `shape_collide_move_no_clear` (the collision insert keeps it), `4`
+/// `shape_gc_deadkey_reuse` (the GC dead-key marking keeps it), `8` `shape_weak_clear_skip` (the weak-table clears keep it).
+#[cfg(feature = "jit_trace_mut")]
+static MUT_SHAPE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Select the layout-id mutants (feature `jit_trace_mut`); see [`MUT_SHAPE`] for the bits.
+#[cfg(feature = "jit_trace_mut")]
+pub fn set_mut_shape(mask: u8) {
+    MUT_SHAPE.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Test-only (feature `jit_trace_mut`): the value a new node vector stores in its layout-id slot (0 = the real behaviour). A nonzero
+/// value lets a test observe that the trace's inline `NEWREF` (which writes keys without going through `insertkey`) clears the id.
+#[cfg(feature = "jit_trace_mut")]
+static MUT_BORN_MARK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Select the born value of the layout-id slot (feature `jit_trace_mut`).
+#[cfg(feature = "jit_trace_mut")]
+pub fn set_mut_born_mark(v: u64) {
+    MUT_BORN_MARK.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline(always)]
+fn born_layout_id() -> u64 {
+    #[cfg(feature = "jit_trace_mut")]
+    return MUT_BORN_MARK.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(feature = "jit_trace_mut"))]
+    0
+}
+
+#[inline(always)]
+fn mut_shape(bit: u8) -> bool {
+    #[cfg(feature = "jit_trace_mut")]
+    return MUT_SHAPE.load(std::sync::atomic::Ordering::Relaxed) & bit != 0;
+    #[cfg(not(feature = "jit_trace_mut"))]
+    {
+        let _ = bit;
+        false
+    }
+}
+
 impl TableRef {
     /// # Safety
     /// `p` must be a non-null pointer to a live table.
@@ -228,7 +291,29 @@ unsafe fn haslastfree(t: *const Table) -> bool {
 #[inline]
 unsafe fn lastfree_slot(t: *const Table) -> *mut *mut Node {
     // SAFETY: T2: with lsizenode >= 3 the slot lives right before `node`.
-    unsafe { (*t).node.cast::<u8>().sub(LIMBOX).cast() }
+    unsafe { (*t).node.cast::<u8>().sub(LASTFREE_BYTES).cast() }
+}
+/// S4: the layout-id slot of a hash part with at least 8 nodes (`node - 16`). Born 0 with the node vector; every change of
+/// which key lives in which node of the vector stores 0 (see [`clear_layout_id`]).
+#[inline]
+unsafe fn layout_slot(t: *const Table) -> *mut u64 {
+    // SAFETY: T2: with lsizenode >= 3 the slot lives 16 bytes before `node`.
+    unsafe {
+        (*t).node
+            .cast::<u8>()
+            .sub(LASTFREE_BYTES + LAYOUT_BYTES)
+            .cast()
+    }
+}
+/// S4: invalidate the layout id of `t` (no-op without a slot: the dummy node has `lsizenode == 0`).
+#[inline(always)]
+unsafe fn clear_layout_id(t: *mut Table) {
+    // SAFETY: valid table; the slot exists iff `sized_hasid(lsizenode)` (the dummy node and small parts have none).
+    unsafe {
+        if sized_hasid((*t).lsizenode) {
+            *layout_slot(t) = 0;
+        }
+    }
 }
 #[inline]
 unsafe fn gnode(t: *const Table, i: usize) -> *mut Node {
@@ -372,12 +457,7 @@ pub fn new_table_bytes(nasize: u32, nhsize: u32) -> Option<usize> {
 }
 
 fn sizehash_bytes(lsizenode: u8) -> usize {
-    (1usize << lsizenode) * std::mem::size_of::<Node>()
-        + if sized_haslastfree(lsizenode) {
-            LIMBOX
-        } else {
-            0
-        }
+    (1usize << lsizenode) * std::mem::size_of::<Node>() + prefix_bytes(lsizenode)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -785,12 +865,15 @@ unsafe fn setnodevector(heap: &mut Heap, t: *mut Table, size: u32) -> Result<(),
         let n = 1usize << lsize;
         let bytes = sizehash_bytes(lsize as u8);
         let block = heap.mem.alloc(bytes)?.as_ptr();
-        let node;
-        if !sized_haslastfree(lsize as u8) {
-            node = block.cast::<Node>();
-        } else {
-            node = block.add(LIMBOX).cast::<Node>();
-            *node.cast::<u8>().sub(LIMBOX).cast::<*mut Node>() = node.add(n);
+        let node = block.add(prefix_bytes(lsize as u8)).cast::<Node>();
+        if sized_haslastfree(lsize as u8) {
+            *node.cast::<u8>().sub(LASTFREE_BYTES).cast::<*mut Node>() = node.add(n);
+        }
+        if sized_hasid(lsize as u8) {
+            *node
+                .cast::<u8>()
+                .sub(LASTFREE_BYTES + LAYOUT_BYTES)
+                .cast::<u64>() = born_layout_id();
         }
         for i in 0..n {
             node.add(i).write(Node {
@@ -812,8 +895,7 @@ unsafe fn freehash(heap: &mut Heap, t: *mut Table) {
     // SAFETY: T2.
     unsafe {
         if !isdummy(t) {
-            let extra = if haslastfree(t) { LIMBOX } else { 0 };
-            let base = (*t).node.cast::<u8>().sub(extra);
+            let base = (*t).node.cast::<u8>().sub(prefix_bytes((*t).lsizenode));
             heap.mem.free(base, sizehash_bytes((*t).lsizenode));
         }
     }
@@ -858,6 +940,9 @@ unsafe fn insertkey(t: *mut Table, key: &Value, value: &Value) -> bool {
     unsafe {
         let mp = mainposition(t, key);
         if nval_empty(mp) && !isdummy(t) {
+            if !mut_shape(1) {
+                clear_layout_id(t);
+            }
             set_nkey(mp, key);
             set_nval(mp, value);
             return true;
@@ -875,6 +960,10 @@ unsafe fn insertkey_collide(t: *mut Table, mut mp: *mut Node, key: &Value, value
             let f = getfreepos(t);
             if f.is_null() {
                 return false;
+            }
+            // the key set changes (a live key may move to `f`, `mp` gets a new key)
+            if !mut_shape(2) {
+                clear_layout_id(t);
             }
             let mut othern = mainposition(t, &nkey(mp));
             if othern != mp {
@@ -1305,9 +1394,10 @@ unsafe fn resize_hash(heap: &mut Heap, t: *mut Table, nhsize: u32) -> Result<(),
                     let _ = done;
                 }
             }
-            let extra = if sized_haslastfree(oldl) { LIMBOX } else { 0 };
-            heap.mem
-                .free(oldnode.cast::<u8>().sub(extra), sizehash_bytes(oldl));
+            heap.mem.free(
+                oldnode.cast::<u8>().sub(prefix_bytes(oldl)),
+                sizehash_bytes(oldl),
+            );
         }
         Ok(())
     }
@@ -1712,6 +1802,34 @@ impl TableRef {
         // SAFETY: handle invariant; `alimit` checks `asize` (T1).
         unsafe { alimit(self.as_ptr()) }
     }
+    /// S4: the layout id of the hash part: the 64-bit slot at `node - 16` (0 when the part has no such slot: the dummy node or fewer
+    /// than 8 nodes). Always 0 after any change of which key lives in which node (see [`clear_layout_id`]).
+    #[inline]
+    pub fn layout_id(self) -> u64 {
+        // SAFETY: handle invariant; the slot exists iff `sized_hasid(lsizenode)` (dummy: `lsizenode == 0`).
+        unsafe {
+            let t = self.as_ptr();
+            if sized_hasid((*t).lsizenode) {
+                *layout_slot(t)
+            } else {
+                0
+            }
+        }
+    }
+    /// S4, tests and the trace compiler: store `id` in the layout-id slot; `false` (nothing stored) when the part has no slot.
+    #[inline]
+    pub fn set_layout_id(self, id: u64) -> bool {
+        // SAFETY: as `layout_id`.
+        unsafe {
+            let t = self.as_ptr();
+            if sized_hasid((*t).lsizenode) {
+                *layout_slot(t) = id;
+                true
+            } else {
+                false
+            }
+        }
+    }
     /// log2 of the node-vector size (0 for the shared dummy node, whose single node holds a dead key).
     /// Read-only; used by the trace recorder (docs/JIT_TRACE.md TR13.4, task F1).
     pub fn lsizenode(self) -> u8 {
@@ -1846,6 +1964,7 @@ impl TableRef {
                         None
                     },
                     flags,
+                    layout: sized_hasid((*t).lsizenode),
                 });
             }
             if !key_is_nil(mp) {
@@ -1858,6 +1977,7 @@ impl TableRef {
                 node_next: (*mp).next,
                 lastfree: None,
                 flags,
+                layout: sized_hasid((*t).lsizenode),
             })
         }
     }
@@ -2920,10 +3040,16 @@ pub(crate) mod gcaccess {
         unsafe { (*n).val_tt = LUA_VEMPTY }
     }
     /// `clearkey`: a node with an empty value gets a dead key.
-    pub unsafe fn clearkey(n: *mut Node) {
-        // SAFETY: valid node with empty value.
+    ///
+    /// S4: a collectable key becoming dead changes the node's key tag, so the layout id of `t` (the table `n` belongs to) is
+    /// cleared.
+    pub unsafe fn clearkey(t: *mut Table, n: *mut Node, weak: bool) {
+        // SAFETY: valid node with empty value, of table `t`.
         unsafe {
             if key_is_collectable(n) {
+                if !mut_shape(if weak { 8 } else { 4 }) {
+                    clear_layout_id(t);
+                }
                 (*n).key_tt = LUA_TDEADKEY;
             }
         }

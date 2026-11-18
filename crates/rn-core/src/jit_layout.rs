@@ -103,6 +103,8 @@ pub mod node {
     const _: () = assert!(KEY + size_of::<Payload>() == SIZE);
     /// A1: the `lastfree` pointer of a hash part that has one lives this many bytes before the first node.
     pub const LASTFREE_BYTES: usize = crate::table::LASTFREE_BYTES;
+    /// S4: the 64-bit layout-id slot of a hash part with at least 8 nodes lives this many bytes before the first node.
+    pub const LAYOUT_ID_BYTES: usize = crate::table::LASTFREE_BYTES + crate::table::LAYOUT_BYTES;
     const _: () = assert!(align_of::<Node>() == align_of::<Payload>());
 }
 

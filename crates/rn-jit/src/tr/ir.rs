@@ -370,7 +370,8 @@ pub mod nrplan {
                 | ((p.main_next + 16) as u32) << 6
                 | ((p.node_next + 16) as u32) << 11
                 | p.lastfree.map_or(0, |l| u32::from(l) + 1) << 16
-                | u32::from(p.flags) << 21,
+                | u32::from(p.flags) << 21
+                | u32::from(p.layout) << 29,
         )
     }
     /// The plan `aux` encodes.
@@ -385,6 +386,7 @@ pub mod nrplan {
                 l => Some((l - 1) as u8),
             },
             flags: (aux >> 21 & 255) as u8,
+            layout: aux >> 29 & 1 != 0,
         }
     }
 }

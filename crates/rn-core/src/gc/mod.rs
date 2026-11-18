@@ -1684,7 +1684,7 @@ impl Heap {
             for i in 0..ga::nodes(h) {
                 let n = ga::node(h, i);
                 if ga::node_empty(n) {
-                    ga::clearkey(n);
+                    ga::clearkey(h, n, false);
                 } else {
                     let k = ga::node_key_gc(n);
                     if !k.is_null() {
@@ -1707,7 +1707,7 @@ impl Heap {
             for i in 0..ga::nodes(h) {
                 let n = ga::node(h, i);
                 if ga::node_empty(n) {
-                    ga::clearkey(n);
+                    ga::clearkey(h, n, false);
                 } else {
                     let k = ga::node_key_gc(n);
                     if !k.is_null() {
@@ -1743,7 +1743,7 @@ impl Heap {
                     ga::node(h, i)
                 };
                 if ga::node_empty(n) {
-                    ga::clearkey(n);
+                    ga::clearkey(h, n, false);
                 } else if self.iscleared(ga::node_key_gc(n)) {
                     hasclears = true;
                     let v = ga::node_val_gc(n);
@@ -1810,7 +1810,7 @@ impl Heap {
                         ga::set_node_empty(n);
                     }
                     if ga::node_empty(n) {
-                        ga::clearkey(n);
+                        ga::clearkey(h, n, true);
                     }
                 }
                 l = (*h).gclist;
@@ -1835,7 +1835,7 @@ impl Heap {
                         ga::set_node_empty(n);
                     }
                     if ga::node_empty(n) {
-                        ga::clearkey(n);
+                        ga::clearkey(h, n, true);
                     }
                 }
                 l = (*h).gclist;

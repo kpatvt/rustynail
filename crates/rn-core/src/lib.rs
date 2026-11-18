@@ -37,6 +37,8 @@ mod vm_unsafe;
 #[cfg(test)]
 mod tests_gc;
 #[cfg(test)]
+mod tests_shape;
+#[cfg(test)]
 mod tests_state;
 #[cfg(test)]
 mod tests_table;
