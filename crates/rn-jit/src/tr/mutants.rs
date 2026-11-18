@@ -805,6 +805,10 @@ pub const NAMES: &[&str] = &[
     "hstore_nomt_check_skipped",
     "hstore_mt_stale",
     "hstore_known_nonnil_wrong",
+    // G1 (`guarddiet`): transitive entry state of a side trace's chain, room checks of a guard-free link entry
+    "entry2_transitive_stale",
+    "entry_inherit_wrong_slot",
+    "room_skip_bigger_frame",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -873,7 +877,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 667);
+        assert_eq!(NAMES.len(), 670);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

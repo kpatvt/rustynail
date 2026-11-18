@@ -3743,6 +3743,29 @@ const TABLE: &[Row] = &[
             "tr_loop",
             "hstore_after_a_nil_store_keeps_its_old_value_check",
         )],
+    },    Row {
+        name: "entry2_transitive_stale",
+        owner: "G1",
+        dets: &[
+            d("tr_asm", "hand_entry_ents_follow_the_chain_and_skip_stored_slots"),
+            dl("tr_core", "g1_guard_diet_programs"),
+        ],
+    },
+    Row {
+        name: "entry_inherit_wrong_slot",
+        owner: "G1",
+        dets: &[
+            d("tr_asm", "hand_entry_ents_follow_the_chain_and_skip_stored_slots"),
+            dl("tr_core", "g1_guard_diet_programs"),
+        ],
+    },
+    Row {
+        name: "room_skip_bigger_frame",
+        owner: "G1",
+        dets: &[
+            d("tr_asm", "hand_side_link2_skips_room_checks_only_with_proof"),
+            dl("tr_core", "g1_guard_diet_programs"),
+        ],
     },
 ];
 

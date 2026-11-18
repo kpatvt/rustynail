@@ -317,4 +317,168 @@ for k = 1, 3 do out[#out + 1] = tostring(pcall(f, "7", 2.5, 100)) end
 print(table.concat(out, " "))
 "#,
     },
+    // ---- G1 (`guarddiet`): the chain's entry state is inherited through side traces; links skip the room checks of a guard-free entry ----
+    Prog {
+        name: "g1_nested_types",
+        small: false,
+        src: r#"
+-- an nbody-like nest: inner trip counts vary, the slots the side traces never touch (x, y, z) change type between activations
+local function f(n, x, y, z)
+  local s, t = 0, 0.5
+  for i = 1, n do
+    local m = (i % 4) + 1
+    for j = 1, m do s = s + x * j; t = t + y end
+    s = s + z
+  end
+  return s, t, x, y, z
+end
+local out = {}
+for k = 1, 40 do f(12, 1, 2, 3) end
+for k = 1, 3 do out[#out + 1] = table.concat({ f(12, 1, 2, 3) }, ",") end
+for k = 1, 30 do f(12, 1.5, 2, 3) end
+for k = 1, 3 do out[#out + 1] = table.concat({ f(12, 1.5, 2, 3) }, ",") end
+for k = 1, 30 do f(12, 1, 2.5, 3.5) end
+for k = 1, 3 do out[#out + 1] = table.concat({ f(12, 1, 2.5, 3.5) }, ",") end
+for k = 1, 3 do out[#out + 1] = table.concat({ f(12, 1, 2, 3.5) }, ",") end
+for _, v in ipairs { "4", 4.0, 7, "0x10" } do
+  local ok, a, b = pcall(f, 12, 1, 2, v)
+  out[#out + 1] = tostring(ok) .. ":" .. tostring(a) .. ":" .. tostring(b)
+  ok, a, b = pcall(f, 12, v, 2, 3)
+  out[#out + 1] = tostring(ok) .. ":" .. tostring(a) .. ":" .. tostring(b)
+end
+local ok, e = pcall(f, 12, 1, nil, 3)
+out[#out + 1] = tostring(ok) .. ":" .. (tostring(e):gsub("^.-:%d+: ", ""))
+ok, e = pcall(f, 12, 1, 2, {})
+out[#out + 1] = tostring(ok) .. ":" .. (tostring(e):gsub("^.-:%d+: ", ""))
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "g1_mid_store",
+        small: false,
+        src: r#"
+-- a trace of the chain stores to a slot (k) that the root guards at its entry: the type guard must run again after the store
+local function f(n, k, j0)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 4 + j0 do s = s + k end
+    if i % 5 == 0 then k = k + 0.5 end
+    if i % 7 == 0 then k = math.floor(k) end
+    if i % 11 == 0 then k = tostring(k) end
+    if i % 13 == 0 then k = tonumber(k) end
+  end
+  return s, k, math.type(k) or type(k)
+end
+local out = {}
+for r = 1, 60 do f(30, 1, 1) end
+for r = 1, 4 do out[#out + 1] = table.concat({ f(30, 1, 1) }, ",") end
+for r = 1, 40 do f(30, 2.5, 1) end
+for r = 1, 4 do out[#out + 1] = table.concat({ f(30, 2.5, 1) }, ",") end
+for r = 1, 4 do out[#out + 1] = table.concat({ f(100, 3, 2) }, ",") end
+for r = 1, 4 do out[#out + 1] = table.concat({ f(100, 3.5, 0) }, ",") end
+print(table.concat(out, " "))
+local function g(n, a, b)
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do a = a + b end
+    if i % 4 == 0 then b = b + 0.25 end
+    if i % 9 == 0 then b = 1 end
+    if i % 10 == 0 then a = a // 1 end
+  end
+  return a, b, math.type(a), math.type(b)
+end
+local r = {}
+for k = 1, 50 do g(20, 0, 1) end
+for k = 1, 3 do r[#r + 1] = table.concat({ g(20, 0, 1) }, ",") end
+for k = 1, 3 do r[#r + 1] = table.concat({ g(20, 0.5, 2) }, ",") end
+for k = 1, 3 do r[#r + 1] = table.concat({ g(37, 7, 1.5) }, ",") end
+print(table.concat(r, " "))
+"#,
+    },
+    Prog {
+        name: "g1_room_deep",
+        small: false,
+        src: r#"
+-- loops with exits inside frames at growing depth (stack growth in a loop, the stack limit, the CallInfo list)
+local function inner(n, x)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do s = s + x end
+    if i % 5 == 0 then s = s + 1 end
+  end
+  return s
+end
+local function rec(d, x)
+  local s = inner(7, x)
+  if d > 0 then s = s + rec(d - 1, x) end
+  return s
+end
+local out = {}
+for _, d in ipairs { 0, 1, 5, 50, 300, 3000, 20000, 1, 0 } do
+  for k = 1, 3 do out[#out + 1] = rec(d, 1) end
+end
+out[#out + 1] = rec(100, 1.5)
+print(table.concat(out, " "))
+local function inf(d)
+  local s = inner(5, 1)
+  return s + inf(d + 1) + 1
+end
+for k = 1, 3 do
+  local ok, e = pcall(inf, 0)
+  print(ok, (tostring(e):find("stack overflow", 1, true)) ~= nil, rec(10, 2))
+end
+local function grow(n, ...)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do s = s + select('#', ...) end
+  end
+  return s
+end
+local t = {}
+for k = 1, 40 do t[#t + 1] = k end
+for k = 1, 5 do print(grow(30, table.unpack(t, 1, 5 * k))) end
+"#,
+    },
+    Prog {
+        name: "g1_hooks_coro_gc_err",
+        small: false,
+        src: r#"
+-- the guarded nest under a count hook, in a coroutine that yields in the inner loop, with garbage and errors at varying iterations
+local function f(n, x, bad)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do
+      s = s + x
+      if i == bad and j == 2 then error("boom " .. i) end
+    end
+    local g = { i, tostring(i) }
+    s = s + #g
+  end
+  return s
+end
+local out = {}
+for k = 1, 40 do f(20, 1, 0) end
+local fired = 0
+debug.sethook(function() fired = fired + 1 end, "", 50)
+for k = 1, 10 do out[#out + 1] = f(20, 1, 0) end
+debug.sethook()
+out[#out + 1] = fired > 0 and "hook" or "nohook"
+for k = 1, 6 do
+  local ok, e = pcall(f, 20, 1, k * 3)
+  out[#out + 1] = tostring(ok) .. ":" .. (tostring(e):gsub("^.-:%d+: ", ""))
+end
+local co = coroutine.wrap(function(n, x)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do s = s + x end
+    if i % 4 == 0 then coroutine.yield(s) end
+  end
+  return -s
+end)
+for k = 1, 5 do out[#out + 1] = co(16, 2) end
+local co2 = coroutine.wrap(function() for r = 1, 6 do coroutine.yield(f(20, 1.5, 0)) end end)
+for k = 1, 6 do out[#out + 1] = co2() end
+for k = 1, 20 do collectgarbage("step") out[#out + 1] = f(20, 2, 0) end
+print(table.concat(out, " "))
+"#,
+    },
 ];

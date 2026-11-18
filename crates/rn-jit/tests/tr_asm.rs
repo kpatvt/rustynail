@@ -692,6 +692,8 @@ fn base_env(w: &mut World) -> AsmEnv {
         exit_cells: 0,
         side: None,
         entry_tags: [0xFD; 256],
+        guarddiet: false,
+        room_have: (0, 0),
         vcell: 0,
         gc_cells: Default::default(),
         num_names: [0; 2],
@@ -1757,6 +1759,8 @@ fn hand_entry_failure_bookkeeping_follows_the_free_peel_rule() {
             e2_sig_inst: Cell::new(0),
             e2: Cell::new(0),
             e2sig: Cell::new(0),
+            e2n_code: Cell::new(0),
+            e2n: Cell::new(0),
             rec: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
@@ -1979,6 +1983,102 @@ fn hand_side_link2_needs_proof_signature_and_poll() {
     });
 }
 
+/// G1: the entry tags a side trace's chain guarantees are inherited by the trace's snapshots and writeback for the slots the trace does not write
+/// (`SSTORE`) and only for exactly those (the slot numbers are the ones of the tags). Mutants `entry2_transitive_stale`, `entry_inherit_wrong_slot`.
+#[test]
+fn hand_entry_ents_follow_the_chain_and_skip_stored_slots() {
+    both(|| {
+        let mut b = B::new();
+        let s0 = b.snap(0, &[]);
+        b.budget(1, s0);
+        let v = b.sload(4, Ty::Int, s0);
+        // slot 2 is written by the trace itself (the chain's tag of it is stale from here on)
+        b.ins(TOp::Sstore, Ty::Num, 0, v, NOREF, 2);
+        let mut entry = [0xFDu8; 256];
+        entry[2] = LUA_VNUMINT; // the chain says "int", the trace writes it
+        entry[6] = LUA_VNUMFLT;
+        entry[7] = 0xFE; // some nil variant: never inherited
+        let mut ents = exit::entry_ents(&b.ir, &entry);
+        ents.sort_by_key(|e| e.0);
+        assert_eq!(ents, vec![(6, Ty::Num)]);
+        let w = exit::wb_ents_ex(&b.ir, Some(&entry));
+        assert!(w.contains(&(6, Ty::Num)) && w.contains(&(4, Ty::Int)));
+        assert!(!w.iter().any(|e| e.0 == 2));
+        // the snapshot lists carry them for every guard-bearing snapshot
+        let se = exit::stack_ents_ex(&b.ir, Some(&entry));
+        assert!(se[s0 as usize].contains(&(6, Ty::Num)));
+        assert!(!se[s0 as usize].iter().any(|e| e.0 == 2));
+        // without the diet nothing is inherited
+        assert!(exit::wb_ents_ex(&b.ir, None).iter().all(|e| e.0 == 4));
+    });
+}
+
+/// G1: a link to a guard-free second entry jumps past the room checks of the root only while the chain of the side trace guarantees at least
+/// the stack extent and spare `CallInfo` nodes the signature of the entry promises to check. Mutant `room_skip_bigger_frame`.
+#[test]
+fn hand_side_link2_skips_room_checks_only_with_proof() {
+    use rn_jit::tr::asm::SideEnv;
+    use rn_jit::tr::cache::head_off;
+    #[repr(C)]
+    struct Three {
+        e2: Cell<usize>,
+        sig: Cell<u32>,
+        e2n_code: Cell<usize>,
+        e2n: Cell<usize>,
+    }
+    assert_eq!(
+        std::mem::offset_of!(Three, e2n) - std::mem::offset_of!(Three, e2),
+        head_off::E2N - head_off::E2
+    );
+    both(|| {
+        const SLOW: usize = 0x7000_0000;
+        const FAST: usize = 0x7200_0000;
+        const NOROOM: usize = 0x7400_0000;
+        let sig = exit::e2_intern_room(&[(0, Ty::Int)], 5, 1);
+        let mut b = B::new();
+        let s0 = b.snap(0, &[]);
+        let s1 = b.snap(0, &[]);
+        b.budget(3, s0);
+        b.sload(0, Ty::Int, s0);
+        let cell = Box::new(Cell::new(SLOW));
+        let link_cell = std::ptr::from_ref::<Cell<usize>>(&cell) as u64;
+        let three = Box::new(Three {
+            e2: Cell::new(FAST),
+            sig: Cell::new(sig),
+            e2n_code: Cell::new(NOROOM),
+            e2n: Cell::new(NOROOM),
+        });
+        let l2 = std::ptr::from_ref::<Three>(&three) as u64;
+        // (diet, room the chain has, where the link goes)
+        let cases: [(bool, (u16, u8), usize); 7] = [
+            (true, (5, 1), NOROOM),
+            (true, (9, 3), NOROOM),
+            (true, (4, 1), FAST), // a smaller frame: the room checks of the entry stay
+            (true, (5, 0), FAST), // fewer spare nodes
+            (true, (0, 0), FAST),
+            (false, (9, 3), FAST), // the knob is off
+            (true, (u16::MAX, u8::MAX), NOROOM),
+        ];
+        for (k, (diet, have, to)) in cases.into_iter().enumerate() {
+            let mut w = World::new(&model_ints(&[1]));
+            w.load(&model_ints(&[1]));
+            w.setup_ci(0);
+            w.set_cnt(100);
+            let (t, _, _, _) = exec(&b.ir, &mut w, |e| {
+                e.guarddiet = diet;
+                e.room_have = have;
+                e.side = Some(SideEnv {
+                    link_cell,
+                    link_snap: s1,
+                    link2_cell: l2,
+                    link2_sig: sig,
+                })
+            });
+            assert_eq!(t, to as u64, "case {k}");
+        }
+    });
+}
+
 #[test]
 fn hand_hot_exit_diverts_to_the_generic_stub() {
     both(|| {
@@ -2084,6 +2184,8 @@ fn new_head() -> Box<rn_jit::tr::cache::HeadData> {
         e2_sig_inst: Cell::new(0),
         e2: Cell::new(0),
         e2sig: Cell::new(0),
+        e2n_code: Cell::new(0),
+        e2n: Cell::new(0),
         rec: Cell::new(0),
         lazy: Cell::new(false),
         deep: Cell::new(false),
@@ -3048,6 +3150,8 @@ mod e2e {
             exit_cells: 0,
             side: None,
             entry_tags: [0xFD; 256],
+            guarddiet: false,
+            room_have: (0, 0),
             vcell: 0,
             gc_cells: Default::default(),
             num_names: [0; 2],
@@ -3108,6 +3212,7 @@ mod e2e {
                 entry_off,
                 inner_off: 0,
                 e2_off: 0,
+                e2n_off: 0,
                 e2_sig: 0,
                 rec_ret: false,
                 text: None,

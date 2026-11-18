@@ -59,6 +59,8 @@ pub const SIDEMIN_PROCESS: u32 = 4;
 pub const SNAPPRUNE_PROCESS: u32 = 1;
 /// F5: the process default of [`TrLimits::hstoreguard`] (also the struct default).
 pub const HSTOREGUARD_PROCESS: u32 = 1;
+/// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
+pub const GUARDDIET_PROCESS: u32 = 0;
 /// BUNDLE-L A: the process default of [`TrLimits::aidx`] (also the struct default).
 pub const AIDX_PROCESS: u32 = 0;
 /// BUNDLE-L B: the process default of [`TrLimits::bhoist`] (also the struct default).
@@ -576,6 +578,10 @@ pub struct TrLimits {
     /// (`FLOAD metatable == 0`, or the metatable's flag cache says no `__newindex`; CSE'd by the header-fact rules) instead of the per-store
     /// exit on a nil old value: 0 = the old-value check, 1 = the metatable guard (default [`HSTOREGUARD_PROCESS`]).
     pub hstoreguard: u32,
+    /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
+    /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
+    /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
+    pub guarddiet: u32,
 }
 
 impl Default for TrLimits {
@@ -671,6 +677,7 @@ impl Default for TrLimits {
             rearm: REARM_PROCESS,
             snapprune: SNAPPRUNE_PROCESS,
             hstoreguard: HSTOREGUARD_PROCESS,
+            guarddiet: GUARDDIET_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -840,6 +847,7 @@ impl TrLimits {
                 "rearm" => l.rearm = v.min(64),
                 "snapprune" => l.snapprune = v.min(2),
                 "hstoreguard" => l.hstoreguard = v.min(1),
+                "guarddiet" => l.guarddiet = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }
@@ -1158,6 +1166,11 @@ pub struct HeadData {
     pub e2: Cell<usize>,
     /// A2: the signature of `e2` (0 whenever `e2` is 0: a link compares it with the signature it was compiled for).
     pub e2sig: Cell<u32>,
+    /// G1: the installed trace's second entry past its room checks (see `asm::Asm::entry2n`; 0: none), and the cell a link whose chain proves the room jumps
+    /// through (`e2n_code` exactly while `e2` is `e2_code`, else 0).
+    pub e2n_code: Cell<usize>,
+    /// See `e2n_code`.
+    pub e2n: Cell<usize>,
     /// J2-2: the site is recorded with the deep limits (`TrLimits::deep`): set once, when a recording of the head ended at the
     /// recursion / depth limit (never reset: the site gets exactly one deeper re-record).
     pub deep: Cell<bool>,
@@ -1185,6 +1198,8 @@ pub mod head_off {
     pub const E2: usize = offset_of!(HeadData, e2);
     /// `e2sig: u32` (A2).
     pub const E2SIG: usize = offset_of!(HeadData, e2sig);
+    /// `e2n: usize` (G1).
+    pub const E2N: usize = offset_of!(HeadData, e2n);
 }
 
 /// Abort count at which a head goes `Black` (3.3).
@@ -1247,6 +1262,8 @@ impl HeadData {
             e2_sig_inst: Cell::new(0),
             e2: Cell::new(0),
             e2sig: Cell::new(0),
+            e2n_code: Cell::new(0),
+            e2n: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
         }
@@ -1296,9 +1313,11 @@ impl HeadData {
         if d2 {
             self.e2.set(self.e2_code.get());
             self.e2sig.set(self.e2_sig_inst.get());
+            self.e2n.set(self.e2n_code.get());
         } else if !mutants::active("link2_cell_stale_after_flush") {
             self.e2.set(0);
             self.e2sig.set(0);
+            self.e2n.set(0);
         }
     }
 
@@ -1750,6 +1769,7 @@ impl TrProto {
         h.entry.set(0);
         h.rec_inner.set(0);
         h.e2_code.set(0);
+        h.e2n_code.set(0);
         h.e2_sig_inst.set(0);
         h.pre.set(0);
         h.entry_fail.set(0);
@@ -3206,6 +3226,8 @@ pub struct TraceInstall {
     pub inner_off: usize,
     /// A2: offset of the guard-free second entry (see `asm::Asm::entry2`), 0 if none, and the interned signature of the guards it skips.
     pub e2_off: usize,
+    /// G1: offset of the second entry past its room checks, 0 if none.
+    pub e2n_off: usize,
     /// See `e2_off`.
     pub e2_sig: u32,
     /// P-M3: the trace ends with a native return.
@@ -3593,6 +3615,11 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         } else {
             0
         });
+        h.e2n_code.set(if ti.e2n_off != 0 && ti.e2_off != 0 {
+            block_addr + ti.e2n_off
+        } else {
+            0
+        });
         h.e2_sig_inst.set(ti.e2_sig);
         h.trace.set(Some(id));
         tp.set_state(head, HeadState::Traced);
@@ -3603,10 +3630,11 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         }
         vlog(d, || {
             format!(
-                "{no} loop proto:{} pc {} entry {entry:#x} code {}B",
+                "{no} loop proto:{} pc {} entry {entry:#x} code {}B e2 {:#x}",
                 tp.line,
                 h.pc,
-                ti.code.len()
+                ti.code.len(),
+                ti.e2_off
             )
         });
     }
@@ -3684,6 +3712,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                     h.entry.set(0);
                     h.rec_inner.set(0);
                     h.e2_code.set(0);
+                    h.e2n_code.set(0);
                     h.e2_sig_inst.set(0);
                     h.pre.set(0);
                     tp.blacklist(t.head);

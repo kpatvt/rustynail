@@ -392,6 +392,48 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
 /// executed only the earlier `SLOAD`s (the failing one is not its own predecessor). Traces with native frames or `RETF` segments
 /// get none (their frames move the base; a slot number is not stable). Slots of sunk tables are removed by the caller.
 pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
+    stack_ents_ex(ir, None)
+}
+
+/// G1 (`guarddiet`): the exact static tags the parent chain of a side trace guarantees at its entry (`SideInfo::entry_tags`), as `(slot, type)`
+/// for the slots the trace never writes with `SSTORE`: the stack still holds them at every guard of the trace and before its writeback (nothing
+/// but `SSTORE`, the writeback and exit stubs writes the stack; native frames and `RETF` segments, where slot numbers move, are excluded by
+/// the callers). `nil` (variants) and dynamic string tags are left out. Mutants `entry2_transitive_stale` (inherits across an `SSTORE`) and
+/// `entry_inherit_wrong_slot` (the slot of the neighbour).
+pub fn entry_ents(ir: &TraceIr, entry: &[u8; 256]) -> Vec<(u16, Ty)> {
+    if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
+        return Vec::new();
+    }
+    let stale = mutants::active("entry2_transitive_stale");
+    let mut out = Vec::new();
+    for (slot, &tag) in entry.iter().enumerate() {
+        if tag == UNKNOWN_TAG || tag == NIL_ANY || tag == LUA_VNIL {
+            continue;
+        }
+        let Some(ty) = ty_of_tag(tag).filter(|&t| t != Ty::Nil && tag_of(t) == Some(tag)) else {
+            continue;
+        };
+        let slot = slot as u16;
+        if !stale
+            && ir
+                .ins
+                .iter()
+                .any(|j| j.op == TOp::Sstore && j.aux as u16 == slot)
+        {
+            continue;
+        }
+        let slot = if mutants::active("entry_inherit_wrong_slot") {
+            slot ^ 1
+        } else {
+            slot
+        };
+        out.push((slot, ty));
+    }
+    out
+}
+
+/// [`stack_ents`] with the entry state of a side trace's chain (see [`entry_ents`]) added for the slots the trace's own `SLOAD`s do not cover.
+pub fn stack_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<Vec<(u16, Ty)>> {
     // (the helper below holds the exclusions)
     let n = ir.snaps.len();
     let mut out = vec![Vec::new(); n];
@@ -430,6 +472,19 @@ pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
                 && !o.iter().any(|&(sl, _)| sl == i.a)
             {
                 o.push((i.a, i.t));
+            }
+        }
+    }
+    if let Some(e) = entry {
+        let inherited = entry_ents(ir, e);
+        for (s, o) in out.iter_mut().enumerate() {
+            if first[s] == usize::MAX {
+                continue;
+            }
+            for &(sl, t) in &inherited {
+                if !o.iter().any(|&(x, _)| x == sl) {
+                    o.push((sl, t));
+                }
             }
         }
     }
@@ -607,6 +662,16 @@ pub fn build_exits(
     al: &Allocation,
     res: &dyn Resolver,
 ) -> Result<(Vec<ExitSnap>, Vec<ExitDesc>), String> {
+    build_exits_ex(ir, al, res, None)
+}
+
+/// [`build_exits`] with the entry tags of a side trace's chain (G1, `guarddiet`; see [`entry_ents`]).
+pub fn build_exits_ex(
+    ir: &TraceIr,
+    al: &Allocation,
+    res: &dyn Resolver,
+    entry: Option<[u8; 256]>,
+) -> Result<(Vec<ExitSnap>, Vec<ExitDesc>), String> {
     if al.snap_locs.len() != ir.snaps.len() {
         return Err("allocation does not match the snapshots".into());
     }
@@ -727,7 +792,7 @@ pub fn build_exits(
             ents: Vec::new(),
         });
     }
-    let ents = stack_ents(ir);
+    let ents = stack_ents_ex(ir, entry.as_ref());
     for (si, e) in ents.into_iter().enumerate() {
         let sn = &mut out[si];
         // a slot of a sunk table (or an alias) is written by the generic restore with a type the `SLOAD` did not see; the slots of
@@ -1067,16 +1132,36 @@ pub fn lead_run(ir: &TraceIr) -> Option<(usize, Vec<(u16, Ty)>)> {
 }
 
 /// A2: the type signatures of the guard-free entries, interned: equal requirement lists get the same id (1-based; 0 = none).
-static E2_SIGS: std::sync::Mutex<Vec<Vec<(u16, Ty)>>> = std::sync::Mutex::new(Vec::new());
+static E2_SIGS: std::sync::Mutex<Vec<E2Sig>> = std::sync::Mutex::new(Vec::new());
 
-/// Interns the requirement list `req` of a root's second entry.
+/// One interned signature: the requirement list and the room (stack extent, spare `CallInfo` nodes) the entry's room checks cover (G1).
+type E2Sig = (Vec<(u16, Ty)>, u16, u8);
+
+/// Interns the requirement list `req` of a second entry that needs no room (hand-built entries of the tests).
 pub fn e2_intern(req: &[(u16, Ty)]) -> u32 {
+    e2_intern_room(req, 0, 0)
+}
+
+/// Interns the requirement list `req` and the room `(extent, depth)` of a root's second entry.
+pub fn e2_intern_room(req: &[(u16, Ty)], extent: u16, depth: u8) -> u32 {
     let mut v = E2_SIGS.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(i) = v.iter().position(|r| r == req) {
+    if let Some(i) = v
+        .iter()
+        .position(|r| r.0 == req && r.1 == extent && r.2 == depth)
+    {
         return i as u32 + 1;
     }
-    v.push(req.to_vec());
+    v.push((req.to_vec(), extent, depth));
     v.len() as u32
+}
+
+/// The room `(extent, depth)` of interned signature `sig` (the largest values: nothing is promised for an unknown signature).
+pub fn e2_room(sig: u32) -> (u16, u8) {
+    let v = E2_SIGS.lock().unwrap_or_else(|e| e.into_inner());
+    (sig as usize)
+        .checked_sub(1)
+        .and_then(|i| v.get(i))
+        .map_or((u16::MAX, u8::MAX), |r| (r.1, r.2))
 }
 
 /// The requirement list of interned signature `sig`.
@@ -1085,7 +1170,7 @@ pub fn e2_req(sig: u32) -> Vec<(u16, Ty)> {
     (sig as usize)
         .checked_sub(1)
         .and_then(|i| v.get(i))
-        .cloned()
+        .map(|r| r.0.clone())
         .unwrap_or_default()
 }
 
@@ -1159,6 +1244,23 @@ const NIL_ANY: u8 = 0xFE;
 /// end of a rolled iteration (and of a side trace) the stack still holds those tags (every `SLOAD` of the iteration ran). Empty under
 /// the same exclusions as [`stack_ents`].
 pub fn wb_ents(ir: &TraceIr) -> Vec<(u16, Ty)> {
+    wb_ents_ex(ir, None)
+}
+
+/// [`wb_ents`] plus the entry state of a side trace's chain (G1, see [`entry_ents`]).
+pub fn wb_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<(u16, Ty)> {
+    let mut out = wb_ents_own(ir);
+    if let Some(e) = entry {
+        for (sl, t) in entry_ents(ir, e) {
+            if !out.iter().any(|&(x, _)| x == sl) {
+                out.push((sl, t));
+            }
+        }
+    }
+    out
+}
+
+fn wb_ents_own(ir: &TraceIr) -> Vec<(u16, Ty)> {
     if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
         return Vec::new();
     }

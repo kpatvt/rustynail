@@ -338,6 +338,8 @@ struct Active {
     max_ci: u8,
     /// R2: frameful side traces check their own room (`TrLimits::siderooms`).
     side_rooms: bool,
+    /// G1: the guard diet (`TrLimits::guarddiet`).
+    guarddiet: bool,
 }
 
 /// A trace installed with `+emurun` / `+emuverify`: the micro-op program the emulator runs.
@@ -689,6 +691,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                     max_extent: 0,
                     max_ci: 0,
                     side_rooms: false,
+                    guarddiet: cfg.limits.guarddiet != 0,
                 });
             });
             true
@@ -880,6 +883,7 @@ pub fn driver_start_side(
             max_extent: start.max_extent,
             max_ci: start.max_ci,
             side_rooms: cfg.limits.siderooms != 0,
+            guarddiet: cfg.limits.guarddiet != 0,
         });
     });
     Some(rem)
@@ -1418,8 +1422,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         );
     }
     let t_ex = phase::now();
-    let (mut snaps, mut descs) =
-        exit::build_exits(ir, &al, &res).map_err(|e| abort_err("exits", e))?;
+    let (mut snaps, mut descs) = exit::build_exits_ex(
+        ir,
+        &al,
+        &res,
+        (act.guarddiet && side.is_some()).then(|| side.map_or([0xFD; 256], |si| si.entry_tags)),
+    )
+    .map_err(|e| abort_err("exits", e))?;
     phase::add(phase::EXITS, t_ex);
     // The entry snapshot's exits are entry-check failures: the entry-failure rule of 3.3 (`entry_fail` / free peel)
     // decides about them, not the hot type-guard rule, so they never flush.
@@ -1678,6 +1687,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         exit_cells: cells as u64,
         side: side_env,
         entry_tags: side.map_or([0xFD; 256], |si| si.entry_tags),
+        guarddiet: act.guarddiet,
+        room_have: (
+            act.max_extent.max(rec.ir.extent),
+            act.max_ci.max(rec.ir.depth),
+        ),
         vcell: st.heap().virtual_cell() as u64,
         gc_cells: st.heap().jit_gc_cells(),
         num_names: [
@@ -1784,8 +1798,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     let entry_off =
         em.label_off[entry as usize].ok_or_else(|| abort_err("x86", "entry unbound"))?;
     let e2_off = e2_label.and_then(|l| em.label_off[l as usize]).unwrap_or(0);
+    let e2n_off = if e2_off != 0 {
+        a.entry2n
+            .and_then(|l| em.label_off[l as usize])
+            .unwrap_or(0)
+    } else {
+        0
+    };
     let e2_sig = if e2_off != 0 {
-        exit::e2_intern(&a.e2_req)
+        exit::e2_intern_room(&a.e2_req, ir.extent, ir.depth)
     } else {
         0
     };
@@ -1807,6 +1828,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             entry_off,
             inner_off: a.inner.and_then(|l| em.label_off[l as usize]).unwrap_or(0),
             e2_off,
+            e2n_off,
             e2_sig,
             rec_ret: ir.rec_ret.is_some(),
             text,

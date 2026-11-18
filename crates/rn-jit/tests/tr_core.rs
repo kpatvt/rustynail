@@ -7782,6 +7782,57 @@ fn f4_prune_programs() {
     }
 }
 
+/// G1 (`guarddiet`): side traces inherit the entry state of the whole chain, links to a guard-free second entry skip the room checks the
+/// chain proves, and the writeback skips the tag stores of the inherited slots. The programs change the types of the slots the side traces
+/// never touch between activations, store to a slot the root guards, recurse towards the stack limit, run under hooks, coroutines, GC
+/// pressure and errors; every mode equals the interpreter. Detector of the mutants `entry2_transitive_stale`, `entry_inherit_wrong_slot`
+/// and `room_skip_bigger_frame`.
+#[test]
+fn g1_guard_diet_programs() {
+    let progs = [
+        "g1_nested_types",
+        "g1_mid_store",
+        "g1_room_deep",
+        "g1_hooks_coro_gc_err",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["guarddiet=1", "guarddiet=0"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).limits_s(lim).opts("+verify"));
+                jobs.push(
+                    Job::new(p, trace)
+                        .limits_s(lim)
+                        .opts("+exitstorm=3 +verify"),
+                );
+                jobs.push(Job::new(p, trace).limits_s(lim).budget(17));
+                jobs.push(Job::new(p, trace).limits_s(lim).opts("-loop"));
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("guarddiet=1")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("guarddiet=1")
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+            );
+        }
+    }
+    let res = compare(jobs);
+    for p in ["g1_nested_types", "g1_mid_store"] {
+        let side = res
+            .iter()
+            .filter(|(j, _)| j.prog == p && j.trace == "always" && j.opts.is_empty())
+            .map(|(_, o)| o.stats.side_installed)
+            .max()
+            .unwrap_or(0);
+        assert!(side >= 1, "{p}: no side trace was installed");
+    }
+}
+
 /// F5: `HSTORE` into an existing field takes the `__newindex` guard of the table instead of the old-value check (`hstoreguard=1`):
 /// tables without a metatable, with a metatable lacking `__newindex`, with `__newindex` as a function and as a table; nil and non-nil
 /// slots; a metatable changed between iterations (`setmetatable`, a call in the middle, the metatable's own `__newindex` field);

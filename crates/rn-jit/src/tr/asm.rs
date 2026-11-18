@@ -134,6 +134,11 @@ pub struct AsmEnv {
     pub side: Option<SideEnv>,
     /// A2: the stack tags the parent chain guarantees at the entry of a side trace (`record::SideInfo::entry_tags`; all `0xFD` otherwise).
     pub entry_tags: [u8; 256],
+    /// G1: the guard diet (`TrLimits::guarddiet`).
+    pub guarddiet: bool,
+    /// G1: the room (stack extent, spare `CallInfo` nodes) a side trace's chain guarantees at its end: its own entry checks' or its parent's
+    /// (`max(parent, own)`: the trace either needs no more than the parent promised or checks its own).
+    pub room_have: (u16, u8),
     /// S0 (allocation sinking): address of the virtual-byte counter (`Heap::virtual_cell`); `TVIRT` adds its bytes to it
     /// (P-L: the only cell; the collector-visible total is the real bytes plus this counter). `0`: none (tests without
     /// sinking).
@@ -291,6 +296,8 @@ impl Default for AsmEnv {
             exit_cells: 0,
             side: None,
             entry_tags: [0xFD; 256],
+            guarddiet: false,
+            room_have: (0, 0),
             vcell: 0,
             gc_cells: Default::default(),
             num_names: [0; 2],
@@ -398,6 +405,8 @@ pub struct Asm {
     pub entry2: Option<L>,
     /// A2: the type checks `entry2` skips (`exit::lead_run`).
     pub e2_req: Vec<(u16, Ty)>,
+    /// G1: the guard-free second entry past its room checks (`entry2`'s sibling for links whose chain proves at least the room it needs).
+    pub entry2n: Option<L>,
 }
 
 /// J1-1: the cold disambiguator of a fused `HREFK`+`HLOAD` pair with two exits.
@@ -2064,6 +2073,8 @@ struct Cx<'a> {
     wb_ents: Vec<(u16, Ty)>,
     /// A2: the second entry's copy of the entry sequence is being emitted (`entry2_skip_entry_ok`).
     in_e2: bool,
+    /// G1: the label to bind past the room checks of the second entry (`entry_checks`).
+    e2n: Option<L>,
     /// B4-3 (`hkfuse`): the `HLOAD` (instruction index) whose value-tag check the preceding `HREFK` already did (one 16-bit compare of
     /// the value tag byte and the key tag byte).
     hk_fused: Option<usize>,
@@ -2605,8 +2616,12 @@ pub fn assemble(
         mat_frames: Vec::new(),
         mat_codes: Vec::new(),
         ktag: Vec::new(),
-        wb_ents: exit::wb_ents(ir),
+        wb_ents: exit::wb_ents_ex(
+            ir,
+            (env.guarddiet && env.side.is_some()).then_some(&env.entry_tags),
+        ),
         in_e2: false,
+        e2n: None,
         hk_fused: None,
         hk_cold: Vec::new(),
         rec_ci_cold: Vec::new(),
@@ -2782,12 +2797,17 @@ pub fn assemble(
         cx.push(Op::Jmp(loop_l));
     }
     // A2: the second entry sits behind the main code (nothing falls into it)
+    let mut entry2n = None;
     let (entry2, e2_req) = match e2plan {
         Some((end, req)) => {
             let e2 = cx.label();
             cx.bind(e2);
             cx.in_e2 = true;
+            let e2n = cx.label();
+            cx.e2n = Some(e2n);
             cx.entry_checks(entry_fail)?;
+            cx.e2n = None;
+            entry2n = Some(e2n);
             cx.in_e2 = false;
             if rolled {
                 cx.count_iteration();
@@ -2846,6 +2866,7 @@ pub fn assemble(
         inner,
         entry2,
         e2_req,
+        entry2n,
     })
 }
 
@@ -3017,7 +3038,18 @@ impl Cx<'_> {
                     to: slow,
                 });
             }
-            self.ld(7, W::B8, rm(7, 0));
+            // G1: the entry past the room checks when the chain of this trace guarantees at least the room the target root checks
+            let (need_e, need_d) = exit::e2_room(sd.link2_sig);
+            let room_ok = self.env.guarddiet
+                && !self.env.lazy
+                && ((self.env.room_have.0 >= need_e && self.env.room_have.1 >= need_d)
+                    || mutants::active("room_skip_bigger_frame"));
+            let off = if room_ok {
+                (super::cache::head_off::E2N - super::cache::head_off::E2) as i32
+            } else {
+                0
+            };
+            self.ld(7, W::B8, rm(7, off));
             if mutants::active("link2_sig_ignored") {
                 self.br(Cc::Eq, 7, Src::Imm(0), slow);
             }
@@ -3591,6 +3623,10 @@ impl Cx<'_> {
     fn entry_checks(&mut self, fail: L) -> Result<(), AsmError> {
         if !self.env.no_room_checks {
             self.room_checks(fail);
+        }
+        if let Some(l) = self.e2n.take() {
+            // G1: the entry past the room checks (taken by a link whose chain proves the room)
+            self.bind(l);
         }
         // the budget word into its register (after the TR6 checks: their failures leave the word alone)
         if let Some(r) = self.env.budget_reg {
