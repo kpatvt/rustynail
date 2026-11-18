@@ -4468,7 +4468,8 @@ fn side_attempt(
         for &(slot, t) in snap
             .ents
             .iter()
-            .filter(|_| !prelude || mutants::active("tagskip_entry_fail")) {
+            .filter(|_| !prelude || mutants::active("tagskip_entry_fail"))
+        {
             if !k.iter().any(|&(s, _)| s == slot) {
                 k.push((slot, t));
             }

@@ -1901,12 +1901,12 @@ fn hand_entry2_skips_only_the_type_checks() {
                     Some(s0),
                     "{tag}: past the entry, out at the last budget"
                 );
-                assert_eq!(w.cnt(), 9, "{tag}: the budget of the loop top is charged once");
                 assert_eq!(
-                    (head.pending.get(), head.entry_ok.get()),
-                    (0, 4),
-                    "{tag}"
+                    w.cnt(),
+                    9,
+                    "{tag}: the budget of the loop top is charged once"
                 );
+                assert_eq!((head.pending.get(), head.entry_ok.get()), (0, 4), "{tag}");
             } else {
                 assert_eq!(snap_of(t), Some(s1), "{tag}: the entry check fails");
                 assert_eq!((head.pending.get(), head.entry_ok.get()), (1, 3), "{tag}");

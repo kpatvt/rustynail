@@ -3009,7 +3009,10 @@ impl Cx<'_> {
                 self.push(Op::BrM {
                     cc: Cc::Ne,
                     w: W::B4,
-                    m: rm(7, (super::cache::head_off::E2SIG - super::cache::head_off::E2) as i32),
+                    m: rm(
+                        7,
+                        (super::cache::head_off::E2SIG - super::cache::head_off::E2) as i32,
+                    ),
                     imm: sd.link2_sig as i32,
                     to: slow,
                 });
@@ -3744,10 +3747,17 @@ impl Cx<'_> {
     /// no other move and holds nothing the add still needs (`b != D`), and the add wraps (sets no flag any code reads).
     fn last_add_in_place(&mut self, i: usize) -> bool {
         let (ins, a) = (self.ir.ins[i], &self.al.ins[i]);
-        if ins.op != TOp::Add || ins.t != Ty::Int || !a.pre.is_empty() || !a.post.is_empty() || !a.stores.is_empty() {
+        if ins.op != TOp::Add
+            || ins.t != Ty::Int
+            || !a.pre.is_empty()
+            || !a.post.is_empty()
+            || !a.stores.is_empty()
+        {
             return false;
         }
-        let (Loc::G(d), Loc::G(x)) = (a.dst, a.ops[0]) else { return false };
+        let (Loc::G(d), Loc::G(x)) = (a.dst, a.ops[0]) else {
+            return false;
+        };
         let bloc = a.ops[1];
         if d == x || d == 7 || x == 7 || bloc == Loc::G(d) {
             return false;
@@ -3762,8 +3772,12 @@ impl Cx<'_> {
             .filter(|m| m.dst != m.src && m.dst != Loc::None && m.src != Loc::None)
             .collect();
         let pat = live.len() == 2
-            && live.iter().any(|m| m.dst == Loc::G(x) && m.src == Loc::G(d))
-            && live.iter().any(|m| m.dst == Loc::G(d) && m.src == Loc::G(x));
+            && live
+                .iter()
+                .any(|m| m.dst == Loc::G(x) && m.src == Loc::G(d))
+            && live
+                .iter()
+                .any(|m| m.dst == Loc::G(d) && m.src == Loc::G(x));
         if !pat {
             return false;
         }

@@ -1540,7 +1540,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                 cache::with_tr(st, tpr, |tp| {
                     tp.head_index(si.link_pc).map(|i| {
                         let h = tp.head(i);
-                        (&h.e2 as *const std::cell::Cell<usize> as u64, h.e2_sig_inst.get())
+                        (
+                            &h.e2 as *const std::cell::Cell<usize> as u64,
+                            h.e2_sig_inst.get(),
+                        )
                     })
                 })
                 .flatten()
@@ -1778,9 +1781,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     phase::add(phase::X86, t_x86);
     let entry_off =
         em.label_off[entry as usize].ok_or_else(|| abort_err("x86", "entry unbound"))?;
-    let e2_off = e2_label
-        .and_then(|l| em.label_off[l as usize])
-        .unwrap_or(0);
+    let e2_off = e2_label.and_then(|l| em.label_off[l as usize]).unwrap_or(0);
     let e2_sig = if e2_off != 0 {
         exit::e2_intern(&a.e2_req)
     } else {

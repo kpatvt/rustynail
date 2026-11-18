@@ -2392,7 +2392,12 @@ fn programs_are_deterministic() {
 fn dump_programs() {
     if let Ok(d) = std::env::var("TR_CORE_DUMP") {
         std::fs::create_dir_all(&d).expect("dir");
-        for p in PROGS.iter().chain(SINK_PROGS).chain(NR_PROGS).chain(A1_PROGS) {
+        for p in PROGS
+            .iter()
+            .chain(SINK_PROGS)
+            .chain(NR_PROGS)
+            .chain(A1_PROGS)
+        {
             std::fs::write(format!("{d}/{}.lua", p.name), p.src).expect("write");
         }
     }
@@ -3352,35 +3357,35 @@ fn b4_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
     for name in ["b4_backend", "b4_boolstore_ix"] {
-    for trace in ["always", "on2", "on"] {
-        for (opts, budget) in [
-            ("", 0),
-            ("+verify", 0),
-            ("+exitstorm=3 +verify", 0),
-            ("+exitstorm=7 +verify +randra=5", 0),
-            ("", 3),
-            ("", 17),
-            ("-loop", 0),
-            ("+emurun +verify", 0),
-            ("-fwd -cse -loop -sink", 0),
-            ("+membudget +verify", 0),
-        ] {
-            let mut j = Job::new(name, trace).opts(opts);
-            if budget != 0 {
-                j = j.budget(budget);
+        for trace in ["always", "on2", "on"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("", 3),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+                ("-fwd -cse -loop -sink", 0),
+                ("+membudget +verify", 0),
+            ] {
+                let mut j = Job::new(name, trace).opts(opts);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                j.limits = ON.into();
+                jobs.push(j);
             }
+            for gc in ["1", "2"] {
+                let mut j = Job::new(name, trace).env("RUSTYNAIL_GC_STRESS", gc);
+                j.limits = ON.into();
+                jobs.push(j);
+            }
+            let mut j = Job::new(name, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
             j.limits = ON.into();
             jobs.push(j);
         }
-        for gc in ["1", "2"] {
-            let mut j = Job::new(name, trace).env("RUSTYNAIL_GC_STRESS", gc);
-            j.limits = ON.into();
-            jobs.push(j);
-        }
-        let mut j = Job::new(name, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
-        j.limits = ON.into();
-        jobs.push(j);
-    }
     }
     let res = compare(jobs);
     for (j, o) in &res {

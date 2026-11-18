@@ -395,10 +395,7 @@ pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
     // (the helper below holds the exclusions)
     let n = ir.snaps.len();
     let mut out = vec![Vec::new(); n];
-    if ir.rec_call.is_some()
-        || ir.rec_ret.is_some()
-        || !ir.segs.is_empty()
-    {
+    if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
         return out;
     }
     let all = mutants::active("side_known_unmod_all");
@@ -428,7 +425,9 @@ pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
             }
             // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one, and a prelude inherits them)
             let all_here = all || (entry_fail && ir.ins[first[s]].op == TOp::Sload);
-            if (k < first[s] || all_here) && tag_of(i.t).is_some() && !o.iter().any(|&(sl, _)| sl == i.a)
+            if (k < first[s] || all_here)
+                && tag_of(i.t).is_some()
+                && !o.iter().any(|&(sl, _)| sl == i.a)
             {
                 o.push((i.a, i.t));
             }
@@ -1112,7 +1111,12 @@ pub fn link_proof(ir: &TraceIr, wb: &[SnapEntry], entry: &[u8; 256], req: &[(u16
     }
     let mut st = *entry;
     for i in &ir.ins {
-        if i.op == TOp::Sload && i.a < 256 && !ir.ins.iter().any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
+        if i.op == TOp::Sload
+            && i.a < 256
+            && !ir
+                .ins
+                .iter()
+                .any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
         {
             st[usize::from(i.a)] = if i.t == Ty::Nil {
                 NIL_ANY
@@ -1163,7 +1167,10 @@ pub fn wb_ents(ir: &TraceIr) -> Vec<(u16, Ty)> {
         if i.op == TOp::Sload
             && i.a != u16::MAX
             && tag_of(i.t).is_some()
-            && !ir.ins.iter().any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
+            && !ir
+                .ins
+                .iter()
+                .any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
             && !out.iter().any(|&(sl, _)| sl == i.a)
         {
             out.push((i.a, i.t));
