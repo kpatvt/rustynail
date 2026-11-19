@@ -835,6 +835,7 @@ pub const NAMES: &[&str] = &[
     "carry_sig_ignored",
     "carry_wb_prune_live",
     "carry_demote_copied",
+    "carry_entry_snap_bare",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -909,7 +910,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 692);
+        assert_eq!(NAMES.len(), 693);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

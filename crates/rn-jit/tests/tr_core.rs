@@ -8039,6 +8039,10 @@ fn r1_regcarry_programs() {
         "r1_copy_slots",
         "r1_live_many",
         "r1_live_flip",
+        "r1_callee_upval",
+        "r1_callee_alt",
+        "r1_callee_open",
+        "r1_callee_coro",
     ];
     let mut jobs = Vec::new();
     for p in progs {
@@ -8046,6 +8050,7 @@ fn r1_regcarry_programs() {
             for lim in [
                 "regcarry=1",
                 "regcarry=1,carrymin=1,carrylive=0",
+                "regcarry=1,carrymin=1,carrylive=0,sidemin=0",
                 "regcarry=2",
                 "regcarry=3,carrymin=1,carrylive=0",
                 "regcarry=0",

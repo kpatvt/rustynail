@@ -2096,7 +2096,10 @@ a carrying transition restores the carried slots, tag included**:
    like to any def (the dead slot is never read before it is rewritten, so a stale value there is unobservable), also for the writeback at the link's pc
    (`mod::pipeline_inner`). `stack_ents`, `entry_ents` and `wb_ents` exclude carried slots (no tag elision, no inherited type), `link_proof` treats them as unknown unless
    the writeback names them. The carry entry skips the room checks of the plain entry, so a side trace with carried loads aborts (`carry-room`) when it needs more room
-   than the parent's checks guarantee (`max_extent` / `max_ci`).
+   than the parent's checks guarantee (`max_extent` / `max_ci`). **The entry snapshot** (TR6d: the snapshot of the hoistable callee-identity guards, the empty map at
+   the head pc, `Recorder::entry_snap`) is taken from the slot map of snapshot 0 (`entry_sm`: the carried loads), not from an empty map: a side trace entered
+   through the carry entry has a stale stack for the slots of the parent's exit map, and an entry guard that fails restores nothing but that snapshot (see the bug story
+   at the end of this section).
 3. *Chains.* Root -> side -> root: the side trace's snapshots are dense in the parent's map, the root's in the carried slots of its run; a side trace attached to a side
    trace takes over the exit map of its parent the same way. Nothing assumes that the stack is complete except the plain entries, and those are only reached after a
    stub or the handler stored the state.
@@ -2114,3 +2117,18 @@ a carrying transition restores the carried slots, tag included**:
    differs), the room check of the carry plan, `r14` as a carry destination, the flush of carry cells (a stale cell would need a flushed side trace re-entered through a
    parent that keeps its stub), the link's tag store (the stack tags are right already in every program tried), `carry_stored_slot`. They are covered by the
    argument above and by the `tr_asm` / `tr_exit` structural tests only.
+
+**Bug story: the entry snapshot of a carried side trace (found with `carrymin=1,carrylive=0,sidemin=0`, fixed on `regcarry-fix`).** The recorder gives the guards that are
+valid at the trace entry (callee identity of an upvalue / global / field call, no store before it, operands entry values) one shared snapshot, `entry_snap`: the empty
+map at the head pc ("re-execute the iteration"). Snapshot 0 of a side trace entered through a carry entry names the carried loads, but this one was built from
+`SlotMap::new(0)`, so it restored nothing for the slots the parent's exit left only in registers. When such a guard failed (the callee of the inner loop had been
+replaced by another function, reached through an upvalue that changes between calls: `r1_callee_upval`, `r1_callee_alt`, `r1_callee_open`; or a table field:
+`r1_callee_alt`'s sibling), the interpreter resumed at the head pc with the stale stack: wrong numbers (`6135667752.500` instead of `212.500`), and, when the stale
+slot was a loop counter, an endless loop (the reported hang of the harness in this mode: the `for` limit / index slot held a leftover, the interpreter ran until killed;
+`chain check` lines of the verbose log count the exits of the hot side trace that never stops). The root had the analogous problem solved by `carry_dense` (copy of the
+shared snapshot for the guards behind the lead run); the side-trace half had no equivalent. The fix is the one line above, rule: **every snapshot of a trace entered
+through a carry entry, the shared entry snapshot included, names every carried slot** (carried loads are ordinary defs to the slot map). Mutant `carry_entry_snap_bare`
+(restores the empty map), caught by `tr_core::r1_regcarry_programs`. Reachability: the faulty path needs a side trace with carried loads (the family's root must
+offer a third entry: with the default `carrymin=4` / `carrylive=1` that is a root with four live carried values, nbody-shaped) whose recording begins with an entry
+guard before any store; no program with the default policy was found that misbehaved before the fix (about twenty variants, see the task report), every miscompiling
+program needed `carrylive=0`; but nothing in the code depends on the policy, so the fix is needed for the default configuration too.

@@ -1073,6 +1073,9 @@ struct Rec {
     /// Index of the first `ASTORE` / `USTORE` (TR6d: no entry guard after it).
     first_store: Option<usize>,
     entry_snap: Option<u32>,
+    /// R1: the slot map of the entry snapshot: empty, except for a side trace entered through a carry entry (the slots the parent's exit hands over in
+    /// registers are defined by carried loads and the stack holds nothing for them, so the entry snapshot must name them like snapshot 0 does).
+    entry_sm: SlotMap,
     // the trace under construction
     b: Builder,
     sm: SlotMap,
@@ -1363,6 +1366,7 @@ impl Rec {
             la_seen: Default::default(),
             first_store: None,
             entry_snap: None,
+            entry_sm: SlotMap::new(0),
             b: Builder::new(cfg.fold, cfg.cse),
             sm: SlotMap::new(nslots),
             path: Vec::new(),
@@ -1590,6 +1594,7 @@ impl Rec {
         self.first_store = None;
         self.ccalls_done = 0;
         self.entry_snap = None;
+        self.entry_sm = SlotMap::new(0);
         self.path.clear();
         self.path_proto.clear();
         self.path_depth.clear();
@@ -2045,6 +2050,9 @@ impl Rec {
                 sm0.def(usize::from(slot), r);
                 self.b.ir.carry_in.push((slot, src, tagok));
             }
+        }
+        if !mutants::active("carry_entry_snap_bare") {
+            self.entry_sm = sm0.clone();
         }
         let frames0 = if mutants::active("fside_frames_dropped") {
             Vec::new()
@@ -3390,14 +3398,7 @@ impl Rec {
                 return Err(AbortReason::TooLong);
             }
             // the slice's `S0R`: the state at H (empty map), after the budget charge (`refund = n`, patched at close)
-            let s = snap::take(
-                &mut self.b.ir,
-                &SlotMap::new(0),
-                self.head,
-                Land::Pre,
-                &[],
-                0,
-            );
+            let s = snap::take(&mut self.b.ir, &self.entry_sm, self.head, Land::Pre, &[], 0);
             debug_assert_eq!(s, tentative);
             self.meta.push(SnapMeta {
                 step: 0,

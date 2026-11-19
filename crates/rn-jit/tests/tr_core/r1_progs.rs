@@ -343,4 +343,142 @@ for k = 1, 200 do work(t, 40, -1) end
 print(work(t, 40, -1))
 "#,
     },
+    Prog {
+        name: "r1_callee_upval",
+        small: false,
+        src: r#"
+-- the callee of the inner loop is an upvalue that changes between calls of the enclosing function: the root's hoisted callee guard fails on entry, a carried side trace
+-- takes over (its own copy of the guard carries the entry snapshot: it must name the carried slots, else the interpreter resumes with a stale stack)
+local function fa(x) return x * 2 end
+local function fb(x) return x * 3 + 1 end
+local function fc(x) return x - 0.5 end
+local fs = { fa, fb, fc }
+local f = fa
+local function run(n, m)
+  local acc = 0
+  for i = 1, n do
+    local base = i * 0.5
+    for j = 1, m do
+      acc = acc + f(base + j)
+    end
+    acc = acc - base
+  end
+  return acc
+end
+local out = {}
+for rep = 1, 90 do
+  f = fs[rep % 3 + 1]
+  out[#out + 1] = string.format("%.3f", run(6, 9))
+end
+print(table.concat(out, " "))
+for rep = 1, 90 do
+  f = fs[(rep // 10) % 3 + 1]
+  out[#out + 1] = string.format("%.3f", run(5, 8))
+end
+print(table.concat(out, " ", 91))
+"#,
+    },
+    Prog {
+        name: "r1_callee_alt",
+        small: false,
+        src: r#"
+-- the callee changes between outer iterations of one call (periods 1..4): the carried side trace of the callee-guard exit links back into the root
+-- callee changes by upvalue between outer iterations of one call
+local function fa(x) return x * 2 end
+local function fb(x) return x * 3 + 1 end
+local function fc(x) return x - 0.5 end
+local fs = { fa, fb, fc }
+local f = fa
+local function run(n, m, per)
+  local acc = 0
+  for i = 1, n do
+    f = fs[(i // per) % 3 + 1]
+    local base = i * 0.5
+    for j = 1, m do acc = acc + f(base + j) end
+    acc = acc - base
+  end
+  return acc
+end
+local out = {}
+for rep = 1, 200 do out[#out + 1] = string.format("%.3f", run(12, 7, 1 + rep % 4)) end
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "r1_callee_open",
+        small: false,
+        src: r#"
+-- the callee is an open upvalue (a local of the running function replaced by a nested closure), then a closed one
+-- open upvalue: f is a local of the running function, replaced by a nested closure in the loop
+local fs = { function(x) return x * 2 end, function(x) return x * 3 + 1 end, function(x) return x - 0.5 end }
+local function run(n, m, per)
+  local f = fs[1]
+  local function setf(k) f = fs[k] end
+  local acc = 0
+  for i = 1, n do
+    setf((i // per) % 3 + 1)
+    local base = i * 0.5
+    for j = 1, m do acc = acc + f(base + j) end
+    acc = acc - base
+  end
+  return acc
+end
+local out = {}
+for rep = 1, 200 do out[#out + 1] = string.format("%.3f", run(12, 7, 1 + rep % 5)) end
+-- closed upvalue: the closure outlives run
+local function mk(k)
+  local f = fs[k]
+  local function set(k2) f = fs[k2] end
+  local function go(n, m)
+    local acc = 0
+    for i = 1, n do
+      local base = i * 0.5
+      for j = 1, m do acc = acc + f(base + j) end
+      acc = acc - base
+    end
+    return acc
+  end
+  return go, set
+end
+local go, set = mk(1)
+for rep = 1, 300 do set((rep // 10) % 3 + 1); out[#out + 1] = string.format("%.3f", go(6, 9)) end
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "r1_callee_coro",
+        small: false,
+        src: r#"
+-- the callee changes across coroutine yields
+-- coroutine: the callee changes across yields
+local fs = { function(x) return x * 2 end, function(x) return x * 3 + 1 end, function(x) return x - 0.5 end }
+local f = fs[1]
+local function body(n, m)
+  local acc = 0
+  for i = 1, n do
+    local base = i * 0.5
+    for j = 1, m do acc = acc + f(base + j) end
+    acc = acc - base
+    if i % 3 == 0 then coroutine.yield(acc) end
+  end
+  return acc
+end
+local out = {}
+for rep = 1, 150 do
+  local co = coroutine.wrap(body)
+  local k = 0
+  local r = co(9, 8)
+  while true do
+    k = k + 1
+    f = fs[(rep // 7 + k) % 3 + 1]
+    local ok, r2 = pcall(co)
+    if not ok then break end
+    r = r + r2
+    if k > 20 then break end
+  end
+  out[#out + 1] = string.format("%.3f", r)
+end
+print(table.concat(out, " "))
+"#,
+    },
 ];
