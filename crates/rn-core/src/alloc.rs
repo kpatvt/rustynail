@@ -21,7 +21,7 @@ pub const BLOCK_ALIGN: usize = 16;
 ///
 /// Returns null on failure, leaving any existing block untouched. Blocks must be aligned to
 /// [`BLOCK_ALIGN`].
-pub trait Allocator {
+pub trait Allocator: std::any::Any {
     /// # Safety
     /// `ptr` must be null or a live block previously returned by this allocator with size exactly `old`.
     unsafe fn realloc(&mut self, ptr: *mut u8, old: usize, new: usize) -> *mut u8;
@@ -45,6 +45,32 @@ pub trait Allocator {
     unsafe fn free_block(&mut self, ptr: *mut u8, old: usize) {
         // SAFETY: forwarded caller contract.
         unsafe { self.realloc(ptr, old, 0) };
+    }
+
+    /// H4: frees the three blocks of a dead table in one call: the header (`hdr`, `hdr_size` bytes, always live), the hash part
+    /// `(ptr, size)` and the array part `(ptr, size)` (`size == 0`: absent). The default forwards to
+    /// [`Allocator::free_block`] per block.
+    ///
+    /// # Safety
+    /// As for [`Allocator::free_block`] for every block with a non-zero size.
+    #[inline]
+    unsafe fn free_table_blocks(
+        &mut self,
+        hdr: *mut u8,
+        hdr_size: usize,
+        hash: (*mut u8, usize),
+        arr: (*mut u8, usize),
+    ) {
+        // SAFETY: forwarded caller contract.
+        unsafe {
+            self.free_block(hdr, hdr_size);
+            if hash.1 != 0 {
+                self.free_block(hash.0, hash.1);
+            }
+            if arr.1 != 0 {
+                self.free_block(arr.0, arr.1);
+            }
+        }
     }
 }
 
@@ -234,6 +260,27 @@ impl Allocator for PoolAllocator {
     }
 
     #[inline]
+    unsafe fn free_table_blocks(
+        &mut self,
+        hdr: *mut u8,
+        hdr_size: usize,
+        hash: (*mut u8, usize),
+        arr: (*mut u8, usize),
+    ) {
+        for (p, sz) in [(hdr, hdr_size), hash, arr] {
+            if sz == 0 {
+                continue;
+            }
+            if sz <= POOL_MAX {
+                self.free_small(p, Self::class(sz));
+            } else {
+                // SAFETY: forwarded contract: a live system block of `sz` bytes.
+                unsafe { SystemAllocator.realloc(p, sz, 0) };
+            }
+        }
+    }
+
+    #[inline]
     unsafe fn realloc(&mut self, ptr: *mut u8, old: usize, new: usize) -> *mut u8 {
         let old = if ptr.is_null() { 0 } else { old };
         let small_old = old != 0 && old <= POOL_MAX;
@@ -277,9 +324,81 @@ impl Allocator for PoolAllocator {
     }
 }
 
+/// H4: the allocator of a [`Mem`]. The default [`PoolAllocator`] is held by value so that its calls are direct (inlinable)
+/// instead of virtual: every table allocation and every sweep free goes through here.
+enum AllocImpl {
+    Pool(Box<PoolAllocator>),
+    Dyn(Box<dyn Allocator>),
+}
+
+impl AllocImpl {
+    fn new(a: Box<dyn Allocator>) -> Self {
+        let any: &dyn std::any::Any = &*a;
+        if any.is::<PoolAllocator>() {
+            let b: Box<dyn std::any::Any> = a;
+            match b.downcast::<PoolAllocator>() {
+                Ok(p) => AllocImpl::Pool(p),
+                Err(_) => unreachable!("type checked above"),
+            }
+        } else {
+            AllocImpl::Dyn(a)
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn realloc(&mut self, ptr: *mut u8, old: usize, new: usize) -> *mut u8 {
+        // SAFETY: forwarded caller contract.
+        unsafe {
+            match self {
+                AllocImpl::Pool(p) => p.realloc(ptr, old, new),
+                AllocImpl::Dyn(d) => d.realloc(ptr, old, new),
+            }
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn alloc_block(&mut self, new: usize) -> *mut u8 {
+        // SAFETY: forwarded caller contract.
+        unsafe {
+            match self {
+                AllocImpl::Pool(p) => p.alloc_block(new),
+                AllocImpl::Dyn(d) => d.alloc_block(new),
+            }
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn free_block(&mut self, ptr: *mut u8, old: usize) {
+        // SAFETY: forwarded caller contract.
+        unsafe {
+            match self {
+                AllocImpl::Pool(p) => p.free_block(ptr, old),
+                AllocImpl::Dyn(d) => d.free_block(ptr, old),
+            }
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn free_table_blocks(
+        &mut self,
+        hdr: *mut u8,
+        hdr_size: usize,
+        hash: (*mut u8, usize),
+        arr: (*mut u8, usize),
+    ) {
+        // SAFETY: forwarded caller contract.
+        unsafe {
+            match self {
+                AllocImpl::Pool(p) => p.free_table_blocks(hdr, hdr_size, hash, arr),
+                AllocImpl::Dyn(d) => d.free_table_blocks(hdr, hdr_size, hash, arr),
+            }
+        }
+    }
+}
+
 /// Allocator + accounting. One per `Heap`.
 pub struct Mem {
-    alloc: Box<dyn Allocator>,
+    alloc: AllocImpl,
     total: usize,
     /// Bytes of "buffer" blocks that count toward the memory limit but not toward the collector's
     /// debt (the reference builds big strings in `luaL_Buffer` boxes outside `luaM_`).
@@ -295,7 +414,7 @@ pub struct Mem {
 impl Mem {
     pub fn new(alloc: Box<dyn Allocator>) -> Self {
         Mem {
-            alloc,
+            alloc: AllocImpl::new(alloc),
             total: 0,
             ext: 0,
             limit: usize::MAX,
@@ -503,6 +622,27 @@ impl Mem {
         self.total -= counted;
     }
 
+    /// H4: free the blocks of a dead table with one allocator call and one accounting update: `counted` is the sum of the accounted
+    /// sizes (what the per-block [`Mem::free`] / [`Mem::free_counted`] calls subtracted).
+    ///
+    /// # Safety
+    /// `hdr` is a live block of `hdr_size` bytes and each other block is absent (`size == 0`) or live with exactly that allocated
+    /// size; `counted` is the sum of their currently accounted sizes.
+    #[inline]
+    pub unsafe fn free_table_blocks(
+        &mut self,
+        hdr: *mut u8,
+        hdr_size: usize,
+        hash: (*mut u8, usize),
+        arr: (*mut u8, usize),
+        counted: usize,
+    ) {
+        debug_assert!(self.total >= counted);
+        // SAFETY: forwarded caller contract; freeing never fails.
+        unsafe { self.alloc.free_table_blocks(hdr, hdr_size, hash, arr) };
+        self.total -= counted;
+    }
+
     /// Change the accounted size of a block that is not reallocated (it has spare capacity) from `old` to `new` bytes, with the
     /// limit check `realloc` makes when growing.
     #[inline]
@@ -625,6 +765,45 @@ mod tests {
         // SAFETY: q is a live 300-byte block from m.
         unsafe { m.free(q.as_ptr(), 300) };
         assert_eq!(m.total_bytes(), 0);
+    }
+
+    /// H4: `free_table_blocks` frees header + hash + array blocks (pool and system allocators, small and large blocks) and
+    /// subtracts exactly the counted bytes; the pool is detected through `Any`.
+    #[test]
+    fn free_table_blocks_accounting() {
+        for pooled in [false, true] {
+            let a: Box<dyn Allocator> = if pooled {
+                Box::new(PoolAllocator::new())
+            } else {
+                Box::new(SystemAllocator)
+            };
+            let mut m = Mem::new(a);
+            assert_eq!(matches!(m.alloc, AllocImpl::Pool(_)), pooled);
+            for (hs, ars) in [(0usize, 0usize), (96, 0), (0, 40), (96, 40), (4096, 70_000)] {
+                let h = m.alloc(56).unwrap().as_ptr();
+                let hash = if hs != 0 {
+                    m.alloc(hs).unwrap().as_ptr()
+                } else {
+                    std::ptr::null_mut()
+                };
+                let arr = if ars != 0 {
+                    m.alloc(ars).unwrap().as_ptr()
+                } else {
+                    std::ptr::null_mut()
+                };
+                assert_eq!(m.total_bytes(), 56 + hs + ars);
+                // SAFETY: live blocks of exactly these sizes, all counted.
+                unsafe { m.free_table_blocks(h, 56, (hash, hs), (arr, ars), 56 + hs + ars) };
+                assert_eq!(m.total_bytes(), 0);
+            }
+            // the pool reuses a freed block of the same class
+            let p = m.alloc(56).unwrap().as_ptr();
+            // SAFETY: live 56-byte block.
+            unsafe { m.free(p, 56) };
+            if pooled {
+                assert_eq!(m.alloc(56).unwrap().as_ptr(), p);
+            }
+        }
     }
 
     #[test]

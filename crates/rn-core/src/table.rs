@@ -1790,12 +1790,31 @@ impl Heap {
     ///
     /// # Safety
     /// `t` must be a live table of this heap; it is dead afterwards.
+    #[inline(always)]
     pub(crate) unsafe fn free_table(&mut self, t: *mut Table) {
         // SAFETY: T1/T2; object allocated with `size_of::<Table>()`.
+        // H4: one allocator call and one accounting update for the header, hash and array blocks (the sweep frees ~30 M
+        // dead tables in `binary_trees`)
         unsafe {
-            freehash(self, t);
-            freearray(self, t);
-            self.mem.free(t.cast(), std::mem::size_of::<Table>());
+            let mut counted = std::mem::size_of::<Table>();
+            let mut hash = (std::ptr::null_mut(), 0);
+            let mut arr = (std::ptr::null_mut(), 0);
+            if !isdummy(t) {
+                let ls = (*t).lsizenode;
+                hash = (
+                    (*t).node.cast::<u8>().sub(prefix_bytes(ls)),
+                    sizehash_alloc(ls),
+                );
+                counted += sizehash_bytes(ls);
+            }
+            let asize = (*t).asize;
+            if asize != 0 {
+                let oc = arrcap(asize);
+                arr = ((*t).array.sub(oc as usize * 8), concretesize(oc));
+                counted += concretesize(asize);
+            }
+            self.mem
+                .free_table_blocks(t.cast(), std::mem::size_of::<Table>(), hash, arr, counted);
         }
     }
 }

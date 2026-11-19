@@ -55,7 +55,16 @@ impl Heap {
             } else {
                 (*prev).next = next;
             }
-            self.free_obj(curr);
+            // H4: dead tables are the commonest case; freed here (no `free_obj` frame, no kind dispatch)
+            #[cfg(feature = "jit_trace")]
+            let is_plain_table = |h: &Self| (*curr).tt == LUA_VTABLE && h.gc.watch.is_empty();
+            #[cfg(not(feature = "jit_trace"))]
+            let is_plain_table = |_h: &Self| (*curr).tt == LUA_VTABLE;
+            if is_plain_table(self) {
+                self.free_table(curr.cast());
+            } else {
+                self.free_obj(curr);
+            }
         }
     }
 
