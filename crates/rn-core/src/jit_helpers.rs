@@ -625,6 +625,20 @@ pub unsafe extern "C" fn jit_get(th: *mut Thread, ci: *mut CallInfo, instr: u64,
             return H_DONE;
         }
     }
+    // H1a: an integer key of a table (`t[i]`, `t[1]` on `{}`): the raw `luaH_getint`; a nil / absent result of a table without
+    // a metatable is the final answer (no `__index` to consult). A metatable present: the generic chain below.
+    if t.is_table() && matches!(op, OpCode::Geti | OpCode::Gettable) {
+        if let Some(k) = key.as_int() {
+            // SAFETY: the tag was just checked.
+            let h = unsafe { t.table_unchecked() };
+            let v = h.get_int(k);
+            if !v.is_nil() || h.metatable().is_none() {
+                let base = ci.r().func.0 + 1;
+                st.set(StkId(base + a as usize), v);
+                return H_DONE;
+            }
+        }
+    }
     let mut obj = t;
     let mut found = None;
     for _ in 0..MAXTAGLOOP {
