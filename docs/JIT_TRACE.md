@@ -2122,8 +2122,7 @@ a carrying transition restores the carried slots, tag included**:
 valid at the trace entry (callee identity of an upvalue / global / field call, no store before it, operands entry values) one shared snapshot, `entry_snap`: the empty
 map at the head pc ("re-execute the iteration"). Snapshot 0 of a side trace entered through a carry entry names the carried loads, but this one was built from
 `SlotMap::new(0)`, so it restored nothing for the slots the parent's exit left only in registers. When such a guard failed (the callee of the inner loop had been
-replaced by another function, reached through an upvalue that changes between calls: `r1_callee_upval`, `r1_callee_alt`, `r1_callee_open`; or a table field:
-`r1_callee_alt`'s sibling), the interpreter resumed at the head pc with the stale stack: wrong numbers (`6135667752.500` instead of `212.500`), and, when the stale
+replaced by another function, reached through an upvalue that changes between calls: `r1_callee_upval`, `r1_callee_alt`, `r1_callee_open`; a table field `t.f` behaves the same), the interpreter resumed at the head pc with the stale stack: wrong numbers (`6135667752.500` instead of `212.500`), and, when the stale
 slot was a loop counter, an endless loop (the reported hang of the harness in this mode: the `for` limit / index slot held a leftover, the interpreter ran until killed;
 `chain check` lines of the verbose log count the exits of the hot side trace that never stops). The root had the analogous problem solved by `carry_dense` (copy of the
 shared snapshot for the guards behind the lead run); the side-trace half had no equivalent. The fix is the one line above, rule: **every snapshot of a trace entered
