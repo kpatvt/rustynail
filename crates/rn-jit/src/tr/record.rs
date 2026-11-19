@@ -4116,6 +4116,9 @@ impl Rec {
                 }
             }
         }
+        if let Some(r) = self.int_absent(&tv, t, key, k)? {
+            return Ok(r);
+        }
         let (tbl, ev) = self.table_for(&tv, t.1, k)?;
         // M1: a nil element of the array part (`{ "if", c, b, e }` with `e == nil`) is an `ALOAD` of type nil (any nil variant)
         let ev = match ev {
@@ -4136,6 +4139,51 @@ impl Rec {
         }
         let aref = self.array_guards(t.0, key, tbl, ety != Ty::Nil)?;
         self.guard(TOp::Aload, ety, aref, NOREF, 1)
+    }
+
+    /// H1b (CP5): `t[k]` for an integer key that is outside the array part and absent from the hash part of a table WITHOUT a metatable
+    /// (the leaf `tree[1]` on `{}`): the result is nil. The proof is the conjunction of: the TR14 guard of the absent metatable (a
+    /// metatable added later could have `__index`), `key - 1 >=u asize` (the array part has not grown over the key), the node-count guard
+    /// and `HREFV` with `HREF_INT | HREF_ABS` (the `hashint` chain walk exits when it FINDS the key, so a key inserted later is found).
+    /// `None`: not this case (the caller's other paths apply, aborts included).
+    fn int_absent(&mut self, tv: &Value, t: (Ref, Ty), key: Ref, k: i64) -> R<Option<Ref>> {
+        if t.1 != Ty::Tab || !super::hashint_enabled() {
+            return Ok(None);
+        }
+        let Some(tbl) = tv.as_table() else {
+            return Ok(None);
+        };
+        if tbl.metatable().is_some()
+            || (1..=i64::from(tbl.array_size())).contains(&k)
+            || tbl.int_node(k).is_some()
+            || tbl.lsizenode() > 30
+        {
+            return Ok(None);
+        }
+        self.handle(tbl);
+        if !mutants::active("iabs_meta_skip") {
+            self.meta_guard(t.0, tbl, rn_core::meta::Tm::Index)?;
+        }
+        if !mutants::active("iabs_array_guard_skip") {
+            let asize = self.fload(t.0, Field::Asize, Ty::U32)?;
+            let one = self.kint(1);
+            let idx0 = self.ins(TOp::Sub, Ty::Int, key, one)?;
+            self.guard(TOp::Uge, Ty::I64, idx0, asize, 0)?;
+        }
+        if !mutants::active("iabs_lsize_skip") {
+            let ls = self.fload(t.0, Field::Lsizenode, Ty::U32)?;
+            let kl = self.kint(i64::from(tbl.lsizenode()));
+            self.guard(TOp::Eq, Ty::I64, ls, kl, 0)?;
+        }
+        let node = self.fload(t.0, Field::Node, Ty::P64)?;
+        self.guard(
+            TOp::Hrefv,
+            Ty::P64,
+            node,
+            key,
+            u32::from(tbl.lsizenode()) | HREF_INT | HREF_ABS,
+        )?;
+        Ok(Some(self.b.ir.konst(KVal::Pri(Ty::Nil))))
     }
 
     /// Is `key` the IR value `#t + 1` of the table `t` (the append idiom)?

@@ -1526,6 +1526,26 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "h1_hash_int_keys")],
     },
     Row {
+        name: "iabs_meta_skip",
+        owner: "H1b",
+        dets: &[d("tr_record_calls", "h1b_absent_int_key_records_its_guards"), d("tr_core", "h1b_int_absent")],
+    },
+    Row {
+        name: "iabs_array_guard_skip",
+        owner: "H1b",
+        dets: &[d("tr_record_calls", "h1b_absent_int_key_records_its_guards"), d("tr_core", "h1b_int_absent")],
+    },
+    Row {
+        name: "iabs_lsize_skip",
+        owner: "H1b",
+        dets: &[d("tr_record_calls", "h1b_absent_int_key_records_its_guards"), d("tr_core", "h1b_int_absent")],
+    },
+    Row {
+        name: "fnpromo_kl_keep",
+        owner: "H1b",
+        dets: &[d("tr_core", "fn_root_short_recordings_blacklist_the_head")],
+    },
+    Row {
         name: "fcfn_family_excluded",
         owner: "BUNDLE-H1",
         dets: &[d("tr_core", "h1_towers_frame_sides")],

@@ -1834,6 +1834,72 @@ fn h1_hash_int_keys() {
     }
 }
 
+/// H1b (CP5): the absent integer-key read in traces (`Rec::int_absent`: metatable guard, `key - 1 >=u asize`, node-count guard, integer
+/// `HREFV` with `HREF_ABS`) in every trace mode with `+verify`, exit storms, small budgets, stack-move stress, the optimiser off, the
+/// limits of a process (recursion traces: the binary-tree leaf), and with the integer hash path off. Detector of `iabs_meta_skip`,
+/// `iabs_array_guard_skip`, `iabs_lsize_skip` (with the record-level test `h1b_absent_int_key_records_its_guards`), `habs_found_ignored`.
+#[test]
+fn h1b_int_absent() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 17),
+            ("-loop", 0),
+            ("-fwd", 0),
+        ] {
+            let mut j = Job::new("h1b_int_absent", trace).opts(opts);
+            if budget != 0 {
+                j = j.budget(budget);
+            }
+            jobs.push(j.clone());
+            j.limits = H1_PROC.into();
+            jobs.push(j);
+        }
+        jobs.push(Job::new("h1b_int_absent", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+        jobs.push(Job::new("h1b_int_absent", trace).env("RUSTYNAIL_JIT_HASHINT", "0"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() {
+            assert!(
+                o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
+/// H1b (CP5): the binary_trees leaf (`tree[1]` on `{}`) records as an absent-key read, so the leaf exit of `ItemCheck`'s recursion root gets a
+/// side trace instead of staying a blacklisted exit into tier 1 (the process limits; same output in every mode).
+#[test]
+fn h1b_binary_tree_leaf_side_trace() {
+    let mut j = Job::new("h1b_bintree", "on");
+    j.limits = H1_PROC.into();
+    let mut j2 = Job::new("h1b_bintree", "on2").opts("+verify");
+    j2.limits = H1_PROC.into();
+    let res = compare(vec![
+        j,
+        j2,
+        Job::new("h1b_bintree", "always").opts("+verify"),
+    ]);
+    for (j, o) in &res {
+        if !j.limits.is_empty() {
+            assert!(
+                o.stats.side_installed >= 1,
+                "{} [{}]: the leaf got no side trace: {}",
+                j.prog,
+                j.trace,
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// BUNDLE-H1: one trace serves every integer key of a big hash part: the exits of a loop over 200 hash keys stay a handful (a wrong main
 /// position or a walk that stops early is a miss, an exit per key). Detector of `hrefi_mod_size`.
 #[test]
@@ -2947,11 +3013,11 @@ fn fn_root_final_exit_gets_no_side_trace() {
 }
 
 /// A function whose recordings all end short (a leaf call, below `fnmin` bytecodes) is blacklisted after `MAX_FN_SHORT`
-/// attempts, not after the 16 of a short loop. Mutant `fn_short_budget_ignored`.
+/// attempts, not after the 16 of a short loop. Mutants `fn_short_budget_ignored`, `fnpromo_kl_keep`.
 #[test]
 fn fn_root_short_recordings_blacklist_the_head() {
-    // `fnpromo=0` is the rule itself (four short recordings blacklist the head); the shipped `fnpromo` gives the head one more recording
-    // (a promotion round) before it is blacklisted for good
+    // `fnpromo=0` is the rule itself (four short recordings blacklist the head); the shipped `fnpromo` gives the head two more recordings
+    // (a promotion round, H1b: the promoted root's leaf-sample budget is not spent) before it is blacklisted for good
     let mut j = Job::new("fnroot_leafy", "always");
     // (`centry=0`: the program's `leafy` is called from `gsub`, a C-entered function root that is exempt from `fnmin`)
     j.limits = "fnroot=1,fnmin=64,fnpromo=0,centry=0".into();
@@ -2960,7 +3026,7 @@ fn fn_root_short_recordings_blacklist_the_head() {
     let res = compare(vec![j, j2]);
     for (j, o) in &res {
         let short = o.stats.aborts.get("FnShort").copied().unwrap_or(0);
-        let want = if j.limits.contains("fnpromo=0") { 4 } else { 5 };
+        let want = if j.limits.contains("fnpromo=0") { 4 } else { 6 };
         assert_eq!(
             short,
             want,

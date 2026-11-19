@@ -342,4 +342,134 @@ for r = 1, 4 do out[#out + 1] = f(100); cal = add1; G = add1 end
 print(table.concat(out, " "))
 "#,
     },
+    Prog {
+        name: "h1b_int_absent",
+        small: true,
+        src: r##"
+-- H1b (CP5): reads of integer keys that are absent (outside the array part, not in the hash part) of tables without a metatable, in
+-- loops and in a recursion whose leaf is the absent read; the table changes under the trace: metatable with __index added later or
+-- removed, array growth over the key, keys inserted into the hash part, rehash, float / zero / negative / huge keys.
+local function rd(t, k) return t[k] end
+local function item(t)
+  if t[1] then return 1 + item(t[1]) + item(t[2]) end
+  return 1
+end
+local function bottom(d)
+  if d > 0 then return { bottom(d - 1), bottom(d - 1) } end
+  return {}
+end
+local out = {}
+local tot = 0
+for i = 1, 40 do tot = tot + item(bottom(6)) end
+out[#out + 1] = tot
+-- a leaf that grows an element (the root of the next run is a node)
+local function mix(n)
+  local s = 0
+  for i = 1, n do
+    local t = {}
+    if i % 5 == 0 then t[1] = i end
+    if i % 7 == 0 then t[2] = i end
+    if i % 11 == 0 then t[-1] = i end
+    if i % 13 == 0 then t[1 << 40] = i end
+    s = s + (rd(t, 1) or 0) + (rd(t, 2) or 0) + (rd(t, -1) or 0) + (rd(t, 1 << 40) or 0) + (rd(t, 0) or 0)
+  end
+  return s
+end
+for r = 1, 30 do mix(60) end
+out[#out + 1] = mix(300)
+-- one table: keys appear (hash insertion, array growth, rehash) and disappear between the reads
+local function probe(t, n)
+  local s = 0
+  for i = 1, n do
+    s = s + (rd(t, 5) or 0) + (rd(t, 6) or 0) + (rd(t, 1000) or 0) + (rd(t, -5) or 0)
+  end
+  return s
+end
+local t = {}
+for r = 1, 40 do probe(t, 20) end
+out[#out + 1] = probe(t, 50)
+t[5] = 50
+out[#out + 1] = probe(t, 50)
+t[6] = 60; t[1000] = 1
+out[#out + 1] = probe(t, 50)
+for i = 1, 40 do t[i] = i end
+out[#out + 1] = probe(t, 50)
+for i = 1, 40 do t[i] = nil end
+t[1000] = nil
+out[#out + 1] = probe(t, 50)
+t[-5] = 3
+out[#out + 1] = probe(t, 50)
+-- a metatable added later, with __index (table, function) and without; then removed
+local mt = { __index = function(_, k) return k end }
+setmetatable(t, mt)
+out[#out + 1] = probe(t, 50)
+setmetatable(t, { __index = { [5] = 1, [6] = 2, [1000] = 3, [-5] = 4 } })
+out[#out + 1] = probe(t, 50)
+setmetatable(t, {})
+out[#out + 1] = probe(t, 50)
+setmetatable(t, nil)
+out[#out + 1] = probe(t, 50)
+-- the same table, hot without a metatable, then a metatable with __index arrives between two calls of the compiled loop
+local function hot(u, n)
+  local s = 0
+  for i = 1, n do s = s + (u[3] or 0) + (u[i + 100] or 0) end
+  return s
+end
+local hu = {}
+for r = 1, 60 do hot(hu, 30) end
+out[#out + 1] = hot(hu, 30)
+setmetatable(hu, { __index = function(_, k) return 1 end })
+out[#out + 1] = hot(hu, 30)
+setmetatable(hu, { __index = { [3] = 5 } })
+out[#out + 1] = hot(hu, 30)
+setmetatable(hu, nil)
+out[#out + 1] = hot(hu, 30)
+-- fresh tables, the metatable arrives at the same site in the middle of the loop
+local function lf(n, m)
+  local s = 0
+  for i = 1, n do
+    local u = {}
+    if i > m then setmetatable(u, mt) end
+    s = s + (rd(u, 3) or 0) + (rd(u, 4.0) or 0)
+  end
+  return s
+end
+for r = 1, 30 do lf(40, 1000) end
+out[#out + 1] = lf(100, 60)
+-- float keys: integral (normalised), fractional, huge
+local fk = { 1.0, 2.5, 3.0, 1e300, -0.0, 0.5 }
+local function fl(tt, n)
+  local s = 0
+  for i = 1, n do
+    for j = 1, #fk do s = s + (rd(tt, fk[j]) or 0) end
+  end
+  return s
+end
+local ft = {}
+for r = 1, 30 do fl(ft, 10) end
+out[#out + 1] = fl(ft, 30)
+ft[3] = 7; ft[0] = 5
+out[#out + 1] = fl(ft, 30)
+print(table.concat(out, " "))
+"##,
+    },
+    Prog {
+        name: "h1b_bintree",
+        small: true,
+        src: r##"
+-- H1b (CP5): the binary_trees shape: the leaf `tree[1]` on `{}` is an absent integer key; the leaf exit of the recursion root gets a side trace
+local function BottomUpTree(depth)
+  if depth > 0 then depth = depth - 1; local left, right = BottomUpTree(depth), BottomUpTree(depth); return { left, right }
+  else return {} end
+end
+local function ItemCheck(tree) if tree[1] then return 1 + ItemCheck(tree[1]) + ItemCheck(tree[2]) else return 1 end end
+local out = {}
+for depth = 4, 10, 2 do
+  local check = 0
+  for i = 1, 2 ^ (12 - depth) do check = check + ItemCheck(BottomUpTree(depth)) end
+  out[#out + 1] = check
+end
+print(table.concat(out, " "))
+"##,
+    },
 ];

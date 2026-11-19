@@ -274,6 +274,11 @@ pub const NAMES: &[&str] = &[
     "hrefi_lsize_skip",
     "hashint_nil_meta_skip",
     "hashint_newindex_skip",
+    // H1b (CP5): the absent integer-key read in traces (`Rec::int_absent`)
+    "iabs_meta_skip",
+    "iabs_array_guard_skip",
+    "iabs_lsize_skip",
+    "fnpromo_kl_keep",
     "fcfn_family_excluded",
     "fcfn_cells_off",
     "fck_ignored",
@@ -916,7 +921,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 698);
+        assert_eq!(NAMES.len(), 702);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

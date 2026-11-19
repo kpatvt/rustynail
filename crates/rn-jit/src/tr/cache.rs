@@ -1921,6 +1921,12 @@ impl TrProto {
         }
         self.fnpromo.set(true);
         h.k.set(0);
+        // H1b: the promoted generic root gets one more leaf-sample retry than the single one `kl` left it (`FnShort` counted before the
+        // promotion made the first post-promotion sample the last): a recursive function whose leaf invocations are half of the calls
+        // (`binary_trees`' `ItemCheck`) otherwise dies on a run of leaf samples. Hopeless heads pay one more recording.
+        if !mutants::active("fnpromo_kl_keep") {
+            h.kl.set(MAX_FN_SHORT.saturating_sub(2));
+        }
         h.last_reason.set(None);
         let p = penalty(w as u8, self.rand4(h.pc));
         self.to_warm_keep(i, p);

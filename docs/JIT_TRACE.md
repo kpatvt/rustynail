@@ -2260,3 +2260,57 @@ awfy/nbody 555.6M (unchanged to 0.02 %). Against 9250356 no program of the check
 not compile cost is the run time of its polymorphic shape guards: `shapeguard=0` is 0.6 % above 108b935).
 **Mutants:** none added (registry 698): nothing here changes what a trace may assume or a guard's meaning; the mutants that pin the touched code (`entry2_transitive_stale`, `entry_inherit_wrong_slot`,
 `tagskip_*`, `side_known_unmod_all`, `shape_*`, `carry_*`, the dense-store mutant) all stay caught.
+
+## 18. H1: absent integer keys (H1a tier-1 get fast path, H1b = CP5 absent-key read in traces)
+
+Source: `docs/STUDY_ALLOC_CALL.md` (H1; `binary_trees`' leaf `tree[1]` on `{}`, parked as CP5 in `docs/JIT_PARKED.md` C68).
+
+**H1a (`rn-core/src/jit_helpers.rs::jit_get`).** `GETI` / `GETTABLE` with an integer key on a table: `TableRef::get_int` (the array part, then the hash part); a non-nil result, or a nil / absent result of a table
+**without a metatable**, is the answer (`H_DONE`). A metatable present with a nil result, a float key (also an integral one: `GETTABLE` with a float register), a non-table or any other opcode keep the generic
+`__index` chain below it unchanged. Instructions: `binary_trees 17` 19483 M -> 18774 M (-3.6 %), cycles -4 %. Tests: `tests/vm/jit_h1_01_absent_int_key.lua` (vm corpus against the reference: leaf reads, a
+metatable added later / removed, `__index` function and table chains, array growth and shrink between reads, zero / negative / huge / float keys, error messages of non-table values).
+
+**H1b (`tr/record.rs::int_absent`, called from `array_get_k` before `table_for`).** The read `t[k]` with `k` an `Int` (or an exactly integral float, `F2I_EXACT`) outside the array part, **absent from the
+hash part** (`TableRef::int_node(k) == None`, so not even a nil-valued node) of a table **without a metatable** records:
+
+1. the TR14 metatable guard (`metatable == 0`: a metatable added later may hold `__index`, so the trace exits);
+2. `UGE key - 1, asize` (the array part has not grown over the key; 5.4: a key outside the real array part never touches `alimit` in the interpreter either);
+3. `EQ lsizenode, #n` (the node count the walk below is compiled for);
+4. `HREFV node, key` with the op bits `lsizenode | HREF_INT | HREF_ABS`: the `hashint` chain walk (main position `key % ((sizenode - 1) | 1)`, key tag `LUA_VNUMINT`, 64-bit key compare, `next` links) that
+   **exits when it finds the key** and falls through when the chain ends. Both bits already existed (`HREF_INT` for present keys, `HREF_ABS` for the dynamic string-key absence proof; the assembler form
+   covers the combination: no new IR op, no new aux form, `interp.rs` models it as "exit if a known node holds the key").
+
+The result is the constant nil (no `HLOAD`). Soundness: the recorded path is the interpreter's `luaH_getint` -> `luaH_getn`-free hash miss -> `__index` absent, and every input of that path is a guard
+(metatable, array size, node count, the walk itself). A key inserted into the hash part later is found by the walk (exit); an array part that grows over the key fails guard 2; a rehash that
+changes the node count fails guard 3; a rehash with the same node count re-walks the new chain at run time (the walk reads the table when it executes, it does not embed a node index). Only tables without a
+metatable are recorded (a table with a metatable keeps `mm_index_int` / `table_for` as before).
+Knob: `RUSTYNAIL_JIT_HASHINT=0` (the integer hash path of H1) also switches this off.
+
+**The second part of the fix: `fnpromo` kept the head's leaf-sample budget (`cache.rs::promote_fn`).** With the leaf recorded as a short trace instead of an `IntMiss` abort, the `FnShort` rule
+(leaf-call samples; `MAX_FN_SHORT = 4` per head, `kl`) decided the fate of `ItemCheck`: its probe head took four leaf samples in a row (the retry distances are phase-locked with the pre-order of the tree), was
+blacklisted, promoted to a generic root (`fnpromo`, "a fresh abort budget") and blacklisted again by the next leaf sample because `promote_fn` reset `k` but not `kl`: `binary_trees` then ran with *fewer*
+traces than before (instructions +2 %, entered 22 k instead of 1.7 M). `promote_fn` now sets `kl = MAX_FN_SHORT - 2` (the promoted root gets two samples, not one). Price: a head that never records anything
+but leaves pays one more recording (about 0.1-0.5 M instructions each: deltablue has several such heads; a full reset to 0 cost deltablue +1.9 %, havlak +0.8 %, awfy/json +1.0 %, so it was not used). Mutant
+`fnpromo_kl_keep` (the old behaviour; `tr_core::fn_root_short_recordings_blacklist_the_head` now expects 6 `FnShort` aborts with promotion, 4 without).
+
+**Tests.** `tr_record_calls::h1b_absent_int_key_records_its_guards` (IR: the metatable `EQ`, the `UGE` against `FLOAD asize`, the node-count `EQ`, the integer `HREFV` with `HREF_ABS`, no `HLOAD`),
+`tr_core::h1b_int_absent` (program `h1b_int_absent`: binary-tree leaf recursion, leaf reads of tables that get an element, a table that gains and loses keys between calls of the compiled loop (hash insertion,
+array growth over the key, rehash, nil-ing), a metatable with `__index` (function, table, empty) added and removed between calls, float / zero / negative / 2^40 keys; every trace mode with `+verify`, exit storms,
+budget 17, `-loop`, `-fwd`, the process limits (recursion traces), stack-move stress, `RUSTYNAIL_JIT_HASHINT=0`), `tr_core::h1b_binary_tree_leaf_side_trace` (program `h1b_bintree`: at least one side trace under the
+process limits), `tests/vm/jit_h1_01_absent_int_key.lua`.
+**Mutants** (registry 698 -> 702): `iabs_meta_skip`, `iabs_array_guard_skip`, `iabs_lsize_skip` (the three guards; caught by the IR test, the last two also by `h1b_int_absent`; `iabs_meta_skip` also by
+`h1b_int_absent` through its `hot` section), `fnpromo_kl_keep`. `habs_found_ignored` (the walk) stays caught by `dm_programs`.
+
+**Results** (release `rnlua`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, equal-length paths; instructions exact, cycles +-2 %):
+
+| program | base fa155dd | H1a | H1a + H1b |
+|---|---:|---:|---:|
+| binary_trees 17 instructions | 19483 M | 18774 M (-3.6 %) | 15504 M (-20.4 %) |
+| binary_trees 17 cycles | 4.01-4.07 G | 3.79-3.93 G | 3.27-3.35 G (-18 %) |
+| `[trace] side traces` installed (n = 14) | 1 | 1 | 2 |
+| lru_cache | 403.7 M | 399.9 M | 336.3 M (-16.7 %) |
+| roguelike_turns | 3029 M | 3006 M | 2817 M (-7.0 %) |
+
+Check set (instructions vs the base): fib 8210.6 M, fannkuch, queens, spectral_norm, matmul, mandelbrot, programs/nbody 2027.3 M, awfy/nbody 555.6 M, cd, game_loop, table_hash, json, bounce,
+field_method, oop_methods, raytrace (+0.02 %) unchanged to 0.01 %; deltablue +0.07 %, havlak -0.3 %, awfy/json -0.4 %, richards +0.3 % (the extra recording of an abandoned head); astar_jumper
+moves between 4.58 G and 5.07 G from run to run in both binaries (bimodal trace formation, not this change).

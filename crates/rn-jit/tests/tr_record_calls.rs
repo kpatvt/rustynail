@@ -3248,12 +3248,84 @@ fn h1_int_hash_keys_record_the_integer_hrefv() {
         "the metatable guards of the nil-valued reads and stores\n{}",
         dump(&r.ir)
     );
-    // a key that is in neither part is not recorded as a hash access
+    // a key that is in neither part is not a hash access (no `HLOAD`): H1b records the absence proof instead (next test)
     let absent = "local t = { [0] = 5, 1 } function f(n) local s = 0 arm() for i = 1, n do s = s + (t[77] or 0) end return s end return f(40)";
     let a = record_src(absent, strict());
+    if let RecOutcome::Closed(..) = &a.out {
+        let r = closed(&a);
+        assert!(
+            !r.ir.ins.iter().any(|i| i.op == TOp::Hload),
+            "{}",
+            dump(&r.ir)
+        );
+    }
+}
+
+/// H1b (CP5): an integer key outside the array part and absent from the hash part of a table without a metatable records the absence
+/// proof: the metatable guard (`metatable == 0`), `UGE key - 1, asize`, the node-count guard and the integer `HREFV` with `HREF_ABS`
+/// (the walk exits when it FINDS the key). Mutants `iabs_meta_skip`, `iabs_array_guard_skip`, `iabs_lsize_skip`.
+#[test]
+fn h1b_absent_int_key_records_its_guards() {
+    let src = "local t = { 1, 2 } local e = {} function f(n) local s = 0 arm() for i = 1, n do s = s + (e[i + 10] or 0) + (t[7] or 0) end return s end return f(40)";
+    let rc = record_src(src, strict());
+    let r = closed(&rc);
+    let walks: Vec<(usize, &Ins)> = r
+        .ir
+        .ins
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| {
+            i.op == TOp::Hrefv && aux_bits(i.aux) & HREF_INT != 0 && aux_bits(i.aux) & HREF_ABS != 0
+        })
+        .collect();
     assert!(
-        matches!(a.out, RecOutcome::Aborted(_)),
-        "an absent key does not record"
+        !walks.is_empty(),
+        "the absence walk is recorded\n{}",
+        dump(&r.ir)
+    );
+    for (n, h) in &walks {
+        let node = r.ir.at(h.a);
+        assert!(
+            node.op == TOp::Fload && node.b == Field::Node as Ref,
+            "{}",
+            dump(&r.ir)
+        );
+        let before = &r.ir.ins[..*n];
+        let fl = |f: Field| {
+            move |g: &&Ins| {
+                TraceIr::is_ins(g.a)
+                    && r.ir.at(g.a).op == TOp::Fload
+                    && r.ir.at(g.a).b == f as Ref
+                    && r.ir.at(g.a).a == node.a
+            }
+        };
+        assert!(
+            before
+                .iter()
+                .any(|g| g.op == TOp::Eq && fl(Field::Lsizenode)(&g)),
+            "node-count guard\n{}",
+            dump(&r.ir)
+        );
+        assert!(
+            before
+                .iter()
+                .any(|g| g.op == TOp::Eq && fl(Field::Metatable)(&g)),
+            "metatable guard\n{}",
+            dump(&r.ir)
+        );
+        assert!(
+            before.iter().any(|g| g.op == TOp::Uge
+                && TraceIr::is_ins(g.b)
+                && r.ir.at(g.b).op == TOp::Fload
+                && r.ir.at(g.b).b == Field::Asize as Ref),
+            "array bound guard\n{}",
+            dump(&r.ir)
+        );
+    }
+    assert!(
+        !r.ir.ins.iter().any(|i| i.op == TOp::Hload),
+        "{}",
+        dump(&r.ir)
     );
 }
 
