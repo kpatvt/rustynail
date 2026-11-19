@@ -395,6 +395,38 @@ print(table.concat(r, " "))
 "#,
     },
     Prog {
+        name: "bk_lazy_link_root",
+        small: false,
+        src: r#"
+-- a lazy-aware (loop-free, self-recursive) root whose inlined callee has a loop: with `nest=2` the root ends with a frame link, and the
+-- region root must be stored at its entry like any root's (a stale `lazy_root` from an earlier, deeper descent walked off the CallInfo chain)
+local function inner(n, x)
+  local s = 0
+  for i = 1, n do
+    for j = 1, i % 3 + 1 do s = s + x end
+    if i % 5 == 0 then s = s + 1 end
+  end
+  return s
+end
+local function rec(d, x)
+  local s = inner(7, x)
+  if d > 0 then s = s + rec(d - 1, x) end
+  return s
+end
+local out = {}
+for _, d in ipairs { 0, 1, 5, 50, 1, 0 } do
+  for k = 1, 3 do out[#out + 1] = rec(d, 1) end
+end
+print(table.concat(out, " "))
+-- the same shape called from C (pcall: a CIST_FRESH root frame) after a deep descent
+for k = 1, 4 do
+  out[#out + 1] = select(2, pcall(rec, 40 + k, 2))
+  out[#out + 1] = select(2, pcall(rec, 2, 2))
+end
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
         name: "g1_room_deep",
         small: false,
         src: r#"

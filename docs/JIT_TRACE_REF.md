@@ -4984,7 +4984,7 @@ Knob `lazyci` (`TrLimits::lazyci`, `LAZYCI_PROCESS` = 0, `RUSTYNAIL_JIT_TRACE_LI
 `ci.func` and the caller's `savedpc` (the continuation address, which is also what the native return reads to find its site). Not stored: `top`, `callstatus`, `trap`, `kcache`, the callee's own `savedpc`, `thread.top`, `thread.ci`. `thread.ci` is stale while a region runs.
 No lazy frame is ever visible to code outside the region: the region has no GC safepoint, no stack move, no Lua code (class N/S/A helpers only), so the only observers are exits.
 
-**Entering.** An outer entry (root trace entry, prelude) stores `root := r13` (the frame is complete). Inner entries (native push / return through `HeadData::rec`) keep it. A head that is not directly entered (blacklisted, prelude, wait stub: `set_rec`) has `rec == 0` in lazy
+**Entering.** An outer entry (root trace entry, prelude, and a root that ends with a link: `env.side` is `Some` but `env.head != 0`; see docs/JIT_TRACE.md "lazy_root") stores `root := r13` (the frame is complete). Inner entries (native push / return through `HeadData::rec`) keep it. A head that is not directly entered (blacklisted, prelude, wait stub: `set_rec`) has `rec == 0` in lazy
 mode; the native jump sites test for 0 and take the *leave* path (below) into the plain dispatch cell.
 
 **Leaving** (every path that does not stay in the family), always completing the chain first (`exit::lazy_leave`: for each frame above the root, `top = func + 1 + maxstack`, `kcache`, `trap = 0`, `callstatus` = the `C` operand of the caller's CALL, for a frame pushed just now

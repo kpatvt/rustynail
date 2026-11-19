@@ -747,6 +747,7 @@ pub const NAMES: &[&str] = &[
     "lazy_ret_root_unchecked",
     "lazy_ret_root_stale",
     "lazy_mat_no_leave",
+    "lazy_root_link_root_unset",
     // BUNDLE-L A / B (array loops)
     "aidx_disp_ignored",
     "aidx_off8",
@@ -910,7 +911,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 693);
+        assert_eq!(NAMES.len(), 694);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

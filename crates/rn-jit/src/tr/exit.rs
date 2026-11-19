@@ -2521,6 +2521,10 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
             };
             while !c.is_null() && c != root {
                 let prev = (*c).previous;
+                if prev.is_null() {
+                    // the walk reached the base frame without meeting the root: `lazy_root` is stale (an invariant violation, never UB)
+                    lazy_root_off_chain(root, inner);
+                }
                 debug_assert!(
                     st.get((*c).func)
                         .as_lclosure()
@@ -2563,6 +2567,16 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
             th8.add(thr::TOP).cast::<StkId>().write(StkId(top));
         }
     }
+}
+
+/// Fail stop for a stale region root: the chain below `inner` ends (`previous == null`) without containing `root`. Walking on would dereference
+/// the null `previous` of the base frame, and completing frames that are already complete would rewrite their `callstatus`.
+#[cold]
+#[inline(never)]
+fn lazy_root_off_chain(root: *mut CallInfo, inner: *mut CallInfo) -> ! {
+    panic!(
+        "internal error: lazy_root {root:p} is not on the CallInfo chain below the running frame {inner:p} (stale region root)"
+    );
 }
 
 /// `jit_tr_lazy_leave(thread, ci, flags, 0)`: the out-of-line twin of the leave sequence of generated code (a `CallH` of a stub whose

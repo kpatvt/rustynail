@@ -2131,3 +2131,25 @@ through a carry entry, the shared entry snapshot included, names every carried s
 offer a third entry: with the default `carrymin=4` / `carrylive=1` that is a root with four live carried values, nbody-shaped) whose recording begins with an entry
 guard before any store; no program with the default policy was found that misbehaved before the fix (about twenty variants, see the task report), every miscompiling
 program needed `carrylive=0`; but nothing in the code depends on the policy, so the fix is needed for the default configuration too.
+
+## lazy_root: the region root of lazy CallInfo chains (C70), the link-root hole and its fix
+
+**Invariant.** `ExitArea::lazy_root` is one word per state (behind the budget word, shared by every coroutine of the state; no region survives a helper call,
+a collector step or a nested entry, so one word suffices). Whenever a lazy-aware trace (`ExitMeta::lazy`) can run or exit, `lazy_root` is a `CallInfo` **on the chain from the running frame
+down to the base frame** (the running frame itself, or one of its callers), and everything at or below it is complete. Outside a region the word keeps its last value
+(it is never cleared on unwinding): it is only meaningful because every lazy-aware *entry* stores `root := r13` before anything can leave through the handler.
+Stores: (1) the outer entry of a root trace, of a prelude and of a **root that ends with a link** (`entry_checks`, after the TR6 room checks, whose failure goes straight to tier 1 without the handler); (2) the root frame's native return
+(`root := previous`); (3) `lazy_leave` (`root := running frame`). Inner entries (native push / return through `HeadData::rec`) and side traces inherit it. Readers: `exit_entry` (`meta.lazy && lazy_root != 0`
+-> `lazy_leave`), the leave blocks, the native-return guards.
+
+**The hole (fixed).** `entry_checks` stored the root under `side.is_none() || prelude`. A *root that ends with a link* (`pipeline_inner::link_root`, produced by `nest=2` frame links:
+a loop-free self-recursive root whose inlined callee has a loop) is assembled with `env.side = Some(..)` and `env.head != 0`, so it matched neither arm and entered with whatever
+root the last region left behind. The first exit of that trace after a deeper descent had unwound called `lazy_leave` with a root that is not on the chain: the walk
+`while c != root` never met it, reached the base frame and dereferenced `(*null).savedpc` (SIGSEGV in a release build; the debug assertion "lazy frames are of one prototype" in a debug build;
+with a stale root that happened to be an ancestor it rewrote the `callstatus` / `top` / `kcache` of complete frames, e.g. a `CIST_FRESH` frame called from `pcall`).
+Reach: only `nest=2` (not a default; the default is `nest=1`, `sidenest=1`) in the tests; `instruction_count_identity` hit it in 3 of 28 `g1_room_deep` cells (the `nest=2,stitchmin=4` cells).
+Fix: the store condition is `side.is_none() || prelude || head != 0`. Mutant `lazy_root_link_root_unset` (the old condition), detector `tr_core::bk_lazy_link_root_programs`
+(`bk_lazy_link_root`, `g1_room_deep` with `nest=2`; plain programs `tests/vm/jit_lazyroot_01_rec_inner_loop.lua`).
+
+**Defence in depth.** `lazy_leave` checks `previous` before it dereferences it and fails stop (`lazy_root_off_chain`, a `#[cold]` panic with the two addresses) if the chain ends without meeting the root;
+the check sits in a loop that already tests the frame pointer, so the normal path pays one compare per completed frame in the Rust helper only.

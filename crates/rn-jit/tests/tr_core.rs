@@ -4722,6 +4722,36 @@ fn bk_lazy_programs() {
     compare(jobs);
 }
 
+/// A lazy-aware root that ends with a frame link (`nest=2`: its inlined callee has a loop) stores the region root at entry (`lazy_root`): without it
+/// a stale root from an earlier deeper descent made `lazy_leave` walk past the base frame (a null dereference in a release build, the
+/// "lazy frames are of one prototype" assertion in a debug build). Detector of the mutant `lazy_root_link_root_unset`.
+#[test]
+fn bk_lazy_link_root_programs() {
+    let mut jobs = Vec::new();
+    for p in ["bk_lazy_link_root", "g1_room_deep"] {
+        for trace in ["always", "on2"] {
+            for b in [None, Some(3), Some(17), Some(200)] {
+                for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                    let mut j = Job::new(p, trace).opts(opts).limits_s("nest=2");
+                    j.budget = b;
+                    jobs.push(j);
+                }
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("nest=2")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+            let mut j = Job::new(p, trace).limits_s("nest=2,stitchmin=4");
+            // (the count identity needs the oracle build)
+            j.ident = cfg!(feature = "t15_oracle");
+            j.budget = Some(17);
+            jobs.push(j);
+        }
+    }
+    compare(jobs);
+}
+
 /// BUNDLE-L (`aidx`, `bhoist`): the array-loop programs (observers, boundaries, matrices) against the interpreter in every checking mode, with each
 /// knob alone and both. The mutants `aidx_*` / `bhoist_*` break the complemented index, its displacement, the hoisted guards or their coverage.
 #[test]

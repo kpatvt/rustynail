@@ -3507,6 +3507,12 @@ const TABLE: &[Row] = &[
         dets: &[dl("tr_core", "bk_lazy_programs")],
     },
     Row {
+        name: "lazy_root_link_root_unset",
+        owner: "BUNDLE-K",
+        // (a lazy-aware root that ends with a link, `nest=2`, did not store the region root: stale root -> null walk in `lazy_leave`, a crash)
+        dets: &[dl("tr_core", "bk_lazy_link_root_programs")],
+    },
+    Row {
         name: "aidx_disp_ignored",
         owner: "BUNDLE-L",
         dets: &[dl("tr_core", "bl_programs")],

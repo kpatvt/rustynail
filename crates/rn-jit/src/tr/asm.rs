@@ -4086,8 +4086,11 @@ impl Cx<'_> {
             self.st(W::B4, rm(0, head_off::ENTRY_OK as i32), Src::V(1));
             self.bind(skip);
         }
+        // A root that ends with a link (`pipeline_inner::link_root`: nest frame links, `env.side` is `Some` and `env.head != 0`) enters like any
+        // root: it must store the region root too, or the exit handler completes a chain against a stale `lazy_root` (docs/JIT_TRACE.md "lazy_root")
+        let link_root = self.env.head != 0 && !mutants::active("lazy_root_link_root_unset");
         if self.env.lazy
-            && (self.env.side.is_none() || self.env.prelude)
+            && (self.env.side.is_none() || self.env.prelude || link_root)
             && !mutants::active("lazy_root_not_set")
         {
             // BUNDLE-K L1: this (complete) frame is the root of the region the trace may start
