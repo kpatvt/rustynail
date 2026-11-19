@@ -1,0 +1,61 @@
+pass A: plain/LJ 0.962 pgo/LJ 0.877
+dup A: >3% off 5 max 1.035 min 0.954 geomean 1.000
+A/B plain gm 1.0012 n>5% off (>=30M): 1
+A/B pgo gm 1.0006 n>5% off (>=30M): 4
+A/B b1p gm 1.0005 n>5% off (>=30M): 6
+A/B b1g gm 1.0011 n>5% off (>=30M): 4
+A/B lj gm 0.9975 n>5% off (>=30M): 9
+A/B puc gm 1.0009 n>5% off (>=30M): 5
+--- path-length sweep (min of 11, CPU 4): plain/b1p , PGO/b1g (instr ratios)
+| program | pad0 (15-run) | +1 | +5 | +12 | +29 |
+|---|---|---|---|---|---|
+| corpus/parser_combinator | 1.056, 1.006 (ins 1.001/1.002) | 1.045, 1.011 (ins 1.001/1.002) | 1.048, 1.026 (ins 1.001/1.001) | 1.043, 1.007 (ins 1.001/1.001) | 1.054, 1.013 (ins 1.001/1.001) |
+| lib/find_cap | 1.041, 1.014 (ins 1.000/1.000) | 1.005, 1.004 (ins 1.000/1.000) | 1.003, 1.028 (ins 1.000/1.000) | 0.997, 0.997 (ins 1.000/1.000) | 0.955, 0.985 (ins 1.000/1.000) |
+| lib/fmt_g | 1.007, 1.075 (ins 1.000/1.000) | 1.013, 1.033 (ins 1.000/1.000) | 0.990, 0.989 (ins 1.000/1.000) | 0.984, 0.989 (ins 1.000/1.000) | 0.981, 0.984 (ins 1.000/1.000) |
+| lib/fmt_q | 1.140, 1.002 (ins 1.000/1.000) | 1.114, 0.999 (ins 1.000/1.000) | 1.133, 0.993 (ins 1.000/1.000) | 1.138, 0.989 (ins 1.000/1.000) | 1.119, 0.983 (ins 1.000/1.000) |
+| lib/tonumber_bad | 1.015, 1.054 (ins 1.000/1.004) | 1.016, 1.077 (ins 1.000/1.004) | 1.005, 1.061 (ins 1.000/1.004) | 1.011, 1.037 (ins 1.000/1.004) | 1.017, 1.054 (ins 1.000/1.004) |
+| lib/tunpack | 1.042, 0.981 (ins 0.995/0.994) | 1.035, 0.983 (ins 0.995/0.994) | 1.042, 0.980 (ins 0.995/0.994) | 1.044, 0.983 (ins 0.995/0.994) | 1.036, 0.981 (ins 0.995/0.994) |
+--- startup (cycles k, empty)
+rn55plain          cyc 909k ins 982k
+rn55pgo            cyc 889k ins 919k
+rn55plain_jitoff   cyc 876k ins 976k
+rn55nojit-build    cyc 882k ins 946k
+b1plain            cyc 896k ins 982k
+b1pgo              cyc 887k ins 916k
+rn54plain          cyc 884k ins 970k
+rn54pgo            cyc 856k ins 902k
+rn54nojit-build    cyc 852k ins 936k
+PUC55              cyc 709k ins 694k
+PUC54              cyc 712k ins 707k
+LuaJIT             cyc 804k ins 846k
+rss {'rn55plain': '4064', 'rn55pgo': '4704', 'rn55plain_jitoff': '4008', 'rn55nojit-build': '3584', 'b1plain': '4116', 'b1pgo': '4680', 'rn54plain': '4084', 'rn54pgo': '4596', 'rn54nojit-build': '3576', 'PUC55': '2364', 'PUC54': '2384', 'LuaJIT': '2928'}
+--- hyperfine
+startup_hyperfine.json       rn55plain              min 0.464 median 0.485 ms
+startup_hyperfine.json       rn55pgo                min 0.472 median 0.491 ms
+startup_hyperfine.json       rn55nojit-build        min 0.445 median 0.462 ms
+startup_hyperfine.json       rn54plain              min 0.460 median 0.478 ms
+startup_hyperfine.json       rn54pgo                min 0.469 median 0.486 ms
+startup_hyperfine.json       108b935-plain          min 0.467 median 0.484 ms
+startup_hyperfine.json       108b935-pgo            min 0.473 median 0.492 ms
+startup_hyperfine.json       PUC55                  min 0.321 median 0.337 ms
+startup_hyperfine.json       PUC54                  min 0.325 median 0.339 ms
+startup_hyperfine.json       LuaJIT                 min 0.365 median 0.400 ms
+startup_hf_jiton_1.json      rn55plain              min 0.327 median 0.350 ms
+startup_hf_jitoff_1.json     rn55plain-JIT=off      min 0.361 median 0.406 ms
+startup_hf_jiton_2.json      rn55plain              min 0.329 median 0.340 ms
+startup_hf_jitoff_2.json     rn55plain-JIT=off      min 0.325 median 0.336 ms
+startup_hf_jiton_3.json      rn55plain              min 0.330 median 0.341 ms
+startup_hf_jitoff_3.json     rn55plain-JIT=off      min 0.322 median 0.337 ms
+--- JS ports (min of 5, CPU 4)
+| program | node Mcyc | node ms | plain Mcyc | plain ms | PGO Mcyc | PGO ms | LuaJIT Mcyc | LuaJIT ms | plain/node cyc | PGO/node cyc | plain/node wall | PGO/node wall | LJ/node wall |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| binary_trees | 850 | 230 | 1947 | 409 | 1596 | 338 | 2131 | 446 | 2.29 | 1.88 | 1.78 | 1.47 | 1.94 |
+| fannkuch | 762 | 171 | 1048 | 220 | 1062 | 222 | 1078 | 226 | 1.38 | 1.39 | 1.29 | 1.30 | 1.32 |
+| fib | 702 | 158 | 1250 | 262 | 1251 | 262 | 472 | 107 | 1.78 | 1.78 | 1.65 | 1.66 | 0.67 |
+| heapsort | 751 | 168 | 1039 | 224 | 1039 | 221 | 1230 | - | 1.38 | 1.38 | 1.33 | 1.31 | - |
+| mandelbrot | 572 | 132 | 532 | 117 | 532 | 115 | 522 | 117 | 0.93 | 0.93 | 0.88 | 0.87 | 0.89 |
+| matmul | 389 | 98 | 427 | 96 | 433 | 98 | 273 | 67 | 1.10 | 1.12 | 0.98 | 0.99 | 0.68 |
+| nbody | 275 | 71 | 352 | 81 | 345 | 80 | 348 | 78 | 1.28 | 1.25 | 1.14 | 1.13 | 1.1 |
+| queens | 1183 | 254 | 1846 | 380 | 1846 | 378 | 1896 | 387 | 1.56 | 1.56 | 1.50 | 1.48 | 1.52 |
+| sieve | 2311 | 519 | 569 | 146 | 572 | 148 | 1002 | 224 | 0.25 | 0.25 | 0.28 | 0.28 | 0.43 |
+| spectral_norm | 378 | 95 | 180 | 46 | 180 | 48 | 171 | 44 | 0.48 | 0.48 | 0.48 | 0.50 | 0.46 |
