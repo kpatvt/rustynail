@@ -157,6 +157,28 @@ pub struct SunkTable {
     pub aliases: Vec<u16>,
     /// BUNDLE-2 (`sinkmt`): the metatable the table gets after its fields (tag and location of the metatable value).
     pub mt: Option<(u8, ValSrc)>,
+    /// H5: the keys of `fields` are distinct and at most as many as the hash part has nodes (`NEWTABLE`'s size): the fields can be
+    /// inserted as absent keys without a lookup and without a rehash ([`TableRef::insert_absent_shortstr`]). Set once the fields are known
+    /// ([`SunkTable::seal`]). (The recorder never produces repeated keys or nil fields, and `fast` rules out a full part: the checks are
+    /// defences, the generic `set_str` is the fallback, so no mutant can show them.)
+    pub fast: bool,
+}
+
+impl SunkTable {
+    /// Computes [`SunkTable::fast`] from the fields.
+    fn seal(&mut self) {
+        let hsize = if self.b > 0 {
+            1usize << (self.b - 1)
+        } else {
+            0
+        };
+        let distinct = self
+            .fields
+            .iter()
+            .enumerate()
+            .all(|(i, f)| self.fields[..i].iter().all(|g| g.key != f.key));
+        self.fast = self.c == 0 && self.fields.len() <= hsize && distinct;
+    }
 }
 
 /// A fully resolved snapshot (one exit).
@@ -767,6 +789,7 @@ pub fn build_exits_ex(
                         fields: Vec::new(),
                         aliases: Vec::new(),
                         mt: None,
+                        fast: false,
                     });
                 } else if e.flags & SNAP_SMT != 0 {
                     let (tag, src) = slot_value(ir, si, e.r, loc, &mut usable)?;
@@ -806,6 +829,9 @@ pub fn build_exits_ex(
                 func: e.flags & SNAP_FUNC != 0,
                 dense: e.flags & SNAP_CARRY != 0,
             });
+        }
+        for t in &mut sunk {
+            t.seal();
         }
         out.push(ExitSnap {
             pc: s.pc,
@@ -1878,7 +1904,15 @@ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area: 
         let tag = u64::from(ctb(LUA_VTABLE));
         let ptr = tab.as_ptr() as u64;
         put(t.slot, tag, ptr);
-        for f in &t.fields {
+        let mut inserted = false;
+        let n = t.fields.len();
+        for k in 0..n {
+            // (MUTANT `sinkfast_order_reversed`: the fields go in backwards: another node layout, another `next` order)
+            let f = &t.fields[if mutants::active("sinkfast_order_reversed") {
+                n - 1 - k
+            } else {
+                k
+            }];
             // SAFETY: `Value` is `repr(C)` `{ tag word, payload }`; the key is a live interned short string and the
             // value a number, boolean or live object (contract).
             let (kv, v) = unsafe {
@@ -1891,11 +1925,29 @@ pub unsafe fn materialise(st: &mut State, ctx: &RestoreCtx, s: &ExitSnap, area: 
                 )
             };
             let key = kv.as_strref().expect("short string key");
-            if mat_fault() || tab.set_str(heap, key, &v).is_err() {
+            if mat_fault() {
+                return mat_failed!();
+            }
+            if t.fast {
+                // H5: a key that is not in the table yet, a free node for it: `set_str` without its lookup. A nil value stores nothing
+                // (as `set_str`); no free node (never, for `fast` tables) is the generic store.
+                if v.is_nil() {
+                    continue;
+                }
+                if tab.insert_absent_shortstr(key, &v) {
+                    inserted = true;
+                    continue;
+                }
+            }
+            if tab.set_str(heap, key, &v).is_err() {
                 // (the table is already in its slot: it is rooted, partly filled, and nothing can observe it before the
                 // error unwinds the frame)
                 return mat_failed!();
             }
+        }
+        if inserted && !mutants::active("sinkfast_flags_skip") {
+            // (what every `set_str` insertion does: a key may be a metamethod name; the table is a fresh one, `flags` are all "absent")
+            tab.invalidate_tm_cache();
         }
         if let Some((mtag, msrc)) = t.mt {
             // BUNDLE-2: the `setmetatable` of the sunk table (the trace guarded that the metatable has no `__gc`: no finalizer to register)

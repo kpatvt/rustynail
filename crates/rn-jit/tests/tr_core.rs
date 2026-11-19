@@ -4485,6 +4485,42 @@ fn h2_tail_programs() {
     assert!(!res.is_empty());
 }
 
+/// H5: sunk tables that a trace exit materialises (`h5_sink_next`): the node layout (`pairs` order, the string-hash seed is pinned), sizes, repeated keys, nil values,
+/// tables past their presized hash part, sunk metatables and their metamethod flags equal the interpreter's. In every trace mode with `+verify`, exit storms (nearly
+/// every exit materialises), the writeback layout, count budgets, GC stress and with sinking off. Mutants `sinkfast_order_reversed`, `sinkfast_flags_skip`,
+/// (the other checks of the fast path are defences against states the recorder never produces).
+#[test]
+fn h5_sink_next_programs() {
+    std::env::set_var("TR_CORE_SEED", "0");
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("h5_sink_next", trace).opts("+verify"));
+        jobs.push(Job::new("h5_sink_next", trace).opts("+exitstorm=3"));
+        jobs.push(Job::new("h5_sink_next", trace).opts("+wb +exitstorm=5 +verify"));
+        jobs.push(Job::new("h5_sink_next", trace).opts("+exitstorm=7 +verify +randra=3"));
+        jobs.push(Job::new("h5_sink_next", trace).budget(17));
+        jobs.push(Job::new("h5_sink_next", trace).opts("+wb"));
+        for gc in ["1", "2"] {
+            jobs.push(Job::new("h5_sink_next", trace).env("RUSTYNAIL_GC_STRESS", gc));
+            jobs.push(
+                Job::new("h5_sink_next", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_MODE", "inc"),
+            );
+        }
+    }
+    jobs.push(Job::new("h5_sink_next", "always").opts("-loop -fwd"));
+    jobs.push(Job::new("h5_sink_next", "always").opts("-sink"));
+    let res = compare(jobs);
+    let sunk = res
+        .iter()
+        .filter(|(j, _)| j.trace == "always" && j.opts == "+verify")
+        .map(|(_, o)| o.stats.sunk)
+        .max()
+        .unwrap_or(0);
+    assert!(sunk >= 1, "h5_sink_next: no table was sunk");
+}
+
 /// BUNDLE-K (B): the tier-1 `SELF` on a string receiver (`strself`): every change of the string library / metatable between calls of a hot
 /// loop against the interpreter run, in every trace mode, with exit storms, budgets, GC stress and the stack-move stress (K3b: `strself` is hard-wired on; `t3idx=0` is the control without the string metatable address).
 /// Mutants `strself_tag_skip`, `strself_mt_skip`, `strself_nil_hit`.

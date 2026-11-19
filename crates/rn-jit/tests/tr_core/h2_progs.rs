@@ -540,4 +540,105 @@ emit("nilfill", tnil(7), nilfill(none()))
 print(H_concat(out, "\n"))
 "##,
     },
+    Prog {
+        name: "h5_sink_next",
+        small: true,
+        src: r##"
+-- H5: sunk tables that a trace exit materialises keep the interpreter's node layout (`pairs` order), sizes, metatables and metamethod flags:
+-- constructors that fill the hash part exactly, partly, past its size (rehash), with a repeated key and a nil value, updated fields,
+-- metatables that are sunk too, kept (escaping) in a branch that exits. The key sets are ones whose node layout depends on the order of
+-- insertion under the pinned string-hash seed (colliding keys), so that a different insertion order shows in `pairs`.
+local out = {}
+local H_tostring, H_concat, H_type = tostring, table.concat, type
+local function emit(...)
+  local t = {}
+  for i = 1, select("#", ...) do t[i] = H_tostring((select(i, ...))) end
+  out[#out + 1] = H_concat(t, ",")
+end
+local function sig(t)
+  local p = {}
+  for k, v in pairs(t) do p[#p + 1] = H_tostring(k) .. "=" .. (H_type(v) == "table" and "T" or H_tostring(v)) end
+  return H_concat(p, " ")
+end
+local H = { hv = "base" }
+local H2 = {}
+local keep = {}
+local function f(n, nv)
+  local s = 0
+  for i = 1, n do
+    local v = { f26 = i, f4 = i * 0.5, f57 = "n", f19 = i > 3, f54 = H }
+    local w = { f56 = i, f14 = 2, f52 = 3, f50 = 4, f39 = 5, f37 = 6, f23 = 7, f27 = 8 }
+    local u = { f54 = i, f21 = 2, f33 = 3 }
+    local m = { __index = H, tag = i, f13 = 1 }
+    local o = setmetatable({ own = i }, m)
+    local z = { f13 = 1 }
+    z.f43 = i
+    z.f22 = 3
+    local dd = { f34 = i, f24 = 2, f34 = i + 1, f48 = 4, f26 = 5 }
+    local nn = { f34 = 1, f24 = nv, f48 = 3, f26 = 4, f59 = 5 }
+    local q = { f49 = i, f4 = 2, f39 = 3 }
+    v.f26 = v.f26 + 1
+    w.f27 = w.f27 + i
+    q.f4 = q.f4 + i
+    local c = { __index = H, f13 = i, __newindex = H2 }
+    if i % 9 == 0 then keep[#keep + 1] = { v, w, u, o, z, m, dd, nn, q, c } end
+    s = s + v.f26 + w.f27 + u.f54 + o.own + z.f43 + dd.f34 + (nn.f48 or 0) + q.f4
+  end
+  return s
+end
+local r = 0
+for k = 1, 30 do r = r + f(30 + k, nil) end
+emit("sum", r, #keep)
+for _, i in ipairs({ 1, 2, #keep }) do
+  local e = keep[i]
+  emit("v", sig(e[1]))
+  emit("w", sig(e[2]))
+  emit("u", sig(e[3]))
+  emit("o", sig(e[4]), e[4].hv, e[4].missing, getmetatable(e[4]) == e[6])
+  emit("z", sig(e[5]))
+  emit("m", sig(e[6]))
+  emit("dd", sig(e[7]))
+  emit("nn", sig(e[8]))
+  emit("q", sig(e[9]))
+end
+-- a materialised table used as a metatable afterwards (its `__index` / `__newindex` / `__len` flags are the interpreter's)
+for _, i in ipairs({ 1, 2, #keep }) do
+  local mm = keep[i][6]
+  local oo = setmetatable({}, mm)
+  emit("asmt", oo.hv, oo.tag, rawget(oo, "tag"), getmetatable(oo) == mm)
+end
+local bad_idx, bad_len = 0, 0
+for i = 1, #keep do
+  local mm = keep[i][10]
+  if mm then
+    local oo = setmetatable({}, mm)
+    if oo.hv ~= "base" then bad_idx = bad_idx + 1 end
+    oo.fresh = 1
+    if rawget(oo, "fresh") ~= nil or H2.fresh ~= 1 then bad_len = bad_len + 1 end
+    H2.fresh = nil
+  end
+end
+emit("asmt-all", #keep, bad_idx, bad_len)
+-- keys added after the materialisation: the free nodes / the rehash behave as in the interpreter
+local e = keep[1]
+for j = 1, 6 do e[1]["extra" .. j] = j; e[2]["more" .. j] = j; e[3]["u" .. j] = j; e[9]["q" .. j] = j end
+emit("after", sig(e[1]), sig(e[2]), sig(e[3]), sig(e[9]))
+-- a materialised metatable answers `__index` / `__newindex` / `__len` like any: the flags of the fresh table are not stale
+local hits = 0
+local function g(n)
+  for i = 1, n do
+    local m = { __index = H, __len = function() return 7 end }
+    local o = setmetatable({}, m)
+    local p = setmetatable({}, { __newindex = function(t, k, v) hits = hits + 1 end })
+    if i % 7 == 0 then keep[#keep + 1] = o; keep[#keep + 1] = p end
+    hits = hits + #o
+  end
+end
+for k = 1, 40 do g(40) end
+local o, p = keep[#keep - 1], keep[#keep]
+p.zzz = 1
+emit("flags", hits, o.hv, #o, rawget(p, "zzz"))
+print(H_concat(out, "\n"))
+"##,
+    },
 ];

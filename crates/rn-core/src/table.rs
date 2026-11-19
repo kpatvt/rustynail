@@ -2638,6 +2638,18 @@ impl TableRef {
         }
     }
 
+    /// H5: inserts the interned short string `key`, which the caller knows is absent, with the non-nil `value`: the insertion of
+    /// `set_str` (`insertkey`: the free main position, or the collision / free-position path) without the lookup, the type dispatch
+    /// and the table-error plumbing. `false` when the hash part has no free node (or none at all): nothing has changed, the caller
+    /// falls back to `set_str` (rehash). The caller invalidates the metamethod-absence flags once after its insertions
+    /// ([`TableRef::invalidate_tm_cache`]); no write barrier (the caller's table is white and the collector is stopped).
+    #[inline]
+    pub fn insert_absent_shortstr(self, key: StrRef, value: &Value) -> bool {
+        // SAFETY: handle invariant; `key` is a live short string (T3/T4) that is not in the table (contract); `insertkey` only
+        // writes a free node of the table's own node vector.
+        unsafe { insertkey(self.as_ptr(), &Value::string(key), value) }
+    }
+
     /// Raw set with a string key (interned or not).
     pub fn set_str(self, heap: &mut Heap, key: StrRef, value: &Value) -> Result<(), TableError> {
         self.set(heap, &Value::string(key), value)

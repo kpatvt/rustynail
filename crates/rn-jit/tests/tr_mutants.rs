@@ -2374,6 +2374,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "h2_tail_programs")],
     },
     Row {
+        name: "sinkfast_order_reversed",
+        owner: "H5",
+        dets: &[d("tr_core", "h5_sink_next_programs")],
+    },
+    Row {
+        name: "sinkfast_flags_skip",
+        owner: "H5",
+        dets: &[d("tr_core", "h5_sink_next_programs")],
+    },
+    Row {
         name: "t3_default_ignored",
         owner: "T3",
         dets: &[d("tr_policy", "t3_process_default")],
