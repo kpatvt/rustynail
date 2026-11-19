@@ -195,7 +195,7 @@ pub struct ExitSnap {
     /// A1: the slots the exit does not restore whose stack tag is provably the type of an unmodified `SLOAD` of the trace that
     /// executed before every guard of this snapshot (see [`stack_ents`]): a side trace attached here inherits the types (no entry
     /// check for them, unless the exit restores them itself) and a stub store of the same static tag is redundant. Empty for traces with native frames or segments.
-    pub ents: Vec<(u16, Ty)>,
+    pub ents: std::sync::Arc<[(u16, Ty)]>,
 }
 
 /// One exit of a trace: the snapshot it restores and the class of the site (for the hot-exit policy, 3.3 / 7.9).
@@ -394,7 +394,7 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
 /// the snapshot does not restore still holds the type its `SLOAD` saw. Entry checks run in IR order: a guard exits having
 /// executed only the earlier `SLOAD`s (the failing one is not its own predecessor). Traces with native frames or `RETF` segments
 /// get none (their frames move the base; a slot number is not stable). Slots of sunk tables are removed by the caller.
-pub fn stack_ents(ir: &TraceIr) -> Vec<Vec<(u16, Ty)>> {
+pub fn stack_ents(ir: &TraceIr) -> Vec<std::sync::Arc<[(u16, Ty)]>> {
     stack_ents_ex(ir, None)
 }
 
@@ -408,6 +408,7 @@ pub fn entry_ents(ir: &TraceIr, entry: &[u8; 256]) -> Vec<(u16, Ty)> {
         return Vec::new();
     }
     let stale = mutants::active("entry2_transitive_stale");
+    let stored = stored_slots(ir);
     let mut out = Vec::new();
     for (slot, &tag) in entry.iter().enumerate() {
         if tag == UNKNOWN_TAG || tag == NIL_ANY || tag == LUA_VNIL {
@@ -417,12 +418,7 @@ pub fn entry_ents(ir: &TraceIr, entry: &[u8; 256]) -> Vec<(u16, Ty)> {
             continue;
         };
         let slot = slot as u16;
-        if !stale
-            && ir
-                .ins
-                .iter()
-                .any(|j| j.op == TOp::Sstore && j.aux as u16 == slot)
-        {
+        if !stale && stored.get(usize::from(slot)).copied().unwrap_or(false) {
             continue;
         }
         let slot = if mutants::active("entry_inherit_wrong_slot") {
@@ -436,10 +432,11 @@ pub fn entry_ents(ir: &TraceIr, entry: &[u8; 256]) -> Vec<(u16, Ty)> {
 }
 
 /// [`stack_ents`] with the entry state of a side trace's chain (see [`entry_ents`]) added for the slots the trace's own `SLOAD`s do not cover.
-pub fn stack_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<Vec<(u16, Ty)>> {
+pub fn stack_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<std::sync::Arc<[(u16, Ty)]>> {
     // (the helper below holds the exclusions)
     let n = ir.snaps.len();
-    let mut out = vec![Vec::new(); n];
+    let none: std::sync::Arc<[(u16, Ty)]> = std::sync::Arc::default();
+    let mut out = vec![none.clone(); n];
     if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
         return out;
     }
@@ -454,44 +451,72 @@ pub fn stack_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<Vec<(u16, T
             }
         }
     }
-    let stored: Vec<u16> = ir
-        .ins
-        .iter()
-        .filter(|i| i.op == TOp::Sstore)
-        .map(|i| i.aux as u16)
-        .collect();
+    let stored = stored_slots(ir);
+    // the candidate `SLOAD`s once, in IR order, the first one of every slot: a snapshot takes the prefix of them that precedes its first
+    // guard (the type of a slot is the one its first `SLOAD` saw), then the inherited slots it does not hold yet
+    let mut uniq: Vec<(usize, u16, Ty)> = Vec::new();
+    let mut pos: Vec<u32> = Vec::new();
+    for (k, i) in ir.ins.iter().enumerate() {
+        if i.op != TOp::Sload
+            || i.a == u16::MAX
+            || stored.get(usize::from(i.a)).copied().unwrap_or(false)
+            || tag_of(i.t).is_none()
+        {
+            continue;
+        }
+        let at = usize::from(i.a);
+        if pos.len() <= at {
+            pos.resize(at + 1, u32::MAX);
+        }
+        if pos[at] == u32::MAX {
+            pos[at] = uniq.len() as u32;
+            uniq.push((k, i.a, i.t));
+        }
+    }
+    let inherited = entry.map(|e| entry_ents(ir, e));
+    // the list of a snapshot depends on the length `p` of the prefix only: snapshots with the same prefix share one list
+    let mut memo: Vec<Option<std::sync::Arc<[(u16, Ty)]>>> = vec![None; uniq.len() + 1];
     for (s, o) in out.iter_mut().enumerate() {
         if first[s] == usize::MAX {
             continue;
         }
-        for (k, i) in ir.ins.iter().enumerate() {
-            if i.op != TOp::Sload || i.a == u16::MAX || stored.contains(&i.a) {
-                continue;
-            }
-            // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one, and a prelude inherits them)
-            let all_here = all || (entry_fail && ir.ins[first[s]].op == TOp::Sload);
-            if (k < first[s] || all_here)
-                && tag_of(i.t).is_some()
-                && !o.iter().any(|&(sl, _)| sl == i.a)
-            {
-                o.push((i.a, i.t));
-            }
-        }
-    }
-    if let Some(e) = entry {
-        let inherited = entry_ents(ir, e);
-        for (s, o) in out.iter_mut().enumerate() {
-            if first[s] == usize::MAX {
-                continue;
-            }
-            for &(sl, t) in &inherited {
-                if !o.iter().any(|&(x, _)| x == sl) {
-                    o.push((sl, t));
+        // (mutant `tagskip_entry_fail`: an entry-check exit counts every `SLOAD`, also those behind the failing one, and a prelude inherits them)
+        let all_here = all || (entry_fail && ir.ins[first[s]].op == TOp::Sload);
+        let p = if all_here {
+            uniq.len()
+        } else {
+            uniq.partition_point(|e| e.0 < first[s])
+        };
+        let list = memo[p].get_or_insert_with(|| {
+            let mut v: Vec<(u16, Ty)> =
+                Vec::with_capacity(p + inherited.as_ref().map_or(0, Vec::len));
+            v.extend(uniq[..p].iter().map(|&(_, a, t)| (a, t)));
+            if let Some(inh) = &inherited {
+                for &(sl, t) in inh {
+                    let held = pos.get(usize::from(sl)).is_some_and(|&q| (q as usize) < p);
+                    if !held {
+                        v.push((sl, t));
+                    }
                 }
             }
-        }
+            v.into()
+        });
+        *o = list.clone();
     }
     out
+}
+
+/// Per slot: does the trace write it with an `SSTORE`?
+fn stored_slots(ir: &TraceIr) -> Vec<bool> {
+    let mut v: Vec<bool> = Vec::new();
+    for i in ir.ins.iter().filter(|i| i.op == TOp::Sstore) {
+        let at = usize::from(i.aux as u16);
+        if v.len() <= at {
+            v.resize(at + 1, false);
+        }
+        v[at] = true;
+    }
+    v
 }
 
 /// BUNDLE-O O0 (diagnostic): per snapshot, the bit set of guard classes that use it. Bits: 1 callee / identity (`EQREF`), 2 hash node
@@ -680,8 +705,11 @@ pub fn build_exits_ex(
     }
     let sites = site_classes(ir);
     let mut out = Vec::with_capacity(ir.snaps.len());
+    // (the windows of `frame_window`, accumulated: that function is linear in the snapshot index)
+    let mut frame_start = 0usize;
     for (si, s) in ir.snaps.iter().enumerate() {
-        let w = frame_window(ir, si);
+        let w = frame_start..frame_start + usize::from(s.nframes);
+        frame_start = w.end;
         if w.end > ir.frames.len() || usize::from(s.nframes) > MAX_FRAMES {
             return Err(format!("snapshot {si}: bad frame window"));
         }
@@ -793,7 +821,7 @@ pub fn build_exits_ex(
             root_code: seg.map_or(std::ptr::null(), |g| g.code as usize as *const u32),
             seg_shift: seg.map_or(0, |g| g.shift),
             seg_pops: seg.map_or(0, |g| g.pops),
-            ents: Vec::new(),
+            ents: Default::default(),
         });
     }
     let ents = stack_ents_ex(ir, entry.as_ref());
@@ -806,7 +834,14 @@ pub fn build_exits_ex(
                 .iter()
                 .any(|t| t.slot == slot || t.aliases.contains(&slot))
         };
-        sn.ents = e.into_iter().filter(|&(sl, _)| !sunk_slot(sl)).collect();
+        sn.ents = if sn.sunk.is_empty() {
+            e
+        } else {
+            e.iter()
+                .copied()
+                .filter(|&(sl, _)| !sunk_slot(sl))
+                .collect()
+        };
     }
     let pre = pre_roll_snaps(ir);
     let descs = (0..out.len())
@@ -970,13 +1005,23 @@ pub fn inline_stub_ops(s: &ExitSnap, vb: Loc) -> Vec<Op> {
 /// [`inline_stub_ops`] whose final jump goes through the exit cell at the absolute address `cell` (F2a, TR8): `Mov V7,
 /// cell; Ld V7, [V7]; JmpR V7`. The cell holds the tier-1 landing address of `s` until a side trace is attached.
 pub fn inline_stub_ops_via(s: &ExitSnap, vb: Loc, cell: Option<u64>) -> Vec<Op> {
+    inline_stub_ops_slots(s, &s.slots, vb, cell)
+}
+
+/// [`inline_stub_ops_via`] for the slot stores `slots` instead of `s.slots` (the head / tail split of a stub without cloning the snapshot).
+pub fn inline_stub_ops_slots(
+    s: &ExitSnap,
+    slots: &[SlotRestore],
+    vb: Loc,
+    cell: Option<u64>,
+) -> Vec<Op> {
     assert!(
         (s.frames.is_empty() || s.frames_plain()) && s.usable,
         "inline stubs are frameless (or S1 frame-cell stubs, or N3b frame-link stubs)"
     );
     assert!(vb_valid(vb), "budget register location {vb:?} (P4c)");
     let mut v = Vec::new();
-    for e in &s.slots {
+    for e in slots {
         let fm = |off: i32| M {
             base: Base::Frame,
             off: i32::from(e.slot) * 16 + off,
@@ -1314,8 +1359,15 @@ pub fn wb_ents(ir: &TraceIr) -> Vec<(u16, Ty)> {
 pub fn wb_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<(u16, Ty)> {
     let mut out = wb_ents_own(ir);
     if let Some(e) = entry {
+        let mut held = [false; 256];
+        for &(x, _) in &out {
+            if let Some(h) = held.get_mut(usize::from(x)) {
+                *h = true;
+            }
+        }
         for (sl, t) in entry_ents(ir, e) {
-            if !out.iter().any(|&(x, _)| x == sl) {
+            // (`entry_ents` slots are below 256, except under the `entry_inherit_wrong_slot` mutant: `slot ^ 1`, still below 256)
+            if !held.get(usize::from(sl)).copied().unwrap_or(false) {
                 out.push((sl, t));
             }
         }
@@ -1328,14 +1380,12 @@ fn wb_ents_own(ir: &TraceIr) -> Vec<(u16, Ty)> {
         return Vec::new();
     }
     let mut out: Vec<(u16, Ty)> = Vec::new();
+    let stored = stored_slots(ir);
     for i in &ir.ins {
         if i.op == TOp::Sload
             && i.a != u16::MAX
             && tag_of(i.t).is_some()
-            && !ir
-                .ins
-                .iter()
-                .any(|j| j.op == TOp::Sstore && j.aux as u16 == i.a)
+            && !stored.get(usize::from(i.a)).copied().unwrap_or(false)
             && !out.iter().any(|&(sl, _)| sl == i.a)
         {
             out.push((i.a, i.t));

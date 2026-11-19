@@ -2224,3 +2224,39 @@ type_call, field_method, oop_override): identical to before the change.
 
 **Mutants** (registry 698): `shape_fallback_key_skip` (`s4_shape_guard_programs`), `shape_nofill_ignored` (`s4_shape_guard_effectiveness_and_demotion`), `shape_drop_keeps_cover`
 (`s4_shapemin_programs`, new program `s4_two_keys`); `shape_demote_never` now means "the budget of fills never ends". The S4 mechanism tests run with `shapemin=0`.
+
+### 17.1 Second pass: the remainder was compile cost (instruction counts, 108b935 vs this change)
+
+**Method.** Instruction counts depend on `argv[0]` and on how the script path is spelled (apps/lru_cache: 405.1M with `./rnlua`-style relative paths, 413.7M with the long absolute
+path of the same binary), so a comparison needs both binaries started the same way: copy them to two paths of equal length (`/tmp/cmpA/rnlua`, `/tmp/cmpB/rnlua`), same
+working directory, same script path, `RUSTYNAIL_SEED=0`. The earlier +3.0 % of lru_cache with every JIT knob off was mostly this artifact plus compile cost (the interpreter alone
+is +0.2 %, so rn-core's layout-id slot is not the cause). To split run time from compile time the `phases` line of `RUSTYNAIL_JIT_VERBOSE=2` was temporarily switched from `rdtsc` to
+a `perf_event_open` instruction counter in both trees (the phase timers are then retired instructions, deterministic): the whole difference of lru_cache, richards and deltablue sat in the compile
+phases (pipeline: richards +3.5M, deltablue +5.6M, lru_cache +3.4M instructions of 181M, 334M, 402M), none in the trace code those programs run.
+
+**Causes found and removed** (all pure compile-time work, no change in what a trace may assume or in the code a trace gets, except the third item):
+
+* `exit::stack_ents_ex` (A1/G1: per snapshot, the types of the entry `SLOAD`s that precede its first guard) scanned every instruction for every snapshot, with a linear `stored.contains` and
+  a linear duplicate test per candidate (snapshots x instructions x slots). It now builds the candidate list once (first `SLOAD` per slot, in IR order), a snapshot takes a prefix of it
+  (`partition_point`), and snapshots with the same prefix share one `Arc<[(u16, Ty)]>` (`ExitSnap::ents` is an `Arc` slice: the three `ExitSnap::clone`s per inline stub no longer copy it).
+  The same for `wb_ents_own` / `entry_ents` (a per-slot `SSTORE` bitmap instead of a scan of the instructions per slot), `wb_ents_ex` (a 256-bit set) and `build_exits_ex` (the frame window of a
+  snapshot was summed over all earlier snapshots: now accumulated).
+* The assembler looked its exit stubs and dispatchers up with linear scans of the stub list (`stub_label`, `poll_stub_label`, `shape_stub_label`, `disp_label`): now hash-indexed. `shape_dropped`
+  was nodes x instructions: one pass. `inline_stub` cloned the whole `ExitSnap` three times to cut the slot list into head, tail and dense part: `exit::inline_stub_ops_slots` takes the slots as an argument.
+* The cold path of `HSHAPE` compares each covered key address with `movabs v7, key; cmp [node + KEY], v7; jne` (as the plain `HREFK`, H3-F) instead of two 32-bit memory-immediate compares (one
+  instruction less per key at polymorphic sites; `v7` is free between two IR instructions and dead at every exit).
+* The layout interner and one recorder map used the std SipHash `HashMap`; both use `fx::HashMap` now.
+
+**What is left.** With the knobs unchanged: richards, deltablue and cd vs 108b935 are listed in the table below. The remainder of richards and deltablue is run time of shape guards at
+polymorphic sites plus trace-formation luck: richards moves by +-3 % between `shapedemote=16`, `64`, `256` and `1024` (180.6M at 1024, 188.9M at 16) without any change of the code a trace
+contains, and by -1.5 % with `shapemin=8`, which loses nbody (+5.5 % with `shapemin=7`: nbody covers six keys of the bodies in some traces). A per-guard miss counter that drops the guard in code
+generation needs the trace to be re-assembled, which is the re-record this section removed (the arbitrary re-record point is what made the earlier policy systematic); a counter that exits
+after K misses turns every extra layout into a side-trace exit (about 100+ instructions against about 15 for the cold path) and was not built. The cold path costs, per guard visit with another
+layout, one failed compare, the zero test, one tag byte and one 8-byte compare per covered key and a jump back; the plain `HREFK` form costs the key compares only.
+
+**Result** (instructions vs 108b935, same invocation for both binaries, `RUSTYNAIL_SEED=0`; before this pass -> after): lru_cache +0.9 % -> +0.3 %, richards +1.4 % -> +0.4 %, deltablue +1.8 % -> +1.05 %, cd +0.8 % -> 0.0 %, havlak +0.7 %
+-> +0.7 %, raytrace +0.6 % -> +0.3 %, expr_lang +0.4 % -> +0.1 %; roguelike_turns -4.3 %, game_loop -8.0 %, astar_jumper -8.2 %, classic_vector -0.1 %, oop_mixins -0.2 % (unchanged); programs/nbody 2027.3M,
+awfy/nbody 555.6M (unchanged to 0.02 %). Against 9250356 no program of the check set moves by more than +0.01 %. Deltablue and havlak keep their remainder (the part of deltablue that is
+not compile cost is the run time of its polymorphic shape guards: `shapeguard=0` is 0.6 % above 108b935).
+**Mutants:** none added (registry 698): nothing here changes what a trace may assume or a guard's meaning; the mutants that pin the touched code (`entry2_transitive_stale`, `entry_inherit_wrong_slot`,
+`tagskip_*`, `side_known_unmod_all`, `shape_*`, `carry_*`, the dense-store mutant) all stay caught.

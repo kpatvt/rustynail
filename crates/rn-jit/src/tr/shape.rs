@@ -17,8 +17,8 @@
 //! immediate); when the counter or the table of descriptors is full no new id is made (`layout_id` answers 0 and the recorder emits no
 //! shape guard for such a table).
 
+use crate::fx::HashMap;
 use rn_core::table::{self, Node, TableRef};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -51,7 +51,7 @@ pub static DEMOTED: AtomicU64 = AtomicU64::new(0);
 fn intern(d: Vec<u64>) -> u64 {
     let mut g = INTERN.lock().unwrap_or_else(|e| e.into_inner());
     let it = g.get_or_insert_with(|| Interner {
-        map: HashMap::new(),
+        map: HashMap::default(),
         next: 1,
     });
     if let Some(&id) = it.map.get(&d) {

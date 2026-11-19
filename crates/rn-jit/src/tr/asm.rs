@@ -46,7 +46,7 @@
 //!   trivially, and `tests/tr_asm.rs` pins it.
 
 use super::cache::head_off;
-use super::exit::{self, tag_of, ExitSnap, SharedExitEnv, ValSrc};
+use super::exit::{self, tag_of, ExitSnap, SharedExitEnv, SlotRestore, ValSrc};
 use super::interp::{
     kbits, CALLN_CFMOD, CALLN_COS, CALLN_EXP, CALLN_FLOOR, CALLN_FMOD, CALLN_LOG, CALLN_POW,
     CALLN_SIN,
@@ -2053,23 +2053,26 @@ fn shape_dropped(ir: &TraceIr, min: u32) -> Vec<Ref> {
     if min == 0 {
         return out;
     }
-    let mut nodes: Vec<Ref> = Vec::new();
+    let mut nodes: Vec<(Ref, Vec<(u32, Ref)>)> = Vec::new();
     for h in &ir.ins {
-        if h.op == TOp::Hshape && !nodes.contains(&h.a) {
-            nodes.push(h.a);
+        if h.op == TOp::Hshape && !nodes.iter().any(|n| n.0 == h.a) {
+            nodes.push((h.a, Vec::new()));
         }
     }
-    for n in nodes {
-        let mut keys: Vec<(u32, Ref)> = Vec::new();
-        for h in &ir.ins {
-            if h.op == TOp::Hrefk
-                && h.a == n
-                && aux_bits(h.aux) & HREFK_COVERED != 0
-                && !keys.contains(&(hrefk_idx(aux_bits(h.aux)), h.b))
-            {
-                keys.push((hrefk_idx(aux_bits(h.aux)), h.b));
+    if nodes.is_empty() {
+        return out;
+    }
+    for h in &ir.ins {
+        if h.op == TOp::Hrefk && aux_bits(h.aux) & HREFK_COVERED != 0 {
+            if let Some(n) = nodes.iter_mut().find(|n| n.0 == h.a) {
+                let k = (hrefk_idx(aux_bits(h.aux)), h.b);
+                if !n.1.contains(&k) {
+                    n.1.push(k);
+                }
             }
         }
+    }
+    for (n, keys) in nodes {
         if (keys.len() as u32) < min {
             out.push(n);
         }
@@ -2116,7 +2119,6 @@ enum EntryKind {
 
 /// A dispatcher stub of a [`EntryKind::FirstIter`] guard: `if first { entry stub } else { plain stub }`.
 struct Disp {
-    snap: u32,
     label: L,
     entry: L,
     plain: L,
@@ -2129,6 +2131,10 @@ struct Cx<'a> {
     env: &'a AsmEnv,
     p: Program,
     stubs: Vec<Stub>,
+    /// `stubs` by `(snapshot, kind)`: 0 plain, 1 entry check, 2 poll, 3 shape (the lookups were linear scans: quadratic in the number of exits).
+    stub_ix: crate::fx::HashMap<(u32, u8), L>,
+    /// `disps` by snapshot.
+    disp_ix: crate::fx::HashMap<u32, L>,
     disps: Vec<Disp>,
     /// The first-iteration flag is maintained (rolled layout, head data, some `FirstIter` guard).
     first_flag: bool,
@@ -2417,14 +2423,14 @@ impl Cx<'_> {
     }
 
     fn disp_label(&mut self, snap: u32) -> Result<L, AsmError> {
-        if let Some(d) = self.disps.iter().find(|d| d.snap == snap) {
-            return Ok(d.label);
+        if let Some(&l) = self.disp_ix.get(&snap) {
+            return Ok(l);
         }
         let entry = self.stub_label(snap, true)?;
         let plain = self.stub_label(snap, false)?;
         let label = self.p.label();
+        self.disp_ix.insert(snap, label);
         self.disps.push(Disp {
-            snap,
             label,
             entry,
             plain,
@@ -2436,14 +2442,11 @@ impl Cx<'_> {
         if (snap as usize) >= self.snaps.len() {
             return incons(format!("snapshot {snap} has no exit"));
         }
-        if let Some(s) = self
-            .stubs
-            .iter()
-            .find(|s| s.snap == snap && s.entry == entry && !s.poll && !s.shape)
-        {
-            return Ok(s.label);
+        if let Some(&l) = self.stub_ix.get(&(snap, u8::from(entry))) {
+            return Ok(l);
         }
         let label = self.p.label();
+        self.stub_ix.insert((snap, u8::from(entry)), label);
         self.stubs.push(Stub {
             snap,
             entry,
@@ -2497,10 +2500,11 @@ impl Cx<'_> {
             // it so; the ordinary stub then lands where the snapshot says, as before P-L, and the mutant stays visible)
             return self.stub_label(snap, false);
         }
-        if let Some(s) = self.stubs.iter().find(|s| s.snap == snap && s.poll) {
-            return Ok(s.label);
+        if let Some(&l) = self.stub_ix.get(&(snap, 2)) {
+            return Ok(l);
         }
         let label = self.p.label();
+        self.stub_ix.insert((snap, 2), label);
         self.stubs.push(Stub {
             snap,
             entry: false,
@@ -2517,10 +2521,11 @@ impl Cx<'_> {
         if (snap as usize) >= self.snaps.len() {
             return incons(format!("snapshot {snap} has no exit"));
         }
-        if let Some(s) = self.stubs.iter().find(|s| s.snap == snap && s.shape) {
-            return Ok(s.label);
+        if let Some(&l) = self.stub_ix.get(&(snap, 3)) {
+            return Ok(l);
         }
         let label = self.p.label();
+        self.stub_ix.insert((snap, 3), label);
         self.stubs.push(Stub {
             snap,
             entry: false,
@@ -2714,6 +2719,8 @@ pub fn assemble(
         env,
         p: Program::default(),
         stubs: Vec::new(),
+        stub_ix: Default::default(),
+        disp_ix: Default::default(),
         disps: Vec::new(),
         first_flag: false,
         ext: al.nspill,
@@ -8150,6 +8157,18 @@ impl Cx<'_> {
                 if mutants::active("shape_fallback_key_skip") {
                     continue;
                 }
+                if c.node != 7 && self.env.hk_key64 {
+                    // (as the plain `HREFK`, H3-F: the 64-bit key address in one compare against V7, which no live value occupies between two
+                    // instructions: `movabs; cmp; jne` instead of two 32-bit memory-immediate compares)
+                    self.push(Op::Mov(7, key));
+                    self.push(Op::BrMR {
+                        cc: Cc::Ne,
+                        m: at(node::KEY),
+                        src: 7,
+                        to: c.exit,
+                    });
+                    continue;
+                }
                 for (half, o) in [(key as u32, 0), ((key >> 32) as u32, 4)] {
                     self.push(Op::BrM {
                         cc: Cc::Ne,
@@ -8461,9 +8480,7 @@ impl Cx<'_> {
         use super::cache::ExitSite;
         self.dbl.push(snap);
         let full = exit::inline_stub_ops_via(es, self.env.vb(), Some(cell));
-        let mut bare = es.clone();
-        bare.slots.clear();
-        let tail = exit::inline_stub_ops_via(&bare, self.env.vb(), Some(cell));
+        let tail = exit::inline_stub_ops_slots(es, &[], self.env.vb(), Some(cell));
         assert!(full.ends_with(&tail), "inline stub layout");
         let head = &full[..full.len() - tail.len()];
         let addr = self.env.counters + 4 * u64::from(snap);
@@ -8897,22 +8914,20 @@ impl Cx<'_> {
         if let (Some(site), Some(c)) = (mat, cell) {
             return self.mat_stub(es, snap, generic_l, site, c);
         }
-        let mut bare = es.clone();
-        bare.slots.clear();
-        let tail = exit::inline_stub_ops_via(&bare, self.env.vb(), cell);
+        let tail = exit::inline_stub_ops_slots(es, &[], self.env.vb(), cell);
         // R1: the dense entries of a root (`SlotRestore::dense`) are stored behind a test of `HeadData::stale` (cold block), not on every exit
         let dense_on = self.env.stale_flag != 0 && es.slots.iter().any(|s| s.dense);
-        let mut es_p = es.clone();
         let mut dense_ops: Vec<Op> = Vec::new();
-        if dense_on {
-            let mut es_d = es.clone();
-            es_d.slots.retain(|s| s.dense);
-            es_p.slots.retain(|s| !s.dense);
-            let fd = exit::inline_stub_ops_via(&es_d, self.env.vb(), cell);
+        let full = if dense_on {
+            let dense: Vec<SlotRestore> = es.slots.iter().filter(|s| s.dense).copied().collect();
+            let plain: Vec<SlotRestore> = es.slots.iter().filter(|s| !s.dense).copied().collect();
+            let fd = exit::inline_stub_ops_slots(es, &dense, self.env.vb(), cell);
             assert!(fd.ends_with(&tail), "inline stub layout");
             dense_ops = fd[..fd.len() - tail.len()].to_vec();
-        }
-        let full = exit::inline_stub_ops_via(&es_p, self.env.vb(), cell);
+            exit::inline_stub_ops_slots(es, &plain, self.env.vb(), cell)
+        } else {
+            exit::inline_stub_ops_via(es, self.env.vb(), cell)
+        };
         assert!(full.ends_with(&tail), "inline stub layout");
         let head = &full[..full.len() - tail.len()];
         // R1: the carry path of the stub (see below)

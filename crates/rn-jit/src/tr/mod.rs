@@ -1321,8 +1321,7 @@ fn carry_dense(ir: &mut ir::TraceIr, min: usize, live: bool) -> Vec<u16> {
             .unwrap_or(0);
         let loop_idx = ir.loop_at.map(|r| usize::from(r - REF_BIAS));
         let fused = vec![false; ir.ins.len()];
-        let mut last_use: std::collections::HashMap<ir::Ref, usize> =
-            std::collections::HashMap::new();
+        let mut last_use: crate::fx::HashMap<ir::Ref, usize> = Default::default();
         for i in 0..ir.ins.len() {
             for r in ra::operand_refs(ir, &fused, i) {
                 if ir::TraceIr::is_ins(r) {
