@@ -548,6 +548,18 @@ pub fn select_addr() -> usize {
     BUILTIN_SELECT.load(Ordering::Relaxed)
 }
 
+static BUILTIN_SETMT: AtomicUsize = AtomicUsize::new(0);
+
+/// H2a: registers the address of `setmetatable` (0 = unknown; the tier-1 `CALL` / `TAILCALL` templates inline the common case).
+pub fn set_setmt(addr: usize) {
+    BUILTIN_SETMT.store(addr, Ordering::Relaxed);
+}
+
+/// H2a: the address of `setmetatable` (0 = none).
+pub fn setmt_addr() -> usize {
+    BUILTIN_SETMT.load(Ordering::Relaxed)
+}
+
 /// BUNDLE-T1I: the registered address of library function `i` of [`libfn`] (0 = none).
 pub fn libfn_addr(i: u8) -> usize {
     BUILTIN_LIBFN

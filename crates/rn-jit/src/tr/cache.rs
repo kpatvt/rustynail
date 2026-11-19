@@ -209,8 +209,8 @@ pub const SIDENEST_PROCESS: u32 = 1;
 pub const DYNMASK_PROCESS: u32 = 1;
 /// BUNDLE-M item C1: process default of [`TrLimits::lockstep`] (0 = the recorder's lockstep cross-check (TR17) is off in a process; 1 = every recording; K >= 2 = one recording in K; the struct default, used by the tests, is 1; `+verify` and debug builds always run it).
 pub const LOCKSTEP_PROCESS: u32 = 0;
-/// BUNDLE-T1I: process default of [`TrLimits::t1inline`] (bit mask of the built-ins the tier-1 `CALL` template runs inline, see `lower::t1inline::B_*`; 1023 = all rows, the default since C36: the `math.floor` bit used to cost `heldout/bigint_rsa` 1.3x through spare-`CallInfo` entry failures (cured by `cispare`, docs/JIT_PARKED.md C36); `t1inline=1021` leaves floor out, `t1inline=0` turns the feature off. The struct default, used by the tests, is 0.
-pub const T1INLINE_PROCESS: u32 = 1023;
+/// BUNDLE-T1I: process default of [`TrLimits::t1inline`] (bit mask of the built-ins the tier-1 `CALL` / `TAILCALL` templates run inline, see `lower::t1inline::B_*`; 2047 = all rows (H2a added `setmetatable`: 1024; 1023 before), the default since C36: the `math.floor` bit used to cost `heldout/bigint_rsa` 1.3x through spare-`CallInfo` entry failures (cured by `cispare`, docs/JIT_PARKED.md C36); `t1inline=1021` leaves floor out, `t1inline=0` turns the feature off. The struct default, used by the tests, is 0.
+pub const T1INLINE_PROCESS: u32 = 2047;
 /// P2: process defaults of [`TrLimits::ineffcover`] and [`TrLimits::typesides`] (K3a: also the struct default).
 pub const INEFFCOVER_PROCESS: u32 = 1;
 pub const TYPESIDES_PROCESS: u32 = 1;
@@ -818,7 +818,7 @@ impl TrLimits {
                 "cloreuse" => l.cloreuse = v.min(1),
                 "sidestitchmin" => l.sidestitchmin = v,
                 "t3idx" => l.t3idx = v.min(4),
-                "t1inline" => l.t1inline = v.min(1023),
+                "t1inline" => l.t1inline = v.min(2047),
                 "lockstep" => l.lockstep = v.min(1_000_000),
                 "dynmask" => l.dynmask = v.min(1),
                 "ineffcover" => l.ineffcover = v.min(1),

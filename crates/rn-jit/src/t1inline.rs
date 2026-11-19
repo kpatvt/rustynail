@@ -45,8 +45,10 @@ pub const B_LEN: u16 = 128;
 pub const B_SELECT: u16 = 256;
 /// `rawlen`.
 pub const B_RAWLEN: u16 = 512;
+/// H2a: `setmetatable(t, mt)` (also as a statement and in tail position).
+pub const B_SETMT: u16 = 1024;
 /// All rows.
-pub const B_ALL: u16 = 1023;
+pub const B_ALL: u16 = 2047;
 
 /// Mutant bit of [`CallEnv::inl_mut`](super::calls::CallEnv::inl_mut) (test-only; always 0 without the `tr_mutants` feature): the `type` identity test is skipped.
 pub const M_TYPE_IDENT: u16 = 1;
@@ -68,6 +70,18 @@ pub const M_RAWLEN_NEXT: u16 = 128;
 pub const M_SQRT_INT: u16 = 256;
 /// `type` answers the upvalue of the *next* basic type.
 pub const M_TYPE_IDX: u16 = 512;
+/// H2a: `setmetatable` does not check that the new metatable has the cached "no `__gc`" bit (a `__gc` metatable would not register the finalizer).
+pub const M_SETMT_GC: u16 = 1024;
+/// H2a: `setmetatable` does not check that the table is not black (the collector's barrier would be missing).
+pub const M_SETMT_BLACK: u16 = 2048;
+/// H2a: `setmetatable` does not check that the table has no metatable yet (a `__metatable` field would not protect it).
+pub const M_SETMT_OLD: u16 = 4096;
+/// H2a: `setmetatable` does not check that the second argument is a table (`nil`, a number or nothing is stored as a metatable).
+pub const M_SETMT_ARG: u16 = 8192;
+/// H2a: the inline tail call of a built-in does not give back the instruction count of the `RETURN` it jumps through.
+pub const M_TAIL_COUNT: u16 = 16384;
+/// H2a: the inline tail call of a built-in is also taken in a metamethod frame.
+pub const M_TAIL_MM: u16 = 32768;
 
 /// The call site being compiled.
 #[derive(Clone, Copy)]
@@ -77,6 +91,8 @@ pub(crate) struct Site {
     pub next: L,
     pub slow: L,
     pub mu: u16,
+    /// `C` of the `CALL` (a `TAILCALL` counts as 0: one result in `R[A]`, `top` after it).
+    pub c: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -101,6 +117,8 @@ struct Builtin {
     addr: fn() -> usize,
     /// Call shapes (`B` of the `CALL`) the emitter handles.
     shape: fn(u32) -> bool,
+    /// The emitter also handles `C == 1` (no result wanted: the call as a statement).
+    c1: bool,
     emit: Emit,
 }
 
@@ -135,6 +153,10 @@ fn a_rawlen() -> usize {
     jit_hooks::libfn_addr(libfn::RAWLEN)
 }
 
+fn a_setmt() -> usize {
+    jit_hooks::setmt_addr()
+}
+
 fn one_arg(b: u32) -> bool {
     b == 2
 }
@@ -156,6 +178,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Closure,
         addr: a_type,
         shape: one_arg,
+        c1: false,
         emit: |c, s| c.t1i_type(s),
     },
     Builtin {
@@ -164,6 +187,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_floor,
         shape: one_arg,
+        c1: false,
         emit: |c, s| c.t1i_floor(s),
     },
     Builtin {
@@ -172,6 +196,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_byte,
         shape: byte_shape,
+        c1: false,
         emit: |c, s| c.t1i_byte(s),
     },
     Builtin {
@@ -180,6 +205,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_max,
         shape: two_args,
+        c1: false,
         emit: |c, s| c.t1i_max(s),
     },
     Builtin {
@@ -188,6 +214,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_min,
         shape: two_args,
+        c1: false,
         emit: |c, s| c.t1i_min(s),
     },
     Builtin {
@@ -196,6 +223,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_abs,
         shape: one_arg,
+        c1: false,
         emit: |c, s| c.t1i_abs(s),
     },
     Builtin {
@@ -204,6 +232,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_sqrt,
         shape: one_arg,
+        c1: false,
         emit: |c, s| c.t1i_sqrt(s),
     },
     Builtin {
@@ -212,6 +241,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_len,
         shape: one_arg,
+        c1: false,
         emit: |c, s| c.t1i_len(s),
     },
     Builtin {
@@ -220,6 +250,7 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_select,
         shape: select_shape,
+        c1: false,
         emit: |c, s| c.t1i_select(s),
     },
     Builtin {
@@ -228,7 +259,17 @@ static BUILTINS: &[Builtin] = &[
         kind: Kind::Light,
         addr: a_rawlen,
         shape: one_arg,
+        c1: false,
         emit: |c, s| c.t1i_rawlen(s),
+    },
+    Builtin {
+        bit: B_SETMT,
+        names: &["setmetatable"],
+        kind: Kind::Light,
+        addr: a_setmt,
+        shape: two_args,
+        c1: true,
+        emit: |c, s| c.t1i_setmt(s),
     },
 ];
 
@@ -326,11 +367,20 @@ pub fn site_hints(p: &Proto) -> Box<[u16]> {
     let mut out = vec![0u16; code.len()];
     for pc in 0..code.len() {
         let i = Instruction(code[pc]);
-        if i.opcode() == Some(OpCode::Call) && (i.c() == 0 || i.c() == 2) {
-            out[pc] = if stripped {
+        let op = i.opcode();
+        // (`C` = 1, a call as a statement, is only done for the rows that handle it; a `TAILCALL` has one result like `C` = 0)
+        if (op == Some(OpCode::Call) && (i.c() == 0 || i.c() == 2 || i.c() == 1))
+            || op == Some(OpCode::Tailcall)
+        {
+            let m = if stripped {
                 B_ALL
             } else {
                 callee_mask(p, pc, i.a(), 0)
+            };
+            out[pc] = if op == Some(OpCode::Call) && i.c() == 1 {
+                m & B_SETMT
+            } else {
+                m
             };
         }
     }
@@ -346,10 +396,10 @@ fn m_reg(v: V, off: i32) -> M {
 
 impl Cx<'_> {
     /// The rows enabled for a call shape.
-    fn t1i_rows(inl: u16, b: u32) -> Vec<&'static Builtin> {
+    fn t1i_rows(inl: u16, b: u32, c: u32) -> Vec<&'static Builtin> {
         BUILTINS
             .iter()
-            .filter(|r| inl & r.bit != 0 && (r.shape)(b) && usable(r))
+            .filter(|r| inl & r.bit != 0 && (r.shape)(b) && (c != 1 || r.c1) && usable(r))
             .collect()
     }
 
@@ -369,14 +419,21 @@ impl Cx<'_> {
     /// passes to [`Cx::t1i_emit`]).
     pub(crate) fn t1i_applies(&self, pc: u32, b: u32, c: u32) -> bool {
         let inl = self.env().inl & self.t1i_site_mask(pc);
-        inl != 0 && (c == 0 || c == 2) && !Self::t1i_rows(inl, b).is_empty()
+        inl != 0 && c <= 2 && !Self::t1i_rows(inl, b, c).is_empty()
     }
 
     /// Emits the inline built-ins at `notlcl` (`V0` = the callee's tag byte, `V5` = `top`). Control leaves to `next` (done) or
     /// `slow` (nothing has been changed: the generic call).
-    pub(crate) fn t1i_emit(&mut self, pc: u32, a: u32, b: u32, next: L, slow: L, notlcl: L) {
+    pub(crate) fn t1i_emit(
+        &mut self,
+        pc: u32,
+        (a, b, c): (u32, u32, u32),
+        next: L,
+        slow: L,
+        notlcl: L,
+    ) {
         let env = self.env();
-        let rows = Self::t1i_rows(env.inl & self.t1i_site_mask(pc), b);
+        let rows = Self::t1i_rows(env.inl & self.t1i_site_mask(pc), b, c);
         let mu = env.inl_mut;
         let site = Site {
             a,
@@ -384,6 +441,7 @@ impl Cx<'_> {
             next,
             slow,
             mu,
+            c,
         };
         self.op(Op::Bind(notlcl));
         let lights: Vec<&Builtin> = rows
@@ -432,14 +490,20 @@ impl Cx<'_> {
     /// Stores the result `(tag, payload)` in `R[A]` and the dead copy above the arguments, sets `top` after the result and
     /// leaves to the continuation.
     fn t1i_store(&mut self, s: &Site, tag: Src, pay: V, dead: bool) {
-        self.op(Op::St {
-            w: W::B8,
-            m: fr(s.a, 0),
-            src: tag,
-        });
-        self.st(W::B8, fr(s.a, 8), pay);
-        if dead {
-            let d = s.a + s.b + 1;
+        self.t1i_store_d(s, tag, pay, dead.then_some(s.a + s.b + 1));
+    }
+
+    /// [`Cx::t1i_store`] with the register of the dead copy given (`None`: no dead copy).
+    fn t1i_store_d(&mut self, s: &Site, tag: Src, pay: V, dead: Option<u32>) {
+        if s.c != 1 {
+            self.op(Op::St {
+                w: W::B8,
+                m: fr(s.a, 0),
+                src: tag,
+            });
+            self.st(W::B8, fr(s.a, 8), pay);
+        }
+        if let Some(d) = dead {
             self.op(Op::St {
                 w: W::B8,
                 m: fr(d, 0),
@@ -456,8 +520,9 @@ impl Cx<'_> {
 
     /// `top` = `R[A + 1]` (one result), continue.
     fn t1i_done(&mut self, s: &Site) {
+        // (`C` = 1: no result wanted, `top` = `R[A]`, like `moveresults` of the generic path)
         self.ld(5, W::B8, ciw(ci::FUNC));
-        self.op(Op::Add(5, Src::Imm((s.a + 2) as i32)));
+        self.op(Op::Add(5, Src::Imm((s.a + 2 - u32::from(s.c == 1)) as i32)));
         self.st(W::B8, thw(thr::TOP), 5);
         self.op(Op::Jmp(s.next));
     }
@@ -735,5 +800,38 @@ impl Cx<'_> {
         self.op(Op::And(6, Src::Imm(i32::from(table::BITDUMMY))));
         self.br(Cc::Eq, 6, Src::Imm(0), s.slow);
         self.t1i_store_int(s, 4);
+    }
+
+    /// H2a: `setmetatable(t, mt)` of a table `t` without a metatable and a table `mt` whose cached "no `__gc`" bit is set, on a table the
+    /// collector's barrier ignores (not black): store the pointer; the result is `t`. The same guards as the trace compiler's inline
+    /// form (`Asm::setmt_fast`): a protected old metatable (`__metatable` field), `__gc`, a black table, a nil or non-table second
+    /// argument, a missing argument (`B` = 3 is two arguments), every error: the generic call, with nothing changed.
+    pub(crate) fn t1i_setmt(&mut self, s: &Site) {
+        self.ld(2, W::B1, fr(s.a + 1, 0));
+        self.br(Cc::Ne, 2, Src::Imm(i32::from(ctb(LUA_VTABLE))), s.slow);
+        if s.mu & M_SETMT_ARG == 0 {
+            self.ld(3, W::B1, fr(s.a + 2, 0));
+            self.br(Cc::Ne, 3, Src::Imm(i32::from(ctb(LUA_VTABLE))), s.slow);
+        }
+        self.ld(1, W::B8, fr(s.a + 1, 8)); // t
+        self.ld(4, W::B8, fr(s.a + 2, 8)); // mt
+        if s.mu & M_SETMT_GC == 0 {
+            // `fast_tm(mt, Gc)` is `None` without a lookup only when the "absent" bit is cached
+            self.ld(6, W::B1, m_reg(4, table::FLAGS as i32));
+            self.op(Op::And(6, Src::Imm(1 << rn_core::meta::Tm::Gc as u8)));
+            self.br(Cc::Eq, 6, Src::Imm(0), s.slow);
+        }
+        if s.mu & M_SETMT_BLACK == 0 {
+            self.ld(6, W::B1, m_reg(1, table::MARKED as i32));
+            self.op(Op::And(6, Src::Imm(i32::from(rn_core::gc::BLACKBIT))));
+            self.br(Cc::Ne, 6, Src::Imm(0), s.slow);
+        }
+        if s.mu & M_SETMT_OLD == 0 {
+            self.ld(6, W::B8, m_reg(1, table::METATABLE as i32));
+            self.br(Cc::Ne, 6, Src::Imm(0), s.slow);
+        }
+        self.st(W::B8, m_reg(1, table::METATABLE as i32), 4);
+        // (the native pushes its result at `top`, the slot after its arguments)
+        self.t1i_store_d(s, Src::Imm(i32::from(ctb(LUA_VTABLE))), 1, Some(s.a + s.b));
     }
 }

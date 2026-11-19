@@ -2896,6 +2896,24 @@ pub(crate) fn t1inline_mut() -> u16 {
     if mutants::active("t1i_type_index") {
         m |= t::M_TYPE_IDX;
     }
+    if mutants::active("t1i_setmt_gc_skip") {
+        m |= t::M_SETMT_GC;
+    }
+    if mutants::active("t1i_setmt_black_skip") {
+        m |= t::M_SETMT_BLACK;
+    }
+    if mutants::active("t1i_setmt_old_skip") {
+        m |= t::M_SETMT_OLD;
+    }
+    if mutants::active("t1i_setmt_arg_skip") {
+        m |= t::M_SETMT_ARG;
+    }
+    if mutants::active("t1i_tail_count_skip") {
+        m |= t::M_TAIL_COUNT;
+    }
+    if mutants::active("t1i_tail_mm_skip") {
+        m |= t::M_TAIL_MM;
+    }
     m
 }
 

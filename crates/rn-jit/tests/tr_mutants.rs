@@ -2294,6 +2294,36 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "t1i_inline_programs")],
     },
     Row {
+        name: "t1i_setmt_gc_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_setmt_programs")],
+    },
+    Row {
+        name: "t1i_setmt_black_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_setmt_programs")],
+    },
+    Row {
+        name: "t1i_setmt_old_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_setmt_programs")],
+    },
+    Row {
+        name: "t1i_setmt_arg_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_setmt_programs")],
+    },
+    Row {
+        name: "t1i_tail_count_skip",
+        owner: "H2",
+        dets: &[ol("tr_core", "instruction_count_identity")],
+    },
+    Row {
+        name: "t1i_tail_mm_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_setmt_programs")],
+    },
+    Row {
         name: "t3_default_ignored",
         owner: "T3",
         dets: &[d("tr_policy", "t3_process_default")],

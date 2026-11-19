@@ -306,7 +306,7 @@ impl Cx<'_> {
         self.op(Op::SetK(0));
         self.op(Op::JmpR(3));
         if inl {
-            self.t1i_emit(pc, a, b, next, slow, notlcl);
+            self.t1i_emit(pc, (a, b, c), next, slow, notlcl);
         }
         // ---- the general call
         self.op(Op::Bind(slow));
@@ -367,19 +367,33 @@ impl Cx<'_> {
         self.op(Op::Mov(0, self.pc_addr(pc + 1)));
         self.st(W::B8, ciw(ci::SAVEDPC), 0);
         let fast = env.tail_fast && i.c() == 0 && i.b() != 0 && i.b() <= 16;
-        let slow = if fast { self.p.label() } else { 0 };
+        // H2a: a callee that is not a Lua closure may be a built-in with an inline fast path (`t1inline`): the result is computed in
+        // place and the frame returns through the `RETURN` that follows this instruction (a `TAILCALL` of a native finishes like that)
+        let inl = self.t1i_applies(pc, i.b(), 0);
+        let slow = if fast || inl { self.p.label() } else { 0 };
+        let notlcl = if inl { self.p.label() } else { slow };
         // R1: the interpreter's `OP_TAILCALL` of a Lua closure, inline: the callee's function and arguments move down over
         // the frame's function slot (`pre_tail_call`), the frame (the same `CallInfo`) becomes the callee's, and control
         // continues at the callee's entry. Only the common shape: no upvalues to close (`k`), a non-vararg caller (`C`), a
         // fixed argument count (`B`), a compiled callee with at least as many arguments as parameters and the stack room
         // `pre_tail_call` checks; anything else (and every failing guard, nothing has been changed by then) takes the helper.
         let (a, b) = (i.a(), i.b());
+        if inl && !fast {
+            if b != 0 {
+                self.ld(5, W::B8, ciw(ci::FUNC));
+                self.op(Op::Add(5, Src::Imm((a + b + 1) as i32)));
+            } else {
+                self.ld(5, W::B8, thw(thr::TOP));
+            }
+            self.ld(0, W::B1, fr(a, 0));
+            self.op(Op::Jmp(notlcl));
+        }
         if fast {
             // V5 = top = end of the arguments
             self.ld(5, W::B8, ciw(ci::FUNC));
             self.op(Op::Add(5, Src::Imm((a + b + 1) as i32)));
             self.ld(0, W::B1, fr(a, 0));
-            self.br(Cc::Ne, 0, Src::Imm(i32::from(ctb(LUA_VLCL))), slow);
+            self.br(Cc::Ne, 0, Src::Imm(i32::from(ctb(LUA_VLCL))), notlcl);
             self.ld(1, W::B8, fr(a, 8)); // closure
             self.ld(2, W::B8, Self::m_reg(1, lclosure::PROTO as i32));
             self.ld(3, W::B8, Self::m_reg(2, proto::JIT as i32));
@@ -437,6 +451,35 @@ impl Cx<'_> {
             self.ld(3, W::B8, Self::m_reg(3, HDR_ENTRY0));
             self.op(Op::SetK(0));
             self.op(Op::JmpR(3));
+        }
+        if inl {
+            let tail_ret = self.p.label();
+            let pre = self.p.label();
+            // (a metamethod frame returns through `Cold::MmRet`, which the helper path knows: no inline native tail call there)
+            self.op(Op::Bind(notlcl));
+            if env.t1q & 32 != 0 && env.inl_mut & super::t1inline::M_TAIL_MM == 0 {
+                self.ld(1, W::B4, ciw(ci::CALLSTATUS));
+                self.op(Op::And(1, Src::Imm(ci::CIST_MMRET as i32)));
+                self.br(Cc::Ne, 1, Src::Imm(0), slow);
+            }
+            self.ld(0, W::B1, fr(a, 0));
+            self.t1i_emit(pc, (a, b, 0), tail_ret, slow, pre);
+            // the built-in's result is in `R[A]`, `top` after it: the `RETURN` that follows returns it. The interpreter does not execute
+            // that instruction after a native tail callee, so its instruction count is given back
+            self.op(Op::Bind(tail_ret));
+            if env.inl_mut & super::t1inline::M_TAIL_COUNT == 0 {
+                let m = M {
+                    base: Base::Cnt,
+                    off: 0,
+                };
+                self.ld(1, W::B4, m);
+                self.op(Op::Add(1, Src::Imm(1)));
+                self.st(W::B4, m, 1);
+            }
+            let rl = self.pcl[pc as usize + 1];
+            self.op(Op::Jmp(rl));
+        }
+        if fast || inl {
             self.op(Op::Bind(slow));
         }
         self.op(Op::CallH {

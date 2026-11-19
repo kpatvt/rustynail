@@ -133,6 +133,7 @@ pub fn register_with(cfg: Config) -> bool {
             jit_hooks::set_strlen(rn_std::lib_string::jit_len_addr());
             jit_hooks::set_strformat(rn_std::lib_string::jit_format_addr());
             jit_hooks::set_select(rn_std::lib_base::jit_select_addr());
+            jit_hooks::set_setmt(rn_std::lib_base::jit_setmt_addr());
             let [sub, byte, chr] = rn_std::lib_string::jit_libfns();
             let [ins, rem] = rn_std::lib_table::jit_libfns();
             let [mty, fmod, toint] = rn_std::lib_math::jit_libfns();

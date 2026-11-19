@@ -23,6 +23,8 @@
 mod a1_progs;
 #[path = "tr_core/h1_progs.rs"]
 mod h1_progs;
+#[path = "tr_core/h2_progs.rs"]
+mod h2_progs;
 #[path = "tr_core/nr_progs.rs"]
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
@@ -36,6 +38,7 @@ mod sink_progs;
 
 use a1_progs::{A1_PROGS, G1_SLOW};
 use h1_progs::H1_PROGS;
+use h2_progs::H2_PROGS;
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
 use r1_progs::R1_PROGS;
@@ -154,6 +157,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(R1_PROGS)
         .chain(G1_SLOW)
         .chain(H1_PROGS)
+        .chain(H2_PROGS)
         .chain(S4_PROGS)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
@@ -4339,6 +4343,57 @@ fn t1i_inline_programs() {
         let mut off = Job::new("t1i_inline", "always").opts("+verify");
         off.limits = l.into();
         jobs.push(off);
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+}
+
+/// H2a: `setmetatable` inline in the tier-1 `CALL` / `TAILCALL` templates and the inline tail call of the built-in rows (`h2_setmt`): normal and
+/// abnormal arguments, a protected / old / `__gc` metatable, old and black tables, metamethod frames, a replaced function, hooks, coroutines. In every
+/// trace mode with `+verify`, exit storms, count budgets, GC stress 1 and 2 in both collector modes (with the heap verifier), the stack-move stress and
+/// the limit off / on. Mutants `t1i_setmt_gc_skip`, `t1i_setmt_black_skip`, `t1i_setmt_old_skip`, `t1i_setmt_arg_skip`, `t1i_tail_count_skip`,
+/// `t1i_tail_mm_skip`.
+#[test]
+fn h2_setmt_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
+            let mut j = Job::new("h2_setmt", trace).opts(opts);
+            if budget != 0 {
+                j = j.budget(budget);
+            }
+            jobs.push(j);
+        }
+        for gc in ["1", "2"] {
+            jobs.push(Job::new("h2_setmt", trace).env("RUSTYNAIL_GC_STRESS", gc));
+            jobs.push(
+                Job::new("h2_setmt", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_MODE", "inc"),
+            );
+            jobs.push(
+                Job::new("h2_setmt", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_VERIFY", "1"),
+            );
+        }
+        jobs.push(Job::new("h2_setmt", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+    }
+    for j in jobs.iter_mut() {
+        j.limits = "t1inline=2047".into();
+    }
+    // controls: the knob off, and the setmetatable row alone
+    for l in ["t1inline=0", "t1inline=1024", "t1inline=1023"] {
+        let mut j = Job::new("h2_setmt", "always").opts("+verify");
+        j.limits = l.into();
+        jobs.push(j);
     }
     let res = compare(jobs);
     assert!(!res.is_empty());

@@ -462,6 +462,12 @@ pub const NAMES: &[&str] = &[
     "t1i_rawlen_next_skip",
     "t1i_sqrt_int_bits",
     "t1i_type_index",
+    "t1i_setmt_gc_skip",
+    "t1i_setmt_black_skip",
+    "t1i_setmt_old_skip",
+    "t1i_setmt_arg_skip",
+    "t1i_tail_count_skip",
+    "t1i_tail_mm_skip",
     "t3_default_ignored",
     "ineff_cover_ignored",
     "typesides_ignored",
@@ -921,7 +927,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 702);
+        assert_eq!(NAMES.len(), 708);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

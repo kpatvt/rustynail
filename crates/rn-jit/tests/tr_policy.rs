@@ -475,12 +475,12 @@ fn t3_process_default() {
     }
 }
 
-/// BUNDLE-T1I / C36: the process default of `t1inline` is 1023 (all rows; the floor bit cost `heldout/bigint_rsa` 30% until `cispare` repaired its entry failures),
-/// the struct default (tests) is off, and an explicit value wins (clamped to the 10 rows).
+/// BUNDLE-T1I / C36: the process default of `t1inline` is 2047 (all rows; the floor bit cost `heldout/bigint_rsa` 30% until `cispare` repaired its entry failures),
+/// the struct default (tests) is off, and an explicit value wins (clamped to the 11 rows).
 #[test]
 fn t1i_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, T1INLINE_PROCESS};
-    assert_eq!(T1INLINE_PROCESS, 1023);
+    assert_eq!(T1INLINE_PROCESS, 2047);
     assert_eq!(
         TrConfig::for_mode(TrMode::On).limits.t1inline,
         T1INLINE_PROCESS,
@@ -493,7 +493,7 @@ fn t1i_process_default() {
         (Some("t1inline=0"), 0),
         (Some("maxside=9,t1inline=65"), 65),
         (Some("t1inline=1021"), 1021),
-        (Some("t1inline=4096"), 1023),
+        (Some("t1inline=4096"), 2047),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);
