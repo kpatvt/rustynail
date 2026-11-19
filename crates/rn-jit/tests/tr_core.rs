@@ -4399,6 +4399,57 @@ fn h2_setmt_programs() {
     assert!(!res.is_empty());
 }
 
+/// H2b: `SETFIELD` of a new key inline in tier 1 (`h2_newkey`): generated insertion sequences read back in `pairs` order, metamethod-absence flags, `__newindex`,
+/// nil values, old (black) tables in both collector modes, layout ids of 8+ node parts under shape guards. In every trace mode with `+verify`, exit storms, count
+/// budgets, GC stress 1 and 2 (with the heap verifier), the stack-move stress and the limit off / on. Mutants `newkey_black_skip`, `newkey_nil_value`,
+/// `newkey_nonempty_skip`, `newkey_mt_skip`, `newkey_flags_skip`, `newkey_layout_skip`, `newkey_mainpos_off`, `newkey_dummy_skip`.
+#[test]
+fn h2_newkey_programs() {
+    // (the program prints keys in `pairs` order, which follows the string-hash seed: random per process unless pinned; the children inherit it)
+    std::env::set_var("TR_CORE_SEED", "0");
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
+            let mut j = Job::new("h2_newkey", trace).opts(opts);
+            if budget != 0 {
+                j = j.budget(budget);
+            }
+            jobs.push(j);
+        }
+        for gc in ["1", "2"] {
+            jobs.push(Job::new("h2_newkey", trace).env("RUSTYNAIL_GC_STRESS", gc));
+            jobs.push(
+                Job::new("h2_newkey", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_MODE", "inc"),
+            );
+            jobs.push(
+                Job::new("h2_newkey", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_VERIFY", "1"),
+            );
+        }
+        jobs.push(Job::new("h2_newkey", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+    }
+    // controls: the knob off (the old tier 1), on
+    for l in ["tset=15", "tset=31", "tset=0"] {
+        for trace in ["always", "on"] {
+            let mut j = Job::new("h2_newkey", trace).opts("+verify");
+            j.limits = l.into();
+            jobs.push(j);
+        }
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+}
+
 /// BUNDLE-K (B): the tier-1 `SELF` on a string receiver (`strself`): every change of the string library / metatable between calls of a hot
 /// loop against the interpreter run, in every trace mode, with exit storms, budgets, GC stress and the stack-move stress (K3b: `strself` is hard-wired on; `t3idx=0` is the control without the string metatable address).
 /// Mutants `strself_tag_skip`, `strself_mt_skip`, `strself_nil_hit`.

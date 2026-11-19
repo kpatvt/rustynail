@@ -197,6 +197,62 @@ fn shape_trace_newref_clears_the_id() {
     }
 }
 
+/// `newkey_layout_skip`: constructors of 5 to 8 constant keys (8-node hash parts) built by tier 1 (traces never form: the thresholds are out of reach)
+/// through the inline insertion of a new key of `SETFIELD` (H2b); with a nonzero born value of the slot, every table must end with 0.
+#[cfg(feature = "tr_mutants")]
+#[test]
+fn shape_tier1_newkey_clears_the_id() {
+    use rn_core::state::{LuaState, LUA_MULTRET};
+    use rn_core::status::Status;
+    use rn_jit::rt::set_trace;
+    use rn_jit::t15::runtime::{T15Config, T15Mode};
+    use rn_jit::tr::cache::TrConfig;
+    init();
+    let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
+    rn_jit::set_mode(&mut st, rn_jit::Mode::Always);
+    rn_jit::set_t15(&mut st, T15Config::for_mode(T15Mode::Off));
+    set_trace(
+        &mut st,
+        TrConfig::parse(Some("on"), Some("2000000000,2000000000"), None, None, None),
+    );
+    rn_jit::tr::attach_driver(&mut st);
+    let src = "
+      KEEP = {}
+      local function m1(i) return {name = i, value = 2, key = 3, next = 4, len = 5, size = 6, id = 7, tag = 8} end
+      local function m2(i) return {k1 = i, k2 = 2, k3 = 3, k4 = 4, k5 = 5} end
+      local function m3(i) return {x = i, y = 2, z = 3, w = 4, v = 5, u = 6} end
+      local function m4(i) return {tag = i, id = 2, size = 3, len = 4, next = 5, key = 6, value = 7, name = 8} end
+      local function m5(i) return {a = i, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7} end
+      local fs = {m1, m2, m3, m4, m5}
+      local function run(n)
+        for i = 1, n do
+          KEEP[i % 40 + 1] = fs[i % 5 + 1](i)
+        end
+      end
+      run(3000) run(7)";
+    rn_core::table::set_mut_born_mark(MARK);
+    let base = st.top();
+    assert_eq!(st.load_buffer(src.as_bytes(), b"=shape", None), Status::Ok);
+    let func = st.top() - 1;
+    let status = st.pcall(func, LUA_MULTRET, 0);
+    rn_core::table::set_mut_born_mark(0);
+    assert_eq!(status, Status::Ok, "script failed: {:?}", st.get(func));
+    st.set_top(base);
+    let g = st.globals();
+    let key = Value::string(st.heap().new_str(b"KEEP").unwrap());
+    let keep = g.get(&key);
+    let keep = keep.as_table().expect("KEEP");
+    for i in 1..=40 {
+        let t = keep.get_int(i).as_table().expect("kept table");
+        assert!(t.hash_size() >= 8, "table {i}: {} nodes", t.hash_size());
+        assert_eq!(
+            t.layout_id(),
+            0,
+            "table {i}: the id survived the key insertions"
+        );
+    }
+}
+
 /// The library paths (`table.insert` / `table.remove` / `table.move`, `rawset`, `next`/`pairs`, `table.sort`) through the real
 /// interpreter: array-part moves and value writes keep a stamped id, an insertion of a new hash key clears it.
 #[test]

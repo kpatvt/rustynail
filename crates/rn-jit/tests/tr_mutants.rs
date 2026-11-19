@@ -2324,6 +2324,46 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "h2_setmt_programs")],
     },
     Row {
+        name: "newkey_black_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
+        name: "newkey_nil_value",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
+        name: "newkey_nonempty_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
+        name: "newkey_mt_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
+        name: "newkey_flags_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
+        name: "newkey_layout_skip",
+        owner: "H2",
+        dets: &[d("tr_shape", "shape_tier1_newkey_clears_the_id")],
+    },
+    Row {
+        name: "newkey_mainpos_off",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
+        name: "newkey_dummy_skip",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_newkey_programs")],
+    },
+    Row {
         name: "t3_default_ignored",
         owner: "T3",
         dets: &[d("tr_policy", "t3_process_default")],

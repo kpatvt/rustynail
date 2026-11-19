@@ -1192,19 +1192,19 @@ fn sinkroot_process_defaults() {
 fn bb_process_defaults() {
     use rn_jit::tr::cache::{TrConfig, TrMode, MAXSIDE_PROCESS, TSET_PROCESS};
     assert_eq!(MAXSIDE_PROCESS, 16);
-    assert_eq!(TSET_PROCESS, 15);
+    assert_eq!(TSET_PROCESS, 31);
     assert_eq!(
         TrConfig::for_mode(TrMode::On).limits.maxside,
         MAXSIDE_PROCESS
     );
     assert_eq!(TrConfig::for_mode(TrMode::On).limits.tset, TSET_PROCESS);
     for (env, want) in [
-        (None, 15),
-        (Some("warm=0"), 15),
+        (None, 31),
+        (Some("warm=0"), 31),
         (Some("tset=0"), 0),
         (Some("tset=3,maxside=9"), 3),
         (Some("tset=9"), 9),
-        (Some("tset=99"), 15),
+        (Some("tset=99"), 31),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);

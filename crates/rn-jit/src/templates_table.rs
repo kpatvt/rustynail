@@ -43,6 +43,15 @@ pub(crate) const NS_INT_KEY_SKIP: u8 = 32;
 /// BUNDLE-G1 mutants: the inline integer-key read treats a nil-valued node as a hit / sends keys of any type to the hash probe.
 pub(crate) const NS_GET_NIL_HIT: u8 = 64;
 pub(crate) const NS_GET_TAG_SKIP: u8 = 128;
+/// H2b mutants of the inline insertion of a new key (`tr::newkey_mutants()`; always 0 without the `tr_mutants` feature).
+pub(crate) const NK_BLACK_SKIP: u8 = 1;
+pub(crate) const NK_NIL_VALUE: u8 = 2;
+pub(crate) const NK_NONEMPTY: u8 = 4;
+pub(crate) const NK_MT_SKIP: u8 = 8;
+pub(crate) const NK_FLAGS_SKIP: u8 = 16;
+pub(crate) const NK_LAYOUT_SKIP: u8 = 32;
+pub(crate) const NK_MAINPOS: u8 = 64;
+pub(crate) const NK_DUMMY_SKIP: u8 = 128;
 
 /// Classification of the opcodes this file implements (`None` = not ours).
 pub(crate) fn kind(op: OpCode, i: Instruction, k: &[Value]) -> Option<Kind> {
@@ -245,8 +254,23 @@ impl Cx<'_> {
             O::Setfield => {
                 let v = self.vop(i);
                 self.tbl_reg(a, x);
-                self.str_lookup_const(b, x);
-                self.set_node(v, x);
+                if self.calls_on() && self.env().tset & 16 != 0 {
+                    // H2b (`tset` bit 4): a key that is not in the table is inserted inline when its main position is free
+                    // (out of line: the store into an existing node falls through without a jump)
+                    let (absent, done) = (self.p.label(), self.p.label());
+                    self.cold.push(Cold::NewKey {
+                        l: absent,
+                        back: done,
+                        x,
+                        v,
+                    });
+                    self.str_lookup_const(b, absent);
+                    self.set_node(v, x);
+                    self.op(Op::Bind(done));
+                } else {
+                    self.str_lookup_const(b, x);
+                    self.set_node(v, x);
+                }
             }
             O::Settabup => {
                 let v = self.vop(i);
@@ -758,6 +782,99 @@ impl Cx<'_> {
         self.ld(5, W::B8, v.pay);
         self.st(W::B1, rm(2, node::VAL_TT as i32), 4);
         self.st(W::B8, rm(2, node::VAL as i32), 5);
+    }
+
+    /// The active `newkey` mutant `bit` (test-only; always false without the `tr_mutants` feature).
+    fn newkey_mut(&self, bit: u8) -> bool {
+        #[cfg(feature = "trace")]
+        {
+            crate::tr::newkey_mutants() & bit != 0
+        }
+        #[cfg(not(feature = "trace"))]
+        {
+            let _ = bit;
+            false
+        }
+    }
+
+    /// H2b: `SETFIELD` of a constant short-string key the walk of its chain did not find (`V0` = the table, `V1` = the key, `V3` = its hash;
+    /// the chain walk leaves them untouched): what `psetshortstr_miss` + `insertkey` do when the main position of the key is free (its
+    /// value empty): the key and the value are stored there, the metamethod-absence flags are invalidated and so is the layout id of
+    /// the hash part (docs/JIT_TRACE.md 15). Everything else exits to `x` before anything has changed: a table without hash part (the dummy
+    /// node), a black table (the helper's key / value barrier), a nil value (a no-op that the helper answers), a metatable that might have
+    /// `__newindex` (the "absent" bit of its flags is not set), a taken main position (collision: the helper moves nodes, takes a free
+    /// position or rehashes).
+    pub(crate) fn emit_newkey(&mut self, l: L, back: L, x: L, v: Vop) {
+        self.op(Op::Bind(l));
+        // no hash part: the dummy node must never be written
+        if !self.newkey_mut(NK_DUMMY_SKIP) {
+            self.ld(4, W::B1, rm(0, table::FLAGS as i32));
+            self.op(Op::And(4, Src::Imm(i32::from(table::BITDUMMY))));
+            self.br(Cc::Ne, 4, Src::Imm(0), x);
+        }
+        if !self.newkey_mut(NK_BLACK_SKIP) {
+            self.ld(4, W::B1, rm(0, table::MARKED as i32));
+            self.op(Op::And(4, Src::Imm(i32::from(BLACKBIT))));
+            self.br(Cc::Ne, 4, Src::Imm(0), x);
+        }
+        if !self.newkey_mut(NK_NIL_VALUE) {
+            self.ld(4, W::B1, v.tag);
+            self.op(Op::And(4, Src::Imm(0x0F)));
+            self.br(Cc::Eq, 4, Src::Imm(0), x);
+        }
+        if !self.newkey_mut(NK_MT_SKIP) {
+            let ok = self.p.label();
+            self.ld(4, W::B8, rm(0, table::METATABLE as i32));
+            self.br(Cc::Eq, 4, Src::Imm(0), ok);
+            self.ld(4, W::B1, rm(4, table::FLAGS as i32));
+            self.op(Op::And(4, Src::Imm(1 << Tm::NewIndex as i32)));
+            self.br(Cc::Eq, 4, Src::Imm(0), x);
+            self.op(Op::Bind(ok));
+        }
+        // V2 = main position of the key
+        self.ld(4, W::B8, rm(0, table::NODE as i32));
+        if self.newkey_mut(NK_MAINPOS) {
+            self.op(Op::MovR(2, 4));
+        } else {
+            self.ld(6, W::B1, rm(0, table::LSIZENODE as i32));
+            self.op(Op::Mov(2, 1));
+            self.op(Op::ShlV(2));
+            self.op(Op::Sub(2, Src::Imm(1)));
+            self.op(Op::And(2, Src::V(3)));
+            self.op(Op::Mul(2, Src::Imm(NODE_SIZE)));
+            self.op(Op::Add(2, Src::V(4)));
+        }
+        if !self.newkey_mut(NK_NONEMPTY) {
+            self.ld(4, W::B1, rm(2, node::VAL_TT as i32));
+            self.op(Op::And(4, Src::Imm(0x0F)));
+            self.br(Cc::Ne, 4, Src::Imm(0), x);
+        }
+        // commit (nothing below can exit)
+        self.st_imm(W::B1, rm(2, node::KEY_TT as i32), TAG_SHRSTR);
+        self.st(W::B8, rm(2, node::KEY as i32), 1);
+        self.ld(4, W::B1, v.tag);
+        self.ld(5, W::B8, v.pay);
+        self.st(W::B1, rm(2, node::VAL_TT as i32), 4);
+        self.st(W::B8, rm(2, node::VAL as i32), 5);
+        if !self.newkey_mut(NK_FLAGS_SKIP) {
+            self.ld(4, W::B1, rm(0, table::FLAGS as i32));
+            self.op(Op::And(4, Src::Imm(i32::from(!MASKFLAGS))));
+            self.st(W::B1, rm(0, table::FLAGS as i32), 4);
+        }
+        if !self.newkey_mut(NK_LAYOUT_SKIP) {
+            // S4: the key set of the node vector changes: invalidate its layout id (slot at `node - 16`, parts of 8 nodes or more)
+            let skip = self.p.label();
+            self.ld(6, W::B1, rm(0, table::LSIZENODE as i32));
+            self.br(Cc::Lt, 6, Src::Imm(3), skip);
+            self.ld(4, W::B8, rm(0, table::NODE as i32));
+            self.st_imm(
+                W::B8,
+                rm(4, -(rn_core::jit_layout::node::LAYOUT_ID_BYTES as i32)),
+                0,
+            );
+            self.op(Op::Bind(skip));
+        }
+        self.op(Op::Jmp(back));
     }
 
     /// The out-of-line nil-valued-node store of [`Cold::SetNil`] (`V0` = table, `V2` = the node of the existing key, whose value is nil):

@@ -6,10 +6,11 @@
 
 use super::progs::Prog;
 
-pub const H2_PROGS: &[Prog] = &[Prog {
-    name: "h2_setmt",
-    small: true,
-    src: r##"
+pub const H2_PROGS: &[Prog] = &[
+    Prog {
+        name: "h2_setmt",
+        small: true,
+        src: r##"
 local N = 300
 local out = {}
 local V = {}
@@ -263,4 +264,177 @@ for _ in pairs(wkt) do nk = nk + 1 end
 emit("weak", nw, nk, #wv, getmetatable(ws) == WV)
 print(H_concat(out, "\n"))
 "##,
-}];
+    },
+    Prog {
+        name: "h2_newkey",
+        small: true,
+        src: r##"
+-- H2b: SETFIELD of a key that is not in the table, inline in tier 1 when its main position is free. Generated insertion sequences (so that the
+-- same constant keys hit free main positions, collisions, full parts that rehash and nil values), read back in `pairs` order (the node layout
+-- decides it) with their sizes; metamethod-absence flags, `__newindex`, old (black) tables, tables of 8+ nodes (layout ids) read by hot loops.
+local out = {}
+local H_tostring, H_concat, H_pcall, H_type = tostring, table.concat, pcall, type
+local function emit(...)
+  local t = {}
+  for i = 1, select("#", ...) do t[i] = H_tostring((select(i, ...))) end
+  out[#out + 1] = H_concat(t, ",")
+end
+local seed = 20241
+local function rnd(n) seed = (seed * 1103515245 + 12345) % 2147483648 return (seed >> 8) % n + 1 end
+local keys = {}
+for i = 1, 26 do keys[i] = "k" .. i end
+keys[#keys + 1] = "__index"; keys[#keys + 1] = "__len"; keys[#keys + 1] = "n"; keys[#keys + 1] = "x"; keys[#keys + 1] = "y"; keys[#keys + 1] = "z"
+local function gen(nsets, prefill, withnil, withmt)
+  local l = { "local v, MT = ..." }
+  local pre = {}
+  for j = 1, prefill do pre[#pre + 1] = keys[rnd(#keys)] .. " = " .. j end
+  if rnd(4) == 1 then pre[#pre + 1] = "1, 2" end
+  l[#l + 1] = "local t = {" .. H_concat(pre, ", ") .. "}"
+  if withmt then l[#l + 1] = "setmetatable(t, MT)" end
+  for j = 1, nsets do
+    local k = keys[rnd(#keys)]
+    local r = rnd(8)
+    local val = r == 1 and withnil and "nil" or r == 2 and "{}" or r == 3 and "'s" .. j .. "'" or r == 4 and "false" or "v + " .. j
+    l[#l + 1] = "t." .. k .. " = " .. val
+  end
+  l[#l + 1] = "return t"
+  return assert(load(H_concat(l, "\n"), "=gen"))
+end
+local function sig(t)
+  local p = {}
+  for k, v in pairs(t) do p[#p + 1] = H_tostring(k) .. "=" .. (H_type(v) == "table" and "T" or H_tostring(v)) end
+  return H_concat(p, " ") .. " #" .. #t
+end
+local fns, ni_calls = {}, 0
+local MT_NI = { __newindex = function(t, k, v) ni_calls = ni_calls + 1 rawset(t, k, v) end }
+local MT_PLAIN = { __index = {} }
+for f = 1, 48 do fns[f] = gen(2 + rnd(14), rnd(7) - 1, f % 3 ~= 0, f % 4 ~= 0) end
+for f = 1, #fns do
+  local fn, last = fns[f], nil
+  local sum = 0
+  local mt = f % 8 < 4 and MT_NI or MT_PLAIN
+  for i = 1, 90 do
+    local t = fn(i, mt)
+    local s = sig(t)
+    if i == 90 then last = s end
+    sum = sum + #s
+  end
+  emit(f, last, sum, ni_calls)
+end
+
+-- metamethod-absence flags: the cached "absent" bit of a metatable is invalidated by the insertion of the key
+local function set_ni(m, f) m.__newindex = f end
+local function set_idx(m, f) m.__index = f end
+local function set_len(m, f) m.__len = f end
+local function set_eq(m, f) m.__eq = f end
+local seen = 0
+for i = 1, 120 do
+  local m1, m2, m3, m4 = {}, {}, {}, {}
+  local o1, o2, o3, o4 = setmetatable({}, m1), setmetatable({}, m2), setmetatable({}, m3), setmetatable({}, m4)
+  local o4b = setmetatable({}, m4)
+  local _ = o1.zz; o1.zz = 1; local _ = o2.zz; local _ = #o3; local _ = o4 == o4b
+  if i > 60 then
+    set_ni(m1, function(t, k, v) seen = seen + 1 rawset(t, k, v) end)
+    set_idx(m2, function(t, k) seen = seen + 10 return k end)
+    set_len(m3, function() seen = seen + 100 return 7 end)
+    set_eq(m4, function() seen = seen + 1000 return true end)
+    o1.qq = 5
+    local r2 = o2.nokey
+    local r3 = #o3
+    local r4 = o4 == o4b
+    if i % 20 == 0 then emit("flags", seen, r2, r3, r4, rawget(o1, "qq")) end
+  end
+end
+emit("flags", seen)
+
+-- `__newindex` handlers see the new key (the inline path must not be taken)
+local log = {}
+local function mk_h() return setmetatable({}, { __newindex = function(t, k, v) log[#log + 1] = k rawset(t, k, v) end }) end
+local function put3(t, v) t.a = v; t.b = v; t.c = v; t.a = v + 1 return t end
+for i = 1, 100 do local t = put3(mk_h(), i) if i % 50 == 0 then emit("ni", H_concat(log, ""), t.a, t.b, t.c) end end
+local proxy = setmetatable({}, { __newindex = {} })
+local function put_into(t, v) t.k = v end
+for i = 1, 100 do put_into({}, i) put_into(proxy, i) end
+emit("proxy", rawget(proxy, "k"), getmetatable(proxy).__newindex.k)
+
+-- nil values: no key is created; a following insertion behaves as in the interpreter (node reuse / rehash timing, shown by `pairs`)
+local function nil_then(t, v) t.x = nil; t.y = v; t.z = nil; t.n = v + 1; t.k1 = v + 2; t.k2 = nil; t.k3 = v + 3 return t end
+local last
+for i = 1, 100 do last = sig(nil_then({ k4 = 1 }, i)) end
+emit("nil", last)
+local function nil_fill(t, v) t.k1 = v; t.k2 = nil; t.k3 = nil; t.k5 = v; t.k6 = nil; t.k7 = v; t.k8 = v; t.k9 = v return t end
+for i = 1, 100 do last = sig(nil_fill({ a = 1, b = 2, c = 3 }, i)) end
+emit("nil2", last)
+
+-- old (black) tables: an insertion of a young value needs the collector's barrier (generational and incremental)
+collectgarbage("generational")
+local olds = {}
+for i = 1, 300 do olds[i] = {} end
+collectgarbage(); collectgarbage()
+local function put_young(t, i) t.v = { i } end
+for i = 1, 300 do
+  put_young(olds[i], i)
+  if i % 30 == 0 then collectgarbage("step") end
+end
+collectgarbage("step")
+local junk = {}
+for i = 1, 900 do junk[i] = { -i } end
+local bad = 0
+for i = 1, 300 do if olds[i].v[1] ~= i then bad = bad + 1 end end
+emit("gen-black", bad)
+collectgarbage("incremental")
+local inc = {}
+for i = 1, 600 do inc[i] = {} end
+collectgarbage(); collectgarbage()
+collectgarbage("step", 0)
+for i = 1, 600 do
+  put_young(inc[i], i)
+  collectgarbage("step", 0)
+end
+local junk2 = {}
+for i = 1, 900 do junk2[i] = { -i } end
+collectgarbage()
+bad = 0
+for i = 1, 600 do if inc[i].v[1] ~= i then bad = bad + 1 end end
+emit("inc-black", bad)
+
+-- 8+ node parts: the layout id changes with each insertion; hot loops read the keys through shape guards
+local function mk8(i) local t = { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7 } t.h = i t.i = i + 1 return t end
+local function mk8b(i) local t = { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7 } t.i = i + 1 t.h = i t.j = i + 2 return t end
+local function mk16(i) local t = { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8, i = 9 } t.j = i t.k = i + 1 t.l = i + 2 t.m = i + 3 return t end
+local function rd(t) return t.a + t.b + t.c + t.d + t.e + t.f + t.g + (t.h or 0) + (t.i or 0) + (t.j or 0) + (t.k or 0) + (t.l or 0) + (t.m or 0) end
+local function grow(t, i) t.h = i t.j = i + 1 t.m = i + 2 return t end
+local shapes = { mk8, mk8b, mk16 }
+local acc = 0
+for i = 1, 400 do
+  local t = shapes[i % 3 + 1](i)
+  acc = acc + rd(t)
+  local u = { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7 }
+  acc = acc + rd(u)
+  grow(u, i)
+  acc = acc + rd(u)
+end
+emit("layout", acc)
+local pool = {}
+for i = 1, 64 do pool[i] = { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7 } end
+for round = 1, 6 do
+  local s = 0
+  for i = 1, 64 do s = s + rd(pool[i]) end
+  for i = 1, 64 do grow(pool[i], i + round) end
+  emit("pool", round, s)
+  for i = 1, 64 do pool[i] = { a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7 } end
+end
+
+-- a hook and an error inside the store path (hooks exit before the store; a protected `__newindex` raising)
+local function bad_put(t) t.q = 1 end
+local E = setmetatable({}, { __newindex = function() error("no") end })
+for i = 1, 100 do local ok, e = H_pcall(bad_put, E) if i == 100 then emit("err", ok, (tostring(e):gsub("^[^:]*:%d+: ", ""))) end end
+local cnt = 0
+debug.sethook(function() cnt = cnt + 1 end, "l")
+for i = 1, 10 do put_young({}, i) end
+debug.sethook()
+emit("hook", cnt > 0)
+print(H_concat(out, "\n"))
+"##,
+    },
+];

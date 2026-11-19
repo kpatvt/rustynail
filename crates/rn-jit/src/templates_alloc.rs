@@ -91,6 +91,13 @@ pub(crate) enum Cold {
         x: L,
         v: crate::templates_table::Vop,
     },
+    /// H2b: the inline insertion of a new key by `SETFIELD` (`V0` = table, `V1` = key, `V3` = hash), rejoining at `back` after the store.
+    NewKey {
+        l: L,
+        back: L,
+        x: L,
+        v: crate::templates_table::Vop,
+    },
     /// C2: out-of-line comparison of two non-numbers (`jit_cmp`): `H_TRUE` jumps to `lt`, `H_FALSE` to `lf`, `H_EXIT` leaves at `pc`.
     Cmp {
         l: L,
@@ -620,6 +627,7 @@ impl Cx<'_> {
                     b,
                 } => self.emit_str_self(l, x, done, kidx, a, b),
                 Cold::SetNil { l, back, x, v } => self.emit_set_nil(l, back, x, v),
+                Cold::NewKey { l, back, x, v } => self.emit_newkey(l, back, x, v),
                 Cold::Cmp {
                     l,
                     pc,

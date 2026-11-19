@@ -295,7 +295,7 @@ pub const LOOPANY_PROCESS: u32 = 1;
 /// 0 and 16-32 lose on `real_dis_mips` / `awfy/cd` / `dijkstra_routes` (formation-dependent, docs/JIT_PARKED.md A25), 40-48 lose on none above 1 % instructions.
 pub const LOOPANYMAX_PROCESS: u32 = 48;
 /// BUNDLE-B item 2: process value of [`TrLimits::tset`] (the three inline store paths and, BUNDLE-G1, bit 3 = the inline integer-key hash probe of `GETTABLE`; K3a: also the struct default).
-pub const TSET_PROCESS: u32 = 15;
+pub const TSET_PROCESS: u32 = 31;
 
 /// Is the limit `key` named in the `RUSTYNAIL_JIT_TRACE_LIMITS` string `s` (exact key match of an item `key=value`; the items are separated
 /// like in [`TrLimits::parse`])? A process default is skipped only for a knob that is named. (Before K1 this was a substring test:
@@ -478,7 +478,7 @@ pub struct TrLimits {
     /// P3: see `chainre`.
     pub chainn: u32,
     /// BUNDLE-B item 2: inline store paths of tier 1 (bit 0 `SETTABLE` with a short-string key into an existing node, bit 1 integer key in the hash part,
-    /// bit 2 nil-slot stores; 0 = none).
+    /// bit 2 nil-slot stores, bit 3 the inline integer-key hash probe of `GETTABLE`, bit 4 H2b the inline insertion of a new key by `SETFIELD`; 0 = none).
     pub tset: u32,
     /// H1: such an exit (a family rooted at a function-entry or continuation head) gets its side trace when it has been taken
     /// `fck` times `hot_exit` times (a lower count made short programs record side traces that never repaid their compilation).
@@ -846,7 +846,7 @@ impl TrLimits {
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
-                "tset" => l.tset = v.min(15),
+                "tset" => l.tset = v.min(31),
                 "fck" => l.fck = v.clamp(1, 1024),
                 "framemin" => l.framemin = v,
                 "allocguard" => l.allocguard = v.min(1),

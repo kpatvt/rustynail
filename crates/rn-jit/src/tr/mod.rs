@@ -2853,6 +2853,22 @@ pub(crate) fn nilset_mutants() -> u8 {
         | u8::from(mutants::active("tget_tag_skip")) * NS_GET_TAG_SKIP
 }
 
+/// H2b: the active mutants of the inline insertion of a new key (tier-1 `SETFIELD`) as the bit set of `templates_table::NK_*`.
+pub(crate) fn newkey_mutants() -> u8 {
+    use crate::templates_table::{
+        NK_BLACK_SKIP, NK_DUMMY_SKIP, NK_FLAGS_SKIP, NK_LAYOUT_SKIP, NK_MAINPOS, NK_MT_SKIP,
+        NK_NIL_VALUE, NK_NONEMPTY,
+    };
+    u8::from(mutants::active("newkey_black_skip")) * NK_BLACK_SKIP
+        | u8::from(mutants::active("newkey_nil_value")) * NK_NIL_VALUE
+        | u8::from(mutants::active("newkey_nonempty_skip")) * NK_NONEMPTY
+        | u8::from(mutants::active("newkey_mt_skip")) * NK_MT_SKIP
+        | u8::from(mutants::active("newkey_flags_skip")) * NK_FLAGS_SKIP
+        | u8::from(mutants::active("newkey_layout_skip")) * NK_LAYOUT_SKIP
+        | u8::from(mutants::active("newkey_mainpos_off")) * NK_MAINPOS
+        | u8::from(mutants::active("newkey_dummy_skip")) * NK_DUMMY_SKIP
+}
+
 /// BUNDLE-K item B: the active mutants `(strself_tag_skip, strself_mt_skip, strself_nil_hit)` of the inline string `SELF` of tier 1.
 pub(crate) fn strself_mut() -> (bool, bool, bool) {
     (
