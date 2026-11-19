@@ -2162,6 +2162,14 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         shape_miss = true;
         // MUTANT `shape_miss_counts_hot`: the miss of a zero id counts towards hotness like an ordinary exit
         count_it = before == 0 && mutants::active("shape_miss_counts_hot");
+        // the budget of fills: past it the cold paths of the shape guards stop calling the handler for a zero id
+        area.shape_fills += 1;
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        let budget =
+            u64::from(unsafe { (*crate::rt::data_ptr(&mut st)).tr.cfg.limits.shapedemote });
+        if area.shape_fills >= budget && !mutants::active("shape_demote_never") {
+            area.shape_nofill = 1;
+        }
     }
     // SAFETY: contract of this function.
     let out = unsafe { exit_core_ex(meta, &ctx, area, count_it) };

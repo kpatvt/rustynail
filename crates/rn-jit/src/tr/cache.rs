@@ -599,8 +599,11 @@ pub struct TrLimits {
     /// instead of storing them to the stack and re-loading them; the root's snapshots restore those slots at every exit (dense). 0 = off, 1 = on
     /// (default [`REGCARRY_PROCESS`]).
     pub regcarry: u32,
-    /// S4 (`shapedemote`): shape-guard exits of one trace after which its family is re-recorded without shape guards (default [`SHAPE_DEMOTE`]).
+    /// S4 (`shapedemote`): zero layout ids the exit handler fills (per state) before `ExitArea::shape_nofill` is set: the cold paths of the shape guards then re-check the keys of a
+    /// table with a zero id instead of leaving through the handler (default [`SHAPE_DEMOTE`]).
     pub shapedemote: u32,
+    /// S4 (`shapemin`): distinct keys a node vector's shape guard must cover in a trace to be assembled (default [`SHAPE_MIN`]; 0 = every guard).
+    pub shapemin: u32,
     /// R1 (`carrymin`): the fewest carried slots a root needs to offer a third entry (default [`CARRY_MIN_SLOTS`]; the tests lower it).
     pub carrymin: u32,
     /// R1 (`carrylive`): 1 = carry only values the trace keeps live anyway (default), 0 = every unmodified leading `SLOAD` (the tests).
@@ -704,6 +707,7 @@ impl Default for TrLimits {
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
+            shapemin: SHAPE_MIN,
             carrymin: CARRY_MIN_SLOTS as u32,
             carrylive: 1,
             regcarry: REGCARRY_PROCESS,
@@ -880,6 +884,7 @@ impl TrLimits {
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,
+                "shapemin" => l.shapemin = v.min(64),
                 "carrymin" => l.carrymin = v,
                 "carrylive" => l.carrylive = v.min(1),
                 "regcarry" => l.regcarry = v.min(3),
@@ -1173,8 +1178,6 @@ pub struct HeadData {
     pub ncallee: Cell<bool>,
     /// BUNDLE-L B (`bhoist`): the head is recorded without hoisted bounds guards (set when a root with hoisted guards was flushed as ineffective; never reset).
     pub nohoist: Cell<bool>,
-    /// S4 (`shapeguard`): the head's family took [`SHAPE_DEMOTE`] shape misses ([`shape_miss`]): it is recorded without shape guards from now on (never reset).
-    pub noshape: Cell<bool>,
     /// R1 (`rearm`): rearm entries still allowed before a short stay refunds nothing ([`REARM_BUDGET`] consecutive short ones end them for a while).
     pub rearm_budget: Cell<u8>,
     /// R1: refused rearm attempts since the budget ran out.
@@ -1307,7 +1310,6 @@ impl HeadData {
             dom_done: Cell::new(false),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
-            noshape: Cell::new(false),
             rearm_budget: Cell::new(REARM_BUDGET),
             rearm_wait: Cell::new(0),
             rearm_last: Cell::new(0),
@@ -1449,6 +1451,9 @@ pub struct TrProto {
     lazy: Cell<bool>,
     /// P-G: the block structure of the prototype for the recorder's count model (P-G, always on in the pipeline).
     landing: RefCell<Option<std::rc::Rc<Lowered>>>,
+    /// F4: the pruning data of the prototype (`snap::prune_info` with no fault and no locals), computed by the first recording that closes: the liveness analysis is
+    /// quadratic in the locals of a long chunk and every recording of the prototype (side traces included) needs the same answer.
+    prune: std::cell::OnceCell<Option<std::sync::Arc<super::ir::PruneInfo>>>,
     /// BUNDLE-C: the prototype's function-entry head was promoted to a generic function root (`TrLimits::fnpromo`).
     fnpromo: Cell<bool>,
     /// BUNDLE-J (`centry`): the prototype was first hot when a C function called it; its function-entry head is a C-entered function root (no `fnmin`, no recursion probe).
@@ -1508,6 +1513,7 @@ impl TrProto {
             recursive: Cell::new(false),
             lazy: Cell::new(false),
             landing: RefCell::new(None),
+            prune: std::cell::OnceCell::new(),
             fnpromo: Cell::new(false),
             cent: Cell::new(false),
             cent_off: Cell::new(false),
@@ -2582,6 +2588,24 @@ fn tr_of<'a>(d: &JitData, key: usize) -> Option<&'a TrProto> {
 pub fn caller_proto(st: &mut State) -> Option<ProtoRef> {
     let ci = st.ci().previous()?;
     ci_proto_ref(st, ci)
+}
+
+/// F4: [`super::snap::prune_info`] of `p`, cached in the prototype's trace table when the analysis is the real one (no mutant fault, `locals` off).
+pub fn prune_cached(
+    p: &rn_core::func::Proto,
+    locals: bool,
+) -> Option<std::sync::Arc<super::ir::PruneInfo>> {
+    let jp = p.jit.get() as usize;
+    if jp > rt::NOJIT && !locals && !super::snap::prune_faulty() {
+        // SAFETY: as in `landing_cached`.
+        if let Some(tp) = unsafe { (*(jp as *const JitProto)).tr.as_deref() } {
+            return tp
+                .prune
+                .get_or_init(|| super::snap::prune_info(p, false))
+                .clone();
+        }
+    }
+    super::snap::prune_info(p, locals)
 }
 
 /// P-G: the block structure of `p` for the recorder (P-G, always on in the pipeline): the copy cached in the prototype's trace
@@ -5573,8 +5597,11 @@ pub fn set_hoisted(st: &mut State, id: TrId, v: bool) {
     }
 }
 
-/// S4: shape misses (zero ids filled by the handler and different layouts) of one trace after which its family is re-recorded without shape guards.
-pub const SHAPE_DEMOTE: u32 = 48;
+/// S4: zero layout ids the exit handler fills (per state) before the cold paths of the shape guards stop calling it ([`TrLimits::shapedemote`]).
+pub const SHAPE_DEMOTE: u32 = 256;
+
+/// S4: process default of [`TrLimits::shapemin`].
+pub const SHAPE_MIN: u32 = 3;
 
 /// S4: the exit handler of a shape-guard miss: the layout-id slot of the node vector `node` (`2^lsizenode` nodes) was 0 when the trace tested it; computes and stores the
 /// id. Returns the slot's value *before* (0 expected: the cold path of the guard only goes to the handler for a zero slot).
@@ -5591,57 +5618,22 @@ pub unsafe fn shape_fill(node: *mut rn_core::table::Node, lsizenode: u8) -> u64 
     before
 }
 
-/// S4: is the head `pc` of `pr` to be recorded without shape guards?
-pub fn head_noshape(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
-    let d = d_of(st);
-    tr_of(d, pr.0)
-        .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).noshape.get()))
-        .unwrap_or(false)
-}
-
-/// S4: is the family of trace `id` (a side recording's parent) to be recorded without shape guards?
-pub fn family_noshape(st: &mut State, id: TrId) -> bool {
-    let d = d_of(st);
-    let (root, head) = match d.tr.slot(id) {
-        Some(Slot {
-            body: Body::Trace(t),
-            ..
-        }) => (t.root, t.head),
-        Some(Slot {
-            body: Body::Rec(r), ..
-        }) => (r.root, r.head),
-        _ => return false,
-    };
-    tr_of(d, root).is_some_and(|tp| tp.head(head).noshape.get())
-}
-
-/// S4: trace `id` exited on its shape guard (`filled`: the layout id was not computed yet and the handler computed it; else another layout
-/// than the recorded one). Counts the miss; at [`SHAPE_DEMOTE`] the family is flushed and its head is recorded without shape guards (a loop
-/// that inserts into the tables it reads by field, or sees a different layout every time, must not pay a handler call per iteration).
-/// Returns whether the family was flushed.
+/// S4: trace `id` exited through its shape guard's handler (the layout id of the table was 0 and the handler computed it). Counts the exit. There is no demotion: a
+/// loop that meets a fresh table every iteration (or inserts into the tables it reads) spends the state's budget of fills (`TrLimits::shapedemote`, `ExitArea::shape_nofill`),
+/// after which the guards' cold paths re-check the keys instead of calling the handler; re-recording the family (the S4 policy before) threw away its side traces and
+/// recorded the loop again at an arbitrary iteration, which cost 7 to 17 % of the instructions of deltablue, cd, astar and richards.
+/// Always `false` (nothing was flushed).
 pub fn shape_miss(st: &mut State, id: TrId) -> bool {
     let d = d_of(st);
-    let limit = d.tr.cfg.limits.shapedemote;
-    let Some(Slot {
+    if let Some(Slot {
         body: Body::Trace(t),
         ..
     }) = d.tr.slot_mut(id)
-    else {
-        return false;
-    };
-    t.shape_miss = t.shape_miss.saturating_add(1);
-    if t.shape_miss < limit || mutants::active("shape_demote_never") {
-        return false;
+    {
+        t.shape_miss = t.shape_miss.saturating_add(1);
+        super::shape::MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    t.shape_miss = 0;
-    super::shape::DEMOTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let (root, head, family) = (t.root, t.head, t.family);
-    if let Some(tp) = tr_of(d, root) {
-        tp.head(head).noshape.set(true);
-    }
-    d.tr.stats.exit_other_hot += 1;
-    request_flush(st, family, FlushWhy::Rerec);
-    true
+    false
 }
 
 /// BUNDLE-L B: is the head `pc` of `pr` to be recorded without hoisted bounds guards?

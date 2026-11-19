@@ -827,6 +827,9 @@ pub const NAMES: &[&str] = &[
     "shape_demote_never",
     "shape_id_reuse",
     "shape_miss_counts_hot",
+    "shape_fallback_key_skip",
+    "shape_nofill_ignored",
+    "shape_drop_keeps_cover",
     // R1 (`regcarry`): register-carrying transitions (docs/JIT_TRACE.md section 16)
     "carry_plain_no_store",
     "carry_drop_move",
@@ -913,7 +916,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 695);
+        assert_eq!(NAMES.len(), 698);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

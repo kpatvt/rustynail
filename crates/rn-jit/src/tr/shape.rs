@@ -42,6 +42,8 @@ static INTERN: Mutex<Option<Interner>> = Mutex::new(None);
 pub static IDS_MADE: AtomicU64 = AtomicU64::new(0);
 /// Zero ids filled by the exit handler.
 pub static FILLS: AtomicU64 = AtomicU64::new(0);
+/// Shape-guard exits taken (the handler ran; zero ids filled and other layouts alike).
+pub static MISSES: AtomicU64 = AtomicU64::new(0);
 /// Families re-recorded without shape guards (`cache::shape_miss`).
 pub static DEMOTED: AtomicU64 = AtomicU64::new(0);
 

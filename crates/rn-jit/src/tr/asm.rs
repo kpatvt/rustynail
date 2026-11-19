@@ -191,6 +191,8 @@ pub struct AsmEnv {
     pub b2_tag: bool,
     /// B2: `HREFK` with displacements and a `lea` (`b2hk`).
     pub b2_hk: bool,
+    /// S4 (`shapemin`): a node vector whose shape guard covers fewer than this many distinct keys in the trace gets no guard (its `HREFK`s compare their keys).
+    pub shape_min: u32,
     /// B4-1: stores of nil / false / true write the tag byte only (`nopay`).
     pub nopay: bool,
     /// H3-F (`hk64`): `HREFK` compares the key address with one 64-bit compare (`cmp [m], r`) instead of two 32-bit halves.
@@ -332,6 +334,7 @@ impl Default for AsmEnv {
             b2_arr: false,
             b2_tag: false,
             b2_hk: false,
+            shape_min: 0,
             nopay: false,
             divmagic: false,
             hk_fuse: false,
@@ -2043,6 +2046,53 @@ fn collectable(t: Ty) -> bool {
     )
 }
 
+/// S4 (`shapemin`): the node vector references of the `HSHAPE`s of `ir` that cover fewer than `min` distinct `(node index, key)` pairs through covered `HREFK`s: such a guard saves
+/// less than it costs (one compare per table visit against about two instructions per covered key) and makes the trace depend on the whole layout of the table.
+fn shape_dropped(ir: &TraceIr, min: u32) -> Vec<Ref> {
+    let mut out = Vec::new();
+    if min == 0 {
+        return out;
+    }
+    let mut nodes: Vec<Ref> = Vec::new();
+    for h in &ir.ins {
+        if h.op == TOp::Hshape && !nodes.contains(&h.a) {
+            nodes.push(h.a);
+        }
+    }
+    for n in nodes {
+        let mut keys: Vec<(u32, Ref)> = Vec::new();
+        for h in &ir.ins {
+            if h.op == TOp::Hrefk
+                && h.a == n
+                && aux_bits(h.aux) & HREFK_COVERED != 0
+                && !keys.contains(&(hrefk_idx(aux_bits(h.aux)), h.b))
+            {
+                keys.push((hrefk_idx(aux_bits(h.aux)), h.b));
+            }
+        }
+        if (keys.len() as u32) < min {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// S4: the out-of-line path of an `HSHAPE` whose compare failed (registers as at the compare).
+struct ShapeCold {
+    label: L,
+    /// The register holding the node vector.
+    node: V,
+    /// The generic stub of the handler exit (`exit::EXIT_SHAPE`).
+    stub: L,
+    lsizenode: u8,
+    /// The ordinary exit of the guard.
+    exit: L,
+    /// Where the main path continues.
+    back: L,
+    /// The key (`displacement of the node from the vector start`, key bits) of every `HREFK` the guard covers.
+    keys: Vec<(i32, u64)>,
+}
+
 struct Stub {
     snap: u32,
     entry: bool,
@@ -2112,8 +2162,10 @@ struct Cx<'a> {
     /// J1-1: the fused pairs whose two guards leave through different snapshots: a failed 16-bit compare jumps to a cold
     /// disambiguator (`cmp byte [node + KEY_TT], tag; jne hrefk_exit; jmp hload_exit`), so each guard keeps its own exit (and class).
     hk_cold: Vec<HkCold>,
-    /// S4: the cold paths of the `HSHAPE` guards: `(label, node register, shape stub, lsizenode)`.
-    shape_cold: Vec<(L, V, L, u8)>,
+    /// S4: the cold paths of the `HSHAPE` guards.
+    shape_cold: Vec<ShapeCold>,
+    /// S4 (`shapemin`): the node vector references whose shape guard is not assembled (nor honoured by their `HREFK`s).
+    shape_dropped: Vec<Ref>,
     /// CP1: the out-of-line spare-`CallInfo` repairs of the TR6b checks of natively entered frames: (slow label, resume label).
     rec_ci_cold: Vec<(L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
@@ -2687,6 +2739,7 @@ pub fn assemble(
         hk_fused: None,
         hk_cold: Vec::new(),
         shape_cold: Vec::new(),
+        shape_dropped: Vec::new(),
         rec_ci_cold: Vec::new(),
         bud_cold: Vec::new(),
         rc_cold: Vec::new(),
@@ -2697,6 +2750,7 @@ pub fn assemble(
         dbl: Vec::new(),
         lz_leave: [None, None],
     };
+    cx.shape_dropped = shape_dropped(ir, env.shape_min);
     cx.first_flag = rolled
         && env.head != 0
         && (0..ir.ins.len()).any(|i| cx.entry_kind(i) == EntryKind::FirstIter);
@@ -5520,6 +5574,8 @@ impl Cx<'_> {
         self.env.b2_hk
             && self.ir.ins[i].op == TOp::Hrefk
             && aux_bits(self.ir.ins[i].aux) & HREFK_COVERED != 0
+            && (!self.shape_dropped.contains(&self.ir.ins[i].a)
+                || mutants::active("shape_drop_keeps_cover"))
     }
 
     /// `HSHAPE node, #id` (S4): the layout-id slot of the node vector (the word at `node - 16`) equals `id`: `cmp qword [node - 16], id; jne cold`. The cold path (out
@@ -5527,6 +5583,10 @@ impl Cx<'_> {
     /// family, does not count the exit towards hotness). The recorder guarded `lsizenode >= 3` (the slot exists) before the node vector was loaded.
     fn hshape(&mut self, i: usize) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
+        if self.shape_dropped.contains(&ins.a) {
+            // (`shapemin`: the guard covers too few keys to pay for itself and for the exits of a polymorphic site; its `HREFK`s compare their keys)
+            return Ok(());
+        }
         let ops = self.ops(i);
         let Loc::Const(kr) = ops[1] else {
             return unsup("HSHAPE with an id that is not a constant");
@@ -5541,11 +5601,38 @@ impl Cx<'_> {
         let ls = aux_bits(ins.aux) as u8;
         // (the ordinary exit label: the `+exitstorm` check of the guard is emitted here, and the stub exists for the storm's jump)
         let x = self.guard_label(i)?;
-        let _ = x;
         let n = self.reg(ops[0], 7);
         let stub = self.shape_stub_label(aux_snap(ins.aux))?;
         let cold = self.label();
-        self.shape_cold.push((cold, n, stub, ls));
+        let back = self.label();
+        // the keys of the covered `HREFK`s (those of the same node vector reference): what the cold path re-checks when the layout is not the recorded one
+        let mut keys = Vec::new();
+        for j in 0..self.ir.ins.len() {
+            let h = self.ir.ins[j];
+            if h.op == TOp::Hrefk && h.a == ins.a && self.hk_covered(j) {
+                let hops = self.ops(j);
+                let Loc::Const(kr) = hops[1] else {
+                    return unsup("HREFK with a key that is not a constant");
+                };
+                let idx = i64::from(hrefk_idx(aux_bits(h.aux)));
+                let Some(off) = fits(idx * node::SIZE as i64) else {
+                    return unsup("HREFK slot index");
+                };
+                let k = (off, self.kbits_of(kr));
+                if !keys.contains(&k) {
+                    keys.push(k);
+                }
+            }
+        }
+        self.shape_cold.push(ShapeCold {
+            label: cold,
+            node: n,
+            stub,
+            lsizenode: ls,
+            exit: x,
+            back,
+            keys,
+        });
         self.push(Op::BrM {
             cc: Cc::Ne,
             w: W::B8,
@@ -5553,6 +5640,7 @@ impl Cx<'_> {
             imm: id,
             to: cold,
         });
+        self.bind(back);
         Ok(())
     }
 
@@ -8034,12 +8122,62 @@ impl Cx<'_> {
         }
         // S4: the cold paths of the shape guards (registers as at the failed compare): the node vector and its size go to the exit area and the exit
         // through the handler (`exit::EXIT_SHAPE`)
-        for (label, node, stub, ls) in std::mem::take(&mut self.shape_cold) {
-            self.bind(label);
+        for c in std::mem::take(&mut self.shape_cold) {
+            self.bind(c.label);
+            let zero = self.label();
+            let check = self.label();
+            // a slot that is 0 (the id of this table was not computed yet): the handler fills it (until its budget is spent, see below)
+            self.push(Op::BrM {
+                cc: Cc::Eq,
+                w: W::B8,
+                m: rm(c.node, -(node::LAYOUT_ID_BYTES as i32)),
+                imm: 0,
+                to: zero,
+            });
+            self.bind(check);
+            // another layout: the guard stands for the key compares of the `HREFK`s it covers, so they are done here (the node vector has not changed since the guard:
+            // the covered `HREFK`s are separated from it by header-safe instructions only). A table whose layout differs in keys that this trace never reads passes,
+            // as it did with the plain `HREFK`s; a key that is not where the trace expects it is an ordinary exit of the guard (counted, a side trace can attach).
+            for &(off, key) in &c.keys {
+                let at = |o: usize| rm(c.node, off + o as i32);
+                self.push(Op::BrM {
+                    cc: Cc::Ne,
+                    w: W::B1,
+                    m: at(node::KEY_TT),
+                    imm: i32::from(ctb(LUA_VSHRSTR) as i8),
+                    to: c.exit,
+                });
+                if mutants::active("shape_fallback_key_skip") {
+                    continue;
+                }
+                for (half, o) in [(key as u32, 0), ((key >> 32) as u32, 4)] {
+                    self.push(Op::BrM {
+                        cc: Cc::Ne,
+                        w: W::B4,
+                        m: at(node::KEY + o as usize),
+                        imm: half as i32,
+                        to: c.exit,
+                    });
+                }
+            }
+            self.push(Op::Jmp(c.back));
+            // the exit through the handler (`exit::EXIT_SHAPE`): the node vector and its size go to the exit area
+            self.bind(zero);
+            // the handler's budget of fills is spent (`ExitArea::shape_nofill`): the same key compares, no exit (a loop that meets a fresh table every iteration does not
+            // pay a handler call per iteration, and no family is re-recorded because of it)
+            if !mutants::active("shape_nofill_ignored") {
+                self.push(Op::BrM {
+                    cc: Cc::Ne,
+                    w: W::B8,
+                    m: area_m(exit_area::SHAPE_NOFILL),
+                    imm: 0,
+                    to: check,
+                });
+            }
             let m = |off: usize| area_m(exit_area::ARGS + off);
-            self.st(W::B8, m(8), Src::V(node));
-            self.st(W::B8, m(16), Src::Imm(i32::from(ls)));
-            self.push(Op::Jmp(stub));
+            self.st(W::B8, m(8), Src::V(c.node));
+            self.st(W::B8, m(16), Src::Imm(i32::from(c.lsizenode)));
+            self.push(Op::Jmp(c.stub));
         }
         // R1: the cold exits of a carrying link
         for (label, x, stores) in std::mem::take(&mut self.rc_cold) {

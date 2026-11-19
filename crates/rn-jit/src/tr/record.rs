@@ -2199,7 +2199,7 @@ impl Rec {
         if self.cfg.snapprune && self.segs.is_empty() {
             // SAFETY: the root frame's prototype is alive for the whole recording (its closure runs in the root frame).
             let p = unsafe { &*(self.frames[0].proto as *const Proto) };
-            self.b.ir.prune = snap::prune_info(p, self.cfg.snapprune_locals);
+            self.b.ir.prune = super::cache::prune_cached(p, self.cfg.snapprune_locals);
             snap::prune_snaps(&mut self.b.ir);
         }
         let mut ir = std::mem::take(&mut self.b.ir);

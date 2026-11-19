@@ -7767,6 +7767,7 @@ fn a1_inline_newref() {
 }
 
 const S4_LIST: &[&str] = &[
+    "s4_two_keys",
     "s4_nbody_like",
     "s4_extra_keys",
     "s4_nil_readd",
@@ -7789,6 +7790,36 @@ const S4_LIST: &[&str] = &[
     "s4_strkeys",
 ];
 
+/// S4 (`shapemin`, default 3): a node vector whose guard covers fewer than three distinct keys gets no guard in the assembly (its `HREFK`s compare their keys), the others
+/// keep it: every program in every trace mode equals the interpreter at the default, and at `shapemin=1..4`. Detector of the mutant `shape_drop_keeps_cover` (the `HREFK`s of
+/// a dropped guard stay covered: a key at another node of a table of another layout is read from the wrong node).
+#[test]
+fn s4_shapemin_programs() {
+    let mut jobs = Vec::new();
+    for p in S4_LIST {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace).limits_s("shapeguard=1").opts("+verify"));
+            jobs.push(Job::new(p, trace).limits_s("shapeguard=1"));
+            for m in ["shapemin=1", "shapemin=2", "shapemin=4"] {
+                jobs.push(Job::new(p, trace).limits_s(m));
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("shapeguard=1")
+                    .opts("+exitstorm=3 +verify"),
+            );
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("shapeguard=1")
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+    }
+    // (`table.insert` into a table with hash fields diverges in the recorder's lockstep model, as in `s4_shape_guard_programs`)
+    jobs.retain(|j| !(j.prog == "s4_tableops" && j.opts.contains("+verify")));
+    compare(jobs);
+}
+
 /// The number after `key` in the `[trace] shape:` summary line of a child's stderr (0 when absent).
 fn shape_stat(stderr: &str, key: &str) -> u64 {
     stderr
@@ -7809,7 +7840,7 @@ fn shape_stat(stderr: &str, key: &str) -> u64 {
 #[test]
 fn s4_shape_guard_programs() {
     let mut jobs = Vec::new();
-    let l = "shapeguard=1";
+    let l = "shapeguard=1,shapemin=0";
     for p in S4_LIST {
         for trace in ["always", "on2"] {
             jobs.push(Job::new(p, trace).limits_s(l).opts("+verify"));
@@ -7845,7 +7876,7 @@ fn s4_shape_guard_programs() {
             }
         }
         jobs.push(Job::new(p, "always").limits_s(l).opts("+emurun +verify"));
-        jobs.push(Job::new(p, "always").limits_s("shapeguard=1,hkaddr=0"));
+        jobs.push(Job::new(p, "always").limits_s("shapeguard=1,shapemin=0,hkaddr=0"));
         jobs.push(Job::new(p, "always"));
         jobs.push(Job::new(p, "t1"));
     }
@@ -7856,19 +7887,21 @@ fn s4_shape_guard_programs() {
 }
 
 /// S4: the shape guard is effective on identical objects (one id for the five bodies, the ids of the other four filled by the handler, no demotion) and a
-/// loop that gives its table a new layout every iteration, or reads fifty different layouts, is demoted to a recording without shape guards after a bounded
-/// number of handler exits (no storm: a handler call per iteration would be 1500 fills). Detector of the mutants `shape_demote_never` (no demotion) and
-/// `shape_miss_counts_hot` (a zero-id miss counts towards hotness: side traces form on the shape guard).
+/// loop that gives its table a new layout every iteration, or reads fifty different layouts, makes a bounded number of handler exits (the budget of fills,
+/// `shapedemote`, 16 here: no storm, a handler call per iteration would be 1500 fills) and is never re-recorded because of it. Detector of the mutants
+/// `shape_demote_never` (the budget never ends), `shape_nofill_ignored` (the cold path calls the handler after the budget) and `shape_miss_counts_hot` (a zero-id miss
+/// counts towards hotness: side traces form on the shape guard).
 #[test]
 fn s4_shape_guard_effectiveness_and_demotion() {
-    let l = "shapeguard=1";
+    let l = "shapeguard=1,shapemin=0";
+    let lb = "shapeguard=1,shapemin=0,shapedemote=16";
     let jobs = vec![
         Job::new("s4_nbody_like", "always").limits_s(l),
         Job::new("s4_nbody_like", "on2").limits_s(l),
-        Job::new("s4_insert_every_iter", "always").limits_s(l),
-        Job::new("s4_insert_every_iter", "on2").limits_s(l),
-        Job::new("s4_many_instances", "always").limits_s(l),
-        Job::new("s4_late_id", "always").limits_s(l),
+        Job::new("s4_insert_every_iter", "always").limits_s(lb),
+        Job::new("s4_insert_every_iter", "on2").limits_s(lb),
+        Job::new("s4_many_instances", "always").limits_s(lb),
+        Job::new("s4_late_id", "always").limits_s(lb),
         Job::new("s4_fresh_tables", "always").limits_s(l),
         Job::new("s4_fresh_tables", "on2").limits_s(l),
     ];
@@ -7928,8 +7961,8 @@ fn s4_shape_guard_effectiveness_and_demotion() {
             );
         } else {
             assert!(
-                dem >= 1 && fills <= 4 * u64::from(rn_jit::tr::cache::SHAPE_DEMOTE),
-                "{}: ids {ids} fills {fills} demoted {dem}: no demotion\n{}",
+                (1..=16).contains(&fills) && dem == 0,
+                "{}: ids {ids} fills {fills} demoted {dem}: the budget of fills did not bound the handler exits\n{}",
                 j.tag(),
                 tail(&o.stderr)
             );

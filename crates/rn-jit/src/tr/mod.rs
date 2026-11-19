@@ -94,6 +94,11 @@ pub struct ExitArea {
     /// region of natively pushed (lazy) frames starts: every frame at or below it is complete, the frames above it up to the
     /// running one (`r13`) have only `func` and the caller's `savedpc` stored (docs/JIT_TRACE_REF.md "BUNDLE-K").
     pub lazy_root: u64,
+    /// S4: nonzero once the zero layout ids filled by the exit handler reached the budget (`TrLimits::shapedemote`): the cold path of an `HSHAPE` then re-checks the
+    /// keys of the covered `HREFK`s of a table whose id is 0 instead of leaving through the handler.
+    pub shape_nofill: u64,
+    /// S4: zero ids filled by the exit handler so far (statistics of the budget).
+    pub shape_fills: u64,
 }
 
 /// Byte offsets inside [`ExitArea`] (frozen; asm, exit handler and tests use these, never `offset_of` directly).
@@ -118,6 +123,8 @@ pub mod exit_area {
     pub const ARGS: usize = offset_of!(ExitArea, args);
     /// `lazy_root: u64` (BUNDLE-K L1).
     pub const LAZY_ROOT: usize = offset_of!(ExitArea, lazy_root);
+    /// `shape_nofill: u64` (S4).
+    pub const SHAPE_NOFILL: usize = offset_of!(ExitArea, shape_nofill);
     /// Size of the area.
     pub const SIZE: usize = std::mem::size_of::<ExitArea>();
 }
@@ -132,6 +139,8 @@ impl Default for ExitArea {
             spill: [0; NSPILL],
             args: [0; 4],
             lazy_root: 0,
+            shape_nofill: 0,
+            shape_fills: 0,
         }
     }
 }
@@ -561,7 +570,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         };
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
-        shape: cfg.limits.shapeguard != 0 && !pr.is_some_and(|pr| cache::head_noshape(st, pr, pc)),
+        shape: cfg.limits.shapeguard != 0,
         fold: cfg.opts.fold,
         cse: cfg.opts.cse,
         verify: cfg.opts.verify,
@@ -744,7 +753,7 @@ pub fn driver_start_side(
         cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
-        shape: cfg.limits.shapeguard != 0 && !cache::family_noshape(st, id),
+        shape: cfg.limits.shapeguard != 0,
         fold: cfg.opts.fold,
         cse: cfg.opts.cse,
         verify: cfg.opts.verify,
@@ -2068,6 +2077,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         b2_arr: true,
         b2_tag: true,
         b2_hk: true,
+        // SAFETY: as above.
+        shape_min: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.shapemin },
         nopay: true,
         divmagic: true,
         hk_fuse: true,
@@ -2798,7 +2809,8 @@ mod tests {
         assert_eq!(exit_area::ARGS, 8 + 88 + 128 + 8 * NSPILL);
         // (BUNDLE-K L1: `lazy_root` right behind `args`; asm reads it only through `exit_area::LAZY_ROOT`)
         assert_eq!(exit_area::LAZY_ROOT, exit_area::ARGS + 32);
-        assert_eq!(exit_area::SIZE, exit_area::LAZY_ROOT + 8);
+        assert_eq!(exit_area::SHAPE_NOFILL, exit_area::LAZY_ROOT + 8);
+        assert_eq!(exit_area::SIZE, exit_area::LAZY_ROOT + 24);
     }
 
     #[test]

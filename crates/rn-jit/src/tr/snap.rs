@@ -193,6 +193,14 @@ pub fn prune_dead(ir: &mut TraceIr, meta: &[SnapMeta], last_read: &[i32]) {
 
 /// F4 (`snapprune`): the pruning data of the root prototype `p` (`None`: nothing may be pruned for it). The mutants
 /// `prune_live_temp`, `prune_local` and `prune_loop_carried` / `prune_after_call` build a deliberately wrong analysis.
+/// Is one of the mutants that build a wrong pruning analysis active (the result is then never cached)?
+pub fn prune_faulty() -> bool {
+    mutants::active("prune_loop_carried")
+        || mutants::active("prune_after_call")
+        || mutants::active("prune_live_temp")
+        || mutants::active("prune_local")
+}
+
 pub fn prune_info(p: &rn_core::func::Proto, locals: bool) -> Option<std::sync::Arc<PruneInfo>> {
     let f = crate::live::Faults {
         no_backedges: mutants::active("prune_loop_carried"),

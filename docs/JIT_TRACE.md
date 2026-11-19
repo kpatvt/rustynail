@@ -2025,20 +2025,27 @@ queens): dense stores on every root exit -> +4 %/+4 %; a three-instruction carry
 4. *A table whose slot is 0 at the guard* (its id was never computed: a table built after the trace was recorded, or one whose layout changed): the cold path of the
    guard stores the node vector and its `lsizenode` in the exit area and leaves through the generic stub tagged `EXIT_SHAPE`; the handler computes and stores the id
    (`shape::fill_node`), restores the snapshot like any exit and lands in the interpreter at the snapshot's pc, so the next entry passes the guard. It does **not** count the
-   exit towards hotness (no side trace forms on a shape guard; mutant `shape_miss_counts_hot`).
-5. *Exit storms.* Every shape-guard exit that reaches the handler (zero id or another layout) is counted per trace (`cache::shape_miss`); at `SHAPE_DEMOTE` (48) the
-   family is flushed (`shapedemote=N` changes the 48) and its root head is recorded without shape guards from then on (`HeadData::noshape`; plain `HREFK`s: the pre-S4 behaviour, side traces on the key
-   compares included). A loop that inserts a key every iteration, reads fifty layouts through one site, or visits many fresh tables is therefore bounded to 48 handler
-   exits (mutant `shape_demote_never`; `tr_core::s4_shape_guard_effectiveness_and_demotion`). Tables that an insertion of the same recording went into, tables the
-   trace allocated (their layout is built by the trace and owned by the sinking analysis) and tables with fewer than 8 or more than 64 nodes get no guard.
+   exit towards hotness (no side trace forms on a shape guard; mutant `shape_miss_counts_hot`). The handler's fills are budgeted per state (`ExitArea::shape_fills`,
+   `shapedemote=N`, default 256): past the budget it sets `ExitArea::shape_nofill`, and the cold path then treats a zero id like another layout (point 5) instead of calling the
+   handler (mutants `shape_demote_never`: the budget never ends, `shape_nofill_ignored`: the cold path ignores the flag). A loop that inserts a key every iteration, or meets a
+   fresh table every iteration, is therefore bounded to 256 handler exits and nothing is re-recorded (see section 17 for why the earlier policy, flushing the family at 48 misses, was removed).
+5. *A table whose slot holds another id* (another layout, section 17): the guard stands for the key compares of the `HREFK`s it covers, so the cold path does exactly those
+   compares for every covered `HREFK` of the same node-vector reference (key tag byte and key address at node `idx`) and returns to the guard's successor when they pass. This is sound
+   for the reason a covered `HREFK` is: the node vector has not changed between the guard and the covered `HREFK`s (point 2), so the key compare done at the guard's position is the
+   compare of the `HREFK`; a failed compare leaves through the guard's own ordinary exit (counted towards hotness, a side trace can attach through the inline stub). A table whose
+   layout differs only in keys the trace never reads passes as it did before S4 (mutant `shape_fallback_key_skip`: the address compare is left out).
+6. *`shapemin` (default 3).* The assembler drops the guard of a node vector (and the `covered` bit of its `HREFK`s) when the trace covers fewer than `shapemin` distinct
+   `(node index, key)` pairs of it: one compare per table visit against about two instructions saved per covered key. Dropping a guard nobody relies on, and un-covering an `HREFK`,
+   is the pre-S4 code (mutant `shape_drop_keeps_cover`: the `HREFK`s stay covered, the guard is gone). nbody reads 7 keys of every body, so its code is unchanged.
 
 **Measured** (instructions, `perf stat`, seed 0, release build, knob 0 vs 1 on one binary): nbody (1M steps) 2486.6M -> 2089.8M (-16.0 %, 2487 -> 2090 per step), awfy/nbody
 -13.4 %; apps/raytrace +0.05 %, oop_methods -0.1 %, json -0.07 %, table_hash / binary_trees / spectral_norm / fib +-0.001 %; a loop that inserts a key every
 iteration -0.2 %; fifty instances with differing extra keys: +0.7 % over ten rotations of the instance order (single runs scatter -25 % .. +25 % either way: the
 demotion re-records the family at an arbitrary instance and the polymorphic trace tree of that site depends on it, with or without the knob).
 
-**Cost model / when it loses.** One extra guard per table visit and one handler call per distinct table whose id is not computed yet (nbody: four). Programs whose hot
-site sees many layouts (hidden-class polymorphism) are demoted after 48 misses and run as before. `layout_id` scans at most 64 nodes.
+**Cost model / when it loses.** One extra guard per table visit and one handler call per distinct table whose id is not computed yet (nbody: four). A site that sees other layouts pays
+the cold path's key compares (about 5 instructions per covered key) per visit instead of one compare per `HREFK`; `shapemin` keeps guards that cover one or two keys out. `layout_id` scans
+at most 64 nodes.
 
 **Tests.** `tr_core::s4_shape_guard_programs` (19 programs x trace modes x exit storms / verification / GC stress), `s4_shape_guard_effectiveness_and_demotion`,
 `tr_record::s4_covered_hrefks_are_dominated_by_their_shape_guard`, `tr_shape::shape_ids_are_content_addressed`, and the rn-core clears (`tests_shape.rs`).
@@ -2173,3 +2180,47 @@ program was affected; the fix removes the dependence on the optimiser.
 elements first (after the pre-read of the sources) and then the `ASTORE` (+ `TBAR`) sequence with no guard between them. Moves between two tables are idempotent and
 keep the old path; the instruction count of every move is unchanged. Mutant `tmove_interleaved_guards` (registry 695), detector `tr_core::tm_tmove_guards_programs`
 (program `tm_tmove_guards`); plain program `tests/vm/tables_06_move_overlap.lua`.
+
+## 17. Regression study of the S4 / R1 work (nbody session): shape guards on polymorphic sites
+
+**Symptom.** After the nbody work (S4 `shapeguard`, `hstoreguard`, `guarddiet`, `hkaddr`, `snapprune`, F2 side-entry guards, `regcarry`) twelve object-heavy programs executed more
+instructions than at 108b935 (`corpus2/heldout/roguelike_turns` +88 %, `oop_mixins` +16 %, `classic_vector` +13 %, `game_loop` +12 %, `astar_jumper` +12 %, `awfy/cd` +11 %,
+`deltablue` +8 %, `richards` +7 %, `prototype_objects` +6.5 %, `lru_cache` +3.4 %, `expr_lang` +1 %); instruction counts are deterministic, so this is not noise. Method: per-knob sweep on one
+binary (`RUSTYNAIL_JIT_TRACE_LIMITS=shapeguard=0`, `hstoreguard=0`, `regcarry=0`, `guarddiet=0`, `hkaddr=0`, `snapprune=0`, `f2ifl=0`, and all of them), `RUSTYNAIL_JIT_VERBOSE=2`
+(trace counts, re-records, exits, the new `shape-guard exits` figure) and `perf record -e instructions:u` against a build of 108b935.
+
+**Findings (instructions vs 108b935, `RUSTYNAIL_SEED=0`).** `regcarry`, `hstoreguard`, `guarddiet`, `hkaddr` and `f2ifl` explain none of the twelve. `shapeguard=0` alone brings
+roguelike_turns to -4 %, oop_mixins +0.5 %, classic_vector +0.3 %, game_loop -0.2 %, astar -1.9 %, richards -0.8 %; three programs keep a part that is not a knob:
+
+1. **The shape guard is stronger than the guard it replaces.** A plain `HREFK` passes for every table that has the key at the same node, whatever else its layout holds; `HSHAPE`
+   fails for any other layout. Sites that read objects with differing extra keys, insertion orders or phases (richards' task kinds, game_loop, astar, classic_vector's particles)
+   left the trace through the shape exit, which was not counted towards hotness (no side trace), and after 48 such exits the S4 policy flushed the whole family and recorded it
+   again with plain `HREFK`s. The re-record happens at an arbitrary iteration: classic_vector's second root took the rare path (80 % of its entries left through one side trace
+   instead of 25 %), roguelike_turns lost its outer `while` trace to six `IntMiss` aborts (an absent integer key in `world.occ`: data-dependent, the recording started in another
+   iteration) and was blacklisted, richards lost its `proto:172` loop. The 108b935 numbers have the same lottery, but the S4 re-record made it systematic (the first recording is at
+   the earliest point, the re-record is not). Also the exits of the handler path do not use the inline exit stub (no patched jump).
+2. **Zero ids are not storms.** The 48-miss rule also counted the zero ids filled by the handler (every table created after the trace was recorded needs one fill): deltablue fills 9011
+   zero ids over 100k entries, richards 179, astar 16k, so the rule fired on programs that merely create objects.
+3. **`snapprune` cost 5 % of prototype_objects** in the *recorder*: `snap::prune_info` (bytecode liveness, quadratic in the locals of a long chunk through `nact`) ran at the close of
+   every recording (53 + 222 of them). It is now cached in the prototype's trace table (`cache::prune_cached`, `TrProto::prune`; not for `snapprune=2` or with a pruning mutant).
+4. Not attributable: `lru_cache` keeps +3 % with every knob off (rn-core table changes, different trace formation), raytrace +0.7 %, havlak +0.5 %, cd +1.5 %.
+
+**Fixes** (all in `crates/rn-jit/src/tr`, none changes what a trace may assume):
+
+* The cold path of `HSHAPE` (asm `ShapeCold`) re-does the key compares of the covered `HREFK`s when the slot holds another id (section 15, point 5): sites with other layouts that
+  keep the key where the trace expects it no longer exit; a key at another node leaves through the guard's ordinary, counted exit with a patchable stub, so a side trace forms.
+* No demotion. The handler's fills are budgeted per state (`ExitArea::shape_fills` / `shape_nofill`, `shapedemote`, default 256); past the budget the cold path re-checks the keys
+  of a zero-id table as for another layout. Nothing is flushed or re-recorded because of shape guards, `HeadData::noshape` is gone.
+* `shapemin` (default 3, assembler): a node vector whose guard covers fewer than three distinct keys in the trace gets no guard (section 15, point 6). This is pure code
+  generation: trace formation is unchanged, which is what makes the result robust (a recorder-level version of the same rule changed which iteration was recorded and moved
+  programs by +-20 % in both directions).
+* `snapprune` analysis cached per prototype.
+
+**Result** (instructions, 108b935 -> before -> after this change): roguelike_turns 3166M -> +87.9 % -> -4.2 %; oop_mixins +16.3 % -> -0.1 %; classic_vector +13.1 % -> +0.1 %;
+game_loop +11.7 % -> -7.2 %; astar_jumper +11.7 % -> -7.9 %; cd +11.4 % -> +1.9 %; deltablue +8.0 % -> +1.3 %; richards +6.6 % -> +1.6 %; prototype_objects +6.5 % -> -0.3 %;
+expr_lang +1.0 % -> +0.7 %; lru_cache +3.4 % -> +3.8 % (not S4); real_dis_x86 -0.3 % -> 0.0 %; sink_vec -11.7 %, inline_2 -15.7 % unchanged. nbody is unchanged to the
+instruction (programs/nbody -31.6 %, awfy/nbody -23.2 %). Check set (fib, fannkuch, queens, spectral_norm, matmul, mandelbrot, oop_methods, table_hash, binary_trees, json, bounce,
+type_call, field_method, oop_override): identical to before the change.
+
+**Mutants** (registry 698): `shape_fallback_key_skip` (`s4_shape_guard_programs`), `shape_nofill_ignored` (`s4_shape_guard_effectiveness_and_demotion`), `shape_drop_keeps_cover`
+(`s4_shapemin_programs`, new program `s4_two_keys`); `shape_demote_never` now means "the budget of fills never ends". The S4 mechanism tests run with `shapemin=0`.

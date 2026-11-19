@@ -3844,6 +3844,21 @@ const TABLE: &[Row] = &[
         owner: "S4",
         dets: &[dl("tr_core", "s4_shape_guard_effectiveness_and_demotion")],
     },
+    Row {
+        name: "shape_fallback_key_skip",
+        owner: "S4",
+        dets: &[dl("tr_core", "s4_shape_guard_programs")],
+    },
+    Row {
+        name: "shape_nofill_ignored",
+        owner: "S4",
+        dets: &[dl("tr_core", "s4_shape_guard_effectiveness_and_demotion")],
+    },
+    Row {
+        name: "shape_drop_keeps_cover",
+        owner: "S4",
+        dets: &[dl("tr_core", "s4_shapemin_programs")],
+    },
     // R1 (`regcarry`): register-carrying transitions
     Row {
         name: "carry_plain_no_store",

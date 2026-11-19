@@ -267,15 +267,16 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     }
     {
         use std::sync::atomic::Ordering::Relaxed;
-        let (ids, fills, dem) = (
+        let (ids, fills, dem, miss) = (
             super::shape::IDS_MADE.load(Relaxed),
             super::shape::FILLS.load(Relaxed),
             super::shape::DEMOTED.load(Relaxed),
+            super::shape::MISSES.load(Relaxed),
         );
         if ids + fills + dem > 0 {
             let _ = writeln!(
                 o,
-                "[trace] shape: layout ids made {ids} filled by the handler {fills} families demoted {dem}"
+                "[trace] shape: layout ids made {ids} filled by the handler {fills} families demoted {dem} shape-guard exits {miss}"
             );
         }
     }

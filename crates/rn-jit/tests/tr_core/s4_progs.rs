@@ -352,6 +352,27 @@ print(pcall(run, 100))
 "#,
     },
     Prog {
+        name: "s4_two_keys",
+        small: false,
+        src: r#"
+-- eight-field tables of different insertion orders read through two keys only (`shapemin`: too few covered keys for a guard, the HREFKs compare their keys)
+local A = { p = 1, q = 2, r = 3, s = 4, t = 5, u = 6, v = 7, w = 8 }
+local B = { w = 8, v = 7, u = 6, t = 5, s = 4, r = 3, q = 2, p = 1 }
+local C = { q = 20, p = 10, s = 40, r = 30, u = 60, t = 50, w = 80, v = 70 }
+local list = { A, B, C, B, A, C }
+local function run(n, step)
+  local s = 0
+  for k = 1, n do
+    local o = list[(k // step) % 6 + 1]
+    s = s + o.p * 3 + o.w
+  end
+  return s
+end
+print(run(100, 1), run(1000, 1))
+print(run(100, 50), run(1000, 7))
+"#,
+    },
+    Prog {
         name: "s4_alternate",
         small: false,
         src: r#"
