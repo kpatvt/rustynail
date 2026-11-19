@@ -102,6 +102,9 @@ const TM_COPY: u8 = 2;
 const TM_STATUS: u8 = 4;
 /// M1 mutant: the open-upvalue test of the `k` fast paths is skipped (closes nothing, wrong when an upvalue is open).
 const TM_CLOSE: u8 = 8;
+/// H2c mutants of the inline tail call with a dynamic argument count (`B` = 0).
+const TM_DYN_COUNT: u8 = 16;
+const TM_DYN_TOP: u8 = 32;
 
 /// Shared stubs of one function, created on demand.
 #[derive(Default)]
@@ -366,7 +369,8 @@ impl Cx<'_> {
         self.op(Op::CountSub { n: 1, exit: xc });
         self.op(Op::Mov(0, self.pc_addr(pc + 1)));
         self.st(W::B8, ciw(ci::SAVEDPC), 0);
-        let fast = env.tail_fast && i.c() == 0 && i.b() != 0 && i.b() <= 16;
+        // (H2c: `B` = 0, the arguments up to `top` (the last argument is a call or `...`), is inline too: the argument count is read from `top`)
+        let fast = env.tail_fast && i.c() == 0 && i.b() <= 16;
         // H2a: a callee that is not a Lua closure may be a built-in with an inline fast path (`t1inline`): the result is computed in
         // place and the frame returns through the `RETURN` that follows this instruction (a `TAILCALL` of a native finishes like that)
         let inl = self.t1i_applies(pc, i.b(), 0);
@@ -390,8 +394,12 @@ impl Cx<'_> {
         }
         if fast {
             // V5 = top = end of the arguments
-            self.ld(5, W::B8, ciw(ci::FUNC));
-            self.op(Op::Add(5, Src::Imm((a + b + 1) as i32)));
+            if b != 0 {
+                self.ld(5, W::B8, ciw(ci::FUNC));
+                self.op(Op::Add(5, Src::Imm((a + b + 1) as i32)));
+            } else {
+                self.ld(5, W::B8, thw(thr::TOP));
+            }
             self.ld(0, W::B1, fr(a, 0));
             self.br(Cc::Ne, 0, Src::Imm(i32::from(ctb(LUA_VLCL))), notlcl);
             self.ld(1, W::B8, fr(a, 8)); // closure
@@ -402,7 +410,17 @@ impl Cx<'_> {
             self.br(Cc::Eq, 4, Src::Imm(0), slow); // compiled for its loops only: no function entry
             self.ld(4, W::B1, Self::m_reg(2, proto::NUMPARAMS as i32));
             if env.tail_mut & TM_ARGS == 0 {
-                self.br(Cc::Gt, 4, Src::Imm(b as i32 - 1), slow); // too few arguments: nil-fill in the helper
+                if b != 0 {
+                    self.br(Cc::Gt, 4, Src::Imm(b as i32 - 1), slow); // too few arguments: nil-fill in the helper
+                } else {
+                    // nargs = top - (callee func + 1)
+                    self.ld(6, W::B8, ciw(ci::FUNC));
+                    self.op(Op::Add(6, Src::Imm(a as i32 + 1)));
+                    self.op(Op::MovR(0, 5));
+                    self.op(Op::Sub(0, Src::V(6)));
+                    self.op(Op::Sub(0, Src::Imm(1)));
+                    self.br(Cc::Gt, 4, Src::V(0), slow);
+                }
             }
             self.ld(0, W::B1, Self::m_reg(2, proto::MAXSTACKSIZE as i32));
             self.ld(6, W::B8, thw(thr::STACK_SIZE));
@@ -430,14 +448,51 @@ impl Cx<'_> {
             } else {
                 b
             };
-            for j in 0..n {
-                self.copy_value(fr(0, -16 + 16 * j as i32), fr(a + j, 0));
+            if b != 0 {
+                for j in 0..n {
+                    self.copy_value(fr(0, -16 + 16 * j as i32), fr(a + j, 0));
+                }
+            } else {
+                // H2c: `top - slot(R[A])` slots (the function and its arguments) move down over the frame's function slot; V1 = count,
+                // V4 = destination, V6 = source, V0 = scratch (the frame size is read again below)
+                let (lp, done) = (self.p.label(), self.p.label());
+                self.ld(1, W::B8, ciw(ci::FUNC));
+                self.op(Op::Add(1, Src::Imm(a as i32 + 1)));
+                self.op(Op::MovR(4, 5));
+                self.op(Op::Sub(4, Src::V(1)));
+                self.op(Op::MovR(1, 4));
+                if env.tail_mut & TM_DYN_COUNT != 0 {
+                    self.op(Op::Sub(1, Src::Imm(1))); // (mutant: the last slot is not moved)
+                }
+                self.op(Op::Lea(4, fr(0, -16)));
+                self.op(Op::Lea(6, fr(a, 0)));
+                self.op(Op::Bind(lp));
+                self.br(Cc::Le, 1, Src::Imm(0), done);
+                self.ld(0, W::B8, Self::m_reg(6, 0));
+                self.st(W::B8, Self::m_reg(4, 0), 0);
+                self.ld(0, W::B8, Self::m_reg(6, 8));
+                self.st(W::B8, Self::m_reg(4, 8), 0);
+                self.op(Op::Add(4, Src::Imm(16)));
+                self.op(Op::Add(6, Src::Imm(16)));
+                self.op(Op::Sub(1, Src::Imm(1)));
+                self.op(Op::Jmp(lp));
+                self.op(Op::Bind(done));
+                self.ld(0, W::B1, Self::m_reg(2, proto::MAXSTACKSIZE as i32));
             }
             self.ld(1, W::B8, ciw(ci::FUNC));
             self.op(Op::Add(0, Src::V(1)));
             self.op(Op::Add(0, Src::Imm(1)));
             self.st(W::B8, ciw(ci::TOP), 0); // func + 1 + fsize
-            self.op(Op::Add(1, Src::Imm(b as i32)));
+            if b != 0 {
+                self.op(Op::Add(1, Src::Imm(b as i32)));
+            } else {
+                // top - (A + 1) = func + narg1
+                self.op(Op::MovR(1, 5));
+                self.op(Op::Sub(1, Src::Imm(a as i32 + 1)));
+                if env.tail_mut & TM_DYN_TOP != 0 {
+                    self.op(Op::Add(1, Src::Imm(1))); // (mutant: `top` one slot too high)
+                }
+            }
             self.st(W::B8, thw(thr::TOP), 1); // func + narg1
             if env.tail_mut & TM_STATUS == 0 {
                 self.ld(0, W::B4, ciw(ci::CALLSTATUS));

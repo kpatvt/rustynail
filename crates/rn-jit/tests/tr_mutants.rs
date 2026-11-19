@@ -2364,6 +2364,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "h2_newkey_programs")],
     },
     Row {
+        name: "tailfast_dyn_count_short",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_tail_programs")],
+    },
+    Row {
+        name: "tailfast_dyn_top_high",
+        owner: "H2",
+        dets: &[d("tr_core", "h2_tail_programs")],
+    },
+    Row {
         name: "t3_default_ignored",
         owner: "T3",
         dets: &[d("tr_policy", "t3_process_default")],

@@ -437,4 +437,107 @@ emit("hook", cnt > 0)
 print(H_concat(out, "\n"))
 "##,
     },
+    Prog {
+        name: "h2_tail",
+        small: true,
+        src: r##"
+-- H2c: TAILCALL with B = 0 (the last argument is a call, so the argument count is read from `top`) of a Lua closure, inline in tier 1.
+local out = {}
+local H_tostring, H_concat, H_pcall, H_select, H_gsub = tostring, table.concat, pcall, select, string.gsub
+local function emit(...)
+  local t = {}
+  for i = 1, H_select("#", ...) do t[i] = H_gsub(H_tostring((H_select(i, ...))), "0x%x+", "0xADDR") end
+  out[#out + 1] = H_concat(t, ",")
+end
+
+local function none() end
+local function one(x) return x end
+local function three(x) return x, x + 1, x + 2 end
+local function sum3(a, b, c) return (a or 0) + (b or 0) * 10 + (c or 0) * 100 end
+local function sum5(a, b, c, d, e) return (a or 0) + (b or 0) * 10 + (c or 0) * 100 + (d or 0) * 1000 + (e or 0) * 10000 end
+local function va(...) return select("#", ...), ... end
+local function id2(a, b) return a, b end
+
+-- the sites: argument counts 0, 1, 3 of the last call; callee with fewer / equal / more parameters; vararg callee
+local function t0(x) return sum3(x, none()) end
+local function t1(x) return sum3(x, one(x + 1)) end
+local function t3(x) return sum3(x, three(x)) end
+local function t5(x) return sum5(x, three(x)) end
+local function t6(x) return sum5(x, x, three(x)) end
+local function tv(x) return va(x, three(x)) end
+local function tm(x) return id2(three(x)) end
+local function tn(x) return id2(none()) end
+local function tz() return three(one(5)) end
+local function tdeep(n, x) if n == 0 then return three(x) end return tdeep(n - 1, one(x + 1)) end
+local function tsel(x) return select("#", three(x)) end
+
+local acc = 0
+for i = 1, 300 do
+  acc = acc + t0(i) + t1(i) + t3(i) + t5(i) + t6(i) + (tv(i)) + (tm(i)) + (tn(i) or 0) + tz()
+  local a, b, c = tdeep(40, i)
+  acc = acc + a + b + c + tsel(i)
+  if i % 100 == 0 then emit(i, acc, t0(i), t1(i), t3(i), t5(i), t6(i), tv(i)) emit(tm(i)) emit(tn(i)) emit(tz()) emit(a, b, c) end
+end
+
+-- a callee that is not a Lua closure, a callee replaced under the site, a callable table
+local function tnat(x) return math.max(x, one(x + 1)) end
+local function tnat2(x) return tostring(one(x)) end
+local calls = 0
+local cobj = setmetatable({}, { __call = function(self, a, b, c) calls = calls + 1 return a, b, c end })
+local function tcall(x) return cobj(x, three(x)) end
+local function tsw(f, x) return f(x, three(x)) end
+for i = 1, 300 do
+  acc = acc + tnat(i) + #tnat2(i)
+  local a, b, c = tcall(i)
+  acc = acc + a + b + c
+  acc = acc + tsw(sum3, i) + tsw(sum5, i) + tsw(math.max, i) + select("#", tsw(va, i)) + select("#", tsw(id2, i))
+  if i % 100 == 0 then emit(acc, calls) end
+end
+
+-- closures capturing locals (`k`): the open upvalues are closed by the tail call
+local function mkc(x)
+  local cap = x
+  local f = function() cap = cap + 1 return cap end
+  if x % 2 == 0 then return sum3(f(), one(x)) end
+  return sum3(x, three(f()))
+end
+for i = 1, 300 do acc = acc + mkc(i) end
+emit("k", acc)
+local fns = {}
+local function keep(x)
+  local cap = x
+  fns[#fns + 1] = function() cap = cap + 1 return cap end
+  return sum3(x, three(cap))
+end
+for i = 1, 100 do keep(i) end
+emit("k2", fns[1](), fns[1](), fns[100]())
+
+-- errors, hooks, tracebacks through the tail call
+local function fail(a, b, c) error("boom " .. tostring(a) .. tostring(c)) end
+local function tfail(x) return fail(x, three(x)) end
+for i = 1, 100 do local ok, e = H_pcall(tfail, i) if i == 100 then emit("err", ok, (H_gsub(e, "^[^:]*:%d+: ", ""))) end end
+local function tb(a, b, c) return debug.traceback("tb", 1) end
+local function ttb(x) return tb(x, three(x)) end
+for i = 1, 50 do ttb(i) end
+emit("tb", (H_gsub(ttb(1), "[^\n]*:%d+:", "L:")))
+local hooked = 0
+debug.sethook(function() hooked = hooked + 1 end, "cr")
+for i = 1, 10 do t3(i) end
+debug.sethook()
+emit("hook", hooked > 0)
+
+-- coroutines and deep recursion (the stack moves)
+local co = coroutine.wrap(function(x) while true do x = coroutine.yield(t3(x), tdeep(30, x)) end end)
+local cacc = 0
+for i = 1, 200 do cacc = cacc + co(i) end
+emit("co", cacc)
+local function rec(n, a, b, c) if n == 0 then return a + b + c end return rec(n - 1, three(a + n)) end
+emit("rec", rec(500, 1, 2, 3), rec(3000, 1, 2, 3))
+local function nilfill(a, b, c, d) return tostring(a) .. tostring(b) .. tostring(c) .. tostring(d) end
+local function tnil(x) return nilfill(x, one(x)) end
+for i = 1, 300 do tnil(i) end
+emit("nilfill", tnil(7), nilfill(none()))
+print(H_concat(out, "\n"))
+"##,
+    },
 ];

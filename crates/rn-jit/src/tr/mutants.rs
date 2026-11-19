@@ -476,6 +476,8 @@ pub const NAMES: &[&str] = &[
     "newkey_layout_skip",
     "newkey_mainpos_off",
     "newkey_dummy_skip",
+    "tailfast_dyn_count_short",
+    "tailfast_dyn_top_high",
     "t3_default_ignored",
     "ineff_cover_ignored",
     "typesides_ignored",
@@ -935,7 +937,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 716);
+        assert_eq!(NAMES.len(), 718);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

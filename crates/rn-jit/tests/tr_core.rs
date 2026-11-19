@@ -4450,6 +4450,41 @@ fn h2_newkey_programs() {
     assert!(!res.is_empty());
 }
 
+/// H2c: `TAILCALL` with `B` = 0 of a Lua closure inline in tier 1 (`h2_tail`): argument counts 0 / 1 / 3 of the last call against callees with fewer, equal and
+/// more parameters, vararg and native callees, `__call`, closures capturing locals, errors, hooks, tracebacks, coroutines, deep recursion. In every trace mode with
+/// `+verify`, exit storms, count budgets, GC stress and the stack-move stress. Mutants `tailfast_dyn_count_short`, `tailfast_dyn_top_high` (and the R1 rows).
+#[test]
+fn h2_tail_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for (opts, budget) in [
+            ("", 0),
+            ("+verify", 0),
+            ("+exitstorm=3 +verify", 0),
+            ("", 3),
+            ("", 17),
+            ("-loop", 0),
+        ] {
+            let mut j = Job::new("h2_tail", trace).opts(opts);
+            if budget != 0 {
+                j = j.budget(budget);
+            }
+            jobs.push(j);
+        }
+        for gc in ["1", "2"] {
+            jobs.push(Job::new("h2_tail", trace).env("RUSTYNAIL_GC_STRESS", gc));
+            jobs.push(
+                Job::new("h2_tail", trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .env("RUSTYNAIL_GC_MODE", "inc"),
+            );
+        }
+        jobs.push(Job::new("h2_tail", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+}
+
 /// BUNDLE-K (B): the tier-1 `SELF` on a string receiver (`strself`): every change of the string library / metatable between calls of a hot
 /// loop against the interpreter run, in every trace mode, with exit storms, budgets, GC stress and the stack-move stress (K3b: `strself` is hard-wired on; `t3idx=0` is the control without the string metatable address).
 /// Mutants `strself_tag_skip`, `strself_mt_skip`, `strself_nil_hit`.

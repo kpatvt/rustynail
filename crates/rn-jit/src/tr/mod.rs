@@ -2835,6 +2835,8 @@ pub(crate) fn tail_mutants() -> u8 {
         | u8::from(mutants::active("tailfast_copy_short")) << 1
         | u8::from(mutants::active("tailfast_status_skip")) << 2
         | u8::from(mutants::active("tailfast_close_skip")) << 3
+        | u8::from(mutants::active("tailfast_dyn_count_short")) << 4
+        | u8::from(mutants::active("tailfast_dyn_top_high")) << 5
 }
 
 /// BUNDLE-B item 2: the active `tset` mutants as the bit set of `templates_table::NS_*`.
