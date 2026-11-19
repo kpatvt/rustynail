@@ -670,6 +670,8 @@ pub const NAMES: &[&str] = &[
     "tmove_order_flip",
     // BUNDLE-VA: the same-table move reads its elements before the first store
     "tmove_no_preread",
+    // BUNDLE-TM: the same-table move emits the guards of every destination element before the first store
+    "tmove_interleaved_guards",
     // BUNDLE-N (RETF; N2a)
     "seg_root_code_stale",
     "seg_land_proto_stale",
@@ -911,7 +913,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 694);
+        assert_eq!(NAMES.len(), 695);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

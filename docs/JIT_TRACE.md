@@ -2153,3 +2153,23 @@ Fix: the store condition is `side.is_none() || prelude || head != 0`. Mutant `la
 
 **Defence in depth.** `lazy_leave` checks `previous` before it dereferences it and fails stop (`lazy_root_off_chain`, a `#[cold]` panic with the two addresses) if the chain ends without meeting the root;
 the check sits in a loop that already tests the frame pointer, so the normal path pays one compare per completed frame in the Rust helper only.
+
+## table.move over one table: guards between stores (BUNDLE-TM)
+
+`lib_tmove` (`record.rs`) unrolls `table.move(t, f, e, t2)` of at most 16 elements as an array load and store per element. A move within ONE table
+whose ranges overlap is not idempotent: a guard that fails between two stores exits to the `CALL`, which the interpreter re-runs from the start over the
+half-moved table. BUNDLE-VA already read all source elements before the first store (`tmove_no_preread`); this is the second half. Each `array_set`
+emitted its own metatable / bounds guards right before its store, and they stayed between the stores whenever the optimiser did not merge them
+with an earlier guard (a destination index no source index covers, or `-cse`). Found by `tr_core::instruction_count_identity`, `br_lib` (`m2`:
+`move(t,2,6,3) move(t,3,7,2)`) with `-fold -cse +exitstorm=7`: `1,3,3,3,3,4,4,8,9,10` instead of `1,2,3,4,5,6,6,8,9,10`.
+
+**Reachability.** A guard between two stores can only fail on a storm exit (`+exitstorm`, every guard fails every N-th time): the bounds guards of a move
+are monotone (the first one of the copy order decides) and the table does not change in between, the element type guards are all before the first store.
+With the default options (CSE on) the stray guards are merged away, and the whole matrix (modes tr, tron, trdef, trdefon, trverify, trstorm 3 and 7, `-fold -cse`,
+GC stress 2; programs `br_lib`, `tm_tmove_guards`, `tests/vm/tables_06_move_overlap.lua`) is clean without the fix; it only fails with `-cse` AND `+exitstorm`. No default-flag
+program was affected; the fix removes the dependence on the optimiser.
+
+**Fix.** When the move is within one table and every destination element is inside the array part, `lib_tmove` emits `array_guards_raw` for ALL destination
+elements first (after the pre-read of the sources) and then the `ASTORE` (+ `TBAR`) sequence with no guard between them. Moves between two tables are idempotent and
+keep the old path; the instruction count of every move is unchanged. Mutant `tmove_interleaved_guards` (registry 695), detector `tr_core::tm_tmove_guards_programs`
+(program `tm_tmove_guards`); plain program `tests/vm/tables_06_move_overlap.lua`.

@@ -9879,6 +9879,27 @@ impl Rec {
         } else {
             (0..n).rev().collect()
         };
+        // Same table, every destination element inside the array part: the bounds / metatable guards of ALL the destination
+        // elements come before the first store, and the stores follow back to back without a guard in between. A guard of
+        // `array_set` between two stores (kept when the optimiser does not merge it with an earlier one: `-cse`, or a destination
+        // index no source index covers) is an exit in the middle of a non-idempotent copy: the interpreter then re-executes the
+        // `CALL` over the half-moved table (`br_lib` `m2`, `-fold -cse +exitstorm=7`: `1,3,3,3,3,4,4,8,9,10`).
+        let mut arefs: Vec<Ref> = Vec::new();
+        let two_phase = same
+            && !mutants::active("tmove_interleaved_guards")
+            && (0..n).all(|i| {
+                let k = t + i;
+                let old_none = dtbl.get_int_arr(k).is_none();
+                (1..=i64::from(dtbl.array_size())).contains(&k)
+                    && !(old_none && ty_of_value(&stbl.get_int(f + i)) == Some(Ty::Nil))
+            });
+        if two_phase {
+            arefs = vec![NOREF; n as usize];
+            for &i in &order {
+                let kd = self.kint(t + i);
+                arefs[i as usize] = self.array_guards_raw(dst.0, kd, dtbl, false, false)?;
+            }
+        }
         for i in order {
             let v = match pre.get(i as usize) {
                 Some(&v) => v,
@@ -9888,6 +9909,14 @@ impl Rec {
                 }
             };
             let ety = ty_of_value(&stbl.get_int(f + i)).ok_or_else(|| self.nyi())?;
+            if two_phase {
+                self.first_store.get_or_insert(self.b.ir.ins.len());
+                self.ins(TOp::Astore, Ty::I64, arefs[i as usize], v)?;
+                if collectable(ety) {
+                    self.ins(TOp::Tbar, Ty::I64, dst.0, v)?;
+                }
+                continue;
+            }
             let kd = self.kint(t + i);
             self.array_set(vm, dst, dslot, kd, t + i, (v, ety))?;
         }

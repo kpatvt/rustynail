@@ -15484,6 +15484,39 @@ print(#out, out[1], out[#out // 2], out[#out], h)
 "####,
     },
     Prog {
+        name: "tm_tmove_guards",
+        small: true,
+        src: r####"
+-- BUNDLE-TM: `table.move` over ONE table (overlapping, both copy orders) in a hot loop. The unrolled copy must not exit between two stores
+-- (the interpreter would re-run the `CALL` over half-moved elements): found by `br_lib` `m2` with `-fold -cse +exitstorm=7`, where the
+-- optimiser did not merge the bounds / metatable guards of the destination elements that follow the first store.
+local out = {}
+local function P(...) local t = table.pack(...) for i = 1, t.n do t[i] = tostring(t[i]) end out[#out + 1] = table.concat(t, ",") end
+local unpack, move = table.unpack, table.move
+local function dump(t, n) local r = {} for i = 1, n or #t do r[#r + 1] = tostring(t[i]) end return table.concat(r, ",") end
+local function u1(n) local acc = 0 for i = 1, n do local t = { 1, 2, i, 4, 5 } local a, b, c, d, e = unpack(t) acc = acc + e + c + b end return acc end
+P(u1(900))
+local function m1(n) local acc = 0 local t = { 1, 2, 3, 4, 5, 6, 7, 8 } local u = {} for i = 1, n do t[1] = i move(t, 1, 8, 1, u) acc = acc + #u + u[1] + u[8] end return acc, dump(u) end
+P(m1(900))
+-- backwards (dest > first, dest <= last), forwards (dest <= first), both in one iteration
+local function m2(n) local t = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 } for i = 1, n do move(t, 2, 6, 3) move(t, 3, 7, 2) end return dump(t, 10) end
+P(m2(901)) P(m2(900))
+local function m3(n) local t = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 } for i = 1, n do move(t, 1, 5, 4) end return dump(t, 10) end
+P(m3(701)) P(m3(700))
+local function m4(n) local t = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 } for i = 1, n do move(t, 4, 8, 1) end return dump(t, 10) end
+P(m4(701)) P(m4(700))
+-- the destination reaches beyond the array part (growth), and a disjoint move of one table
+local function m5(n) local t = { 1, 2, 3, 4, 5, 6 } for i = 1, n do move(t, 2, 6, 3) t[1] = i end return dump(t, 8) end
+P(m5(800)) P(m5(801))
+local function m6(n) local t = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 } for i = 1, n do move(t, 1, 4, 7) move(t, 7, 10, 1) end return dump(t, 10) end
+P(m6(800))
+-- float and string elements travelling through the range
+local function m7(n) local t = { 1, 2.5, "s", 4, 5, 6, 7, 8 } for i = 1, n do move(t, 2, 6, 3) move(t, 3, 7, 2) end return dump(t, 8) end
+P(m7(700)) P(m7(701))
+print(table.concat(out, "\n"))
+"####,
+    },
+    Prog {
         name: "rawget_rawset_array",
         small: true,
         src: r#"

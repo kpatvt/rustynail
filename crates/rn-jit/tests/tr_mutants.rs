@@ -3160,6 +3160,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "va_tmove_overlap_programs")],
     },
     Row {
+        name: "tmove_interleaved_guards",
+        owner: "BUNDLE-TM",
+        dets: &[d("tr_core", "tm_tmove_guards_programs")],
+    },
+    Row {
         name: "seg_root_code_stale",
         owner: "BUNDLE-N",
         dets: &[d("tr_exit", "n2a_segment_snapshots_use_the_segments_prototype_and_code")],

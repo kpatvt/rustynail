@@ -10657,6 +10657,31 @@ fn va_tmove_overlap_programs() {
     compare(jobs);
 }
 
+/// BUNDLE-TM: the unrolled `table.move` over ONE table emits the bounds / metatable guards of all destination elements before the first store. With
+/// the optimiser not merging them (`-cse`, or a destination index no source index covers) a guard sat between two stores, and a failing one (every guard
+/// fails every N-th execution under `+exitstorm`) made the interpreter re-run the `CALL` over the half-moved table (`br_lib` `m2`, `1,3,3,3,3,4,4,8,9,10`).
+/// `tm_tmove_guards` gives the interpreter's output in the trace modes under storms with and without the passes. Mutant `tmove_interleaved_guards`.
+#[test]
+fn tm_tmove_guards_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for opts in [
+            "",
+            "+verify",
+            "-cse",
+            "-fold -cse",
+            "+exitstorm=7",
+            "-cse +exitstorm=7",
+            "-fold -cse +exitstorm=7",
+            "-fold -cse +exitstorm=3 +verify",
+            "-cse +exitstorm=5 +emurun",
+        ] {
+            jobs.push(Job::new("tm_tmove_guards", trace).opts(opts));
+        }
+    }
+    compare(jobs);
+}
+
 /// BUNDLE-P P1 / C45 `rearmside` + `rearmclean`: a rearmed tick enters a young head (fewer than `REARM_MIN_ENTRIES` entries of its root trace) when its family already has
 /// `rearmside` installed side traces and (`rearmclean=1`) the family is clean: no failed side recording, no unrolled callee loop. `bp_rearm_young_clean` (a loop with a four-class
 /// dispatch: one side trace per class; the family never fails a side recording) gives the interpreter's output in every trace mode, with the knob at 0 / 1 / 2 / 64, clean
