@@ -19,4 +19,4 @@ function heapsort(a, n) {
 heapsort(a, n);
 let ok = true;
 for (let i = 2; i <= n; i++) if (a[i - 1] > a[i]) ok = false;
-console.log(ok, a[1], a[n]);
+console.log(`${ok}\t${a[1]}\t${a[n]}`);
