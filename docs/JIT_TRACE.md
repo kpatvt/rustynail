@@ -2314,3 +2314,69 @@ process limits), `tests/vm/jit_h1_01_absent_int_key.lua`.
 Check set (instructions vs the base): fib 8210.6 M, fannkuch, queens, spectral_norm, matmul, mandelbrot, programs/nbody 2027.3 M, awfy/nbody 555.6 M, cd, game_loop, table_hash, json, bounce,
 field_method, oop_methods, raytrace (+0.02 %) unchanged to 0.01 %; deltablue +0.07 %, havlak -0.3 %, awfy/json -0.4 %, richards +0.3 % (the extra recording of an abandoned head); astar_jumper
 moves between 4.58 G and 5.07 G from run to run in both binaries (bimodal trace formation, not this change).
+
+## 19. H4 / H2 / H5: cheaper table free, tier-1 constructor / call paths, faster rebuild of sunk tables
+
+Source: `docs/STUDY_ALLOC_CALL.md` (H2, H4, H5). One commit per item; mutant registry 702 -> 720.
+
+**H4 (`rn-core/src/alloc.rs`, `table.rs::free_table`, `gc/mod.rs`, `gc/generational.rs`).** Three changes, no observable behaviour: (1) `Mem` holds the default `PoolAllocator` by value
+(`AllocImpl::Pool`, found through `Any`; every other allocator stays a `Box<dyn Allocator>`): the pool's alloc / free / realloc are direct calls the compiler inlines, not virtual ones (this alone is
+-20 instructions per `{}`: allocation and free); (2) `Allocator::free_table_blocks` frees header, hash part and array part with one call and `Mem::free_table_blocks` subtracts the **sum of the accounted
+sizes** once (the same bytes the three `free` / `free_counted` calls subtracted: `collectgarbage("count")`, the debt and the memory limit are unchanged; unit test `alloc::tests::free_table_blocks_accounting`);
+(3) both sweep loops (`sweep_some`, `list_remove_after` of the generational sweep) free a table in the loop (`plain table` = tag test, and no trace-recorder watch list active, which `free_obj` still
+handles) instead of entering the `free_obj` frame and its kind dispatch. Weak tables, ephemerons, finalizers and ages are not touched (they act before the sweep frees). Gates: rn-core tests, GC stress 1 / 2
+with `RUSTYNAIL_GC_VERIFY=1` in both modes, vm corpus.
+
+**H2a (`t1inline.rs`, `calls.rs::tpl_tailcall`).** `setmetatable(t, mt)` is a new `t1inline` row (`B_SETMT` = 1024, `t1inline` default 1023 -> 2047; shape `B = 3`, also `C = 1`, a call as a statement, whose
+`R[A]` is not written and `top = R[A]`, exactly what `native_fast_with` leaves). Guards, all before any store, any failure takes the generic call with nothing changed (so every error message, hook,
+Ctrl-C and count behaviour is the old path's): `R[A+1]` and `R[A+2]` are tables; `mt.flags` has the cached "no `__gc`" bit (`fast_tm(mt, Gc)` would return `None` without a lookup: the first call per
+metatable takes the helper, which caches it); `t` is not black (the barrier `luaC_objbarrier` would be a no-op: white, or gray); `t.metatable == null` (no `__metatable` field to protect, no old
+metatable to compare). Then `t.metatable = mt`, result `t` in `R[A]` and the dead copy at the slot where the native pushes it, `top` as above. These are the guards of the trace compiler's inline `SETMT`
+(`Asm::setmt_fast`, section A1). **Tail position:** the t1inline rows are emitted at `TAILCALL` sites too (`site_hints` takes `Tailcall`; any `C` of the caller, `B` including 0 for `select('#', ...)`):
+the result goes to `R[A]`, `top` after it, and control jumps to the `RETURN` that the compiler always emits after a `TAILCALL`. The interpreter does not execute that `RETURN` after a native tail callee, so the
+inline path **gives back its instruction count** (`Cnt += 1`; identity test `instruction_count_identity`), and a frame with `CIST_MMRET` (a metamethod frame, `t1q` bit 5) keeps the helper path (it finishes
+through `jit_mm_pop` / `jit_mm_return`). Mutants: `t1i_setmt_gc_skip`, `t1i_setmt_black_skip`, `t1i_setmt_old_skip`, `t1i_setmt_arg_skip`, `t1i_tail_count_skip`, `t1i_tail_mm_skip`.
+
+**H2b (`templates_table.rs::emit_newkey`, `tset` bit 4, default 31).** `SETFIELD` of a constant short-string key: after the inline chain walk misses, the cold stub `Cold::NewKey` stores the key and value at the
+**main position** of the key when that node's value is empty (what `insertkey` does first; the fall-through path of an existing key is unchanged, no extra jump). Guards before the first store: the table has a hash
+part (not the dummy node: `BITDUMMY`), is not black (the helper's key / value barrier; strictly stronger than needed), the value is not nil (the helper answers that no-op), the metatable is absent or its flags
+have the cached "no `__newindex`" bit (`no_tm`). Stores: key tag + key address, value tag + payload, `flags &= ~MASKFLAGS` (`invalidate_tm_cache`: the key may be a metamethod name), and **the layout id slot
+at `node - 16` is zeroed for parts of 8 or more nodes** (section 15 rule 1: every change of which key lives in which node clears it). A taken main position (collision, free-position scan, node move), a full part
+(rehash) and everything else exit to the old helper (`jit_set`) before anything changed. Mutants: `newkey_black_skip`, `newkey_nil_value`, `newkey_nonempty_skip`, `newkey_mt_skip`, `newkey_flags_skip`,
+`newkey_layout_skip` (detector `tr_shape::shape_tier1_newkey_clears_the_id`, the layout id is not observable from Lua), `newkey_mainpos_off`, `newkey_dummy_skip`.
+
+**H2c (`calls.rs::tpl_tailcall`).** The R1 inline tail call already existed for fixed argument counts; `return f(a, g(...))` has `B = 0` (the last argument is a call, the count comes from `top`), which is the
+shape of `awfy/list` (`return tail(tail(..), tail(..), tail(..))`; a debug run showed every `jit_tailcall` of the program had `B = 0`). The inline path now takes `B = 0`: `top` is read from the thread, the guard
+`numparams <= nargs` uses `nargs = top - (func + A + 1)`, the slots are moved by a loop (`top - slot(R[A])` slots over the frame's function slot, destination below source), `thread.top = top - (A + 1)` (= `func + narg1`),
+everything else (callee compiled with a function entry, room, `k` with open upvalues, vararg caller) as for fixed `B`. Mutants: `tailfast_dyn_count_short`, `tailfast_dyn_top_high`.
+
+**H5 (`tr/exit.rs::materialise`, `table.rs::insert_absent_shortstr`).** A sunk table is created with the `NEWTABLE` sizes and its fields are inserted in recorded order. For a table whose keys are distinct and fit
+the presized part (`SunkTable::fast`, decided once when the snapshot is built: `fields.len() <= hsize`, no repeated key) the fields go through `insertkey` directly (no lookup, no type dispatch, no error
+plumbing; a nil value stores nothing as `set_str` does; no free node falls back to `set_str`), and the flags are invalidated once after the loop. Same final sizes, same insertion order, hence the same node layout,
+`next` order and layout ids as `set_str` (`insertkey` is what `set_str` ends in); the fault-injection counter of `set_materialise_fault` sees the same points. The recorder never produces repeated keys or nil fields
+(measured: mutants making `seal` ignore repeats, store nil fields, or ignore a full part are not reachable), so those checks are defences, not rules with mutants. Mutants: `sinkfast_order_reversed`,
+`sinkfast_flags_skip` (a materialised table used as a metatable afterwards).
+
+**Tests.** `tr_core::h2_setmt_programs` (program `h2_setmt`: every call form, abnormal arguments and their error messages, protected / old / `__gc` / weak metatables, old and black tables in both collector
+modes, metamethod frames, a replaced function, hooks, coroutines, tail calls of the other inline rows), `h2_newkey_programs` (generated insertion sequences read back in `pairs` order under a pinned hash seed,
+metamethod flags, `__newindex`, nil values, old tables, 8+ node parts under shape guards), `h2_tail_programs`, `h5_sink_next_programs`; `tr_shape::shape_tier1_newkey_clears_the_id`; `tests/vm/h2_tier1_setmetatable.lua`
+(the vm corpus against the reference). Every one runs in the trace modes with `+verify`, exit storms, count budgets, GC stress 1 / 2 (both modes) and the stack-move stress; the `h2_*` programs also with the
+limits off.
+
+**Results** (release `rnlua`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, equal-length paths, instructions M; base 3e2b827):
+
+| program | base | H4 | + H2a | + H2b | + H2c | + H5 |
+|---|---:|---:|---:|---:|---:|---:|
+| micro `{}` (insns / iteration) | 273.5 | 253.5 | 252.5 | 252.5 | 252.5 | 252.5 |
+| micro ctor, tier 1 only (traces never form) | 1756 | - | 1392 | 924 | 924 | 927 |
+| micro setmetatable, tier 1 only | 638 | - | 404 | 404 | 404 | 404 |
+| raytrace 40 | 7704 | 7641 | 6758 | 5781 | 5781 | 5752 (-25.3 %) |
+| cd 20 | 12053 | 11939 | 11828 | 11503 | 11502 | 10874 (-9.8 %) |
+| list 7000 | 12936 | 12937 | 12929 | 12925 | 12719 (-1.7 %) | 12719 |
+| binary_trees 17 | 15510 | 14781 (-4.7 %) | 14751 | 14751 | 14751 | 14752 (-4.9 %) |
+
+The tier-1-only rows are measured with `RUSTYNAIL_JIT_TRACE=on RUSTYNAIL_JIT_TRACE_HOT=2000000000,2000000000` (the tier-1 inline paths are, by the existing rule, off with `RUSTYNAIL_JIT_TRACE=off`, which stays J4
+exactly; that setting still shows only the H4 gain: ctor 1729 -> 1708). Cycles: raytrace 2032 -> 1448 M, cd 3211 -> 2953 M, list 2566 -> 2360 M, binary_trees 3399 -> 3148 M.
+Check set vs the base (instructions): fib, fannkuch, queens, spectral_norm, matmul, mandelbrot, nbody (2027.8 M), awfy/nbody (555.7 M), field_method, oop_methods +-0.02 %; richards +0.27 %, game_loop +0.2 %,
+table_hash +0.76 % (instructions; cycles -7 %: the string-allocation path of H4 and a codegen shift in `table.rs`, not a path any of these changes added), deltablue -0.5 %, havlak -2.2 %, json -0.1 %, bounce -0.3 %,
+lru_cache -0.2 %, roguelike -0.1 %.
