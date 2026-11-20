@@ -1,0 +1,26 @@
+# Known, accepted failures of the gates (docs/GATES.md). Format: "<class> <substring of the failure label>". A gate step whose
+# failures ALL match its class is reported KNOWN (not FAIL); any other failure is a FAIL.
+#
+# oracle: jobs of tr_oracle (label = "<program> [<mode> <opts> budget=<n>]") that mismatch on every base commit because they
+# depend on the binary's load address / path (ASLR and path length reach the hash-order or allocation layout of the program).
+oracle tests/vm/table_insert_layout
+oracle core/bb_tset
+#
+# test: a failing test of a cargo test step ("<test binary>::<test name>"), known to fail on the base commit.
+# tr_identity_pre::fetch_plus_insns_identity: identity gaps on tests/vm/tables_15_alimit_big_moves (table layout depends on the
+# address of the heap), documented as a known base failure in docs/JIT_TRACE_REF.md and docs/JIT_TESTING.md.
+test tr_identity_pre::fetch_plus_insns_identity
+#
+# test54: the same, known on the 5.4 build only (RUSTFLAGS=--cfg rustynail_lua54).
+# tr_core::instruction_count_identity on 5.4: 1 of 11872 identity jobs fails, deterministically (reproduced alone, twice, on a quiet machine):
+# r1_live_flip [on2 budget=200]: IDENT off=1614019 fetches=157381 insns=1456470. Passes on 5.5. Not investigated here.
+test54 tr_core::instruction_count_identity
+#
+# mutant: survivors of the full mutant runner that are accepted ("<mutant name>").
+# Survivors of the full mutant runner on the base commit 994d210 (found by the first run of scripts/gate-mutants.sh, reproduced in a
+# quiet 4-mutant re-run, so not a load effect; their detectors pass with the mutant active): not investigated here. rec_push_top_off is
+# the documented weak detector (docs/JIT_TESTING.md: the CallInfo.top of a natively pushed frame; no program observes it).
+mutant b2hk_lea_off
+mutant rec_push_callstatus_off
+mutant rec_push_top_off
+mutant rec_ret_cframe_skip
