@@ -260,7 +260,6 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
                 a.jcc_label(cond(cc), lab(to));
             }
             Op::BrMR { cc, m, src, to } => {
-                debug_assert!(matches!(cc, Cc::Eq | Cc::Ne));
                 a.alu_mr(Alu::Cmp, Size::S64, mem(&m), vr(src));
                 a.jcc_label(cond(cc), lab(to));
             }

@@ -15706,4 +15706,39 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/jit_f5_07_stale_mt.lua"),
     },
+    Prog {
+        name: "h7_01_upval_alias_frame",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_01_upval_alias_frame.lua"),
+    },
+    Prog {
+        name: "h7_02_rec_shapes",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_02_rec_shapes.lua"),
+    },
+    Prog {
+        name: "h7_03_rec_closures_varargs",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_03_rec_closures_varargs.lua"),
+    },
+    Prog {
+        name: "h7_04_rec_depth_limit",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_04_rec_depth_limit.lua"),
+    },
+    Prog {
+        name: "h7_05_rec_errors",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_05_rec_errors.lua"),
+    },
+    Prog {
+        name: "h7_06_rec_coroutine",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_06_rec_coroutine.lua"),
+    },
+    Prog {
+        name: "h7_07_rec_hooks",
+        small: true,
+        src: include_str!("../../../../tests/vm/h7_07_rec_hooks.lua"),
+    },
 ];

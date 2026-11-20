@@ -536,7 +536,7 @@ impl Emu {
                 Op::BrMR { cc, m, src, to } => {
                     // SAFETY: per the function contract.
                     let v = unsafe { addr(&r, &m).cast::<u64>().read_unaligned() };
-                    if (v == r[src as usize]) == (cc == Cc::Eq) {
+                    if icmp(cc, v as i64, r[src as usize] as i64, 64) {
                         pc = labels[to as usize];
                     }
                 }

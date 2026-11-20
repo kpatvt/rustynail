@@ -4965,6 +4965,38 @@ fn bk_lazy_programs() {
     compare(jobs);
 }
 
+/// H7 (recursion protocol diet): recursion shapes (fib, ackermann, mutual, varargs, closures, upvalue callee replaced mid-run), depth near and at the
+/// stack limit, errors / pcall / tracebacks at depth, coroutines yielding inside recursion, hooks, and an upvalue that aliases register 0 of a
+/// loop frame (detector of `uvrel_frame_off`). Every trace mode, exit storms, small budgets, GC stress 2 (not on the deep / hook programs).
+#[test]
+fn h7_recursion_programs() {
+    let progs = [
+        "h7_01_upval_alias_frame",
+        "h7_02_rec_shapes",
+        "h7_03_rec_closures_varargs",
+        "h7_04_rec_depth_limit",
+        "h7_05_rec_errors",
+        "h7_06_rec_coroutine",
+        "h7_07_rec_hooks",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("depth") || p.contains("hooks");
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace));
+            jobs.push(Job::new(p, trace).opts("+verify"));
+            jobs.push(Job::new(p, trace).limits_s("recnat=1"));
+            if heavy {
+                continue;
+            }
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
+            jobs.push(Job::new(p, trace).budget(17));
+            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        }
+    }
+    compare(jobs);
+}
+
 /// A lazy-aware root that ends with a frame link (`nest=2`: its inlined callee has a loop) stores the region root at entry (`lazy_root`): without it
 /// a stale root from an earlier deeper descent made `lazy_leave` walk past the base frame (a null dereference in a release build, the
 /// "lazy frames are of one prototype" assertion in a debug build). Detector of the mutant `lazy_root_link_root_unset`.

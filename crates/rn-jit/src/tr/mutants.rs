@@ -867,6 +867,8 @@ pub const NAMES: &[&str] = &[
     "carry_entry_snap_bare",
     // H7 (recursion protocol diet)
     "addframe_push_off",
+    "stack_cmp_strict",
+    "ci_next_wrong_word",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -941,7 +943,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 721);
+        assert_eq!(NAMES.len(), 723);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

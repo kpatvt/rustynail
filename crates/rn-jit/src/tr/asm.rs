@@ -3991,19 +3991,29 @@ impl Cx<'_> {
         self.room_ci_check(fail);
     }
 
+    /// H7c: `if V[r] >= thread.stack_size goto fail` as one compare against the memory word (no load into `V0`; `V0` is not written).
+    fn stack_limit_br(&mut self, r: V, fail: L) {
+        self.push(Op::BrMR {
+            // (mutant: strict, the boundary frame is let through)
+            cc: if mutants::active("stack_cmp_strict") {
+                Cc::Lt
+            } else {
+                Cc::Le
+            },
+            m: M {
+                base: Base::Thread,
+                off: thr::STACK_SIZE as i32,
+            },
+            src: r,
+            to: fail,
+        });
+    }
+
     /// TR6a only.
     fn room_stack_check(&mut self, fail: L) {
         let ir = self.ir;
         // TR6a: stack room, strict: stack_size - (ci.func + 1 + extent) > 0
         if !mutants::active("entry_no_extent") {
-            self.ld(
-                0,
-                W::B8,
-                M {
-                    base: Base::Thread,
-                    off: thr::STACK_SIZE as i32,
-                },
-            );
             self.ld(
                 1,
                 W::B8,
@@ -4013,7 +4023,7 @@ impl Cx<'_> {
                 },
             );
             self.push(Op::Add(1, Src::Imm(i32::from(ir.extent) + 1)));
-            self.br(Cc::Ge, 1, Src::V(0), fail);
+            self.stack_limit_br(1, fail);
         }
     }
 
@@ -4023,17 +4033,24 @@ impl Cx<'_> {
         if !mutants::active("entry_no_extent") {
             let off =
                 i32::from(ir.extent) + 1 - 64 * i32::from(mutants::active("fd_room_extent_off"));
-            self.ld(
-                0,
-                W::B8,
-                M {
-                    base: Base::Thread,
-                    off: thr::STACK_SIZE as i32,
-                },
-            );
             self.push(Op::Lea(1, rm(f, off)));
-            self.br(Cc::Ge, 1, Src::V(0), fail);
+            self.stack_limit_br(1, fail);
         }
+    }
+
+    /// H7c: `if ci.next == 0 goto to` as `cmp qword [r13 + next], 0` (V0 is not written).
+    fn ci_next_null_br(&mut self, to: L) {
+        self.push(Op::BrM {
+            cc: Cc::Eq,
+            w: W::B8,
+            m: M {
+                base: Base::Ci,
+                // (mutant: the node after next is tested)
+                off: (ci::NEXT as i32) + 8 * i32::from(mutants::active("ci_next_wrong_word")),
+            },
+            imm: 0,
+            to,
+        });
     }
 
     /// TR6b only.
@@ -4041,6 +4058,11 @@ impl Cx<'_> {
         let ir = self.ir;
         // TR6b: `depth` spare CallInfo nodes behind ci (an intrinsic at depth 4 makes it 5)
         if !mutants::active("entry_no_ci_spare") && ir.depth > 0 {
+            if ir.depth == 1 {
+                // H7c: one level: `cmp qword [ci.next], 0` (no load into V0)
+                self.ci_next_null_br(fail);
+                return;
+            }
             let mut base = Base::Ci;
             for _ in 0..ir.depth {
                 self.push(Op::Ld {
@@ -4068,18 +4090,22 @@ impl Cx<'_> {
             return;
         }
         let (slow, done) = (self.label(), self.label());
-        let mut base = Base::Ci;
-        for _ in 0..ir.depth {
-            self.push(Op::Ld {
-                dst: 0,
-                w: W::B8,
-                m: M {
-                    base,
-                    off: ci::NEXT as i32,
-                },
-            });
-            self.br(Cc::Eq, 0, Src::Imm(0), slow);
-            base = Base::Reg(0);
+        if ir.depth == 1 {
+            self.ci_next_null_br(slow);
+        } else {
+            let mut base = Base::Ci;
+            for _ in 0..ir.depth {
+                self.push(Op::Ld {
+                    dst: 0,
+                    w: W::B8,
+                    m: M {
+                        base,
+                        off: ci::NEXT as i32,
+                    },
+                });
+                self.br(Cc::Eq, 0, Src::Imm(0), slow);
+                base = Base::Reg(0);
+            }
         }
         self.bind(done);
         self.rec_ci_cold.push((slow, done));
@@ -6277,20 +6303,22 @@ impl Cx<'_> {
             (ops[1], 1)
         };
         let _ = vslot;
-        self.ld(7, W::B8, rm(7, upval::V as i32));
+        if ins.op != TOp::Uvrel {
+            self.ld(7, W::B8, rm(7, upval::V as i32));
+        }
         match ins.op {
             TOp::Uvrel => {
+                // H7b: d = uv.v - frame without the extra move (`d` is never V7)
                 let d = self.g(self.dst(i));
+                self.ld(d, W::B8, rm(7, upval::V as i32));
                 self.push(Op::Lea(
-                    d,
+                    7,
                     M {
                         base: Base::Frame,
                         off: 0,
                     },
                 ));
-                // d = frame; V7 - d
-                self.push(Op::Sub(7, Src::V(d)));
-                self.push(Op::MovR(d, 7));
+                self.push(Op::Sub(d, Src::V(7)));
             }
             TOp::Uload => {
                 if let Some(x) = check_l {
