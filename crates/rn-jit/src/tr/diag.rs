@@ -70,6 +70,19 @@ fn take_limit() -> &'static str {
     LIMIT.with(|c| c.replace(""))
 }
 
+/// The recorder refused at source line `l` of `record.rs` (`Nyi`: the line says which of its many refusals it was).
+pub fn set_src(l: u32) {
+    SRC.with(|c| c.set(l));
+}
+
+/// Takes the pending source line of a `Nyi` refusal.
+pub fn take_src() -> Option<u32> {
+    SRC.with(|c| match c.replace(0) {
+        0 => None,
+        l => Some(l),
+    })
+}
+
 /// Takes the pending limit tag (the recorder's abort path appends it to the site).
 pub fn limit_tag() -> &'static str {
     take_limit()
@@ -88,6 +101,7 @@ pub fn enable() {
 }
 
 thread_local! {
+    static SRC: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static LIMIT: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
     static SITE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     static WHY: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };

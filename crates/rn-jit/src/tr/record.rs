@@ -782,11 +782,16 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
                 let op = rn_core::instruction::opcode_from_u8(rec.cur_op)
                     .map_or_else(|| format!("op{}", rec.cur_op), |o| format!("{o:?}"));
                 let lim = super::diag::limit_tag();
-                let lim = if lim.is_empty() {
+                let mut lim = if lim.is_empty() {
                     String::new()
                 } else {
                     format!("[{lim}]")
                 };
+                if let Some(l) = super::diag::take_src() {
+                    if matches!(why, AbortReason::Nyi(_)) {
+                        lim.push_str(&format!("[record.rs:{l}]"));
+                    }
+                }
                 super::diag::set_site(format!("L{line}:{}:{op}{lim}", rec.cur_pc));
             }
             if super::cache::verbose_aborts() {
@@ -3556,7 +3561,10 @@ impl Rec {
         self.b.ir.kint(i)
     }
 
+    #[track_caller]
     fn nyi(&self) -> AbortReason {
+        // (H8: the source line of the refusal reaches the head table as `record.rs:<line>`)
+        super::diag::set_src(std::panic::Location::caller().line());
         AbortReason::Nyi(self.cur_op)
     }
 
