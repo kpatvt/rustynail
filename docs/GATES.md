@@ -9,14 +9,16 @@ CPUs 0-1). A step waits while the load average is above 24 (`GATE_LOAD_MAX`).
 
 | Script | When | What | Wall time |
 |---|---|---|---|
-| `scripts/gate-light.sh [pattern]` | every commit | fmt, clippy (5.5, 5.5 rn-jit with the test features, 5.4), rn-jit `--features trace` suite on 5.5 and 5.4, `vm_corpus` + rn-cli tests, jit-diff 1-50 (3 modes), mutant groups matching `pattern` | 5.4 min (324 s: suites 137 s + 132 s, vm_corpus 45 s) |
+| `scripts/gate-light.sh [pattern]` | every commit | fmt, mutant-map check, clippy (5.5, 5.5 rn-jit with the test features, 5.4), rn-jit `--features trace` suite on 5.5 and 5.4, `vm_corpus` + rn-cli tests, jit-diff 1-50 (3 modes), mutant groups chosen from the changed files (or matching `pattern`) | 5.4 min without mutants (324 s: suites 137 s + 132 s, vm_corpus 45 s) + the mutant group: 30-60 s for a small change (a `shape.rs` touch: 15 mutants, 32 s), 629 s for the K5 change set (142 mutants, one of them leash-bound at 600 s); the plan prints its estimate |
 | `scripts/gate-heavy.sh` | before merge / push | light + oracle-feature suite 5.5 and 5.4 + `oracle_options` + jit-diff 1-200 (7 modes) + all 723 mutants | 66 min (3964 s) |
 
 ```
-scripts/gate-light.sh [MUTANT_PATTERN[,..]] [--no-54] [--seeds 1-50]
-scripts/gate-heavy.sh [--no-54] [--seeds 1-200] [--skip-mutants] [--skip-oracle]
+scripts/gate-light.sh [MUTANT_PATTERN[,..]] [--base REF] [--explain] [--no-mutants] [--no-54] [--seeds 1-50] [--debug|--fast|--release]
+scripts/gate-heavy.sh [--no-54] [--seeds 1-200] [--skip-mutants] [--skip-oracle] [--debug|--fast|--release]
 scripts/gate-oracle.sh [--tests oracle_options,oracle_exits,oracle_trace_modes] [--shards N] [--workers W] [--version 5.4]
 scripts/gate-mutants.sh [--only PATTERN] [--shards N] [--version 5.4]
+scripts/gen-mutant-map.py [--check]       # scripts/gate-mutant-map.tsv: which mutants a changed file can affect
+scripts/gate-mutant-plan.py [--base REF] [--files F...] [--patterns P,..]   # the plan of gate-light (prints patterns and estimate)
 ```
 
 Each prints one line per step (`PASS` / `FAIL` / `KNOWN`, wall seconds, log path) and a summary table; logs go to `target/gate/<gate>-<time>/`.
@@ -31,7 +33,8 @@ tests: 4 in the trace suite, 3 in the oracle suite), `GATE_BIN_PAR` / `GATE_THRE
 - Light (per commit): `cargo fmt --check`; clippy 5.5 (workspace, all targets) and 5.5 `rn-jit --features tr_mutants,t15_oracle` (compiles the
   gated tests), clippy 5.4; the rn-jit suite with `--features trace` (the shipped code) on 5.5 and 5.4 (`--no-fail-fast`); `vm_corpus` and the
   rn-cli tests (`cargo test --release -p rustynail -p rn-cli`, against the reference build); `jit-diff` seeds 1-50, modes `off tr trdef`; and,
-  with a pattern argument, the mutant groups whose name contains it (`gate-light.sh cofuse_,amt_`: `TR_MUT_ONLY`).
+  the mutant groups chosen from the changed files (next section) or, with a pattern argument, the groups whose name contains it
+  (`gate-light.sh cofuse_,amt_`: `TR_MUT_ONLY`).
 - Heavy (before merge / push) = light + the rn-jit suite with `--features tr_mutants,t15_oracle` on 5.5 and 5.4 (this is where
   `tr_identity`, `t15_oracle`, `instruction_count_identity` and the oracle-gated `tr_core` tests run) + `oracle_options` sharded + `jit-diff`
   1-200 with the seven modes `off tr tron trdef trdefon trverify trstorm` (`JITDIFF_ENTERS=1`) + the full mutant runner (723 mutants).
@@ -39,6 +42,73 @@ tests: 4 in the trace suite, 3 in the oracle suite), `GATE_BIN_PAR` / `GATE_THRE
   them: same cost as `oracle_options`), `tr_core::mutants_are_caught_by_live_programs` (one test, over 30 minutes, contains the documented
   `rolled_no_writeback` hang; every one of its mutants is covered by the sharded runner), `scripts/asan-jit.sh`, GC-stress / hook sweeps,
   the official suite, fuzzing (release checklist, docs/RELEASE.md).
+
+### Changed files -> mutant groups (gate-light)
+
+`gate-light.sh` without a pattern runs the mutant runner (`gate-mutants.sh --only <patterns>`) on the mutants a change can affect:
+`scripts/gate-mutant-plan.py` takes `git diff --name-only <base>` (plus untracked files; `--base REF`, default the merge-base with
+`origin/main`, or `HEAD~1` when that is HEAD) and `scripts/gate-mutant-map.tsv`. The map is generated, not edited:
+`scripts/gen-mutant-map.py` reads the registry (`src/tr/mutants.rs`), every injection site (`active("<name>")` in `crates/*/src`: file, line,
+enclosing function; doc-comment mentions for the mutants injected through a setter) and the TABLE of `tests/tr_mutants.rs` (owner, detecting
+test, and the file and line that define the test). `gen-mutant-map.py --check` (a light-gate step, `mutant-map`) fails when the committed
+map is stale (a mutant added or moved, a detector renamed) or a registered mutant has neither site nor detector row; regenerate with
+`scripts/gen-mutant-map.py` and commit. The plan selects, per changed file:
+
+- a source file with injection sites: the mutants whose site is inside a changed function (or changed line); if no site is hit, the six
+  nearest sites; for a file with at most 5 sites (`shape.rs`: 1) also the same-named test binary (`tests/tr_shape.rs`) and the mutants named
+  `<stem>_*`, so touching `src/tr/shape.rs` selects the 14 `shape_*` mutants and `newkey_layout_skip`;
+- a test file: the mutants of the detecting tests whose function changed; a change outside a detecting test selects the detectors whose
+  test name starts like the file (`tr_core/h2_progs.rs` -> `h2_*` tests), else the 40 fastest mutants of that binary;
+- any diff that names a registered mutant (registry, TABLE, comments): that mutant;
+- nothing selected (docs, scripts, crates without sites): a default set of eight fast mutants of different families.
+
+`gate-light.sh --explain` prints the plan (changed files -> mutants with the reason, patterns, the estimate from
+`scripts/gate-mutant-times.tsv`) and the steps, and runs nothing; the normal run prints the same plan first. The estimate is
+`max(sum / 7 jobs, slowest) + 30 s baseline` (measured: 629 s run for an estimate of 630 s, 32 s for 34 s). `--no-mutants` leaves the
+group out (`gate-heavy.sh` runs its light part this way: the full runner follows). The full runner stays the pre-merge safety net: it is
+what found `rec_inner_room_skip`, which a changed-file plan can miss when the weak spot is far from the change.
+
+### Debug or release (test builds)
+
+The rn-jit test steps (trace and oracle suites, `gate-oracle.sh`, `gate-mutants.sh`) build with the **dev profile** (opt-level 1,
+debug assertions, overflow checks): `gate_jit_suite` / `gate-oracle` / `gate-mutants` pass no `--release`, which is why `tr_oracle`,
+`tr_identity`, `tr_core` and the mutant children (the test binary re-executed, `current_exe()`) run from `target/debug` and
+`target-54/debug`. `vm_corpus` and jit-diff are release already. Profiles (`--debug` default, `--fast`, `--release` on every gate script,
+or `GATE_PROFILE`; the release flavours use their own target directories without fat LTO, 16 codegen units):
+
+| Profile | opt / debug assertions | trace suite 5.5 | oracle suite 5.5 | result |
+|---|---|---|---|---|
+| `debug` (default) | 1 / on | 138 s | 608 s | the reference |
+| `fast` | 3 / on | 139 s | 598 s | same tests, same known failure, same injected-failure label sets |
+| `release` | 3 / off | 122 s | 373 s | one more failure (below), and loses checks |
+
+Why the default stays `debug`: optimisation is not where the time goes (the gates are bound by the leashes and by the work that the
+assertions switch on); `fast` is 0-2% faster than `debug` and 10 s faster to build. `release` is 11% (trace) and 39% (oracle) faster, but
+`cfg!(debug_assertions)` code is real coverage that it removes: the recorder's lockstep against the interpreter runs on every recording in
+debug (`tr/mod.rs` `lockstep_on`; in release only as `limits.lockstep` says: never, always, or every K-th recording) together with the `fast_eval` cross-check (`tr/record.rs`),
+the landing-cache equality assertions (`rt.rs`), the poisoned-descriptor quarantine (`rt.rs`), the tier-1.5 budget invariant that
+`t15/stubs.rs` emits, `debug_assert!`s in 16 `rn-jit` files and every overflow check; and
+`t15_core_emu::intrinsic_calls_match_tier1_at_every_pc` FAILS without them (`in_sin_flt`: slot 11 of the region frame holds the callee,
+tier 1 the result; deterministic in the release profile with 16 or 1 codegen units, passes with `debug-assertions = true` at opt-level 3;
+the shipped binaries have no debug assertions, so this is either a test that depends on the emitted budget check or a latent difference
+of the shipped configuration: it needs an owner). The four injected mutants of the oracle sharding (`core/inline`, 36 jobs:
+`snap_drop_last` 5 failing jobs, `refund_off_by_one` 25, `land_pre_mid_swap` 30, `budget_no_check` 23) give identical label sets
+(md5 of the sorted label list) in all three profiles, so those do not tell the profiles apart. Not measured: the 5.4 suites and the full
+mutant runner in `fast` / `release`. No step was switched; use `--release` for a quick look only, never for a merge.
+
+### Mutant order and `TR_MUT_STOP_AT_FIRST` (measured, not the default)
+
+The full runner starts the leash-bound mutants first: `gate-mutants.sh` exports `TR_MUT_ORDER=scripts/gate-mutant-times.tsv` (slowest
+first, ~23 mutants at 250-600 s; names without a time, i.e. mutants added since the file was written, go before all). The file lists 712
+of 727 mutants (K5 added some): `MUT_SAVE_TIMES=1` (set by `gate-heavy.sh`; only for a complete run of at least 600 mutants) rewrites it
+after a full run. It was NOT refreshed here (the heavy run was not completed).
+
+`TR_MUT_STOP_AT_FIRST=1` skips a mutant's remaining detectors once one has failed. Measured on a scratch worktree with an injected failing
+detector (`tr_ra::swap_cycles` made to panic, so it fails its baseline): the full runner took 1428 s (719 mutants ran, all caught) against
+1852 s documented for the ordered full run without the flag (not re-measured side by side). But the runner prints a baseline failure only
+in its final report: no row was ever non-caught, so the injected failure was visible only at the very end (1414 s). The flag therefore
+saves time but does not give an early failure; an early report needs a runner change (abort after the baseline phase on a baseline
+problem, or stream problems), not done. Left off by default: it removes the "also caught by" information.
 
 ### Known failures (scripts/gate-known.txt)
 
