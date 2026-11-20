@@ -2504,6 +2504,7 @@ impl TrState {
     pub(crate) fn new(cfg: TrConfig) -> TrState {
         // H8: the sampler of the head table (`RUSTYNAIL_JIT_SAMPLE`), only with the verbose summary on
         if cfg.verbose >= 1 && cfg.mode != TrMode::Off {
+            super::diag::enable();
             super::diag::start_sampler(super::diag::sample_hz(
                 std::env::var("RUSTYNAIL_JIT_SAMPLE").ok().as_deref(),
             ));

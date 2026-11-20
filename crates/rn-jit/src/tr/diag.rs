@@ -33,6 +33,8 @@ pub struct HeadDiag {
     pub side_aborts: BTreeMap<&'static str, u32>,
     /// `StartRefused` sub-reasons of root starts (`side:` prefix for side starts).
     pub refused: BTreeMap<&'static str, u32>,
+    /// Where the recorder aborted (`<reason>@L<line>:<pc>:<op>`, root and side recordings): the sites of the abort reasons.
+    pub sites: BTreeMap<String, u32>,
     /// Flushes of the head's root trace, by cause.
     pub flushes: BTreeMap<&'static str, u32>,
     /// Most successful entries the head's counter showed (the counter is cumulative over the head's generations).
@@ -59,8 +61,31 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Are the per-head counters on (`RUSTYNAIL_JIT_VERBOSE >= 1` in a state with traces)?
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
+/// Switches the counters on (a state with `verbose >= 1` was created).
+pub fn enable() {
+    ENABLED.store(true, Ordering::Relaxed);
+}
+
 thread_local! {
+    static SITE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     static WHY: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+}
+
+/// The recorder aborted at `L<line>:<pc>:<op>` (the frame the recorder was in, which may be an inlined callee): consumed by the next
+/// [`Diag::aborted`] of a recorder abort.
+pub fn set_site(site: String) {
+    SITE.with(|s| *s.borrow_mut() = site);
+}
+
+fn take_site() -> String {
+    SITE.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
 /// The recorder start (root or side) is about to return "refused": remembers why (consumed by [`take_why`]).
@@ -109,6 +134,10 @@ impl Diag {
         why: Option<&'static str>,
     ) {
         let h = self.head(key, line, pc);
+        let site = take_site();
+        if !site.is_empty() && why.is_none() {
+            *h.sites.entry(format!("{reason}@{site}")).or_insert(0) += 1;
+        }
         *(if side {
             &mut h.side_aborts
         } else {
@@ -386,6 +415,12 @@ pub fn head_report(
         }
         if !h.refused.is_empty() {
             let _ = write!(t, " start-refused {{{}}}", counts(&h.refused));
+        }
+        if !h.sites.is_empty() {
+            let mut v: Vec<_> = h.sites.iter().collect();
+            v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+            let s: Vec<String> = v.iter().take(5).map(|(k, n)| format!("{k}:{n}")).collect();
+            let _ = write!(t, " at {{{}}}", s.join(","));
         }
         if !h.flushes.is_empty() {
             let _ = write!(t, " flushes {{{}}}", counts(&h.flushes));

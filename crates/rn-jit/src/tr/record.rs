@@ -771,6 +771,15 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
         }
         Err(why) => {
             st.heap().unwatch_all();
+            if super::diag::enabled() {
+                let line = rec.frames.last().map_or(0, |f| {
+                    // SAFETY: the frame's prototype is alive for as long as the recording is (it is a dependency of it)
+                    unsafe { (*(f.proto as *const rn_core::func::Proto)).linedefined }
+                });
+                let op = rn_core::instruction::opcode_from_u8(rec.cur_op)
+                    .map_or_else(|| format!("op{}", rec.cur_op), |o| format!("{o:?}"));
+                super::diag::set_site(format!("L{line}:{}:{op}", rec.cur_pc));
+            }
             if super::cache::verbose_aborts() {
                 eprintln!(
                     "[trace] abort {:?} at pc {} (depth {}, op {})",
