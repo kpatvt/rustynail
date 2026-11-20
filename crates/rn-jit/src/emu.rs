@@ -677,6 +677,11 @@ impl Emu {
                     pending = None;
                     frame.set(r[v as usize] as usize as *mut u8);
                 }
+                // H7a: `frame += imm` (a native push / pop; the stack does not move, `pending` is dropped like `SetFrame`)
+                Op::AddFrame(i) => {
+                    pending = None;
+                    frame.set(frame.get().wrapping_offset(i as isize));
+                }
             }
         }
     }

@@ -294,6 +294,7 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
             Op::StFi { m, src } => a.movsd_mr(memi(&m), xr(src)),
             Op::Shl(d, n) => a.shift_ri(Shift::Shl, Size::S64, vr(d), n),
             Op::SetFrame(v) => a.mov_rr(Size::S64, RBX, vr(v)),
+            Op::AddFrame(i) => a.alu_ri(Alu::Add, Size::S64, RBX, i),
             Op::SetCi(v) => a.mov_rr(Size::S64, R13, vr(v)),
             Op::SetK(v) => a.mov_rr(Size::S64, R14, vr(v)),
             Op::ReloadK => a.mov_rm(Size::S64, R14, Mem::base_disp(R13, callinfo::KCACHE as i32)),

@@ -4026,6 +4026,11 @@ const TABLE: &[Row] = &[
         owner: "R1",
         dets: &[dl("tr_core", "r1_regcarry_programs")],
     },
+    Row {
+        name: "addframe_push_off",
+        owner: "H7",
+        dets: &[dl("tr_core", "pm3_programs_run_on_traces")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

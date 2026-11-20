@@ -3623,15 +3623,10 @@ impl Cx<'_> {
         self.push(Op::Mov(3, after));
         self.st(W::B8, ciw(ci::SAVEDPC), Src::V(3)); // the caller continues after its CALL
         self.st(W::B8, thw(thr::CI), Src::V(1));
-        self.push(Op::Lea(
-            4,
-            M {
-                base: Base::Frame,
-                off: (i32::from(rc.a) + 1) * 16,
-            },
-        ));
         self.push(Op::SetCi(1));
-        self.push(Op::SetFrame(4));
+        let bump =
+            (i32::from(rc.a) + 1) * 16 - 16 * i32::from(mutants::active("addframe_push_off"));
+        self.push(Op::AddFrame(bump));
         if self.env.rec_link_cell != 0 {
             // a continuation trace: the new frame enters the function-entry head through its dispatch cell (which is the
             // function-entry trace, its counting stub or tier 1: whatever a flat call would reach)
@@ -3690,15 +3685,10 @@ impl Cx<'_> {
         };
         self.push(Op::Mov(3, after));
         self.st(W::B8, ciw(ci::SAVEDPC), Src::V(3)); // the caller continues after its CALL
-        self.push(Op::Lea(
-            4,
-            M {
-                base: Base::Frame,
-                off: (i32::from(rc.a) + 1) * 16,
-            },
-        ));
         self.push(Op::SetCi(1));
-        self.push(Op::SetFrame(4));
+        let bump =
+            (i32::from(rc.a) + 1) * 16 - 16 * i32::from(mutants::active("addframe_push_off"));
+        self.push(Op::AddFrame(bump));
         if self.env.rec_link_cell != 0 {
             if let Some(r) = self.env.budget_reg {
                 self.st(
@@ -3898,14 +3888,7 @@ impl Cx<'_> {
             } else {
                 i32::from(a) + 1
             };
-            self.push(Op::Lea(
-                4,
-                M {
-                    base: Base::Frame,
-                    off: -up * 16,
-                },
-            ));
-            self.push(Op::SetFrame(4));
+            self.push(Op::AddFrame(-up * 16));
             if lazy {
                 self.lazy_rec_jump(cell, false);
             } else {
@@ -3994,14 +3977,7 @@ impl Cx<'_> {
         } else {
             i32::from(ins.b)
         };
-        self.push(Op::Lea(
-            2,
-            M {
-                base: Base::Frame,
-                off: -up * 16,
-            },
-        ));
-        self.push(Op::SetFrame(2));
+        self.push(Op::AddFrame(-up * 16));
         if !mutants::active("retf_no_reloadk") {
             self.ld(2, W::B8, ciw(ci::KCACHE)); // (r13 = C now)
             self.push(Op::SetK(2));

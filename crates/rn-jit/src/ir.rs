@@ -458,6 +458,9 @@ pub enum Op {
     Shl(V, u8),
     /// Pinned `rbx` (frame base) `= V`.
     SetFrame(V),
+    /// H7a: pinned `rbx` (frame base) `+= imm` bytes: the native push / pop of a frame (`add rbx, imm`, one instruction instead of
+    /// `lea` + `SetFrame`). Native only like `SetFrame` (the emulator moves its frame base the same way).
+    AddFrame(i32),
     /// Pinned `r13` (the `CallInfo`) `= V`.
     SetCi(V),
     /// Pinned `r14` (constants) `= V`.
