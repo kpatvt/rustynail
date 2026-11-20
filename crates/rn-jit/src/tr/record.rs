@@ -166,7 +166,10 @@ pub enum AbortReason {
 impl From<IrAbort> for AbortReason {
     fn from(e: IrAbort) -> AbortReason {
         match e {
-            IrAbort::TooLong => AbortReason::TooLong,
+            IrAbort::TooLong => {
+                super::diag::set_limit("ir");
+                AbortReason::TooLong
+            }
             IrAbort::ConstGuard => AbortReason::Compile("const_guard"),
         }
     }
@@ -778,7 +781,13 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
                 });
                 let op = rn_core::instruction::opcode_from_u8(rec.cur_op)
                     .map_or_else(|| format!("op{}", rec.cur_op), |o| format!("{o:?}"));
-                super::diag::set_site(format!("L{line}:{}:{op}", rec.cur_pc));
+                let lim = super::diag::limit_tag();
+                let lim = if lim.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{lim}]")
+                };
+                super::diag::set_site(format!("L{line}:{}:{op}{lim}", rec.cur_pc));
             }
             if super::cache::verbose_aborts() {
                 eprintln!(
@@ -1927,6 +1936,16 @@ impl Rec {
                     > self.cfg.max_ins
                 && !mutants::active("deep_ins_unbounded"))
         {
+            // (H8: which limit, for the head table)
+            super::diag::set_limit(if self.path.len() >= MAX_PATH {
+                "path"
+            } else if self.b.ir.ins.len() > MAX_INS - 16 {
+                "ins"
+            } else if self.cfg.side.is_some() && self.b.ir.ins.len() > MAX_SIDE_INS {
+                "sideins"
+            } else {
+                "deepins"
+            });
             return Err(AbortReason::TooLong);
         }
         let mm_follower = self.mm_bridge.is_some() || std::mem::take(&mut self.mm_jmp);
@@ -1996,6 +2015,7 @@ impl Rec {
     /// Start of the recorded iteration at `H`: entry model, `POLL`, `BUDGET` (7.8: `TOP`).
     fn begin(&mut self, vm: &Vm<'_>) -> R<()> {
         if self.nslots > MAX_EXTENT {
+            super::diag::set_limit("extent");
             return Err(AbortReason::TooLong);
         }
         let side = self.cfg.side.is_some();
@@ -2108,6 +2128,7 @@ impl Rec {
     /// cell instead of the tier-1 label.
     fn close_frame_link(&mut self, at: u32, p: &Proto) -> R<Flow> {
         if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
+            super::diag::set_limit("snaps");
             return Err(AbortReason::TooLong);
         }
         let low = self.frames[self.cur_depth].low;
@@ -2295,6 +2316,7 @@ impl Rec {
     /// Makes room for slots below `n` (root-relative): the map, the model frame and the extent (`TooLong` above 200).
     fn need_ext(&mut self, n: usize) -> R<()> {
         if n > MAX_EXTENT {
+            super::diag::set_limit("extent");
             return Err(AbortReason::TooLong);
         }
         self.ext = self.ext.max(n);

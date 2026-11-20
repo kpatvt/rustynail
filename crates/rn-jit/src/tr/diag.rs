@@ -61,6 +61,20 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Which limit made the recorder abort `TooLong` (consumed with the site).
+pub fn set_limit(l: &'static str) {
+    LIMIT.with(|c| c.set(l));
+}
+
+fn take_limit() -> &'static str {
+    LIMIT.with(|c| c.replace(""))
+}
+
+/// Takes the pending limit tag (the recorder's abort path appends it to the site).
+pub fn limit_tag() -> &'static str {
+    take_limit()
+}
+
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Are the per-head counters on (`RUSTYNAIL_JIT_VERBOSE >= 1` in a state with traces)?
@@ -74,6 +88,7 @@ pub fn enable() {
 }
 
 thread_local! {
+    static LIMIT: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
     static SITE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     static WHY: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
 }
