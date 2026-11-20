@@ -22,6 +22,7 @@ while [ $# -gt 0 ]; do
     --only) ONLY=$2; shift 2 ;;
     --shards) SHARDS=$2; shift 2 ;;
     --version) VERSION=$2; shift 2 ;;
+    --debug|--fast|--release) export GATE_PROFILE=${1#--}; shift ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -31,18 +32,16 @@ NC=$(gate_ncpus "$GATE_CPUS")
 [ -z "$SHARDS" ] && SHARDS=1
 MJOBS=${MUT_JOBS:-$(( NC / (2 * SHARDS) ))}
 [ "$MJOBS" -lt 1 ] && MJOBS=1
-if [ "$VERSION" = 5.4 ]; then
-  export RUSTFLAGS="--cfg rustynail_lua54" CARGO_TARGET_DIR="$GATE_ROOT/target-54"
-fi
+gate_export_test_env "$VERSION"
 FEAT=tr_mutants,t15_oracle
 echo "gate-mutants: only=${ONLY:-all} shards=$SHARDS jobs/shard=$MJOBS cpus=${GATE_CPUS:-all} ($NC) mem=$GATE_MEM_BIG version=$VERSION"
-gate_step mutants-build 3000 - - cargo test -p rn-jit --features $FEAT --no-run || { gate_summary; exit 1; }
+gate_step mutants-build 3000 - - cargo test -p rn-jit "${GATE_REL[@]}" --features $FEAT --no-run || { gate_summary; exit 1; }
 
 SHARD_SCRIPT='
-shards=$1; d=$2; feat=$3
+shards=$1; d=$2; feat=$3; rel=$4
 for i in $(seq 0 $((shards - 1))); do
   ( TR_MUT_SHARD=$i/$shards TR_MUT_RESULTS=$d/shard$i.res \
-    cargo test -p rn-jit --features "$feat" --test tr_mutants -- --nocapture every_registered_mutant_is_caught \
+    cargo test -p rn-jit $rel --features "$feat" --test tr_mutants -- --nocapture every_registered_mutant_is_caught \
     </dev/null >"$d/shard$i.log" 2>&1
     echo $? >"$d/shard$i.rc" ) &
 done
@@ -56,12 +55,13 @@ gate_wait_load
 export TR_MUT_JOBS=$MJOBS TR_CORE_JOBS=${MUT_CORE_JOBS:-2}
 TIMES=${MUT_TIMES:-$GATE_ROOT/scripts/gate-mutant-times.tsv}
 [ -s "$TIMES" ] && export TR_MUT_ORDER=$TIMES
-gate_cap "$GATE_MEM_BIG" "${GATE_CPUS:--}" timeout "${MUT_TIMEOUT:-14400}" bash -c "$SHARD_SCRIPT" _ "$SHARDS" "$D" "$FEAT" </dev/null >/dev/null 2>&1
+gate_cap "$GATE_MEM_BIG" "${GATE_CPUS:--}" timeout "${MUT_TIMEOUT:-14400}" bash -c "$SHARD_SCRIPT" _ "$SHARDS" "$D" "$FEAT" "${GATE_REL[*]}" </dev/null >/dev/null 2>&1
 DUR=$(( $(date +%s) - S ))
 cat "$D"/shard*.res 2>/dev/null | sort > "$D/all.res"
 awk -F'\t' 'NF >= 4 {print $1 "\t" $4}' "$D/all.res" | sort -t"$(printf '\t')" -k2 -rn > "$D/times.tsv"
-if [ "${MUT_SAVE_TIMES:-0}" = 1 ] && [ -z "$ONLY" ]; then cp "$D/times.tsv" "$TIMES"; fi
 RAN=$(wc -l < "$D/all.res")
+# refresh the times file only from a complete run (no pattern, no shard that died before its mutants were all recorded)
+if [ "${MUT_SAVE_TIMES:-0}" = 1 ] && [ -z "$ONLY" ] && [ "$RAN" -ge 600 ]; then cp "$D/times.tsv" "$TIMES"; echo "gate-mutants: refreshed $TIMES ($RAN mutants)"; fi
 CAUGHT=$(awk -F'\t' '$2=="caught"' "$D/all.res" | wc -l)
 awk -F'\t' '$2!="caught" {print $1}' "$D/all.res" > "$D/survivors.txt"
 KRE=$(gate_known_re mutant)

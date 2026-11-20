@@ -11,13 +11,15 @@ GATE_HEAVY_SKIPS=(--skip mutants_are_caught_by_live_programs --skip every_regist
 #           gated on the test-only features (this is "the rn-jit trace suite" of the light gate)
 #   oracle  `--features tr_mutants,t15_oracle`: the oracle-gated tests, tr_identity, the identity tests of tr_core, the mutant registry
 #           tests; without the single long tests that have their own sharded steps (GATE_HEAVY_SKIPS)
+# The profile of the builds is GATE_PROFILE (default debug = the dev profile; `--fast` opt 3 with debug assertions; `--release` without them; gate-lib.sh).
 # Both pass --no-fail-fast; failing tests listed in scripts/gate-known.txt (class test) make the step KNOWN instead of FAIL.
 gate_jit_suite() {
   local v=$1 which=$2 pre=() feat skips=() n
   n=tests-$v-$which
-  if [ "$v" = 5.4 ]; then pre=("${V54ENV[@]}"); else pre=(env); fi
+  gate_test_env "$v"
+  pre=(env "${GATE_TENV[@]}")
   if [ "$which" = oracle ]; then feat=tr_mutants,t15_oracle; skips=("${GATE_HEAVY_SKIPS[@]}"); else feat=trace; fi
-  gate_step "$n-build" 3000 - - "${pre[@]}" cargo test -p rn-jit --features "$feat" --lib --tests --no-run || return
+  gate_step "$n-build" 3000 - - "${pre[@]}" cargo test -p rn-jit "${GATE_REL[@]}" --features "$feat" --lib --tests --no-run || return
   [ -f "$GATE_DIR/$n-build.log" ] || return
   # the binaries of the build, run several at a time (scripts/gate-runbins.sh), not one after another as `cargo test` does
   sed -n -e 's/^ *Executable unittests src\/lib.rs (\(.*\))$/lib \1/p' -e 's/^ *Executable tests\/\([a-z0-9_]*\)\.rs (\(.*\))$/\1 \2/p' "$GATE_DIR/$n-build.log" |

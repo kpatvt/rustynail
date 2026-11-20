@@ -22,6 +22,7 @@ while [ $# -gt 0 ]; do
     --shards) SHARDS=$2; shift 2 ;;
     --workers) WORKERS=$2; shift 2 ;;
     --version) VERSION=$2; shift 2 ;;
+    --debug|--fast|--release) export GATE_PROFILE=${1#--}; shift ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -30,12 +31,10 @@ done
 NC=$(gate_ncpus "$GATE_CPUS")
 [ -z "$WORKERS" ] && WORKERS=$(( NC / SHARDS ))
 [ "$WORKERS" -lt 1 ] && WORKERS=1
-if [ "$VERSION" = 5.4 ]; then
-  export RUSTFLAGS="--cfg rustynail_lua54" CARGO_TARGET_DIR="$GATE_ROOT/target-54"
-fi
+gate_export_test_env "$VERSION"
 FEAT=tr_mutants,t15_oracle
 echo "gate-oracle: tests=$TESTS shards=$SHARDS workers/shard=$WORKERS cpus=${GATE_CPUS:-all} ($NC) mem=$GATE_MEM_BIG version=$VERSION"
-gate_step oracle-build 3000 - - cargo test -p rn-jit --features $FEAT --test tr_oracle --no-run || { gate_summary; exit 1; }
+gate_step oracle-build 3000 - - cargo test -p rn-jit "${GATE_REL[@]}" --features $FEAT --test tr_oracle --no-run || { gate_summary; exit 1; }
 EXE=$(gate_test_bin $FEAT tr_oracle)
 [ -x "$EXE" ] || { echo "cannot find the tr_oracle test binary"; exit 2; }
 

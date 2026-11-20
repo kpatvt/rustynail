@@ -36,6 +36,43 @@ GATE_ONLY=${GATE_ONLY:-}   # comma list of step names: run only these
 GATE_SKIP=${GATE_SKIP:-}   # comma list of step names: leave these out
 V54ENV=(env RUSTFLAGS="--cfg rustynail_lua54" CARGO_TARGET_DIR="$GATE_ROOT/target-54")
 
+# Profile of the rn-jit TEST builds (the light/heavy suites, gate-oracle, gate-mutants), GATE_PROFILE / `--debug|--fast|--release` of the gate scripts:
+#   fast     the release optimisation level (opt 3) WITH debug assertions and overflow checks, no fat LTO, 16 codegen units:
+#            the same checks and cfg(debug_assertions) code paths as `debug` (the trace compiler forces its verification on, the landing
+#            cache and the poisoned-descriptor checks run, t15 emits the budget invariant; t15_core_emu::intrinsic_calls_match_tier1_at_every_pc
+#            FAILS without them), at the speed of optimised code
+#   release  opt 3 WITHOUT debug assertions (the shipped cfg): not equivalent to `debug`, see docs/GATES.md; for experiments
+#   debug    (default) the dev profile (opt 1, debug assertions)
+# `fast` and `release` use their own target directories (target-gr / target-54r) so that they never invalidate the shipped
+# `target/release` build that vm_corpus and jit-diff use.
+GATE_PROFILE=${GATE_PROFILE:-debug}
+export GATE_PROFILE
+# gate_test_env <5.5|5.4>: sets GATE_TENV (VAR=value words for `env`) and GATE_REL (extra cargo test flags) for the profile.
+gate_test_env() {
+  local td=target
+  GATE_TENV=()
+  GATE_REL=()
+  if [ "$1" = 5.4 ]; then GATE_TENV+=(RUSTFLAGS="--cfg rustynail_lua54"); td=target-54; fi
+  if [ "$GATE_PROFILE" != debug ]; then
+    if [ "$td" = target ]; then td=target-gr; else td=target-54r; fi
+    GATE_TENV+=(CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_RELEASE_DEBUG=0)
+    if [ "$GATE_PROFILE" = fast ]; then
+      GATE_TENV+=(CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true)
+    else
+      td=$td-noassert
+    fi
+    GATE_REL=(--release)
+  fi
+  [ "$td" != target ] && GATE_TENV+=(CARGO_TARGET_DIR="$GATE_ROOT/$td")
+  return 0
+}
+# gate_export_test_env <version>: the same, exported (for the scripts whose every cargo call is a test build)
+gate_export_test_env() {
+  gate_test_env "$1"
+  [ "${#GATE_TENV[@]}" -gt 0 ] && export "${GATE_TENV[@]}"
+  return 0
+}
+
 # A scope with the cap; falls back to ulimit -v when systemd-run is not usable.
 CAP_OK=1
 systemd-run --user --scope -q -p MemoryMax=1G -p MemorySwapMax=0 true </dev/null 2>/dev/null || CAP_OK=0
@@ -165,7 +202,7 @@ gate_summary() {
 # prints the path of the executable of `--test <name>`.
 gate_test_bin() { # <features> <test-target> [cargo target dir]
   local feat=$1 tgt=$2
-  cargo test -p rn-jit --features "$feat" --test "$tgt" --no-run </dev/null 2>&1 \
+  cargo test -p rn-jit "${GATE_REL[@]}" --features "$feat" --test "$tgt" --no-run </dev/null 2>&1 \
     | sed -n "s/^ *Executable tests\/$tgt\.rs (\(.*\))\$/\1/p" | head -n 1
 }
 
