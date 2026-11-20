@@ -35,7 +35,7 @@ spec.loader.exec_module(genmap)
 
 # fast mutants of different families, used when nothing maps (checked against the registry; times in the times file are 2-20 s)
 DEFAULT = ["snap_drop_last", "phi_swap", "fold_nan", "tbar_skip", "poll_skip", "entry_no_typecheck", "alias_may_as_no", "native_ci_skip"]
-BASELINE_S = 60  # the baseline pass (each detecting test once without a mutant) of a group run: measured 30-200 s, see GATES.md
+BASELINE_S = 30  # the baseline pass (each detecting test once without a mutant) of a group run: measured 30-200 s, see GATES.md
 
 
 def git(*a):
