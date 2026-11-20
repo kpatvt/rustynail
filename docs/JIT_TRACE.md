@@ -2384,3 +2384,48 @@ exactly; that setting still shows only the H4 gain: ctor 1729 -> 1708). Cycles: 
 Check set vs the base (instructions): fib, fannkuch, queens, spectral_norm, matmul, mandelbrot, nbody (2027.8 M), awfy/nbody (555.7 M), field_method, oop_methods +-0.02 %; richards +0.27 %, game_loop +0.2 %,
 table_hash +0.76 % (instructions; cycles -7 %: the string-allocation path of H4 and a codegen shift in `table.rs`, not a path any of these changes added), deltablue -0.5 %, havlak -2.2 %, json -0.1 %, bounce -0.3 %,
 lru_cache -0.2 %, roguelike -0.1 %.
+
+## 20. H6 study: root-frame `TAILCALL` (2026-11-20, base 9d5d359; study only, no code change merged)
+
+**Question.** docs/STUDY_ALLOC_CALL.md (H6) expected list 7000 -25..40 %, richards -5..10 %, raytrace / cd -3..8 % from recording a `TAILCALL` of the *root* frame
+(the callee replaces the root frame and the trace goes on in it, instead of `Abort::TailCall` / the stitching exit before the instruction). The study was written
+on 324e3e0, before H2c (inline Lua tail call in tier 1, section 19). The numbers below were measured on 9d5d359 (release `rnlua`, `RUSTYNAIL_SEED=0`,
+`taskset -c 4`, `perf stat`), with scratch patches that were reverted (nothing in `crates/` changed).
+
+**What the recorder does today at a root `TAILCALL`** (`Rec::tailcall`, `cur_depth == 0`): a function-entry root (`fn_root`) ends with the always-taken exit before the
+instruction (`fn_end`, tier 1 runs the tail call; this is the final exit of such a trace and is an inline stub, not a handler exit); every other root (continuation
+heads, side recordings whose root is the frame of the exit) aborts `TailCall`. A `TAILCALL` of an *inlined* frame (depth >= 1) already replaces that frame
+(`call_lua(.., tail = true)`, `FrameLink::tail`); setmetatable / `string.*` / intrinsics / `__call` tables in tail position are recorded as the native followed by a `RETURN`.
+
+**Findings.**
+
+1. *List is not blocked by `TailCall`.* `RUSTYNAIL_JIT_VERBOSE=1` on `awfy/list 3000`: aborts `FnShort` 6, `StartRefused` 40, `Recursion` 1, `Unstable` 1, **no `TailCall`**. The
+   continuation heads of `tail` (pc 4, 12, 17, 22) never start a recording: `driver_start` refuses a continuation head (`recany`) of a prototype that is not known to be
+   recursive (`!proto_recursive && !cok`), and `tail` never becomes known because every recording started at its entry (pc 0) takes the leaf path (`return z`: `FnShort`,
+   6 times, then blacklisted; with `fnroot=1` the same recordings abort `LeaveFrame`). `fnmin=0`, `contok=1/2`, `recnat=0`: instructions unchanged (12717 M) or worse (recnat=0: 13224 M).
+   `tier 1` is 47.5 % of the cycles (`tail`'s own tier-1 code) plus 15.5 % (`isShorterThan`); `pre_tail_call` / `jit_tailcall` are gone from the profile since H2c.
+2. *With the refusal lifted* (scratch: `driver_start` ignores the `recany` refusal) the four continuation heads do record and then abort `TailCall` (4 aborts, as the study
+   said): list 12717 -> 12556 M instructions (-1.3 %), cycles 2332 -> 2299 M. If in addition those recordings end before the root `TAILCALL` with the stitching exit (the cheapest
+   possible "handling" of the instruction: `end_exit`), 11 traces install and list gets *worse*: 13321 M instructions, 2500 M cycles (the continuation traces are entered 14 M times and
+   exit before the tail call into tier 1 again). Recording `tail`'s root `TAILCALL` for real would continue in `tail` itself (a self tail call), which only pays once the entry head of `tail`
+   exists as a trace, and that is the `FnShort` / leaf-path problem above, not a tail-call problem.
+3. *Cost of a root tail call that does reach tier 1.* Micro (`scratchpad/mt.lua`, `string.gsub(s, ".", f)` so that `f` is entered from C, 10 M calls): `f = function(c) return g(c, 1) end`
+   (trace of `f` ends before the `TAILCALL`, tier 1 does the tail call, `g` runs in tier 1) 878 instructions per call and 1514 M cycles; `local r = g(c, 1) return r` (`g` inlined into
+   `f`'s trace) 848 instructions, 1498 M cycles; `return c` 631. The whole transition (final exit stub, the inline tier-1 `TAILCALL` of H2c, the callee's entry) is **30 instructions
+   (3.5 %) per call on a loop of 600 instructions of C-call overhead**; there is nothing like the 260 instructions of the old `pre_tail_call` path left to remove.
+4. *Cheap proxy of "root `TAILCALL` handled" on the targets* (scratch: every non-`fn_root` root `TAILCALL` ends the recording with the stitching exit before it, which removes every
+   `TailCall` abort of the programs; instructions M, base -> proxy): richards 500 2846 -> 2861 (+0.5 %), raytrace 40 5905 -> 5826 (-1.3 %), cd 20 10874 -> 10871 (0 %), list 7000 12717 -> 13321
+   (+4.7 %, finding 2). The `TailCall` aborts that exist at all: richards 15 (side), raytrace 1, cd 2, list 0 (4 behind the refusal). The hot root-`TAILCALL` exit of raytrace is `Sphere:normal`'s
+   `return p:sub(self.c):mul(..)` (7426 exits in the run, after which the rest of `trace()` stays in tier 1: that is the `trace()` coverage problem of H8, not the tail call).
+
+**Conclusion (not built).** Handling the root `TAILCALL` as the spec asks (a root replaced by the callee, exit snapshots that rewrite the root `CallInfo`: new function slot value at slot -1,
+`top`, `kcache`, `CIST_TAIL`, a per-snapshot root prototype; stub support in `inline_stub_ops`; the optimizer passes that assume one root prototype per trace: sink, peel, `snapprune`, dead-slot
+analysis; the `Seg` / lockstep / VM-side re-root machinery of RETF as the nearest precedent) is a large change whose measured upper bound on the four targets is 0..3 %
+(finding 3: 30 instructions per transition; finding 4: the proxy), not the -5..40 % of the study, because (a) H2c already made the tier-1 tail call cheap, and (b) list's tier-1 share comes
+from the recursion / continuation start policy of `tail`. It was therefore not implemented: the work does not pay for the soundness surface (new mutants, twins, five passes to teach).
+
+**What would pay instead** (not done): (1) for list, make the entry head of a recursive function with a data-dependent leaf record the *non-leaf* path (a recording armed at a leaf could be
+re-armed once, or `fn_min` / leaf detection could count the invocation as a "probe" and not as an `FnShort` towards the blacklist) so that `proto_recursive` becomes true and the continuation
+heads record; the root `TAILCALL` of the continuation at pc 22 then needs only the `end_exit` handling of finding 2 *together with* an installed entry trace of `tail`; (2) H8 diagnostics (why
+`trace()` of raytrace stays in tier 1); (3) if root tail calls ever matter, the cheaper variant is the "final exit after the call": a snapshot of the replaced frame (callee proto, pc 0, args moved
+down) landing on the callee's function-head label, which needs the root-rewrite restore above but none of the recorder model changes.
