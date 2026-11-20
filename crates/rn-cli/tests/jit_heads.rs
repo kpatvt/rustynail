@@ -19,14 +19,22 @@ end
 print(s, acc.x)
 "#;
 
+/// A loop the recorder refuses (`math.max` of an integer and a float): the abort site names the recorder's source line.
+const NYI_PROG: &str =
+    "local max, s = math.max, 0\nfor i = 1, 200000 do s = s + max(0, i * 0.5 - 3) end\nprint(s)\n";
+
 /// Runs [`PROG`] with a scrubbed JIT environment plus `env`; returns (stdout, stderr, child pid).
 fn run(env: &[(&str, &str)]) -> (String, String, u32) {
+    run_prog(PROG, env)
+}
+
+fn run_prog(prog: &str, env: &[(&str, &str)]) -> (String, String, u32) {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("rn_jitheads_{}_{seq}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("s.lua");
-    std::fs::write(&path, PROG).unwrap();
+    std::fs::write(&path, prog).unwrap();
     let mut c = Command::new(env!("CARGO_BIN_EXE_rnlua"));
     c.arg(&path)
         .stdin(Stdio::null())
@@ -96,6 +104,24 @@ fn head_table_format() {
         !err.contains("[heads] samples"),
         "no sampler without RUSTYNAIL_JIT_SAMPLE:\n{err}"
     );
+}
+
+#[test]
+fn abort_sites_name_reason_line_op_and_source() {
+    let (_, err, _) = run_prog(NYI_PROG, &[("RUSTYNAIL_JIT_VERBOSE", "1")]);
+    let row = err
+        .lines()
+        .find(|l| l.starts_with("[heads] s.lua:") && l.contains("aborts {"))
+        .unwrap_or_else(|| panic!("no abort row:\n{err}"));
+    // `... at {<reason>@L<line>:<pc>:<op>[record.rs:<n>]:<count>,...}`
+    let at = row
+        .split(" at {")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no sites: {row}"));
+    let site = at.split(['}', ',']).next().unwrap();
+    assert!(site.starts_with("Nyi(Call)@L"), "{row}");
+    assert!(site.contains(":Call[record.rs:"), "{row}");
+    assert!(row.contains("black@rec#"), "{row}");
 }
 
 #[test]

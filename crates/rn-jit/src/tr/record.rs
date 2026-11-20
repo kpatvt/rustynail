@@ -3447,6 +3447,7 @@ impl Rec {
         }
         if at_entry && self.entry_snap.is_none() {
             if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
+                super::diag::set_limit("snaps");
                 return Err(AbortReason::TooLong);
             }
             // the slice's `S0R`: the state at H (empty map), after the budget charge (`refund = n`, patched at close)
@@ -3463,6 +3464,7 @@ impl Rec {
             // P-O: the snapshot of the inlined call's `CALL` (state before it), shared by every guard of the body
             let c = self.pcall.as_ref().unwrap();
             if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
+                super::diag::set_limit("snaps");
                 return Err(AbortReason::TooLong);
             }
             let (land, _) = snap::land_info(&self.lows[c.low as usize], c.pc);
@@ -3478,6 +3480,7 @@ impl Rec {
             self.pcall.as_mut().unwrap().snap = Some(s);
         } else if !at_entry && self.cur_snap.is_none() {
             if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
+                super::diag::set_limit("snaps");
                 return Err(AbortReason::TooLong);
             }
             let low = self.frames[self.cur_depth].low;
@@ -6256,6 +6259,7 @@ impl Rec {
             return Ok(s);
         }
         if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
+            super::diag::set_limit("snaps");
             return Err(AbortReason::TooLong);
         }
         let low = self.frames[self.cur_depth].low;
