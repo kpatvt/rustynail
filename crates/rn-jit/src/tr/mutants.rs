@@ -581,6 +581,9 @@ pub const NAMES: &[&str] = &[
     // C36: `cispare`
     "cispare_never",
     "cispare_flush_anyway",
+    // K4: the in-place spare-`CallInfo` repair at the entry of a root
+    "rootci_never",
+    "rootci_short",
     // CP1: spare `CallInfo` repair at the TR6b check of natively entered frames
     "recci_never",
     "recci_short",
@@ -943,7 +946,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 723);
+        assert_eq!(NAMES.len(), 725);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

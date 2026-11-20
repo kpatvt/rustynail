@@ -2144,6 +2144,8 @@ pub struct TrStats {
     pub ncallee_heads: u64,
     /// C36: persistent entry failures repaired by allocating spare `CallInfo` nodes (`cispare`).
     pub ci_repaired: u64,
+    /// K4: root entries whose TR6b check found no spare `CallInfo` and was repaired in place (`jit_tr_ci_spare_root`).
+    pub ci_root_repaired: u64,
     /// CP1: native entries (push / return) whose TR6b check found no spare `CallInfo` and was repaired in place (`jit_tr_ci_spare`).
     pub rec_ci_added: u64,
     /// `loopany` guard (`laprune`): side traces flushed alone (the root stayed).
@@ -6147,6 +6149,36 @@ pub unsafe extern "C" fn jit_tr_ci_spare(
         Some(added) => {
             if added > 0 {
                 d_of(&mut st).tr.stats.rec_ci_added += 1;
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
+/// K4 (`cispare`): `jit_tr_ci_spare_root(thread, ci, depth, 0) -> 1 | 0`: the repair of the TR6b check at the entry of a root, called from the trace's entry
+/// sequence (the frame is a running tier-1 frame, nothing of the trace is live yet): as [`jit_tr_ci_spare`], counted in `ci_root_repaired`.
+/// 0 = allocation failure (the entry fails as before).
+///
+/// # Safety
+/// Called only from compiled code with the running thread and its current Lua frame.
+pub unsafe extern "C" fn jit_tr_ci_spare_root(
+    th: *mut Thread,
+    ci: *mut CallInfo,
+    depth: u32,
+    _b: u32,
+) -> u32 {
+    // SAFETY: as in `jit_tr_ci_spare`.
+    let (mut st, ci) = unsafe { (jit_hooks::state_from_thread(th.cast()), Ci::from_raw(ci)) };
+    let mut n = depth as usize;
+    if mutants::active("rootci_short") {
+        n = n.saturating_sub(1);
+    }
+    // SAFETY: `ci` is a node of the thread's list.
+    match unsafe { st.ensure_spare_ci_after(ci, n) } {
+        Some(added) => {
+            if added > 0 {
+                d_of(&mut st).tr.stats.ci_root_repaired += 1;
             }
             1
         }

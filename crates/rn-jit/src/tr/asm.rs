@@ -106,6 +106,9 @@ pub struct AsmEnv {
     pub entry_fail_fn: u64,
     /// `cache::jit_tr_ci_spare` (CP1: allocates the spare `CallInfo` nodes of a natively entered frame, instead of a tier-1 fall-back), or 0: none.
     pub ci_spare_fn: u64,
+    /// K4 (`cispare`): `cache::jit_tr_ci_spare_root`, the in-place repair of the TR6b check at the entry of a root (a frame of tier 1 whose
+    /// `CallInfo` chain GC shrank or tier 1 never extended), or 0: the failure books an entry failure as before.
+    pub ci_spare_root_fn: u64,
     /// The pure-helper bracket target (`jit_tr_calln` or a test double).
     pub calln: u64,
     /// The write-barrier helper (`jit_tr_barrier` or a test double).
@@ -301,6 +304,7 @@ impl Default for AsmEnv {
             head_pc: 0,
             entry_fail_fn: 0,
             ci_spare_fn: 0,
+            ci_spare_root_fn: 0,
             calln: 0,
             barrier: 0,
             alloc: 0,
@@ -2174,6 +2178,8 @@ struct Cx<'a> {
     shape_dropped: Vec<Ref>,
     /// CP1: the out-of-line spare-`CallInfo` repairs of the TR6b checks of natively entered frames: (slow label, resume label).
     rec_ci_cold: Vec<(L, L)>,
+    /// K4: the out-of-line spare-`CallInfo` repairs of the TR6b check of a root entry: (slow label, resume label, entry-failure label).
+    root_ci_cold: Vec<(L, L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
     bud_cold: Vec<(L, L, i32)>,
     /// R1: the cold exits of a carrying link: `(label, poll stub, stores)`: the carried writeback entries are stored (they are not on the stack yet), then
@@ -2748,6 +2754,7 @@ pub fn assemble(
         shape_cold: Vec::new(),
         shape_dropped: Vec::new(),
         rec_ci_cold: Vec::new(),
+        root_ci_cold: Vec::new(),
         bud_cold: Vec::new(),
         rc_cold: Vec::new(),
         dense_cold: Vec::new(),
@@ -4111,9 +4118,46 @@ impl Cx<'_> {
         self.rec_ci_cold.push((slow, done));
     }
 
+    /// K4: TR6b of the entry of a root. A missing spare node is repaired in place (`jit_tr_ci_spare_root`: the nodes a flat call would have added through
+    /// `luaE_extendCI`) and the entry goes on; only an allocation failure takes `fail`, the entry-failure bookkeeping. Without this, every collection that
+    /// shrinks the chain (`luaE_shrinkCI`: half of the unused nodes) costs the root `ENTRY_FAIL_MIN` failed entries (each runs its iteration in tier 1) before
+    /// the persistent-failure rule repairs the chain and restarts the account (apps/raytrace on 5.4: 1343 repairs, 86 K of 174 K entries lost).
+    fn room_ci_check_root(&mut self, fail: L) {
+        let ir = self.ir;
+        if self.env.ci_spare_root_fn == 0
+            || self.env.head == 0
+            || ir.depth == 0
+            || mutants::active("rootci_never")
+        {
+            self.room_ci_check(fail);
+            return;
+        }
+        let (slow, done) = (self.label(), self.label());
+        if ir.depth == 1 {
+            self.ci_next_null_br(slow);
+        } else {
+            let mut base = Base::Ci;
+            for _ in 0..ir.depth {
+                self.push(Op::Ld {
+                    dst: 0,
+                    w: W::B8,
+                    m: M {
+                        base,
+                        off: ci::NEXT as i32,
+                    },
+                });
+                self.br(Cc::Eq, 0, Src::Imm(0), slow);
+                base = Base::Reg(0);
+            }
+        }
+        self.bind(done);
+        self.root_ci_cold.push((slow, done, fail));
+    }
+
     fn entry_checks(&mut self, fail: L) -> Result<(), AsmError> {
         if !self.env.no_room_checks {
-            self.room_checks(fail);
+            self.room_stack_check(fail);
+            self.room_ci_check_root(fail);
         }
         if let Some(l) = self.e2n.take() {
             // G1: the entry past the room checks (taken by a link whose chain proves the room)
@@ -8111,6 +8155,19 @@ impl Cx<'_> {
             if let Some(l) = rec_fail {
                 self.br(Cc::Eq, 0, Src::Imm(0), l);
             }
+            self.push(Op::Jmp(done));
+        }
+        // K4: the spare-`CallInfo` repairs of the root entries (an allocation failure books the entry failure like the failing check did)
+        for (slow, done, fail) in std::mem::take(&mut self.root_ci_cold) {
+            self.bind(slow);
+            self.save_vb();
+            self.push(Op::CallH {
+                f: self.env.ci_spare_root_fn,
+                a: u32::from(self.ir.depth),
+                b: 0,
+            });
+            self.reload_vb();
+            self.br(Cc::Eq, 0, Src::Imm(0), fail);
             self.push(Op::Jmp(done));
         }
         // J1-1: the cold disambiguators of the fused `HREFK`+`HLOAD` pairs (registers are as at the failed compare): a key tag

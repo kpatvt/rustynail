@@ -220,6 +220,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.ci_repaired
         );
     }
+    if s.ci_root_repaired > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] cispare: root entries repaired in place {}",
+            s.ci_root_repaired
+        );
+    }
     if s.rec_ci_added > 0 {
         let _ = writeln!(
             o,

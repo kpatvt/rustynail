@@ -512,6 +512,8 @@ struct TStats {
     la_self: u64,
     /// C36: entry failures repaired by `cispare` / roots re-recorded by `domtop` / heads given a second chance / identical re-records installed by `second`.
     ci_repaired: u64,
+    /// K4: root entries repaired in place by `cispare` (spare `CallInfo`).
+    ci_root_repaired: u64,
     /// CP1: native entries repaired in place (spare `CallInfo`).
     rec_ci_added: u64,
     dom_flushes: u64,
@@ -615,6 +617,8 @@ impl TStats {
                 s.la_self = g("(self");
             } else if let Some(r) = l.strip_prefix("cispare: entry failures repaired ") {
                 s.ci_repaired = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("cispare: root entries repaired in place ") {
+                s.ci_root_repaired = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("recci: native entries repaired in place ") {
                 s.rec_ci_added = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("domtop: roots re-recorded ") {
@@ -6439,10 +6443,16 @@ fn c36_cispare_programs() {
             on.line(),
             on.ci_repaired
         );
-        assert_eq!(off.ci_repaired, 0, "[{trace}] knob off repairs nothing");
+        assert_eq!(
+            off.ci_repaired + off.ci_root_repaired,
+            0,
+            "[{trace}] knob off repairs nothing"
+        );
+        // K4: the chain is extended at the entry itself (no entry fails, so the persistent-failure repair never runs); without the in-place repair
+        // (mutant `rootci_never`) the failures book up and the old repair takes over
         assert!(
-            on.ci_repaired >= 1,
-            "[{trace}] the chain is extended: {}",
+            on.ci_root_repaired >= 1 && on.ci_repaired == 0,
+            "[{trace}] the chain is extended at the entry: {}",
             on.line()
         );
         assert!(
