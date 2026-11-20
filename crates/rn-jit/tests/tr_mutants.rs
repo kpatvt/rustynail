@@ -24,7 +24,8 @@
 //! The FULL runner under the 8 GB cap (all mutants, a few hours): build once, then run sharded in one memory-capped scope; see docs/JIT_TESTING.md.
 //! Resource knobs: `TR_MUT_JOBS` (test binaries in parallel, default 2), `TR_MUT_BUILD_JOBS` (nested cargo, 4), `TR_MUT_MEM_MB` (RLIMIT_AS of
 //! each test binary, 4096), `TR_CORE_MEM_MB` (RLIMIT_AS of each tr_core job child, 2048), `TR_CORE_JOBS`; `TR_MUT_SHARD=i/n`,
-//! `TR_MUT_RESULTS=file` (one line per finished mutant), `TR_MUT_RESUME=1` (skip those recorded as caught). A mutant none of whose
+//! `TR_MUT_RESULTS=file` (one line per finished mutant: name, caught|SURVIVED, tests, seconds), `TR_MUT_ORDER=file` (longest
+//! mutants first, `name<TAB>seconds` lines), `TR_MUT_STOP_AT_FIRST=1` (stop a mutant's tests at the first failure), `TR_MUT_RESUME=1` (skip those recorded as caught). A mutant none of whose
 //! tests fails prints `SURVIVED`.
 #![cfg(feature = "trace")]
 
@@ -4536,16 +4537,40 @@ mod runner {
             })
             .collect();
         let record = Mutex::new(());
-        let ures = pool(units.clone(), |(r, dets)| {
-            let rs: Vec<(String, Res)> = dets
-                .iter()
-                .map(|d| {
-                    (
-                        format!("{}::{}", d.bin, d.test),
-                        run_one(&exes[d.bin], d, r.name),
-                    )
+        // TR_MUT_ORDER=file ("name<TAB>seconds" lines): the longest mutants start first, so
+        // that a slow mutant never starts last and ends the run alone (scheduling only: the same units run; unknown names go first).
+        let mut units = units;
+        if let Ok(f) = std::env::var("TR_MUT_ORDER") {
+            let secs: BTreeMap<String, f64> = std::fs::read_to_string(f)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| {
+                    let mut it = l.split('\t');
+                    let n = it.next()?.to_string();
+                    let t = it.next()?.parse::<f64>().ok()?;
+                    Some((n, t))
                 })
                 .collect();
+            units.sort_by(|a, b| {
+                let ta = secs.get(a.0.name).copied().unwrap_or(f64::MAX);
+                let tb = secs.get(b.0.name).copied().unwrap_or(f64::MAX);
+                tb.partial_cmp(&ta).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        let ures = pool(units.clone(), |(r, dets)| {
+            let started = std::time::Instant::now();
+            // TR_MUT_STOP_AT_FIRST=1 (opt-in, off by default): the remaining detecting tests of a mutant are not run once one has failed.
+            // The verdict (caught) is the same; the report no longer lists which of the other tests also catch it ("not by ...").
+            let stop_at_first = std::env::var("TR_MUT_STOP_AT_FIRST").is_ok();
+            let mut rs: Vec<(String, Res)> = Vec::new();
+            for d in dets.iter() {
+                let x = run_one(&exes[d.bin], d, r.name);
+                let failed = matches!(x, Res::Fail(_));
+                rs.push((format!("{}::{}", d.bin, d.test), x));
+                if stop_at_first && failed {
+                    break;
+                }
+            }
             let by: Vec<&str> = rs
                 .iter()
                 .filter(|(_, x)| matches!(x, Res::Fail(_)))
@@ -4571,7 +4596,12 @@ mod runner {
                     .append(true)
                     .open(f)
                 {
-                    let _ = writeln!(fh, "{}\t{state}\t{detail}", r.name);
+                    let _ = writeln!(
+                        fh,
+                        "{}\t{state}\t{detail}\t{:.1}",
+                        r.name,
+                        started.elapsed().as_secs_f64()
+                    );
                 }
             }
             rs
