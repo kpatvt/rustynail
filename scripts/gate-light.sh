@@ -8,8 +8,8 @@
 #   MUTANT_PATTERN   substrings of mutant names (TR_MUT_ONLY), e.g. `cofuse_,amt_`; without it no mutant runs
 #   --no-54          leave out the 5.4 steps (clippy-5.4, tests-5.4)
 #   --seeds A-B      jit-diff range (default 1-50), modes JITDIFF_MODES (default `off tr trdef`)
-# Env (see scripts/gate-lib.sh for the common ones): GATE_ONLY / GATE_SKIP (comma lists of step names), GATE_THREADS (test threads,
-#   default 8), LIGHT_JD_MODES.
+# Env (see scripts/gate-lib.sh for the common ones): GATE_ONLY / GATE_SKIP (comma lists of step names), GATE_THREADS (test threads per binary,
+#   default 4), LIGHT_JD_MODES.
 # Exit status 0 when every step passed. Heavier checks: scripts/gate-heavy.sh.
 GATE_NAME=gate-light
 PATTERN=

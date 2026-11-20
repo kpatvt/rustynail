@@ -54,6 +54,12 @@ Rules:
 8. The cap must wrap every command that builds strings, reads big files or loops, not just the test binaries: an uncapped
    helper in the same shell runs in the terminal's cgroup, and `oomd` kills the whole tab.
 
+## Gates and benchmarks (docs/GATES.md)
+Per commit: `scripts/gate-light.sh [mutant-pattern]`; before merge/push: `scripts/gate-heavy.sh`. Both run every step under the memory cap
+and a CPU set (`GATE_CPUS`, default 2-15), print wall times, and report the known failures of `scripts/gate-known.txt` as KNOWN. The long
+single tests are sharded by `scripts/gate-oracle.sh` (tr_oracle) and `scripts/gate-mutants.sh` (mutant runner). Benchmarks of one subject:
+`scripts/bench-fast.sh` (cached PUC/LuaJIT/baseline columns in `bench/results/baselines/`); the full `bench_session.py` method is unchanged.
+
 ## Test harness gotchas
 - Tests in one binary run on parallel threads sharing a pid: temp dirs must be unique per call.
 - Compare outputs with `0x<hex>` addresses normalized; rnlua's stderr has a program-name
