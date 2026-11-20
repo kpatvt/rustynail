@@ -6454,7 +6454,11 @@ fn p_laprune_programs() {
 fn c36_cispare_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["t1inline=1023,cispare=0", "t1inline=1023,cispare=1"] {
+        for lim in [
+            "t1inline=1023,cispare=0",
+            "t1inline=1023,cispare=1",
+            "t1inline=1023,cispare=3",
+        ] {
             jobs.push(Job::new("c36_ci", trace).opts("+verify").limits_s(lim));
             jobs.push(
                 Job::new("c36_ci", trace)
@@ -6494,9 +6498,10 @@ fn c36_cispare_programs() {
             .expect("job")
     };
     for trace in ["always", "on2"] {
-        let (off, on) = (
+        let (off, on, inplace) = (
             find(trace, "t1inline=1023,cispare=0"),
             find(trace, "t1inline=1023,cispare=1"),
+            find(trace, "t1inline=1023,cispare=3"),
         );
         eprintln!(
             "c36_ci [{trace}] cispare=0: {} | cispare=1: {} repaired {}",
@@ -6509,12 +6514,17 @@ fn c36_cispare_programs() {
             0,
             "[{trace}] knob off repairs nothing"
         );
+        assert!(
+            on.ci_repaired >= 1 && on.ci_root_repaired == 0,
+            "[{trace}] the chain is extended by the persistent-failure rule (cispare=1): {}",
+            on.line()
+        );
         // K4: the chain is extended at the entry itself (no entry fails, so the persistent-failure repair never runs); without the in-place repair
         // (mutant `rootci_never`) the failures book up and the old repair takes over
         assert!(
-            on.ci_root_repaired >= 1 && on.ci_repaired == 0,
+            inplace.ci_root_repaired >= 1 && inplace.ci_repaired == 0 && inplace.rerecord == 0,
             "[{trace}] the chain is extended at the entry: {}",
-            on.line()
+            inplace.line()
         );
         assert!(
             off.rerecord >= 1,

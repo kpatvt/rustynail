@@ -88,7 +88,8 @@ pub const T3IDX_PROCESS: u32 = 2;
 pub const LAPRUNE_PROCESS: u32 = 1;
 /// C36 (`cispare`): process value of [`TrLimits::cispare`] (K3a: also the struct default): a persistent entry failure whose cause is missing spare `CallInfo` nodes
 /// behind the frame (`TR6b`) is repaired by extending the chain instead of flushing the root.
-pub const CISPARE_PROCESS: u32 = 1;
+/// K4: a bit set: 1 = the persistent-failure repair (C36), 2 = the in-place repair at the entry of a root (`jit_tr_ci_spare_root`); 3 by default, `cispare=1` is the C36 behaviour.
+pub const CISPARE_PROCESS: u32 = 3;
 /// BUNDLE-L / BUNDLE-N (`cloreuse`): process value of [`TrLimits::cloreuse`] (also the struct default; 0 = off): the callee-identity guard of an inlined call compares the
 /// loaded closure with a closure that the trace already holds in a register when it is the same object at record time (recursion through an upvalue, a call chain back to
 /// a frame that is live), instead of checking its prototype against a code constant, and the callee frame then names that register: the `UREF` / `UVREL` / `UGE` / `ULOAD`
@@ -391,7 +392,8 @@ pub struct TrLimits {
     pub laprune: u32,
     /// C36: when the persistent-entry-failure rule fires for a trace that needs spare `CallInfo` nodes (`TR6b`: an inlined native call) and the frame lacks them (tier 1 that
     /// inlines a built-in never makes the real call that would have allocated them), allocate them, reset the head's failure account and keep the trace
-    /// (0 = flush and re-record, which compiles to the same code and blacklists the head; default [`CISPARE_PROCESS`] (process and tests)).
+    /// (0 = flush and re-record, which compiles to the same code and blacklists the head; default [`CISPARE_PROCESS`] (process and tests)). K4: bit 1 = that rule, bit 2 =
+    /// the check at the entry of a root repairs the chain in place (`jit_tr_ci_spare_root`) instead of booking an entry failure.
     pub cispare: u32,
     /// BUNDLE-L: closure-identity reuse in the callee guard of inlined calls (see [`CLOREUSE_PROCESS`]; 0 = the `EQREF closure, proto` guard of before).
     pub cloreuse: u32,
@@ -823,7 +825,7 @@ impl TrLimits {
                 "loopany" => l.loopany = v.min(1),
                 "loopanymax" => l.loopanymax = v,
                 "laprune" => l.laprune = v.min(1),
-                "cispare" => l.cispare = v.min(1),
+                "cispare" => l.cispare = v.min(3),
                 "cloreuse" => l.cloreuse = v.min(1),
                 "sidestitchmin" => l.sidestitchmin = v,
                 "t3idx" => l.t3idx = v.min(4),
@@ -6235,7 +6237,7 @@ pub unsafe extern "C" fn jit_tr_ci_spare_root(
 /// fails every entry of a trace with an intrinsic call: a flush re-records the same code, which is then refused as `Identical` and the head is blacklisted.)
 fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
     let d = d_of(st);
-    if d.tr.cfg.limits.cispare == 0 || mutants::active("cispare_never") {
+    if d.tr.cfg.limits.cispare & 1 == 0 || mutants::active("cispare_never") {
         return false;
     }
     let Some(tp) = tr_of(d, pr.0) else {

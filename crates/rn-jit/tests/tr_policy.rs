@@ -518,7 +518,7 @@ fn c36_policy() {
     );
     assert_eq!(
         (c0, d0, n0, s0),
-        (1, 82, 65536, 3),
+        (3, 82, 65536, 3),
         "the shipped process defaults"
     );
     let z = TrConfig::for_mode(TrMode::On).limits;
@@ -532,6 +532,8 @@ fn c36_policy() {
         (Some(""), (c0, d0, n0, s0)),
         (Some("nest=2"), (c0, d0, n0, s0)),
         (Some("cispare=1"), (1, d0, n0, s0)),
+        (Some("cispare=2"), (2, d0, n0, s0)),
+        (Some("cispare=9"), (3, d0, n0, s0)),
         (Some("cispare=0"), (0, d0, n0, s0)),
         (Some("domtop=75"), (c0, 75, n0, s0)),
         (Some("domtop=75,domn=1000"), (c0, 75, 1000, s0)),

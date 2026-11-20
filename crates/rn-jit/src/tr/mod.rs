@@ -2017,7 +2017,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         head_pc: pc,
         entry_fail_fn: cache::jit_tr_entry_fail as *const () as usize as u64,
         ci_spare_fn: cache::jit_tr_ci_spare as *const () as usize as u64,
-        ci_spare_root_fn: if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cispare } != 0 {
+        ci_spare_root_fn: if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cispare } & 2 != 0 {
             cache::jit_tr_ci_spare_root as *const () as usize as u64
         } else {
             0
