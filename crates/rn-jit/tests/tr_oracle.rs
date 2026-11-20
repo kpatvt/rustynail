@@ -43,7 +43,8 @@
 //! Corpus: `tests/tr_oracle_progs`, `tests/t15_oracle_progs`, `tests/vm`, `bench/programs`, `bench/jit-trace` (small
 //! N), the twin programs of `tr_core/progs.rs` and generator seeds. Run: `systemd-run --user --scope -q -p
 //! MemoryMax=8G -p MemorySwapMax=0 timeout 1800 cargo test -p rn-jit --features tr_mutants,t15_oracle --test tr_oracle --
-//! --nocapture </dev/null`. Knobs: `TR_P8A_ONLY=<substr>`, `TR_P8A_GEN=<n>`, `TR_P8A_TIMEOUT`, `TR_ORACLE_V=1`.
+//! --nocapture </dev/null`. Knobs: `TR_P8A_ONLY=<substr>`, `TR_P8A_GEN=<n>`, `TR_P8A_TIMEOUT`, `TR_ORACLE_V=1`, `TR_P8A_JOBS=<workers>`,
+//! `TR_P8A_SHARD=i/n` (jobs i mod n; `scripts/gate-oracle.sh` runs the whole set sharded under a CPU/memory cap).
 #![cfg(all(feature = "t15_oracle", feature = "trace"))]
 
 #[path = "tr_p8a/common.rs"]
@@ -1067,6 +1068,28 @@ fn run_cells(title: &str, cells: &[Cell], core_only: bool, gen: u32) {
             });
         }
     }
+    // `TR_P8A_SHARD=i/n`: only the jobs whose index is `i` modulo `n` (all n shards together run every job; scripts/gate-oracle.sh)
+    if let Some((i, n)) = std::env::var("TR_P8A_SHARD").ok().and_then(|v| {
+        let (a, b) = v.split_once('/')?;
+        Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?))
+    }) {
+        assert!(n > 0 && i < n, "TR_P8A_SHARD=i/n needs i < n");
+        jobs = jobs
+            .into_iter()
+            .enumerate()
+            .filter(|(k, _)| k % n == i)
+            .map(|(_, j)| j)
+            .collect();
+    }
+    // Scheduling only: the jobs that always run into the leash (`inconclusive`, docs/JIT_TESTING.md) go first (the pool pops from the
+    // end), so that their 300 s overlap with the other jobs instead of ending the run alone. The set of jobs and the checks are unchanged.
+    const LEASH_PROGS: &[&str] = &[
+        "co_14_cstack_overflow",
+        "err_16_where_prefix",
+        "core/bk_obs2",
+        "core/m1_interp",
+    ];
+    jobs.sort_by_key(|j| LEASH_PROGS.iter().any(|p| j.label.contains(p)));
     let njobs = jobs.len();
     let label_env: std::collections::HashMap<String, Vec<(String, String)>> = jobs
         .iter()
