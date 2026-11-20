@@ -4042,6 +4042,11 @@ const TABLE: &[Row] = &[
         dets: &[dl("tr_core", "r1_regcarry_programs")],
     },
     Row {
+        name: "entry_checks_before_budget",
+        owner: "K5",
+        dets: &[d("tr_core", "r1_entry_check_budget")],
+    },
+    Row {
         name: "addframe_push_off",
         owner: "H7",
         dets: &[dl("tr_core", "pm3_programs_run_on_traces")],

@@ -870,6 +870,8 @@ pub const NAMES: &[&str] = &[
     "carry_wb_prune_live",
     "carry_demote_copied",
     "carry_entry_snap_bare",
+    // R1 / K5: the hoisted entry checks of a side trace with carried loads: placed in front of the `BUDGET` charge (refund `n` for no charge) with an entry snapshot that does not name the carried slots
+    "entry_checks_before_budget",
     // H7 (recursion protocol diet)
     "addframe_push_off",
     "stack_cmp_strict",
@@ -948,7 +950,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 726);
+        assert_eq!(NAMES.len(), 727);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

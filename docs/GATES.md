@@ -79,12 +79,10 @@ idle for the desktop). `tests-5.5-oracle` took 681 s with pools of 2 (load 27), 
 
 ### Known failures found by the first full run (base commit 994d210)
 
-- 5.4 only: `tr_core::instruction_count_identity`, 1 of 11872 identity jobs (`r1_live_flip [on2 budget=200]`, IDENT off=1614019 vs insns=1456470),
-  deterministic (reproduced twice alone on a quiet machine); passes on 5.5. Listed as `test54` in `scripts/gate-known.txt`.
-- 4 survivors of the 720 mutants (`b2hk_lea_off`, `rec_push_callstatus_off`, `rec_push_top_off`, `rec_ret_cframe_skip`), reproduced alone
-  (their detectors pass with the mutant active); `rec_push_top_off` is the documented weak detector. Listed as `mutant`. Neither was investigated.
+- (fixed, K5, docs/JIT_TRACE.md section 23: 5.4 `tr_core::instruction_count_identity` `r1_live_flip [on2 budget=200]`, and the four mutant survivors
+  `b2hk_lea_off`, `rec_push_callstatus_off`, `rec_push_top_off`, `rec_ret_cframe_skip`: no entry left in `scripts/gate-known.txt` for them.)
 - `tr_identity_pre::fetch_plus_insns_identity` (documented base failure).
-These are reported as KNOWN so that the gate can be used; they are not endorsed: the first two are failures the owner has to look at.
+These are reported as KNOWN so that the gate can be used; they are not endorsed.
 
 ### What could not be made faster, and why
 

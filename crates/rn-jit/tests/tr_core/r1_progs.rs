@@ -344,6 +344,114 @@ print(work(t, 40, -1))
 "#,
     },
     Prog {
+        name: "tmpd_p2",
+        small: false,
+        src: r#"
+local function work(t, n)
+  local s1, s2, s3, s4 = 0.0, 0.0, 0.0, 0.0
+  for i = 1, n do
+    local row = t[i]
+    local a, b, d, e = row.a, row.b, row.d, row.e
+    local x1, x2, x3, x4 = a * 1.5, b * 2.5, d * 0.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x2
+      s2 = s2 + x2 - x3 * j
+      s3 = s3 + x3 + x4 * j
+    end
+    s4 = s4 + x4 - x1
+    row.a = a + s1 * 1e-6; row.b = b - s2 * 1e-6; row.d = d + s3 * 1e-6; row.e = e + s4 * 1e-7
+  end
+  return s1, s2, s3, s4
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40) end
+for i = 1, 40 do t[i].e = 2 end
+for k = 1, 20 do work(t, 40) end
+print(work(t, 40))
+"#,
+    },
+    Prog {
+        name: "tmpd_p3",
+        small: false,
+        src: r#"
+local function work(t, n)
+  local s1, s3, s4 = 0.0, 0.0, 0.0
+  for i = 1, n do
+    local row = t[i]
+    local a, b, e = row.a, row.b, row.e
+    local x1, x2, x4 = a * 1.5, b * 2.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x2
+      s3 = s3 + x4 * j
+    end
+    s4 = s4 + x4 - x1
+    row.a = a + s1 * 1e-6; row.b = b - s3 * 1e-6; row.e = e + s4 * 1e-7
+  end
+  return s1, s3, s4
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40) end
+for i = 1, 40 do t[i].e = 2 end
+for k = 1, 20 do work(t, 40) end
+print(work(t, 40))
+"#,
+    },
+    Prog {
+        name: "tmpd_p4",
+        small: false,
+        src: r#"
+local function work(t, n)
+  local s1, s4 = 0.0, 0.0
+  for i = 1, n do
+    local row = t[i]
+    local a, e = row.a, row.e
+    local x1, x4 = a * 1.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x4
+    end
+    s4 = s4 + x4 - x1
+    row.a = a + s1 * 1e-6; row.e = e + s4 * 1e-7
+  end
+  return s1, s4
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40) end
+for i = 1, 40 do t[i].e = 2 end
+for k = 1, 20 do work(t, 40) end
+print(work(t, 40))
+"#,
+    },
+    Prog {
+        name: "tmpd_p5",
+        small: false,
+        src: r#"
+local function work(t, n)
+  local s1, s2, s3, s4 = 0.0, 0.0, 0.0, 0.0
+  for i = 1, n do
+    local row = t[i]
+    local a, b, d, e = row.a, row.b, row.d, row.e
+    local x1, x2, x3, x4 = a * 1.5, b * 2.5, d * 0.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x2
+      s2 = s2 + x2 - x3 * j
+      s3 = s3 + x3 + x4 * j
+    end
+    s4 = s4 + x4 - x1
+  end
+  return s1, s2, s3, s4
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40) end
+for i = 1, 40 do t[i].e = 2 end
+for k = 1, 20 do work(t, 40) end
+print(work(t, 40))
+"#,
+    },
+    Prog {
         name: "r1_callee_upval",
         small: false,
         src: r#"
@@ -479,6 +587,40 @@ for rep = 1, 150 do
   out[#out + 1] = string.format("%.3f", r)
 end
 print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "r1_entry_budget",
+        small: false,
+        src: r#"
+-- K5: a side trace entered with carried values (the inner loop's body) whose live-in checks fail after the type of `e` changes. The checks are
+-- hoisted behind the `BUDGET` charge, and their snapshot names the carried slots; the count identity (fetches + insns = off) and the output
+-- must hold in every budget (a check in front of the charge refunds `n` for nothing: 5.4 was 168..240 instructions short at budget 200)
+local function work(t, n)
+  local s1, s2, s3, s4 = 0.0, 0.0, 0.0, 0.0
+  for i = 1, n do
+    local row = t[i]
+    local a, b, d, e = row.a, row.b, row.d, row.e
+    local x1, x2, x3, x4 = a * 1.5, b * 2.5, d * 0.5, e + 1.0
+    for j = 1, 3 do
+      s1 = s1 + x1 * j + x2
+      s2 = s2 + x2 - x3 * j
+      s3 = s3 + x3 + x4 * j
+    end
+    s4 = s4 + x4 - x1
+    row.a = a + s1 * 1e-6; row.b = b - s2 * 1e-6; row.d = d + s3 * 1e-6; row.e = e + s4 * 1e-7
+  end
+  return s1, s2, s3, s4
+end
+local t = {}
+for i = 1, 40 do t[i] = { a = i * 0.5, b = i % 7 + 0.5, d = i * 0.25, e = 1.5 } end
+for k = 1, 200 do work(t, 40) end
+for i = 1, 40 do t[i].e = 2 end
+for k = 1, 20 do work(t, 40) end
+print(work(t, 40))
+for i = 1, 40 do t[i].e = 1.25; t[i].b = 3 end
+for k = 1, 20 do work(t, 40) end
+print(work(t, 40))
 "#,
     },
 ];

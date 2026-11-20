@@ -8472,6 +8472,48 @@ fn g1_guard_diet_programs() {
     }
 }
 
+/// K5: the hoisted entry checks of a side trace with carried loads sit behind its `BUDGET` charge and their snapshot names the carried slots. The count
+/// identity (`fetches + insns == off`) at the budgets that end the stays at different places, and the output, with the shipped limits and with
+/// every carry knob on (mutant `entry_checks_before_budget`).
+#[cfg(feature = "t15_oracle")]
+#[test]
+fn r1_entry_check_budget() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for b in [17, 100, 150, 190, 196, 200, 204, 250] {
+            for lim in ["", "regcarry=1,carrymin=1,carrylive=0,sidemin=0"] {
+                let mut j = Job::new("r1_entry_budget", trace).limits_s(lim);
+                j.budget = Some(b);
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let n = jobs.len();
+    let res = run_all(jobs);
+    let bad: Vec<String> = res
+        .iter()
+        .filter_map(|(j, o)| ident_check(o).err().map(|e| format!("{}: {e}", j.tag())))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "{} of {n} identity failures:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+    let mut cmp = Vec::new();
+    for trace in ["always", "on2"] {
+        for opts in ["+verify", "+exitstorm=3 +verify"] {
+            cmp.push(
+                Job::new("r1_entry_budget", trace)
+                    .opts(opts)
+                    .limits_s("regcarry=1,carrymin=1,carrylive=0,sidemin=0"),
+            );
+        }
+    }
+    compare(cmp);
+}
+
 /// R1 (`regcarry`): register-carrying transitions. Nested loops whose inner loop is the root trace and whose outer iteration is a side trace that
 /// links back into it; values travel in registers over exits and links (exits only, links only, both: `regcarry=2 / 3 / 1`) and the programs observe the stack
 /// after exits: errors read with `debug.getlocal`, count hooks, GC steps, coroutine yields, type changes of carried slots, spill slots. Every mode equals the

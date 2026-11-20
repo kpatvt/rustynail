@@ -1140,11 +1140,18 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
     }
     let checked =
         |i: &ir::Ins| i.op == TOp::Sload && i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0;
-    // POLL and BUDGET first
+    // POLL and BUDGET first. A side trace entered with carried values starts with its carried loads (unchecked, position-less: they have no code); they
+    // belong to the prefix too, or the checks would be moved in front of the `BUDGET` charge, and a failing check there would leave with `refund = n`
+    // for a charge that was never made (the budget word grows by `n`: 5.4 `r1_live_flip [on2 budget=200]` was 168 instructions short)
     let p = ir
         .ins
         .iter()
-        .take_while(|i| matches!(i.op, TOp::Poll | TOp::Budget))
+        .take_while(|i| {
+            matches!(i.op, TOp::Poll | TOp::Budget)
+                || (i.op == TOp::Sload
+                    && aux_bits(i.aux) & ir::SLOAD_CARRIED != 0
+                    && !mutants::active("entry_checks_before_budget"))
+        })
         .count();
     // (N2b: only the loads before the first `RETF` are entry values: later ones read the caller's frame)
     let first_retf = if ir.segs.is_empty() || mutants::active("retf_entry_checks_past") {
@@ -1168,7 +1175,15 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
                 refund: rec.n as i32,
                 ..ir::Snap::default()
             };
-            let e = ir.snapshot(s, &[]);
+            // (a side trace entered with carried values: the stack holds nothing for them, so the entry snapshot names them like snapshot 0 does, or
+            // a failing check would resume the interpreter with stale slots; the recorder's `carry_entry_snap_bare` is the same rule. The mutant
+            // `entry_checks_before_budget` restores both halves of the old behaviour: the bare snapshot alone is not observable, see docs/JIT_TRACE.md section 23)
+            let ents: Vec<ir::SnapEntry> = if ir.carry_in.is_empty() || mutants::active("entry_checks_before_budget") {
+                Vec::new()
+            } else {
+                ir.snap_entries(0).to_vec()
+            };
+            let e = ir.snapshot(s, &ents);
             rec.snap_step.push(0);
             rec.entry_snap = Some(e);
             e
