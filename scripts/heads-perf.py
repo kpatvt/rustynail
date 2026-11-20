@@ -5,7 +5,7 @@
   perf report -i P.data --no-children --sort sym --stdio > rep.txt
   scripts/heads-perf.py rep.txt log.txt [N]
 
-Prints: trace share per head (trace number -> `[trace] <n> start proto:<line> pc <pc>`; side traces take the head of their root),
+Prints: trace share per head (trace number -> `[trace] <n> start proto:<line> pc <pc>`; a side trace's install line names the head of its root),
 tier-1 share per proto line (`lua_proto:<line>@..`), and the rest grouped by helper family (alloc, gc, table helpers, C-call glue...).
 """
 import re
@@ -22,9 +22,9 @@ for l in open(log, errors="replace"):
     if m:
         head_of[int(m[1])] = (int(m[2]), int(m[3]))
         continue
-    m = re.match(r"\[trace\] (\d+) side of (\d+)/", l)
-    if m and int(m[2]) in head_of:
-        head_of[int(m[1])] = head_of[int(m[2])]
+    m = re.match(r"\[trace\] (\d+) side.* head proto:(\d+) pc (\d+)$", l)
+    if m:
+        head_of[int(m[1])] = (int(m[2]), int(m[3]))
 
 FAM = [
     ("alloc", r"jit_tr_alloc|jit_newtable|new_table|resize|setnodevector|newkey|alloc_block|new_closure|new_string|new_ustr"),

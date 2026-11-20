@@ -3820,11 +3820,13 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         }
         vlog(d, || {
             format!(
-                "{no} side{} exit {} of trace slot {} entry {entry:#x} code {}B",
+                "{no} side{} exit {} of trace slot {} entry {entry:#x} code {}B head proto:{} pc {}",
                 if sl.prelude { " (prelude)" } else { "" },
                 sl.exit,
                 sl.parent.slot,
-                ti.code.len()
+                ti.code.len(),
+                tr_of(d, root).map_or(0, |tp| tp.line),
+                tr_of(d, root).map_or(0, |tp| tp.head(head).pc)
             )
         });
     } else {
