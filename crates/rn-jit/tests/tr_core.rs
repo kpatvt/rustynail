@@ -3391,7 +3391,11 @@ fn b2_programs() {
         // `hkaddr=0`: the `HREFK` address is a value of its own (`lea d, [node + idx * 24]`, mutant `b2hk_lea_off`); with the default the
         // address is folded into the `HLOAD` / `HSTORE` users and that `lea` is not generated.
         for opts in ["+verify", "+exitstorm=3 +verify"] {
-            jobs.push(Job::new("b2_backend", trace).opts(opts).limits_s("hkaddr=0"));
+            jobs.push(
+                Job::new("b2_backend", trace)
+                    .opts(opts)
+                    .limits_s("hkaddr=0"),
+            );
         }
     }
     let res = compare(jobs);

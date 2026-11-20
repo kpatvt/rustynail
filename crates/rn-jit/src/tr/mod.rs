@@ -1178,11 +1178,12 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
             // (a side trace entered with carried values: the stack holds nothing for them, so the entry snapshot names them like snapshot 0 does, or
             // a failing check would resume the interpreter with stale slots; the recorder's `carry_entry_snap_bare` is the same rule. The mutant
             // `entry_checks_before_budget` restores both halves of the old behaviour: the bare snapshot alone is not observable, see docs/JIT_TRACE.md section 23)
-            let ents: Vec<ir::SnapEntry> = if ir.carry_in.is_empty() || mutants::active("entry_checks_before_budget") {
-                Vec::new()
-            } else {
-                ir.snap_entries(0).to_vec()
-            };
+            let ents: Vec<ir::SnapEntry> =
+                if ir.carry_in.is_empty() || mutants::active("entry_checks_before_budget") {
+                    Vec::new()
+                } else {
+                    ir.snap_entries(0).to_vec()
+                };
             let e = ir.snapshot(s, &ents);
             rec.snap_step.push(0);
             rec.entry_snap = Some(e);
