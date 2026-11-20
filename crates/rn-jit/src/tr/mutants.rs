@@ -572,6 +572,8 @@ pub const NAMES: &[&str] = &[
     "polyside_default_ignored",
     "polywait_ignored",
     "polyframes_ignored",
+    // K4: the family guard of side recordings that abort `InnerLoop` inside inlined frames
+    "innerside_ignored",
     // BUNDLE-S: `loopany` (unrolled callee loops) default and its side-attempt guard
     "loopany_default_ignored",
     "loopany_guard_never",
@@ -946,7 +948,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 725);
+        assert_eq!(NAMES.len(), 726);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

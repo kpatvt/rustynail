@@ -286,6 +286,8 @@ pub const POLYSIDE_PROCESS: u32 = 48;
 pub const POLYWAIT_PROCESS: u32 = 2;
 /// See [`POLYSIDE_PROCESS`].
 pub const POLYFRAMES_PROCESS: u32 = 2;
+/// K4: process value of [`TrLimits::innerside`] (also the struct default).
+pub const INNERSIDE_PROCESS: u32 = 4;
 /// BUNDLE-S: process value of [`TrLimits::loopany`] (K3a: also the struct default): `while` / `repeat` loops of inlined callees are unrolled, guarded by
 /// [`TrLimits::loopanymax`] (a family whose exits inside callee frames keep needing side traces loses its unrolled loops). `iter_pipeline` 557 -> 70 ms; the
 /// unguarded `loopany=1` cost `heapsort` 1.48 x and `awfy/cd` 1.50 x (docs/JIT_PARKED.md A25). One constant (0) turns it off.
@@ -334,6 +336,11 @@ pub struct TrLimits {
     /// See `polyside`: only an exit that lies in at least `polyframes` inlined frames may exceed `maxside` (0 = any exit): the outcomes of branches
     /// inside the bodies of inlined methods (several receiver classes, each with its own paths).
     pub polyframes: u32,
+    /// K4 (`innerside`): side recordings of a family that aborted `InnerLoop` (the path of an exit inside inlined frames reaches a loop of a callee
+    /// frame) before the family gets no further side recording at exits inside inlined frames (0 = no such guard). A recursive function that
+    /// contains a loop (`apps/expr_lang`'s `eval`: a loop trace whose every inlined recursion level ends in the loop of the next one) fails 55 of
+    /// 184 side recordings that way, each costing a recording and nothing in return; the exits stay in tier 1.
+    pub innerside: u32,
     /// Inlining depth.
     pub maxdepth: u32,
     /// Recursion unroll.
@@ -621,6 +628,7 @@ impl Default for TrLimits {
             polyside: POLYSIDE_PROCESS,
             polywait: POLYWAIT_PROCESS,
             polyframes: POLYFRAMES_PROCESS,
+            innerside: INNERSIDE_PROCESS,
             maxdepth: 4,
             unroll: 2,
             sidemin: 0,
@@ -798,6 +806,7 @@ impl TrLimits {
                 "polyside" => l.polyside = v,
                 "polywait" => l.polywait = v,
                 "polyframes" => l.polyframes = v,
+                "innerside" => l.innerside = v,
                 "maxdepth" => l.maxdepth = v,
                 "unroll" => l.unroll = v,
                 "sidemin" => l.sidemin = v,
@@ -2311,6 +2320,8 @@ struct Trace {
     la_sides: u32,
     /// C45 (family root): failed side recordings (`side_failed` with `fault`) of any trace of the family so far; never decremented (a flushed side trace's failures count).
     side_faults: u32,
+    /// K4 (family root): side recordings of the family that aborted `InnerLoop` so far (see `TrLimits::innerside`).
+    side_inner: u32,
     /// C45 (family root): a trace of the family unrolled a callee loop (`la` non-empty) at some time.
     la_any: bool,
     /// BUNDLE-O: per exit, how often a full family deferred it (see `TrLimits::polyside`).
@@ -2852,6 +2863,9 @@ fn side_failed(
         }) = fam.and_then(|f| d.tr.slot_mut(f))
         {
             f.side_faults = f.side_faults.saturating_add(1);
+            if reason == "InnerLoop" {
+                f.side_inner = f.side_inner.saturating_add(1);
+            }
         }
     }
     let sbump2 = d.tr.cfg.limits.sbump2;
@@ -3636,6 +3650,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         la: Vec::new(),
         la_sides: 0,
         side_faults: 0,
+        side_inner: 0,
         la_any: false,
         defer: vec![0; nex],
         dbl: Vec::new(),
@@ -4621,6 +4636,34 @@ fn side_attempt(
             black_exit(&mut t.exit_st, &t.exits, k as usize);
         }
         return HotAction::None;
+    }
+    // K4 (`innerside`): a family whose side recordings keep ending in a loop of an inlined callee frame gets no more of them inside inlined frames
+    let lim = d.tr.cfg.limits.innerside;
+    if lim != 0 && !snap.frames.is_empty() && !mutants::active("innerside_ignored") {
+        let inner = match d.tr.slot(id) {
+            Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) => match d.tr.slot(t.family) {
+                Some(Slot {
+                    body: Body::Trace(f),
+                    ..
+                }) => f.side_inner,
+                _ => 0,
+            },
+            _ => 0,
+        };
+        if inner >= lim {
+            side_failed(d, link, true, "InnerFamily", true);
+            if let Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) = d.tr.slot_mut(id)
+            {
+                black_exit(&mut t.exit_st, &t.exits, k as usize);
+            }
+            return HotAction::None;
+        }
     }
     let mut capped = nside >= d.tr.cfg.limits.maxside && !mutants::active("side_maxside_ignored");
     if capped {

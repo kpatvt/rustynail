@@ -2791,6 +2791,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "po_poly_programs")],
     },
     Row {
+        name: "innerside_ignored",
+        owner: "K4",
+        dets: &[d("tr_core", "k4_innerside_programs")],
+    },
+    Row {
         name: "loopany_default_ignored",
         owner: "S",
         dets: &[dl("tr_policy", "s_loopany_process_default")],

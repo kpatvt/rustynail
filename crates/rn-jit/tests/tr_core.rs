@@ -25,6 +25,8 @@ mod a1_progs;
 mod h1_progs;
 #[path = "tr_core/h2_progs.rs"]
 mod h2_progs;
+#[path = "tr_core/k4_progs.rs"]
+mod k4_progs;
 #[path = "tr_core/nr_progs.rs"]
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
@@ -39,6 +41,7 @@ mod sink_progs;
 use a1_progs::{A1_PROGS, G1_SLOW};
 use h1_progs::H1_PROGS;
 use h2_progs::H2_PROGS;
+use k4_progs::K4_PROGS;
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
 use r1_progs::R1_PROGS;
@@ -158,6 +161,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(G1_SLOW)
         .chain(H1_PROGS)
         .chain(H2_PROGS)
+        .chain(K4_PROGS)
         .chain(S4_PROGS)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
@@ -4487,6 +4491,63 @@ fn h2_tail_programs() {
     }
     let res = compare(jobs);
     assert!(!res.is_empty());
+}
+
+/// K4 (`innerside`): a recursive evaluator whose `call` nodes loop over their arguments. Side recordings that end in the loop of an inlined callee frame
+/// (`InnerLoop`) stop after `innerside` of them per family: the default stops at 4 (`InnerLoop` aborts of the run: at most `innerside` plus the ones in flight),
+/// `innerside=0` is the old unlimited behaviour; the output is the interpreter's in every mode. Mutant `innerside_ignored`.
+#[test]
+fn k4_innerside_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["innerside=0", "innerside=2", ""] {
+            jobs.push(
+                Job::new("k4_eval_loop", trace)
+                    .opts("+verify")
+                    .limits_s(lim),
+            );
+        }
+        jobs.push(Job::new("k4_eval_loop", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("k4_eval_loop", trace).budget(17));
+        jobs.push(Job::new("k4_eval_loop", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        jobs.push(Job::new("k4_eval_loop", trace).opts("+emurun +verify"));
+    }
+    jobs.push(Job::new("k4_eval_loop", "t1"));
+    let res = compare(jobs);
+    for trace in ["always", "on2"] {
+        let find = |lim: &str| {
+            res.iter()
+                .find(|(j, _)| {
+                    j.prog == "k4_eval_loop"
+                        && j.trace == trace
+                        && j.limits == lim
+                        && j.opts == "+verify"
+                        && j.env.is_empty()
+                })
+                .map(|(_, o)| o.stats.clone())
+                .expect("job")
+        };
+        let (off, two, def) = (find("innerside=0"), find("innerside=2"), find(""));
+        let inner = |s: &TStats| s.side_aborts.get("InnerLoop").copied().unwrap_or(0);
+        eprintln!(
+            "k4_eval_loop [{trace}] InnerLoop side aborts: off {} two {} default {}",
+            inner(&off),
+            inner(&two),
+            inner(&def)
+        );
+        assert!(
+            inner(&off) >= 8,
+            "[{trace}] the program fails side recordings with InnerLoop: {}",
+            off.line()
+        );
+        assert!(
+            inner(&def) < inner(&off) && inner(&two) <= inner(&def),
+            "[{trace}] the guard stops them: off {} two {} default {}",
+            inner(&off),
+            inner(&two),
+            inner(&def)
+        );
+    }
 }
 
 /// H5: sunk tables that a trace exit materialises (`h5_sink_next`): the node layout (`pairs` order, the string-hash seed is pinned), sizes, repeated keys, nil values,
