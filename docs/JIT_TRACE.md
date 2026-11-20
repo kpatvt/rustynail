@@ -2501,3 +2501,77 @@ The programs do not print exact depths (a harness frame shifts `debug.getinfo` d
 
 No program is above +0.0 % instructions. The H7 estimate (-15..25 %) is not reached: the sound part is -5 %; the rest of the estimate is the identity chain (ceiling -12 %, 2.5 % cycles reachable locally)
 and the poll (ceiling -3 %, unsound as stated).
+
+## 22. K4: the 5.4-only regressions of session-h (2026-11-20, base 61cee86)
+
+**Task.** `bench/results/session-h` (subject 8c39465 vs 1a5aad0): on 5.4, `apps/expr_lang` +22 % instructions (5.5: -23 %), `apps/raytrace` +6.8 % (plain) / +10.5 % (PGO) instructions
+(5.5: -2 %), `lib/gsub_fn`, `lib/tonumber_bad`, `diff_levenshtein` +16..26 % cycles at equal instructions (5.4 plain only), and +1.5..3.7 % instructions on a dozen `lib/` programs.
+Method: scratch worktree per commit, `LUA_VERSION=5.4 RUSTFLAGS="--cfg rustynail_lua54"` release builds, `RUSTYNAIL_SEED=0 perf stat -e instructions:u,cycles:u`, `taskset -c 4..7`, the
+script given by the same path for every binary. **Instruction counts depend on the script path** (the chunk name is part of the heap: GC pacing moves with its length): `raytrace` takes 505..515 M
+(1a5aad0) and 526..541 M (HEAD) for script paths of 7 .. 16 characters, `regex_nfa` is bimodal (5.56 / 6.82 / 7.70 G for the same binary at three path lengths, 1a5aad0 as well), so every
+comparison below uses one fixed path (the main checkout's `bench/` for the tables, a directory-name sweep for the path checks) and instructions, not cycles.
+
+### 22.1 `apps/expr_lang` (5.4): H2c changed the recording moment, `innerside`
+
+`git bisect` on instructions, 5.4: b9afe4c 641 M, 3e2b827 (H1b) 640 M, 15570aa (H2a) 640 M, c9f9ee9 (H2b) 635 M, **816f74b (H2c, inline Lua tail call with `B = 0`) 787 M**, HEAD 764 M. On 5.5 the same commit
+gives 598 -> 561 M (-6 %, the intended tier-1 gain) and the verbose trace summary is identical before and after. On 5.4 it is not: the loop of `eval` (`for i = 1, #args do vals[i] = eval(args[i], env, prog) end`,
+recursive) was aborted `InnerLoop` at its recording before H2c and is *installed* after it (the path of the one iteration that gets recorded depends on the data at the recording moment, and H2c moves that moment:
+`return evalBin(.., eval(..), eval(..))` is a `TAILCALL` with `B = 0`; with the inline `B = 0` path off the run is 622 M). The installed trace is 111 KB (the recursion unrolled `unroll` times) and spawns 198 side
+recordings, 120 failed (53 / 55 of them `InnerLoop`: the path of an exit inside the inlined recursion reaches the loop of the next level, by construction, whatever the data), the pipeline grows from 11 to 42 M TSC
+cycles (44 -> 117 compiles) and cycles +50 %. `polyside`, `maxside`, `loopany`, `sidestitch` and `maxdepth` do not remove it (instructions 764 -> 762 .. 739 M); `polyside=0` gives 683 M; a family-wide limit on
+*all* failed side recordings (8 .. 16) cures it (624 .. 672 M) but costs 2 programs +10 % (`oop_mixins`, `prototype_objects`: their failures are normal, their traces pay).
+
+**Rule `innerside` (`TrLimits::innerside`, default 4, 0 = off).** Family counter `side_inner` (family root, next to `side_faults`: side recordings that aborted `InnerLoop`); once it reaches `innerside`, an exit
+*inside inlined frames* of that family gets no side recording (blacklisted at once, reason `InnerFamily`, like `MaxSide`). Counter-based, deterministic, no timing. The exits stay in tier 1, where they were before.
+Sweep over all 223 programs on 5.4: `innerside=2`: expr_lang 615 M, stream_closures -7.7 %, richards +2.1 %, real_dis_mips +2.1 %; **4**: expr_lang 625 M, stream_closures -7.7 %, nothing else beyond +-1 %;
+8: 650 M; 16: 694 M. Mutant `innerside_ignored`; `tr_core::k4_innerside_programs` (`k4_eval_loop`, a recursive evaluator with a loop over the arguments: `InnerLoop` side aborts 34 unlimited, 16 with the default,
+8 with 2; the output equals the interpreter's in every mode: `+verify`, exit storms, budget 17, GC stress 2, `+emurun`).
+
+### 22.2 `apps/raytrace` (5.4 and 5.5): spare `CallInfo` nodes at the entry of a root, `cispare` in place
+
+`git bisect` on instructions (5.4, script path of 2 characters): b9afe4c 494 M, 15570aa (H2a, inline `setmetatable` / native tail calls in tier 1; its parent is H4) 612 M, its fix 054c888 540 M, HEAD 539 M.
+5.5: 480 -> 497 (15570aa) -> 439 M (054c888). With the tier-1 `setmetatable` row switched off (`t1inline=1023`) 5.4 gives 435 M (-19 %) and 6197 M at 40 rounds against 7545 M, 5.5 gives 414 M, and no other program
+of the 223 moves by more than 1.5 % in that run: the row is only the trigger. The summary lines show the mechanism: `cispare: entry failures repaired` 1343 on 5.4 (58 before), 271 on 5.5; `entered` 87 K against 174 K
+trace entries; 24 `flush Unsink` (the `sinkroot` rule re-records roots without sinking) against none; with `sinkroot=0` 676 M instead of 539 M.
+
+*Cause.* TR6b, the entry check of a root, wants `depth` spare `CallInfo` nodes behind the frame. Every collection shrinks the chain (`luaE_shrinkCI`: half of the unused nodes), and tier 1 with inline built-ins
+(`t1inline`: `setmetatable`, `math.floor`, ...) never makes the call that would extend it again. A failing check booked an entry failure; only after `ENTRY_FAIL_MIN` = 64 of them did the C36 persistent-failure rule
+repair the chain (`jit_tr_entry_fail` -> `ci_spare_repair`) and restart the account. An allocation-heavy loop (raytrace allocates a vector per operation) therefore lost 64 trace entries per collection
+(1343 x 64 = the 87 K missing entries, exactly), and the pre-roll exits of the failing entries fed the `ineffective` / `sinkroot` rules. Why 5.4 loses more than 5.5 (the repair counts differ 5:1) was not isolated;
+inline `setmetatable` makes it worse because `vec` used to extend the chain through the real call.
+
+**Fix (`cispare` is now a bit set, default 3).** Bit 2: the TR6b check at the entry of a root (`room_ci_check_root`, from `entry_checks`: the first and the guard-free second entry) takes a cold path on a missing node:
+`jit_tr_ci_spare_root` (the same `ensure_spare_ci_after` as the CP1 repair of natively entered frames, new stat `ci_root_repaired`, line `cispare: root entries repaired in place`) allocates `depth` nodes behind the
+running frame and the entry goes on; an allocation failure takes the entry-failure label as before. Bit 1 is the C36 rule, unchanged (`cispare=1` is exactly the old behaviour; the in-place repair leaves that rule
+without a program, so `c36_cispare_programs` names `cispare=1` to keep `cispare_never` / `cispare_flush_anyway` detectable, and `cispare=3` for the new path). Side traces with entry room checks (R2) keep the plain
+check. No Lua code runs and nothing is collected inside the helper (TR1). Mutants `rootci_never`, `rootci_short` (one node too few: `exit.rs` asserts the spare node when an inlined frame is rebuilt). `tr_asm`
+envs updated, `tr_policy::c36_policy` covers the new default and values.
+
+### 22.3 The other session-h items
+
+* `lib/gsub_fn`, `lib/tonumber_bad`, `corpus2/dev/diff_levenshtein` (5.4 plain, +16..26 % cycles, instructions equal): not reproduced in instructions (HEAD / 1a5aad0 at one path: 1.002, 0.99, 0.988); 5.4 PGO is
+  unchanged, so layout / alignment of the plain build, as the report guessed. Not investigated further (cycles at equal instructions).
+* `lib/` instruction growth of +1.5..3.7 % (`tinsert_idx` / `_front` / `_append`, `tsort_int`, `tostring_int`, `fmt_d`, `concat_op`, `tonumber_int`, `dijkstra_routes`, `real_dis_mips`), bisected on 5.4 (instructions are exact):
+  - **b4f00a9 (H4, cheaper free of dead tables) is the first step** (`tostring_int` 597 -> 611.6 M, `fmt_d` 410.1 -> 418.3 M, `tinsert_idx` 1196.3 -> 1208.9 M, `concat_op` 570.7 -> 581.9 M; 15570aa adds nothing): the
+    allocator is an enum (`AllocImpl::Pool | Dyn`) matched on every allocation / free, and both sweep loops test `tt == LUA_VTABLE && watch.is_empty()` for every dead object, which strings do not use. It is the price of
+    `binary_trees` -4.7 % at that commit (the program is 20231 -> 15582 M on 5.4 now); not changed.
+  - **f1a90fe (H5) is the second step, only for table-insertion programs** (`tinsert_idx` +26 M, `tinsert_append` +25 M, `tremove_front`): the `#[inline]` wrapper `TableRef::insert_absent_shortstr` makes a second inlined copy of
+    `insertkey`, and the inlining of `newkey` / `resize` / `setnodevector` changes for every table insertion (the `perf record` profile moves `setnodevector` out of `resize`; JIT off is identical, 5.5 and 5.4 alike).
+    `#[inline(never)]` on the wrapper cures it (`tinsert_idx` 1235 -> 1209 M on 5.4, 1042 -> 1014 M on 5.5, `tinsert_append` -2.0 %, `tsort_int` -1.5 % on 5.5, nothing else above 1 % over the 223 programs) **but costs
+    `awfy/cd 20` +1.6 % on 5.5 (10815 -> 10989 M), above the 10871 M ceiling this task was given (H5's own -5.5 %)**, so it was not committed. `#[inline]` on `setnodevector` does nothing.
+  - `real_dis_mips` / `dijkstra_routes` follow the recording moment (`dijkstra_routes` -3.7 % on 5.4 and -5.9 % on 5.5 with 22.2): formation noise, not a rule.
+
+### 22.4 Results (instructions M, `RUSTYNAIL_SEED=0`, one run, one fixed script path; cycles in brackets, +-3 %)
+
+| program | 5.4: 1a5aad0 | 5.4: 61cee86 | 5.4: K4 | 5.5: 1a5aad0 | 5.5: 61cee86 | 5.5: K4 |
+|---|---|---|---|---|---|---|
+| apps/expr_lang | 637 (157) | 764 (226) | 630 (162) | 617 (154) | 558 (135) | 565 (141) |
+| apps/raytrace (2 rounds) | 526 (154) | 536 (159) | 375 (110) | 488 (142) | 442 (132) | 360 (103) |
+| apps/raytrace 40 | 8077 | 7426 | 5546 | 7702 | 5855 | 5325 |
+| awfy/cd 20 | 13258 | 12215 | 12189 | 11852 | 10815 | 10815 |
+| binary_trees 17 | 20231 | 15582 | 15582 | 19484 | 14419 | 14419 |
+| programs/nbody, awfy/nbody | | | | 2028, 557 | 2020, 554 | 2020, 554 |
+
+All 223 programs, instructions K4 / 61cee86: 5.4 geomean 0.9977 (raytrace 0.70, expr_lang 0.83, dijkstra_routes 0.96, `regex_nfa` 1.13 = the bimodal formation above, nothing else beyond +-1 %); 5.5 geomean 0.9983
+(raytrace 0.81, dijkstra_routes 0.94, testrunner_luaunit 0.95, particles_physics 0.96, astar_jumper 0.96, `expr_lang` 1.012: one more installed trace after a different recording moment, 565 against 558 M,
+`real_dis_mips` 1.011). Registry 723 -> 726.
