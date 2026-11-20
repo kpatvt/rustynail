@@ -7636,7 +7636,8 @@ fn k6_selfrec_programs() {
             off.line(),
             on.line()
         );
-        if trace == "on" {
+        // (5.4: the first entry samples already see a non-leaf call: no difference to detect)
+        if trace == "on" && !cfg!(rustynail_lua54) {
             // (default thresholds: the entry head of `tail` samples leaves only until its old budget is spent; with `fnself` it sees a non-leaf call,
             // `tail` is recursive, its continuation heads record)
             assert!(
