@@ -156,6 +156,9 @@ emit("inc-barrier", bad3)
 
 -- 6. in a metamethod frame (`__index` function and `__eq` / `__lt`-style frames of tier 1) that tail-calls `setmetatable`
 local mmv = setmetatable({}, { __index = function(t, k) return setmetatable({ k = k }, V) end })
+-- (tail calls of the other inline rows inside metamethod frames)
+local mmi = setmetatable({}, { __index = function(t, k) return math.abs(-k) end, __unm = function(a) return math.floor(2.5) end,
+  __concat = function(a, b) return type(b) end, __len = function() return string.len("abcd") end })
 local cmpm = { __lt = function(a, b) return s_tail({ r = 1 }, V) ~= nil end, __le = function(a, b) return s_tail({ r = 2 }, nil) == nil end,
   __add = function(a, b) return setmetatable({ x = 7 }, V) end }
 local ca, cb = setmetatable({}, cmpm), setmetatable({}, cmpm)
@@ -167,6 +170,7 @@ for i = 1, N do
   if ca <= cb then acc = acc + 1 end
   local q = ca + cb
   if getmetatable(q) == V then acc = acc + 1 end
+  acc = acc + mmi[i] + (-mmi) + #(mmi .. "x") + #mmi
 end
 emit("mm", acc)
 

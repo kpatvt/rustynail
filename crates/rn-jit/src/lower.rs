@@ -452,6 +452,18 @@ impl Cx<'_> {
     }
     /// Common prefix of RETURN0/RETURN1: guards, block count, pops the frame (`st.ci = prev`) and leaves
     /// `V0 = nresults` (-1 = multret), `V3 = func index`.
+    /// H2a: [`Cx::return_prologue`] for a frame the caller already knows has no hook (`trap == 0`), is not a metamethod frame and has a
+    /// caller: no exit and no count (the interpreter does not execute the `RETURN` after a native tail callee, and nothing may leave in
+    /// between); the same registers: `V0` = wanted results (-1 = all), `V3` = the frame's `func`, `thread.ci` = the caller.
+    pub(crate) fn return_prologue_noexit(&mut self) {
+        self.ld(0, W::B4, ciw(ci::CALLSTATUS));
+        self.ld(2, W::B8, ciw(ci::PREVIOUS));
+        self.op(Op::And(0, Src::Imm(ci::NRESULTS_MASK as i32)));
+        self.op(Op::Sub(0, Src::Imm(1)));
+        self.ld(3, W::B8, ciw(ci::FUNC));
+        self.st(W::B8, thw(thr::CI), 2);
+    }
+
     fn return_prologue(&mut self, pc: u32) {
         let x = self.exit_at(pc);
         self.ld(0, W::B4, ciw(ci::TRAP));

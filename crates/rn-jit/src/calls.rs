@@ -373,7 +373,12 @@ impl Cx<'_> {
         let fast = env.tail_fast && i.c() == 0 && i.b() <= 16;
         // H2a: a callee that is not a Lua closure may be a built-in with an inline fast path (`t1inline`): the result is computed in
         // place and the frame returns through the `RETURN` that follows this instruction (a `TAILCALL` of a native finishes like that)
-        let inl = self.t1i_applies(pc, i.b(), 0);
+        // (the `RETURN` that follows must be the plain multiple-result return the compiler emits after a `TAILCALL`: `B` = 0, no `k`)
+        let ret_i = Instruction(self.code.get(pc as usize + 1).copied().unwrap_or(0));
+        let inl = ret_i.opcode() == Some(OpCode::Return)
+            && ret_i.b() == 0
+            && ret_i.k() == 0
+            && self.t1i_applies(pc, i.b(), 0);
         let slow = if fast || inl { self.p.label() } else { 0 };
         let notlcl = if inl { self.p.label() } else { slow };
         // R1: the interpreter's `OP_TAILCALL` of a Lua closure, inline: the callee's function and arguments move down over
@@ -510,29 +515,33 @@ impl Cx<'_> {
         if inl {
             let tail_ret = self.p.label();
             let pre = self.p.label();
-            // (a metamethod frame returns through `Cold::MmRet`, which the helper path knows: no inline native tail call there)
             self.op(Op::Bind(notlcl));
-            if env.t1q & 32 != 0 && env.inl_mut & super::t1inline::M_TAIL_MM == 0 {
-                self.ld(1, W::B4, ciw(ci::CALLSTATUS));
-                self.op(Op::And(1, Src::Imm(ci::CIST_MMRET as i32)));
-                self.br(Cc::Ne, 1, Src::Imm(0), slow);
+            // The return that follows is done here, without an exit point between the native result and the return (an exit there would
+            // leave the interpreter in front of a `RETURN` it never executes after a native tail callee): a hook (`trap`), a frame with
+            // to-be-closed variables, a metamethod frame (returns through `Cold::MmRet`) and the base frame take the helper, decided before
+            // anything changes.
+            let mut mask = rn_core::state::CIST_TBC as i32;
+            if env.inl_mut & super::t1inline::M_TAIL_MM == 0 {
+                mask |= ci::CIST_MMRET as i32;
             }
+            self.ld(1, W::B4, ciw(ci::CALLSTATUS));
+            self.op(Op::And(1, Src::Imm(mask)));
+            self.br(Cc::Ne, 1, Src::Imm(0), slow);
+            self.ld(1, W::B4, ciw(ci::TRAP));
+            self.br(Cc::Ne, 1, Src::Imm(0), slow);
+            self.ld(1, W::B8, ciw(ci::PREVIOUS));
+            self.br(Cc::Eq, 1, Src::Imm(0), slow);
             self.ld(0, W::B1, fr(a, 0));
             self.t1i_emit(pc, (a, b, 0), tail_ret, slow, pre);
-            // the built-in's result is in `R[A]`, `top` after it: the `RETURN` that follows returns it. The interpreter does not execute
-            // that instruction after a native tail callee, so its instruction count is given back
+            // the built-in's result is in `R[A]`, `top` after it: return it like the `RETURN` that follows would. The interpreter does not
+            // execute that instruction after a native tail callee, so it is not counted either
             self.op(Op::Bind(tail_ret));
-            if env.inl_mut & super::t1inline::M_TAIL_COUNT == 0 {
-                let m = M {
-                    base: Base::Cnt,
-                    off: 0,
-                };
-                self.ld(1, W::B4, m);
-                self.op(Op::Add(1, Src::Imm(1)));
-                self.st(W::B4, m, 1);
+            if env.inl_mut & super::t1inline::M_TAIL_COUNT != 0 {
+                let xc2 = self.exit_cnt(pc + 1, 1);
+                self.op(Op::CountSub { n: 1, exit: xc2 }); // (mutant: the `RETURN` is charged)
             }
-            let rl = self.pcl[pc as usize + 1];
-            self.op(Op::Jmp(rl));
+            self.return_prologue_noexit();
+            self.return_body(ret_i.a(), 0, ret_i.c());
         }
         if fast || inl {
             self.op(Op::Bind(slow));
@@ -646,17 +655,23 @@ impl Cx<'_> {
             self.op(Op::Bind(skip));
         }
         self.return_prologue(pc); // V0 = wanted (-1 = all), V3 = func index
-        if i.b() == 0 {
+        self.return_body(a, i.b(), i.c());
+    }
+
+    /// The result move of `RETURN a b c` after the prologue (`V0` = wanted, `V3` = `func`): up to `top` for `b == 0`, then the frame is left
+    /// through the shared return sequence.
+    fn return_body(&mut self, a: u32, b: u32, c: u32) {
+        if b == 0 {
             self.ld(1, W::B8, thw(thr::TOP));
             self.op(Op::Sub(1, Src::V(3)));
             self.op(Op::Sub(1, Src::Imm(a as i32 + 1)));
         } else {
-            self.op(Op::Mov(1, u64::from(i.b() - 1)));
+            self.op(Op::Mov(1, u64::from(b - 1)));
         }
-        if i.c() != 0 {
+        if c != 0 {
             // vararg frame: results go to the original `func` (`func -= nextraargs + C`)
             self.ld(6, W::B4, ciw(ci::NEXTRAARGS));
-            self.op(Op::Add(6, Src::Imm(i.c() as i32)));
+            self.op(Op::Add(6, Src::Imm(c as i32)));
             self.op(Op::Sub(3, Src::V(6)));
         }
         let (have_w, cnt_ok, copy, fill, done) = (
@@ -677,7 +692,7 @@ impl Cx<'_> {
         self.op(Op::Add(1, Src::V(0))); // new top = func + wanted
         self.op(Op::Lea(4, fr(0, -16)));
         self.op(Op::Lea(5, fr(a, 0)));
-        if i.c() != 0 {
+        if c != 0 {
             self.op(Op::Shl(6, 4));
             self.op(Op::Sub(4, Src::V(6)));
         }

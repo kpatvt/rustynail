@@ -466,7 +466,7 @@ pub const NAMES: &[&str] = &[
     "t1i_setmt_black_skip",
     "t1i_setmt_old_skip",
     "t1i_setmt_arg_skip",
-    "t1i_tail_count_skip",
+    "t1i_tail_count_extra",
     "t1i_tail_mm_skip",
     "newkey_black_skip",
     "newkey_nil_value",

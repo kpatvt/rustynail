@@ -2331,11 +2331,15 @@ with `RUSTYNAIL_GC_VERIFY=1` in both modes, vm corpus.
 `R[A]` is not written and `top = R[A]`, exactly what `native_fast_with` leaves). Guards, all before any store, any failure takes the generic call with nothing changed (so every error message, hook,
 Ctrl-C and count behaviour is the old path's): `R[A+1]` and `R[A+2]` are tables; `mt.flags` has the cached "no `__gc`" bit (`fast_tm(mt, Gc)` would return `None` without a lookup: the first call per
 metatable takes the helper, which caches it); `t` is not black (the barrier `luaC_objbarrier` would be a no-op: white, or gray); `t.metatable == null` (no `__metatable` field to protect, no old
-metatable to compare). Then `t.metatable = mt`, result `t` in `R[A]` and the dead copy at the slot where the native pushes it, `top` as above. These are the guards of the trace compiler's inline `SETMT`
+metatable to compare); the frame is not a metamethod frame (`CIST_MMRET`: with the inline store there, `instruction_count_identity` of `bd_mm_depth`, recursion through metamethods
+to the C-stack limit, was off by 534 instructions, cause not found; the generic call there costs nothing that matters). Then `t.metatable = mt`, result `t` in `R[A]` and the dead copy at the slot where the native pushes it, `top` as above. These are the guards of the trace compiler's inline `SETMT`
 (`Asm::setmt_fast`, section A1). **Tail position:** the t1inline rows are emitted at `TAILCALL` sites too (`site_hints` takes `Tailcall`; any `C` of the caller, `B` including 0 for `select('#', ...)`):
-the result goes to `R[A]`, `top` after it, and control jumps to the `RETURN` that the compiler always emits after a `TAILCALL`. The interpreter does not execute that `RETURN` after a native tail callee, so the
-inline path **gives back its instruction count** (`Cnt += 1`; identity test `instruction_count_identity`), and a frame with `CIST_MMRET` (a metamethod frame, `t1q` bit 5) keeps the helper path (it finishes
-through `jit_mm_pop` / `jit_mm_return`). Mutants: `t1i_setmt_gc_skip`, `t1i_setmt_black_skip`, `t1i_setmt_old_skip`, `t1i_setmt_arg_skip`, `t1i_tail_count_skip`, `t1i_tail_mm_skip`.
+the result goes to `R[A]`, `top` after it, and the frame is **returned right there** by the body of the `RETURN` that the compiler always emits after a `TAILCALL` (`B` = 0, no `k`; the
+inline path is not emitted otherwise): `return_prologue_noexit` + `return_body` (the result move of `tpl_return`, shared), `CIST_FRESH` / the caller's resume entry through the shared `ret_tail` sequence. There is no
+exit point between the native result and the return (an exit at the `RETURN` would leave the interpreter in front of an instruction it never executes after a native tail callee: `tr_oracle` reported
+exactly that on `vararg_04_adjust_and_call` with a first version that jumped into the `RETURN` template), so everything that could make the return leave is decided before anything changes and sends the call
+to the helper: a hook (`trap`), a frame with to-be-closed variables, a metamethod frame (`CIST_MMRET`, which returns through `Cold::MmRet`) and the base frame. The return is not charged (the interpreter
+does not execute the `RETURN` either). Mutants: `t1i_setmt_gc_skip`, `t1i_setmt_black_skip`, `t1i_setmt_old_skip`, `t1i_setmt_arg_skip`, `t1i_tail_count_extra` (the inline path also charges the `RETURN`), `t1i_tail_mm_skip`.
 
 **H2b (`templates_table.rs::emit_newkey`, `tset` bit 4, default 31).** `SETFIELD` of a constant short-string key: after the inline chain walk misses, the cold stub `Cold::NewKey` stores the key and value at the
 **main position** of the key when that node's value is empty (what `insertkey` does first; the fall-through path of an existing key is unchanged, no extra jump). Guards before the first store: the table has a hash

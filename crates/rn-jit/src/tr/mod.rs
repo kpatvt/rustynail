@@ -2926,7 +2926,7 @@ pub(crate) fn t1inline_mut() -> u16 {
     if mutants::active("t1i_setmt_arg_skip") {
         m |= t::M_SETMT_ARG;
     }
-    if mutants::active("t1i_tail_count_skip") {
+    if mutants::active("t1i_tail_count_extra") {
         m |= t::M_TAIL_COUNT;
     }
     if mutants::active("t1i_tail_mm_skip") {

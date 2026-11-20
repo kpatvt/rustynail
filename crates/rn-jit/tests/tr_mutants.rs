@@ -2314,7 +2314,7 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "h2_setmt_programs")],
     },
     Row {
-        name: "t1i_tail_count_skip",
+        name: "t1i_tail_count_extra",
         owner: "H2",
         dets: &[ol("tr_core", "instruction_count_identity")],
     },

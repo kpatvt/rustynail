@@ -78,7 +78,7 @@ pub const M_SETMT_BLACK: u16 = 2048;
 pub const M_SETMT_OLD: u16 = 4096;
 /// H2a: `setmetatable` does not check that the second argument is a table (`nil`, a number or nothing is stored as a metatable).
 pub const M_SETMT_ARG: u16 = 8192;
-/// H2a: the inline tail call of a built-in does not give back the instruction count of the `RETURN` it jumps through.
+/// H2a: the inline tail call of a built-in also charges the instruction count of the `RETURN` it replaces (the interpreter does not execute it).
 pub const M_TAIL_COUNT: u16 = 16384;
 /// H2a: the inline tail call of a built-in is also taken in a metamethod frame.
 pub const M_TAIL_MM: u16 = 32768;
@@ -807,6 +807,11 @@ impl Cx<'_> {
     /// form (`Asm::setmt_fast`): a protected old metatable (`__metatable` field), `__gc`, a black table, a nil or non-table second
     /// argument, a missing argument (`B` = 3 is two arguments), every error: the generic call, with nothing changed.
     pub(crate) fn t1i_setmt(&mut self, s: &Site) {
+        // a metamethod frame (`CIST_MMRET`: a tier-1 arithmetic / comparison / index frame) keeps the generic call: the instruction counts of
+        // `bd_mm_depth` (recursion through metamethods to the C-stack limit) are not those of the interpreter with the inline store there
+        self.ld(6, W::B4, ciw(ci::CALLSTATUS));
+        self.op(Op::And(6, Src::Imm(ci::CIST_MMRET as i32)));
+        self.br(Cc::Ne, 6, Src::Imm(0), s.slow);
         self.ld(2, W::B1, fr(s.a + 1, 0));
         self.br(Cc::Ne, 2, Src::Imm(i32::from(ctb(LUA_VTABLE))), s.slow);
         if s.mu & M_SETMT_ARG == 0 {
