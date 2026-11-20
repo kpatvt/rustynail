@@ -439,7 +439,7 @@ pub fn head_report(
             per.entry((k, l)).or_default().1 += n;
         }
         let mut v: Vec<_> = per.into_iter().collect();
-        v.sort_by(|a, b| (b.1 .0 + b.1 .1).cmp(&(a.1 .0 + a.1 .1)));
+        v.sort_by_key(|a| std::cmp::Reverse(a.1 .0 + a.1 .1));
         for ((k, l), (a, b)) in v.into_iter().take(30) {
             let name = d.name(k, l);
             let _ = writeln!(
