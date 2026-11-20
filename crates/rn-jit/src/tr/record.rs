@@ -699,23 +699,39 @@ pub fn take_retf_used() -> bool {
 /// recording already armed, the proto does not lower).
 pub fn arm(st: &mut State, ci: Ci, head: u32, cfg: RecCfg) -> Option<u64> {
     RETF_USED.with(|c| c.set(false));
-    let cl = st.ci_lclosure(ci)?;
+    let why = super::diag::set_why;
+    let cl = st.ci_lclosure(ci).or_else(|| {
+        why("NoLuaFrame");
+        None
+    })?;
     let p = cl.proto();
     let low = match &cfg.landing {
         Some(l) => l.clone(),
-        None if cfg.landcache => super::cache::landing_cached(&p)?,
-        None => Rc::new(lower_for_landing(&p)?),
+        None if cfg.landcache => super::cache::landing_cached(&p).or_else(|| {
+            why("NoLanding");
+            None
+        })?,
+        None => Rc::new(lower_for_landing(&p).or_else(|| {
+            why("NoLanding");
+            None
+        })?),
     };
     let frameful = cfg.side.as_ref().is_some_and(|sd| !sd.frames.is_empty());
     let token = if frameful {
-        jit_hooks::rec_arm_chain(st, ci, st.ci())?
+        jit_hooks::rec_arm_chain(st, ci, st.ci())
     } else {
-        jit_hooks::rec_arm(st, ci)?
-    };
+        jit_hooks::rec_arm(st, ci)
+    }
+    .or_else(|| {
+        // (the hook slot is taken: another recording, a debug hook, or a coroutine without the room)
+        why("HookBusy");
+        None
+    })?;
     st.heap().unwatch_all();
     let mut rec = Rec::new(token, st, ci, &p, cl.as_ptr() as usize, head, low, cfg);
     if frameful && rec.seed_frames(st).is_none() {
         jit_hooks::rec_disarm(st);
+        why("SeedFrames");
         return None;
     }
     REC.with(|r| *r.borrow_mut() = Some(Box::new(rec)));

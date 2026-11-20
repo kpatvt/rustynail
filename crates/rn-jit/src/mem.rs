@@ -193,6 +193,8 @@ pub struct PerfMap {
     file: File,
     pid: u32,
     follow_pid: bool,
+    /// `RUSTYNAIL_JIT_PERFMAP=2`: also name every trace `TRACE-<n>` and put the line into the tier-1 names.
+    names: bool,
 }
 
 fn open_perf_file(pid: u32) -> std::io::Result<File> {
@@ -221,6 +223,7 @@ impl PerfMap {
             file: open_perf_file(pid)?,
             pid,
             follow_pid: false,
+            names: false,
         })
     }
 
@@ -231,17 +234,26 @@ impl PerfMap {
             file: open_perf_file(pid)?,
             pid,
             follow_pid: true,
+            names: false,
         })
     }
 
-    /// Opens the map for this process iff the environment variable `RUSTYNAIL_JIT_PERFMAP` is `1`.
-    /// Any failure (symlink, foreign owner, I/O error) yields `None`.
+    /// Opens the map for this process iff the environment variable `RUSTYNAIL_JIT_PERFMAP` is `1` or `2` (`2`: also the
+    /// per-trace names, see [`PerfMap::names`]). Any failure (symlink, foreign owner, I/O error) yields `None`.
     pub fn from_env() -> Option<PerfMap> {
-        if std::env::var("RUSTYNAIL_JIT_PERFMAP").as_deref() == Ok("1") {
-            PerfMap::open_current().ok()
-        } else {
-            None
+        let v = std::env::var("RUSTYNAIL_JIT_PERFMAP").ok();
+        match v.as_deref() {
+            Some(l @ ("1" | "2")) => PerfMap::open_current().ok().map(|mut p| {
+                p.names = l == "2";
+                p
+            }),
+            _ => None,
         }
+    }
+
+    /// Level 2 of `RUSTYNAIL_JIT_PERFMAP`: traces are registered as `TRACE-<n>`, tier-1 blocks as `lua_proto:<line>@<ptr>`.
+    pub fn names(&self) -> bool {
+        self.names
     }
 
     /// Appends `"<start hex> <size hex> <name>\n"` (one unbuffered write, so it is flushed). Newlines in
@@ -871,6 +883,19 @@ impl CodeArena {
     pub fn register_symbol(&mut self, block: &CodeBlock, name: &str) -> std::io::Result<()> {
         match &mut self.perf {
             Some(p) => p.write_symbol(block.addr(), block.size, name),
+            None => Ok(()),
+        }
+    }
+
+    /// Is the perf map open at level 2 (trace names)?
+    pub fn perf_names(&self) -> bool {
+        self.perf.as_ref().is_some_and(PerfMap::names)
+    }
+
+    /// Registers the raw range `[start, start + size)` under `name` (a trace block: the caller owns the memory; no-op without a map).
+    pub fn register_range(&mut self, start: usize, size: usize, name: &str) -> std::io::Result<()> {
+        match &mut self.perf {
+            Some(p) => p.write_symbol(start, size, name),
             None => Ok(()),
         }
     }

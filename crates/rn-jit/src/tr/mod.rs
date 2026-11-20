@@ -8,6 +8,7 @@
 
 pub mod asm;
 pub mod cache;
+pub mod diag;
 pub mod exit;
 pub mod fold;
 pub mod interp;
@@ -525,6 +526,7 @@ fn closure_self_ref(cl: rn_core::value::Gc<rn_core::func::LClosure>) -> bool {
 /// False: nothing armed (a transient refusal for the cache).
 pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     let Some(cl) = st.ci_lclosure(ci) else {
+        diag::set_why("NoLuaFrame");
         return false;
     };
     let proto = cl.proto();
@@ -556,6 +558,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             cache::head_is_cont(st, pr, pc) && !cache::proto_recursive(st, pr) && !cok
         })
     {
+        diag::set_why("ContNotRecursive");
         return false;
     }
     let deep =
@@ -744,6 +747,7 @@ pub fn driver_start_side(
         cache::landing_cached(&ip)?
     };
     if inner_low.label_kind(start.pc) == crate::lower::LabelKind::Dead {
+        diag::set_why("DeadLabel");
         return None;
     }
     let rem = snap::land_info(&inner_low, start.pc).1;

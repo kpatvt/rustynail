@@ -2478,6 +2478,8 @@ pub struct TrState {
     pub(crate) rearm_entering: bool,
     next_no: u32,
     pub(crate) stats: TrStats,
+    /// H8: per-head diagnostics (`RUSTYNAIL_JIT_VERBOSE >= 1`; empty otherwise).
+    pub(crate) diag: super::diag::Diag,
     starter: Option<StartFn>,
     side_starter: Option<StartSideFn>,
     dep_hook: Option<DepFreedFn>,
@@ -2500,6 +2502,12 @@ struct HopSt {
 
 impl TrState {
     pub(crate) fn new(cfg: TrConfig) -> TrState {
+        // H8: the sampler of the head table (`RUSTYNAIL_JIT_SAMPLE`), only with the verbose summary on
+        if cfg.verbose >= 1 && cfg.mode != TrMode::Off {
+            super::diag::start_sampler(super::diag::sample_hz(
+                std::env::var("RUSTYNAIL_JIT_SAMPLE").ok().as_deref(),
+            ));
+        }
         TrState {
             cfg: cfg.checked(),
             slots: Vec::new(),
@@ -2517,6 +2525,7 @@ impl TrState {
             rearm_entering: false,
             next_no: 1,
             stats: TrStats::default(),
+            diag: Default::default(),
             starter: None,
             side_starter: None,
             dep_hook: None,
@@ -2808,6 +2817,9 @@ pub fn begin_recording(st: &mut State, pr: ProtoRef, pc: u32) -> Result<TrId, Be
     }));
     d.tr.active = Some(id);
     d.tr.stats.started += 1;
+    if d.tr.cfg.verbose >= 1 {
+        d.tr.diag.started(pr.0, tp.line, pc);
+    }
     h.state.set(HeadState::Recording);
     h.trace.set(Some(id));
     vlog(d, || format!("{no} start proto:{} pc {pc}", tp.line));
@@ -3270,6 +3282,22 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
     let d = d_of(st);
     if let Some(link) = r.side {
         *d.tr.stats.side_aborted.entry(reason).or_insert(0) += 1;
+        if d.tr.cfg.verbose >= 1 {
+            let why = (reason == "StartRefused").then(super::diag::take_why);
+            let root = match d.tr.slot(link.parent) {
+                Some(Slot {
+                    body: Body::Trace(p),
+                    ..
+                }) => Some((p.root, p.head)),
+                _ => None,
+            };
+            if let Some((k, hi)) = root {
+                if let Some(tp) = tr_of(d, k) {
+                    let (l, pc) = (tp.line, tp.head(hi).pc);
+                    d.tr.diag.aborted(k, l, pc, reason, true, why);
+                }
+            }
+        }
         // a side recording never touches its head: only the exit it hangs off remembers the failure
         let (fault, unchangeable) = match kind {
             AbortKind::Drop => (false, false),
@@ -3368,6 +3396,15 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
         }
     };
     note_black(d, tp, r.head, p);
+    if d.tr.cfg.verbose >= 1 {
+        let why = (reason == "StartRefused").then(super::diag::take_why);
+        let (l, pc) = (tp.line, tp.head(r.head).pc);
+        d.tr.diag.aborted(r.root, l, pc, reason, false, why);
+        if p == Penalty::Black {
+            let n = d.tr.stats.started;
+            d.tr.diag.blacklisted(r.root, l, pc, n, reason);
+        }
+    }
     if p == Penalty::Black {
         nest_rule(st, tp, r.head);
     }
@@ -3663,6 +3700,25 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
     let d = d_of(st);
     let entry = placed.block.addr() + ti.entry_off;
     let block_addr = placed.block.addr();
+    if d.tr.cfg.verbose >= 1 || super::diag::sampling() {
+        if let Some(tp) = tr_of(d, root) {
+            let (l, pc) = (tp.line, tp.head(head).pc);
+            if side.is_none() {
+                d.tr.diag.installed(root, l, pc);
+            }
+            super::diag::note_range(
+                block_addr,
+                ti.code.len(),
+                super::diag::Owner::Trace(no, root, l, pc),
+            );
+        }
+    }
+    // H8: `RUSTYNAIL_JIT_PERFMAP=2` names the block for `perf`
+    if d.arena.perf_names() {
+        let _ = d
+            .arena
+            .register_range(block_addr, ti.code.len(), &format!("TRACE-{no}"));
+    }
     let sl = d.tr.slot_mut(id).expect("checked above");
     let Body::Rec(r) = std::mem::replace(&mut sl.body, Body::Free) else {
         unreachable!("checked above")
@@ -3875,6 +3931,21 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
     if let Some(tp) = tr_of(d, t.root) {
         let h = tp.head(t.head);
         entries = h.entry_ok.get();
+        if d.tr.cfg.verbose >= 1 && t.side.is_none() && h.trace.get() == Some(id) {
+            let w = match why {
+                FlushWhy::Rerec => "Rerec",
+                FlushWhy::Unsink => "Unsink",
+                FlushWhy::Ineffective => "Ineffective",
+                FlushWhy::Dep => "Dep",
+                FlushWhy::Dom => "Dom",
+                FlushWhy::Chain => "Chain",
+                FlushWhy::Cap => "Cap",
+                FlushWhy::Off => "Off",
+                FlushWhy::Nest => "Nest",
+            };
+            d.tr.diag
+                .flushed(t.root, tp.line, h.pc, w, u64::from(entries));
+        }
         if h.trace.get() == Some(id) {
             if matches!(why, FlushWhy::Rerec | FlushWhy::Ineffective) {
                 h.flushed_hash.set(t.hash);
@@ -3922,6 +3993,12 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
     }
     if blacklisted {
         d.tr.stats.blacklisted += 1;
+        if d.tr.cfg.verbose >= 1 {
+            if let Some(tp) = tr_of(d, t.root) {
+                let (l, pc, n) = (tp.line, tp.head(t.head).pc, d.tr.stats.started);
+                d.tr.diag.blacklisted(t.root, l, pc, n, "flush");
+            }
+        }
         if why != FlushWhy::Nest {
             d.tr.nest_q.push((t.root, t.head));
         }
@@ -5426,6 +5503,30 @@ pub fn entry_fail_hot_id(st: &mut State, ci: Ci, id: TrId) -> bool {
 /// returns the bytes to refund.
 pub(crate) fn on_proto_free(d: &mut JitData, key: usize, tp: &TrProto) -> usize {
     let mut refund = 0;
+    if d.tr.cfg.verbose >= 1 {
+        for (i, h) in tp.heads().iter().enumerate() {
+            let pc = h.pc;
+            let lh = super::diag::LiveHead {
+                state: match h.state.get() {
+                    HeadState::Warm => "Warm",
+                    HeadState::Recording => "Recording",
+                    HeadState::Traced => "Traced",
+                    HeadState::Black => "Black",
+                },
+                kind: if tp.is_fn_head(pc) {
+                    "fn"
+                } else if tp.is_cont_head(pc) {
+                    "cont"
+                } else {
+                    "loop"
+                },
+                entry_ok: h.entry_ok.get(),
+                entry_fail: h.entry_fail.get(),
+            };
+            let _ = i;
+            d.tr.diag.snapshot(key, tp.line, pc, lh);
+        }
+    }
     let mut ids: Vec<TrId> = tp.deps.take();
     for h in tp.heads() {
         d.tr.stats.entered += u64::from(h.entry_ok.get());
@@ -5550,6 +5651,34 @@ pub(crate) fn report(d: &JitData) {
         }
     }
     eprintln!("[trace] exits {exits} (live traces {traces})");
+    // H8: the per-head table (and the sampler's shares, when it ran)
+    let prof = super::diag::profile();
+    let live = |k: usize, l: i32, pc: u32| -> Option<super::diag::LiveHead> {
+        let tp = tr_of(d, k).filter(|tp| tp.line == l)?;
+        let i = tp.head_index(pc)?;
+        let h = tp.head(i);
+        Some(super::diag::LiveHead {
+            state: match h.state.get() {
+                HeadState::Warm => "Warm",
+                HeadState::Recording => "Recording",
+                HeadState::Traced => "Traced",
+                HeadState::Black => "Black",
+            },
+            kind: if tp.is_fn_head(pc) {
+                "fn"
+            } else if tp.is_cont_head(pc) {
+                "cont"
+            } else {
+                "loop"
+            },
+            entry_ok: h.entry_ok.get(),
+            entry_fail: h.entry_fail.get(),
+        })
+    };
+    eprint!(
+        "{}",
+        super::diag::head_report(&d.tr.diag, prof.as_ref(), &live)
+    );
 }
 
 /// What the `loopany` guard flushes when it fires.

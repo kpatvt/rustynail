@@ -1516,9 +1516,12 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
     // SAFETY: `dp` is still the live per-state data.
     let d = unsafe { &mut *dp };
     let resume = resume_table(p.code().len(), &low, &em);
-    let _ = d
-        .arena
-        .register_symbol(&block, &format!("lua_proto@{:p}", p.code_ptr()));
+    let sym = if d.arena.perf_names() {
+        format!("lua_proto:{}@{:p}", p.linedefined, p.code_ptr())
+    } else {
+        format!("lua_proto@{:p}", p.code_ptr())
+    };
+    let _ = d.arena.register_symbol(&block, &sym);
     if let Some(pr) = d.prof.as_mut() {
         pr.protos.insert(
             p.code_ptr() as usize,
@@ -1587,6 +1590,28 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
     let raw = Box::into_raw(jp);
     d.live.insert(raw as usize);
     p.jit.set(raw.cast());
+    // H8: the proto name for the head table, and the tier-1 code range for the sampler
+    #[cfg(feature = "trace")]
+    if d.tr.cfg.verbose >= 1 {
+        let src = p.source().map_or_else(
+            || "?".to_string(),
+            |s| {
+                let b = s.get().as_bytes();
+                let t = String::from_utf8_lossy(b);
+                let t = t.trim_start_matches(['@', '=']);
+                t.rsplit('/').next().unwrap_or(t).chars().take(40).collect()
+            },
+        );
+        d.tr.diag.names.insert(
+            (raw as usize, p.linedefined),
+            format!("{src}:{}", p.linedefined),
+        );
+        crate::tr::diag::note_range(
+            base,
+            em.code.len(),
+            crate::tr::diag::Owner::Tier1(raw as usize, p.linedefined),
+        );
+    }
     Ok(())
 }
 
@@ -1798,11 +1823,20 @@ fn recompile_inner(
     let (d, jp) = unsafe { (&mut *dp, &mut *jpp) };
     let resume = resume_table(p.code().len(), &low, &em);
     let pcmap = t15rt::pc_map(&low, &em);
-    let _ = d
-        .arena
-        .register_symbol(&block, &format!("lua_proto@{:p}.v{ver}", p.code_ptr()));
-    d.stats.code_bytes += em.code.len() as u64;
+    let sym = if d.arena.perf_names() {
+        format!("lua_proto:{}@{:p}.v{ver}", p.linedefined, p.code_ptr())
+    } else {
+        format!("lua_proto@{:p}.v{ver}", p.code_ptr())
+    };
+    let _ = d.arena.register_symbol(&block, &sym);
+    #[cfg(feature = "trace")]
+    crate::tr::diag::note_range(
+        block.addr(),
+        em.code.len(),
+        crate::tr::diag::Owner::Tier1(jpp as usize, p.linedefined),
+    );
     d.stats.t15_recompiled += 1;
+    d.stats.code_bytes += em.code.len() as u64;
     d.stats.t15_regions += u64::from(regions);
     let base = block.addr();
     let entry_ok = low.entry_ok;
