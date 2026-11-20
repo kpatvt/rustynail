@@ -196,6 +196,8 @@ pub const CHAINDEPTH_PROCESS: u32 = 4;
 pub const FNPROMO_PROCESS: u32 = 6;
 /// BUNDLE-C (`fnpromow`): process value of [`TrLimits::fnpromow`].
 pub const FNPROMOW_PROCESS: u32 = 3;
+/// K6 (`fnself`): process value of [`TrLimits::fnself`].
+pub const FNSELF_PROCESS: u32 = 16;
 /// C36 (`second`): process value of [`TrLimits::second`] (K3a: also the struct default): the second chances of a head lost to a transient (bit 0 abort-count retry after `LeaveFrame`, bit 1 first identical re-record kept).
 pub const SECOND_PROCESS: u32 = 3;
 /// C39 (`innerretry`): process value of [`TrLimits::innerretry`] (K3a: also the struct default): retry rounds of a head blacklisted by `InnerLoop` aborts.
@@ -463,6 +465,10 @@ pub struct TrLimits {
     pub fnpromo: u32,
     /// BUNDLE-C: the promoted head waits `64 << fnpromow` entries before its first generic recording (a short program cannot repay a function root).
     pub fnpromow: u32,
+    /// K6: `FnShort` budget of the function-entry head of a prototype whose closure reaches itself through an upvalue (`local function f .. f() ..`): a leaf-invocation sample says
+    /// nothing about the recursion of such a function (most invocations of a tree recursion are leaves), so the head retries up to this many samples with a flat short wait before it
+    /// is blacklisted. 0 = off (the budget of [`MAX_FN_SHORT`] and the doubling wait).
+    pub fnself: u32,
     /// C39: retry rounds of a head blacklisted by two `InnerLoop` aborts in a row (a loop of an inlined callee the recording cannot unroll, or an inner loop of the root
     /// frame without a root trace). Each round waits `64 << (MAX_ABORTS + n)` back-edges (the loops of the callee may have got a trace, the guard of `loopany`
     /// may be satisfied, the callers of the loop may have another shape) and allows ONE attempt; an `InnerLoop` abort of that attempt ends the round. 0 = none
@@ -672,6 +678,7 @@ impl Default for TrLimits {
             fibdiet: FIBDIET_PROCESS,
             fnpromo: FNPROMO_PROCESS,
             fnpromow: FNPROMOW_PROCESS,
+            fnself: FNSELF_PROCESS,
             innerretry: INNERRETRY_PROCESS,
             sidenest: SIDENEST_PROCESS,
             domtop: DOMTOP_PROCESS,
@@ -850,6 +857,7 @@ impl TrLimits {
                 "fibdiet" => l.fibdiet = v.min(15),
                 "fnpromo" => l.fnpromo = v.min(64),
                 "fnpromow" => l.fnpromow = v.min(12),
+                "fnself" => l.fnself = v.min(200),
                 "innerretry" => l.innerretry = v.min(16),
                 "sidenest" => l.sidenest = v.min(1),
                 "domtop" => l.domtop = v.min(100),
@@ -1458,6 +1466,8 @@ pub struct TrProto {
     conts: RefCell<Vec<u32>>,
     /// R2: a native self-call of this prototype was recorded (it recurses, a native return into itself can happen).
     recursive: Cell<bool>,
+    /// K6: a closure of this prototype reaches itself through an upvalue (seen by `driver_start`): its `FnShort` samples are leaf samples of a recursion.
+    selfref: Cell<bool>,
     /// BUNDLE-K L1: every trace of this prototype is lazy-aware (`TrLimits::lazyci`; fixed when the dispatch table is made).
     lazy: Cell<bool>,
     /// P-G: the block structure of the prototype for the recorder's count model (P-G, always on in the pipeline).
@@ -1522,6 +1532,7 @@ impl TrProto {
             fn_head: Cell::new(false),
             conts: RefCell::new(Vec::new()),
             recursive: Cell::new(false),
+            selfref: Cell::new(false),
             lazy: Cell::new(false),
             landing: RefCell::new(None),
             prune: std::cell::OnceCell::new(),
@@ -1870,6 +1881,17 @@ impl TrProto {
     /// function, vararg callee, ...) twice in a row blacklists; otherwise the penalty is `2^k * 64 + rand4` and
     /// `k >= 6` blacklists (TR21).
     pub fn on_abort(&self, i: usize, reason: &'static str, unchangeable: bool) -> Penalty {
+        self.on_abort_with(i, reason, unchangeable, 0)
+    }
+
+    /// [`TrProto::on_abort`] with the `fnself` limit of the configuration (K6).
+    pub fn on_abort_with(
+        &self,
+        i: usize,
+        reason: &'static str,
+        unchangeable: bool,
+        fnself: u32,
+    ) -> Penalty {
         let h = &self.heads[i];
         h.trace.set(None);
         if reason == "LeaveLoop" || reason == "FnShort" {
@@ -1878,6 +1900,22 @@ impl TrProto {
             // loop of 3-4 iterations per entry is not always sampled at the same iteration.
             let kl = h.kl.get().saturating_add(1);
             h.kl.set(kl);
+            if reason == "FnShort"
+                && kl >= MAX_FN_SHORT
+                && fnself != 0
+                && (self.selfref.get() || mutants::active("fnself_flag_ignored"))
+                && (!self.recursive.get() || mutants::active("fnself_recursive_ignored"))
+                && !mutants::active("fnself_never")
+            {
+                // K6: the fifth and later leaf samples of a self-referential function (the first four wait as before): the budget is `fnself` samples, the wait flat
+                if u32::from(kl) >= fnself && !mutants::active("fnself_unbounded") {
+                    self.set_state(i, HeadState::Black);
+                    return Penalty::Black;
+                }
+                let p = 16 + i64::from(kl) * 3 + i64::from(self.rand4(h.pc));
+                self.to_warm_keep(i, p);
+                return Penalty::Wait(p as i32);
+            }
             // (P-E2: a function-entry recording that ends short is a leaf-call sample; four in a row and the head is not
             // worth the recordings, each of which costs a lowering for the landing labels and an interpreter run)
             if kl
@@ -1942,6 +1980,16 @@ impl TrProto {
         let p = penalty(w as u8, self.rand4(h.pc));
         self.to_warm_keep(i, p);
         Some(Penalty::Wait(p as i32))
+    }
+
+    /// K6: the closure of this prototype reaches itself through an upvalue (`mark_selfref`; public for the policy tests).
+    pub fn set_selfref(&self) {
+        self.selfref.set(true);
+    }
+
+    /// K6: a native self-call of this prototype was recorded (`mark_recursive`; public for the policy tests).
+    pub fn set_recursive(&self) {
+        self.recursive.set(true);
     }
 
     /// BUNDLE-C: is the prototype's function-entry head promoted to a generic function root?
@@ -3265,7 +3313,7 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
                 });
                 Penalty::Wait(1)
             } else {
-                let p = tp.on_abort(r.head, reason, u);
+                let p = tp.on_abort_with(r.head, reason, u, d.tr.cfg.limits.fnself);
                 if second_retry_due(d.tr.cfg.limits.second, p == Penalty::Black, u, reason) {
                     if let Some(w) = tp.second_chance(r.head) {
                         d.tr.stats.retried += 1;
@@ -4921,6 +4969,14 @@ pub fn mark_recursive(st: &mut State, pr: ProtoRef) {
     let d = d_of(st);
     if let Some(tp) = tr_of(d, pr.0) {
         tp.recursive.set(true);
+    }
+}
+
+/// K6: the closure being started at `pr` reaches itself through an upvalue.
+pub fn mark_selfref(st: &mut State, pr: ProtoRef) {
+    let d = d_of(st);
+    if let Some(tp) = tr_of(d, pr.0) {
+        tp.selfref.set(true);
     }
 }
 

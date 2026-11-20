@@ -15741,4 +15741,29 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/h7_07_rec_hooks.lua"),
     },
+    Prog {
+        name: "k6_01_leaf_heavy_recursion",
+        small: true,
+        src: include_str!("../../../../tests/vm/k6_01_leaf_heavy_recursion.lua"),
+    },
+    Prog {
+        name: "k6_02_path_switch",
+        small: true,
+        src: include_str!("../../../../tests/vm/k6_02_path_switch.lua"),
+    },
+    Prog {
+        name: "k6_03_tail_varargs",
+        small: true,
+        src: include_str!("../../../../tests/vm/k6_03_tail_varargs.lua"),
+    },
+    Prog {
+        name: "k6_04_deep_errors_coroutines",
+        small: true,
+        src: include_str!("../../../../tests/vm/k6_04_deep_errors_coroutines.lua"),
+    },
+    Prog {
+        name: "k6_05_list_like",
+        small: true,
+        src: include_str!("../../../../tests/vm/k6_05_list_like.lua"),
+    },
 ];

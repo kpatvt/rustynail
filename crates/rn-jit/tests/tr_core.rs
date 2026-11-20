@@ -7577,6 +7577,78 @@ fn bc_fnpromo_programs() {
     }
 }
 
+/// K6 (`fnself`): a self-recursive local function whose entry samples are mostly leaves keeps its entry head alive for `fnself` leaf samples, so that it becomes
+/// recursive and its continuation heads record. Same output as the interpreter in every mode (lockstep, exit storms, budgets, GC stress 2, emulator) for the
+/// four `k6_*` programs (leaf-heavy trees, a mix that switches mid-run, mutual recursion, a swapped callee, tail calls, varargs, deep recursion, errors,
+/// coroutines); `fnself=0` is the old behaviour, a small `fnself` the old budget. The list-like program installs more traces with the budget than without
+/// (detector of `fnself_mark_skip`; the rule itself: `tr_policy::k6_policy`).
+#[test]
+fn k6_selfrec_programs() {
+    let progs = [
+        "k6_01_leaf_heavy_recursion",
+        "k6_02_path_switch",
+        "k6_03_tail_varargs",
+        "k6_04_deep_errors_coroutines",
+        "k6_05_list_like",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("deep");
+        for trace in ["always", "on2", "on"] {
+            for lim in ["fnself=0", "fnself=16", "fnself=200"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                if heavy {
+                    continue;
+                }
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+            }
+        }
+    }
+    let res = compare(jobs);
+    let find = |trace: &str, lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == "k6_05_list_like"
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
+    };
+    for trace in ["always", "on2", "on"] {
+        let (off, on) = (find(trace, "fnself=0"), find(trace, "fnself=16"));
+        eprintln!(
+            "k6 [{trace}] fnself=0: {} | fnself=16: {}",
+            off.line(),
+            on.line()
+        );
+        if trace == "on" {
+            // (default thresholds: the entry head of `tail` samples leaves only until its old budget is spent; with `fnself` it sees a non-leaf call,
+            // `tail` is recursive, its continuation heads record)
+            assert!(
+                on.installed > off.installed,
+                "[{trace}] fnself=16 installs more traces than fnself=0: {} vs {}",
+                on.installed,
+                off.installed
+            );
+        }
+    }
+}
+
 /// BUNDLE-GM: the `gmatch` iterator step of a generic `for` recorded as a `Lib` helper call (limit `gmatch`; program `gm_loops`). Same output as the
 /// interpreter in every mode (lockstep, exit storms, budgets, GC stress 1 and 2, emulator, the stack-move stress); (K3b: `gmatch` is hard-wired on) traces are
 /// installed for the loops and (almost) no `CFunc` abort happens. Mutants `gm_kind_skip`, `gm_no_commit`, `gm_end_guard_skip`.

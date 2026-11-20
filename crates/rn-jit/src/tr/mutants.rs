@@ -665,6 +665,11 @@ pub const NAMES: &[&str] = &[
     "sbump_never",
     "fnpromo_never",
     "fnpromo_repeats",
+    "fnself_never",
+    "fnself_unbounded",
+    "fnself_flag_ignored",
+    "fnself_recursive_ignored",
+    "fnself_mark_skip",
     // BUNDLE-GM: the `gmatch` iterator helper
     "gm_kind_skip",
     "gm_no_commit",
@@ -950,7 +955,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 727);
+        assert_eq!(NAMES.len(), 732);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

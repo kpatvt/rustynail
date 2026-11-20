@@ -3151,6 +3151,31 @@ const TABLE: &[Row] = &[
         dets: &[dl("tr_policy", "bc_policy")],
     },
     Row {
+        name: "fnself_never",
+        owner: "K6",
+        dets: &[dl("tr_policy", "k6_policy")],
+    },
+    Row {
+        name: "fnself_unbounded",
+        owner: "K6",
+        dets: &[dl("tr_policy", "k6_policy")],
+    },
+    Row {
+        name: "fnself_flag_ignored",
+        owner: "K6",
+        dets: &[dl("tr_policy", "k6_policy")],
+    },
+    Row {
+        name: "fnself_recursive_ignored",
+        owner: "K6",
+        dets: &[dl("tr_policy", "k6_policy")],
+    },
+    Row {
+        name: "fnself_mark_skip",
+        owner: "K6",
+        dets: &[dl("tr_core", "k6_selfrec_programs")],
+    },
+    Row {
         name: "gm_kind_skip",
         owner: "BUNDLE-GM",
         dets: &[dl("tr_core", "gm_programs")],

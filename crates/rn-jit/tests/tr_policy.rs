@@ -1751,6 +1751,80 @@ fn bc_policy() {
     }
 }
 
+/// K6 (`fnself`): the `FnShort` budget of the function-entry head of a self-referential prototype. The first four leaf samples wait as before; from the fifth the
+/// head keeps sampling (flat wait) up to `fnself` samples and is then blacklisted. A prototype that is not self-referential, or is already recursive, keeps the
+/// old budget; `fnself=0` is the old behaviour. Mutants `fnself_never`, `fnself_unbounded`, `fnself_flag_ignored`, `fnself_recursive_ignored`
+/// (`fnself_mark_skip`: the live program `tr_core::k6_selfrec_programs`).
+#[test]
+fn k6_policy() {
+    use rn_jit::tr::cache::{Penalty, TrConfig, TrMode, TrProto, FNSELF_PROCESS, MAX_FN_SHORT};
+    assert_eq!(FNSELF_PROCESS, 16, "the shipped process default");
+    assert_eq!(
+        TrConfig::for_mode(TrMode::On).limits.fnself,
+        FNSELF_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (None, 16),
+        (Some(""), 16),
+        (Some("nest=2"), 16),
+        (Some("fnself=0"), 0),
+        (Some("fnself=5"), 5),
+        (Some("fnself=9999"), 200),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.fnself, want, "limits env {env:?}");
+    }
+    // number of FnShort samples after which the head is Black (None: not within 400)
+    let blacklist_at = |tp: &TrProto, fnself: u32| -> Option<u32> {
+        (1..=400u32).find(|_| tp.on_abort_with(0, "FnShort", false, fnself) == Penalty::Black)
+    };
+    let old = u32::from(MAX_FN_SHORT);
+    let mk = || TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    // a self-referential prototype: the budget is fnself, the waits after the fourth sample are short and flat
+    let tp = mk();
+    tp.set_selfref();
+    for k in 1..=15u32 {
+        match tp.on_abort_with(0, "FnShort", false, 16) {
+            Penalty::Wait(w) if k >= old => {
+                assert!(
+                    ((16 + 3 * k as i32)..=(31 + 3 * k as i32)).contains(&w),
+                    "sample {k}: wait {w}"
+                )
+            }
+            Penalty::Wait(_) => {}
+            o => panic!("sample {k}: {o:?}"),
+        }
+    }
+    assert_eq!(
+        tp.on_abort_with(0, "FnShort", false, 16),
+        Penalty::Black,
+        "the 16th sample blacklists"
+    );
+    let tp = mk();
+    tp.set_selfref();
+    assert_eq!(blacklist_at(&tp, 7), Some(7));
+    // the knob off, the flag absent, the prototype already recursive: the old budget
+    let tp = mk();
+    tp.set_selfref();
+    assert_eq!(blacklist_at(&tp, 0), Some(old), "fnself=0");
+    assert_eq!(blacklist_at(&mk(), 16), Some(old), "not self-referential");
+    let tp = mk();
+    tp.set_selfref();
+    tp.set_recursive();
+    assert_eq!(blacklist_at(&tp, 16), Some(old), "already recursive");
+    // other abort reasons are not touched by the rule
+    let tp = mk();
+    tp.set_selfref();
+    for _ in 0..5 {
+        assert!(matches!(
+            tp.on_abort_with(0, "LeaveFrame", false, 16),
+            Penalty::Wait(_)
+        ));
+    }
+}
+
 /// BUNDLE-F: `stitch0` and `fibdiet` are 0 in the struct default (tests) and the `*_PROCESS` constants in a process; a named value wins and the two are
 /// independent of each other.
 #[test]

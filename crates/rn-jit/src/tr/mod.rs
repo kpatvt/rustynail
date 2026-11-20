@@ -542,6 +542,12 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     let lazy_root = pr.is_some_and(|pr| cache::proto_lazy(st, pr));
     // BUNDLE-C (`fnpromo`): this function-entry head is a generic function root (not for a function that reaches itself through an upvalue)
     let promoted = pr.is_some_and(|pr| cache::fn_promoted(st, pr)) && !closure_self_ref(cl);
+    // K6: remember that the prototype recurses through its own upvalue (the FnShort budget of its entry head)
+    if let Some(pr) = pr {
+        if cfg.limits.fnself != 0 && closure_self_ref(cl) && !mutants::active("fnself_mark_skip") {
+            cache::mark_selfref(st, pr);
+        }
+    }
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
     // function with calls would get continuation traces whose return guard fails when no recursion is involved)
     let cok = cfg.limits.contok >= 1 && record::cont_ok(root);
