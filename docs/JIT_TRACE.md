@@ -2429,3 +2429,75 @@ re-armed once, or `fn_min` / leaf detection could count the invocation as a "pro
 heads record; the root `TAILCALL` of the continuation at pc 22 then needs only the `end_exit` handling of finding 2 *together with* an installed entry trace of `tail`; (2) H8 diagnostics (why
 `trace()` of raytrace stays in tier 1); (3) if root tail calls ever matter, the cheaper variant is the "final exit after the call": a snapshot of the replaced frame (callee proto, pc 0, args moved
 down) landing on the callee's function-head label, which needs the root-rewrite restore above but none of the recorder model changes.
+
+## 21. H7: recursion protocol diet (2026-11-20, base 5855559; sub-gains built, the big items measured and not built)
+
+**Task.** docs/STUDY_ALLOC_CALL.md H7 expected `fib 37` -15..-25 %, `towers 900` -5..10 % from (1) a callee-identity hoist, (2) polls / budget / room checks only at function entry,
+(3) fewer flag stores, (4) direct return links. Method: release `rnlua`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, `perf stat -e instructions:u,cycles:u`, equal-length binary paths, same script path;
+instructions are exact, cycles carry +-1..2 % (min of 3 for the table below).
+
+### 21.1 Where the instructions are (`fib 37`, base 5855559, disassembly of the four fragments: `RUSTYNAIL_JIT_DUMP=dir`, `objdump -D -b binary -mi386:x86-64 -M intel trace-N.bin`)
+
+Internal node = 39 M, leaf = 39 M, 78 M calls. Instructions executed per visit of a fragment (hot path, counted from the disassembly):
+
+| piece | entry trace (trace 3, internal node) | continuation pc 7 (trace 6) | return + continuation pc 11 (trace 5) |
+|---|---:|---:|---:|
+| `POLL` (`movabs; cmp byte [rax],0; jne`) | 3 | 3 | 3 |
+| `BUDGET` (`sub r11; jl`) | 2 | 2 | 2 |
+| tag + base-case guard, `n` load | 5 | 2 | 4 (two tag guards) |
+| callee identity chain (`SLOAD fn; UREF; UVREL; UGE; ULOAD; EQ`) | 15 | 15 | - |
+| frame push (4 slot stores, `ci.next`, callee `func`, caller `savedpc`, 3 pointer moves, stack room 4, `ci` room 3, first flag 1, jump) | 22 (before this work) | 18 + cell dispatch 5 | - |
+| native return: guards (`previous`, `lazy_root` test, `savedpc` compare chain over the sites) | - | - | 8..11 |
+| native return: pop (`previous`, `savedpc`, root test again, `SetCi`, budget store, site compare chain again, frame move, cell dispatch) | - | - | 17 |
+
+`perf stat` of `fib 37`: IPC 6.5, `de_no_dispatch_per_slot.backend_stalls` 36 % of the slots, 738 M store-forwards (9.5 per call). The loop is throughput-bound with a
+store-forwarding component: instruction removals help cycles at about a quarter to a half of their instruction share (measured below), removals of memory round trips would help more.
+
+### 21.2 Built (all encoding-level, no new soundness conditions)
+
+| commit | change | `fib 37` instructions | mutants / tests |
+|---|---|---:|---|
+| H7a | micro-op `AddFrame(imm)` (`add rbx, imm`) replaces `lea` + `SetFrame` in the native push (eager and lazy), the native pop and `RETF` | 8210 -> 8054 M | `addframe_push_off` (caught by `pm3_programs_run_on_traces`); pop is covered by the existing `rec_ret_base_off`; emulator moves its frame base like `SetFrame` |
+| H7b | `UVREL` loads into its destination and subtracts the frame: no extra `mov` (3 -> 2 instructions after the load, once per identity chain) | | `tests/vm/h7_01_upval_alias_frame.lua` (open upvalue at register 0 / 1 / 3 of a loop frame) in `tr_core::h7_recursion_programs`; no mutant: the range guard is unsigned and any wrong offset only makes it fail or pass in the same cases for real stacks (a survivor was found and the mutant dropped) |
+| H7c | stack-room and spare-`CallInfo` checks compare against the memory word (`BrMR` now takes every condition, `BrM` for the one-level `ci.next` test): V0 is no longer loaded | 8054 -> 7780 M | `stack_cmp_strict` (boundary frame let through), `ci_next_wrong_word`, both caught by `tr_asm::hand_entry_checks_tr6` |
+
+Registry 720 -> 723. New programs (`tests/vm/h7_01..07`, also `tr_core::h7_recursion_programs`, every trace mode, `+verify`, `recnat=1`, exit storms, small budget, GC stress 2): recursion shapes (fib,
+ackermann, mutual, tak, global function, callee replaced mid-run), varargs / closures / upvalues in recursion, depth to `stack overflow` (depth reached and message must equal the interpreter's;
+C-stack limit by `pcall` nesting), errors / `pcall` at every level / tracebacks at depth, coroutines yielding inside recursion, count / call-return / line hooks and a hook installed from inside the recursion.
+The programs do not print exact depths (a harness frame shifts `debug.getinfo` depth and the overflow depth by one against `ref/55/build/lua`: 499994 vs 499995 in `vm_corpus`; the same program run directly equals the reference).
+
+### 21.3 Measured ceilings, not built (scratch patches, reverted)
+
+1. **Callee-identity chain removed everywhere (unsound ceiling).** Skipping `UVREL / UGE / ULOAD / EQ` of every native-push trace: fib 7780 -> 6842 M instructions (-12.1 %), cycles 1254 -> 1190 (-5.2 %). Half of it
+   is the entry trace's chain, half the continuation's.
+   *Entry trace (self push) is locally sound:* the pusher has just verified `u.value == C` for the same closure `C` and nothing runs between the push and the callee's own check; the `UGE` range test of
+   the callee follows from stack discipline (an open upvalue of the running closure points below the running frame or into another stack, never into a frame that does not exist yet). It would need a second copy of the
+   body prefix (poll, budget, `SLOAD n`, guard) that enters behind the chain, with snapshot / RA bookkeeping for the copy, and is worth about -6 % instructions / -2.5 % cycles on fib and nothing elsewhere (towers
+   uses method calls, no upvalue callee). *The continuation's chain cannot be hoisted without a family invariant* (no `SETUPVAL` of the callee upvalue in any trace reachable natively from the subtree that ran in
+   between, nor in any helper-called Lua code), which is what C70 (b) already concluded. Not built: complexity (a second assembled body) against 2.5 % cycles on one program shape.
+2. **POLL only at function-entry loop tops (CP3 retest).** Fragments that end in a native push through a link cell (continuations) without their own poll: fib 7780 -> 7663 M (-1.5 %), cycles 1250 -> 1225 (-2.1 %),
+   towers 900 646 -> 638 cycles. Also dropping the poll of native-return fragments: 7546 M (-3.0 %), cycles 1217 (-2.3 %). So CP3's cycle loss of C68 was layout, as suspected.
+   **Not built because soundness is not arguable:** a native push does not run `luaD_precall`'s hook test. The poll in front of every push is what makes a pending hook (`TRACE_POLL` is also set by `sethook`
+   from a finalizer or another coroutine) stop the native chain. If the continuation's poll is dropped, the push goes through `rec_link_cell`, whose target is the entry trace only while that trace is installed:
+   with a counting stub or tier 1 behind the cell nothing polls and the callee frame starts without its call hook. Making it sound needs the continuation to depend on the entry trace (flush with it) or a poll in the
+   counting stub; the return fragments would in addition delay an interrupt by the length of an unwinding chain (bounded by the stack depth, but visible to the hook-timing tests).
+3. **Fusing the return guards and the pop** (the guard loads `previous` / `savedpc` and tests the sites; the pop loads them again and walks the same sites): 5..8 instructions per return by reserving `V1`..`V3`
+   across the body (`ra::op_clobbers` on `BUDGET` of `rec_ret` traces, reload after a helper call). Not built: about 2 % of fib, an allocator constraint on every return trace.
+4. **Direct return links / never-zero rec cells** (`movabs; jmp [cell]` instead of `movabs; mov; cmp; je; jmp`): 3 instructions per dispatch, needs a per-trace fallback target in the shared cell or patching on
+   flush. Not built: the cells are shared by every trace of the head, a null cell is the "no trace" signal of `lazy_rec_jump` and `cache.rs`.
+5. **CP4 (first-flag store)** stays unsound (docs/JIT_PARKED.md C68): the flag lives in the shared exit area, nothing clears it when a region is left.
+
+### 21.4 Results (base 5855559 vs this branch, release, instructions M / cycles M, one run, cycles +-2 %)
+
+| program | instructions | cycles |
+|---|---|---|
+| fib 37 | 8210 -> 7780 (-5.2 %) | 1247 -> 1249 (3-run: 1263..1294 vs 1263..1268) |
+| towers 900 | 2919 -> 2897 (-0.8 %) | 642 -> 643 |
+| binary_trees | 7468 -> 7304 (-2.2 %) | 1551 -> 1504 |
+| queens (programs) | 5528 -> 5391 (-2.5 %) | 1875 -> 1857 |
+| fannkuch / spectral_norm / matmul / mandelbrot / nbody / awfy nbody | -0.5 / 0 / 0 / -0.3 / -0.4 / -0.4 % | noise |
+| richards / deltablue / havlak / raytrace 40 / cd 20 / list 7000 | -0.6 / -0.3 / 0 / -0.4 / -0.5 / -0.6 % | havlak 147 -> 150..158 and raytrace +-3 % at equal instructions: layout noise in the repeats |
+| lru_cache / roguelike_turns / game_loop / json / bounce / field_method / oop_methods / awfy towers / awfy queens | -0.6 / -0.6 / 0 / -0.1 / -0.6 / 0 / 0 / -0.5 / -0.8 % | noise |
+
+No program is above +0.0 % instructions. The H7 estimate (-15..25 %) is not reached: the sound part is -5 %; the rest of the estimate is the identity chain (ceiling -12 %, 2.5 % cycles reachable locally)
+and the poll (ceiling -3 %, unsound as stated).

@@ -10,7 +10,7 @@ CPUs 0-1). A step waits while the load average is above 24 (`GATE_LOAD_MAX`).
 | Script | When | What | Wall time |
 |---|---|---|---|
 | `scripts/gate-light.sh [pattern]` | every commit | fmt, clippy (5.5, 5.5 rn-jit with the test features, 5.4), rn-jit `--features trace` suite on 5.5 and 5.4, `vm_corpus` + rn-cli tests, jit-diff 1-50 (3 modes), mutant groups matching `pattern` | 5.4 min (324 s: suites 137 s + 132 s, vm_corpus 45 s) |
-| `scripts/gate-heavy.sh` | before merge / push | light + oracle-feature suite 5.5 and 5.4 + `oracle_options` + jit-diff 1-200 (7 modes) + all 720 mutants | 66 min (3964 s) |
+| `scripts/gate-heavy.sh` | before merge / push | light + oracle-feature suite 5.5 and 5.4 + `oracle_options` + jit-diff 1-200 (7 modes) + all 723 mutants | 66 min (3964 s) |
 
 ```
 scripts/gate-light.sh [MUTANT_PATTERN[,..]] [--no-54] [--seeds 1-50]
@@ -34,7 +34,7 @@ tests: 4 in the trace suite, 3 in the oracle suite), `GATE_BIN_PAR` / `GATE_THRE
   with a pattern argument, the mutant groups whose name contains it (`gate-light.sh cofuse_,amt_`: `TR_MUT_ONLY`).
 - Heavy (before merge / push) = light + the rn-jit suite with `--features tr_mutants,t15_oracle` on 5.5 and 5.4 (this is where
   `tr_identity`, `t15_oracle`, `instruction_count_identity` and the oracle-gated `tr_core` tests run) + `oracle_options` sharded + `jit-diff`
-  1-200 with the seven modes `off tr tron trdef trdefon trverify trstorm` (`JITDIFF_ENTERS=1`) + the full mutant runner (720 mutants).
+  1-200 with the seven modes `off tr tron trdef trdefon trverify trstorm` (`JITDIFF_ENTERS=1`) + the full mutant runner (723 mutants).
 - Not in any gate: `oracle_exits` and `oracle_trace_modes` (`ORACLE_TESTS=oracle_options,oracle_exits,oracle_trace_modes` or `--tests` adds
   them: same cost as `oracle_options`), `tr_core::mutants_are_caught_by_live_programs` (one test, over 30 minutes, contains the documented
   `rolled_no_writeback` hang; every one of its mutants is covered by the sharded runner), `scripts/asan-jit.sh`, GC-stress / hook sweeps,
@@ -67,7 +67,7 @@ shards); every number is a measured wall time except where it says "documented".
 | `vm_corpus` + rn-cli tests (release) | 86 s (19 s build) | 45 s (warm) |
 | jit-diff 1..40, 7 modes | 3 s | 3 s (1..200: 14 s) |
 | `oracle_options` (3714 jobs) | 2035 s (3 workers) | 604 s (14 workers; 601 / 652 / 696 s in the other configurations) |
-| mutant runner, all 720 | 50 min documented (3 shards x 2 x 2), 3000 s | 1852 s (1 process, 7 mutants x 2 workers, longest first; 2057 s unordered) |
+| mutant runner, all 723 | 50 min documented (3 shards x 2 x 2), 3000 s | 1852 s (1 process, 7 mutants x 2 workers, longest first; 2057 s unordered) |
 | `scripts/asan-jit.sh` (not in a gate) | 1242 s measured (one run, unchanged; load 1-3 for most of it: the corpus sections are serial) | unchanged; the `tr_*` step of that run ended with `Terminated` (SIGTERM from outside the script, cause not found) after the official suites, the corpus differentials, the stack-move stress, the `rn-jit --features jit` tests and `t15_stress` had passed |
 | full gate, all of the above in sequence | about 2 h 05 min (sum) | 66 min (3964 s) |
 | light-equivalent (fmt, clippy, trace 5.5 + 5.4, vm_corpus, jit-diff) | about 7 min | 5.4 min |
