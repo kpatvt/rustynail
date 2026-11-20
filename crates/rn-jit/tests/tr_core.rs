@@ -4970,9 +4970,22 @@ fn pm3_programs_run_on_traces() {
         j.limits = l.into();
         jobs.push(j);
     }
+    // K4: with `cispare` bit 2 (the default) the entry of a root extends the `CallInfo` chain by the trace's depth, which hides the missing check at an
+    // inner entry (mutant `rec_inner_room_skip`): every job without limits runs once more with the C36 behaviour (`cispare=1`), which keeps the chain as
+    // short as a tier-1 frame leaves it
+    let again: Vec<Job> = jobs
+        .iter()
+        .filter(|j| j.limits.is_empty())
+        .cloned()
+        .map(|mut j| {
+            j.limits = "recnat=1,cispare=1".into();
+            j
+        })
+        .collect();
     for j in jobs.iter_mut().filter(|j| j.limits.is_empty()) {
         j.limits = "recnat=1".into();
     }
+    jobs.extend(again);
     compare(jobs);
 }
 
