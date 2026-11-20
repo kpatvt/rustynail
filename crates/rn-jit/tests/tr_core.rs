@@ -3148,6 +3148,7 @@ fn r2_recursion_programs() {
                 "recnat=1,recany=1,unroll=4,maxdepth=6",
                 "recnat=1,recany=1,loopunroll=2",
                 "recnat=1,recany=1,maxside=0",
+                "recnat=1,recany=1,lazyci=0",
                 "recnat=0",
             ] {
                 let mut j = Job::new(p, trace);
@@ -3387,6 +3388,11 @@ fn b2_programs() {
         let mut j = Job::new("b2_backend", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
         j.limits = String::new();
         jobs.push(j);
+        // `hkaddr=0`: the `HREFK` address is a value of its own (`lea d, [node + idx * 24]`, mutant `b2hk_lea_off`); with the default the
+        // address is folded into the `HLOAD` / `HSTORE` users and that `lea` is not generated.
+        for opts in ["+verify", "+exitstorm=3 +verify"] {
+            jobs.push(Job::new("b2_backend", trace).opts(opts).limits_s("hkaddr=0"));
+        }
     }
     let res = compare(jobs);
     for (j, o) in &res {
@@ -4955,6 +4961,17 @@ fn pm3_programs_run_on_traces() {
     for trace in ["always", "on2"] {
         jobs.push(Job::new("bm_rec_top", trace).opts("+verify"));
         jobs.push(Job::new("bm_rec_top", trace).opts("+exitstorm=3"));
+    }
+    // Eager frames (`lazyci=0`): the push stores `top`, `callstatus`, ... by hand (mutants `rec_push_top_off`, `rec_push_callstatus_off`). With the
+    // process default (`lazyci=1`) every loop-free recursion here is lazy and the eager push is not generated: these jobs are its only detectors.
+    for p in ["pm3_rec", "bm_rec_top", "r2_rec"] {
+        for trace in ["always", "on2"] {
+            for opts in ["+verify", "+exitstorm=3"] {
+                let mut j = Job::new(p, trace).opts(opts);
+                j.limits = "recnat=1,lazyci=0".into();
+                jobs.push(j);
+            }
+        }
     }
     for gc in ["1", "2"] {
         let mut j = Job::new("pm3_rec", "always").opts("+verify");
