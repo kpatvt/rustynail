@@ -100,8 +100,10 @@ pub fn run(ir: &mut TraceIr) -> usize {
             let x = ir.ins[j];
             let in_group =
                 |r: Ref| TraceIr::is_ins(r) && members.contains(&((r - REF_BIAS) as usize));
-            let member =
-                x.op == TOp::Newref && x.a == t && x.aux & nrplan::INLINE == 0 && x.aux & nrplan::NOTE != 0;
+            let member = x.op == TOp::Newref
+                && x.a == t
+                && x.aux & nrplan::INLINE == 0
+                && x.aux & nrplan::NOTE != 0;
             let ok = match x.op {
                 TOp::Newref => member,
                 TOp::Ne => in_group(x.a) && ir.kval(x.b) == KVal::Int(0) && !TraceIr::is_ins(x.b),
