@@ -167,6 +167,8 @@ pub const CHAINN_PROCESS: u32 = 65536;
 /// BUNDLE-C (`sbump`): process value of [`TrLimits::sbump`] (K3a: also the struct default): extra recursion unroll granted to the retry of a side attempt
 /// whose previous attempt on the same exit ended `SideShort` inside inlined frames.
 pub const SBUMP_PROCESS: u32 = 1;
+/// K3 (`fretry`): process value of [`TrLimits::fretry`] (also the struct default): the retry of a side attempt inside inlined frames whose previous attempt ended `SideShort` is not held to `framemin`.
+pub const FRETRY_PROCESS: u32 = 1;
 /// BUNDLE-D (`ccalls`): process value of [`TrLimits::ccalls`] (K3a: also the struct default). **1:** all 223 programs cycles 1.000 / instructions 0.999,
 /// `corpus/class_middleclass` 0.890, `programs/metamethods` 0.933, `corpus/astar_jumper` 0.975, nothing above noise (docs/PERF.md "BUNDLE-D"); `ccalls=0` turns it off.
 pub const CCALLS_PROCESS: u32 = 1;
@@ -436,6 +438,9 @@ pub struct TrLimits {
     /// ([`SideStart::ubump`]). The common case: a stitch exit at the recursion limit; a side trace starting AT the limit stitches again at its first call and is too short
     /// by construction, so the exit is blacklisted and storms in tier 1 (`regex_nfa`: two exits of 1 M each). 0 = off; default [`SBUMP_PROCESS`] (process and tests).
     pub sbump: u32,
+    /// K3: a side recording that starts inside inlined frames at an exit whose previous attempt ended `SideShort` (an exit that stayed hot: it was taken
+    /// another `fck x hot_exit` times) is not held to `framemin` (0 = off; default [`FRETRY_PROCESS`]). The first attempt keeps the cost control of H1.
+    pub fretry: u32,
     /// BUNDLE-D (`ccalls`): the `LIB CCALLS` C-stack check is inline loads and a compare (the helper stays the slow path that answers 0 near the limit) (default [`CCALLS_PROCESS`], in a process and in the tests).
     pub ccalls: u32,
     /// BUNDLE-Q (`t1q`): bit mask of the tier-1 exits removed (1 = `EQ` of objects without a real `__eq` call, 2 = float `MOD`, 4 = BUNDLE-S `__index` Lua function frames, 8 = BUNDLE-S `__newindex` Lua function frames); bit 7 (0x80) = named explicitly (then it also applies
@@ -671,6 +676,7 @@ impl Default for TrLimits {
             hoptop: HOPTOP_PROCESS,
             second: SECOND_PROCESS,
             sbump: SBUMP_PROCESS,
+            fretry: FRETRY_PROCESS,
             ccalls: CCALLS_PROCESS,
             armm: ARMM_PROCESS,
             f2ifl: F2IFL_PROCESS,
@@ -851,6 +857,7 @@ impl TrLimits {
                 "hoptop" => l.hoptop = v.min(100),
                 "second" => l.second = v.min(3),
                 "sbump" => l.sbump = v.min(4),
+                "fretry" => l.fretry = v.min(1),
                 "ccalls" => l.ccalls = v.min(1),
                 "armm" => l.armm = v.min(1),
                 "f2ifl" => l.f2ifl = v.min(1),
@@ -2974,6 +2981,14 @@ fn side_failed(
     }
 }
 
+/// K3 (`fretry`): is the side attempt at an exit inside inlined frames (`framed`) whose previous attempt ended `last` exempt from `framemin`? Only the retry after `SideShort`.
+pub fn fretry_due(fretry: u32, last: Option<&'static str>, framed: bool) -> bool {
+    if mutants::active("fretry_always") {
+        return fretry != 0 && framed;
+    }
+    fretry != 0 && framed && last == Some("SideShort") && !mutants::active("fretry_never")
+}
+
 /// BUNDLE-D (`sbump2`): the extra recursion unroll of the next side attempt at an exit inside inlined frames (`framed`) whose last attempts (`fails` of them, the last
 /// ended `last`) were cut by the recursion / depth limits: one more level per failed attempt, at most `sbump2` (0 = off). Counters only, per exit.
 pub fn sbump2_extra(sbump2: u32, last: Option<&'static str>, fails: u32, framed: bool) -> u32 {
@@ -4281,6 +4296,8 @@ pub struct SideStart {
     pub max_ci: u8,
     /// BUNDLE-C: extra recursion unrolls for this recording (see [`TrLimits::sbump`]).
     pub ubump: u32,
+    /// K3 (`fretry`): the side trace may be shorter than `framemin` (the previous attempt at this exit ended `SideShort`).
+    pub fretry: bool,
     /// N3a: record without `RETF` (an earlier recording from this exit that used it failed).
     pub no_retf: bool,
     /// R1 (`regcarry`): the slots the exit's inline stub hands over in registers when a carry entry is attached (slot, type, where the exit map has the value);
@@ -4943,6 +4960,7 @@ fn side_attempt(
     } else {
         Vec::new()
     };
+    let fretry;
     let ubump = {
         let d = d_of(st);
         let (last, fails) = match d.tr.slot(id) {
@@ -4956,6 +4974,7 @@ fn side_attempt(
             _ => (None, 0),
         };
         let retry = matches!(last, Some("SideShort" | "Recursion"));
+        fretry = fretry_due(d.tr.cfg.limits.fretry, last, !frames.is_empty());
         let base = if d.tr.cfg.limits.sbump != 0
             && retry
             && !frames.is_empty()
@@ -4981,6 +5000,7 @@ fn side_attempt(
             max_extent: pextent,
             max_ci: pdepth,
             ubump,
+            fretry,
             no_retf,
             carry,
         },

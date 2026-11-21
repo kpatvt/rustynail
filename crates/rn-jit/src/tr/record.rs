@@ -1864,7 +1864,7 @@ impl Rec {
         let mut retf_stop = false;
         if self.cfg.side.is_some() {
             match reached_head {
-                None if frame_head => {
+                None if frame_head && !self.frame_link_short() => {
                     // C38 slice 1 (`sidenest`): a callee loop head with a root trace ends the side trace with the linking exit
                     if self.pcall.is_some() {
                         return Err(AbortReason::CFunc);
@@ -5274,6 +5274,22 @@ impl Rec {
                 Ok(((r, ty), v))
             }
         }
+    }
+
+    /// K3: a side recording that reached the loop head of a callee frame with a root trace after fewer than `sidemin` bytecodes does not link (a
+    /// side that ends at once behind a hop is dearer than tier 1) and does not abort `SideShort` either: it goes on through the loop like at a
+    /// head without a trace (the callee's loop is unrolled per recording, `loopunroll`). The exit it hangs off would otherwise stay in tier 1 for
+    /// the rest of the loop.
+    fn frame_link_short(&self) -> bool {
+        if mutants::active("frame_short_aborts") {
+            return false;
+        }
+        let n: u32 = self.cost.iter().sum();
+        let min = self.cfg.side.as_ref().map_or(0, |s| s.min_len);
+        n < min
+            && self.cfg.loop_unroll != 0
+            && self.inl_back.get() < self.cfg.loop_unroll
+            && !mutants::active("side_short_ignored")
     }
 
     /// R2: a side recording of a function-entry family with native recursion (`recany`) crosses the back edge of a `for` loop of the root

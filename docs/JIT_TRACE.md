@@ -2740,3 +2740,85 @@ holds). Not a K1 / K2 defect: with the mixed `min`/`max` path switched off the f
 `run2("max"|"min"|..., f_max|f_min, ...)` lines, which contain no change K1 can see), and a family of other reductions (constant arguments, integer-only lists) flips between pass and fail: a formation lottery of the
 exit-storm job in the swap / hook tail of the program. K1 shifts the lottery; the job is listed as KNOWN in `scripts/gate-known.txt` (oracle class) with this note. Not investigated further (it needs the oracle's
 checkpoint model for tier-1 stays under `budget=3`).
+
+## 27. K3 / K4: side traces for loop exits inside inlined frames (2026-11-20, base b8aeacc)
+
+Handles K3 and K4 of docs/STUDY_COVERAGE.md (classes C5 / C3). K3 is shipped (two small rules, `awfy/list` -21 % cycles / -27 % instructions); K4 was prototyped in two forms and **not shipped**
+(no gain on its targets, one form a regression); numbers below.
+
+### 27.1 What was wrong (list)
+
+`tail`'s function-entry root trace holds an unrolled copy of `isShorterThan`'s loop with five frame exits (the loop test and the two `nxt` loads of the last unrolled iterations, `S14-S18`).
+Every exit is hot (32 M exits in `list 7000`) and every side recording from them died `SideShort` at `L21:10 Jmp`. Two independent causes:
+
+1. The side recording runs `GETFIELD`, `JMP` (back edge) and reaches `isShorterThan`'s loop head `pc 2`, which has a root trace (`sidenest`: the frame-linking exit). That path
+   is 2-3 bytecodes, below `sidemin` (4): `SideShort`. For a side that starts inside inlined frames the alternative to the short side is not "a few bytecodes in tier 1" but the whole rest of the loop in
+   tier 1 (the exit materialises the frames and tier 1 runs on), so the `sidemin` rule does not describe its cost.
+2. The recordings that get past that end at `tail`'s root `RETURN` after about 6 bytecodes: `end_exit` with frames refuses it (`framemin` = 8, H1: a side trace that starts inside frames and ends at a
+   stitching exit with fewer bytecodes is `SideShort`; it exists to keep `expr_lang` from compiling 24 extra short side traces).
+
+### 27.2 K3a: a short path at a callee loop head goes on (`Rec::frame_link_short`)
+
+In `on_step` the `frame_head` arm (a side recording inside an inlined frame reaching a loop head with a root trace) used to abort `SideShort` when fewer than `sidemin` bytecodes were recorded.
+Now, when that is the case and the frame's loop budget is not spent (`loopunroll`, `inl_back`), the arm is skipped and the recording continues exactly as at a loop head **without** a root trace
+(the callee's loop is unrolled per recording, the existing P-E / M1 path: `target` counts the back edge, `InnerLoop` beyond `loopunroll`). No new recording machinery: only the case that used to abort is
+routed into the existing one, so snapshots, regcarry cells, sunk tables and `lazy_root` behave as for every unrolled side recording. Mutant `frame_short_aborts` (restores the abort).
+Alone this gives `list` 2036 -> 1800 Mcyc.
+
+### 27.3 K3b: the retry is not held to `framemin` (`fretry`)
+
+`framemin` keeps its job for the first attempt. An exit whose previous attempt ended `SideShort` (`t.last[k]`; it stayed hot: the exit counter was reset and reached the threshold again, `fck x hot_exit` exits)
+gets its next attempt with `frame_min = 0` (`SideStart::fretry`, `cache::fretry_due`; limit `fretry`, default 1, process and struct). With `fck=64` an exit is attempted only after about
+1000 hot exits, which is the evidence that the short path pays; the `expr_lang` cost that `framemin` protects is paid once per exit only after that. Mutants `fretry_never` (no exemption) and
+`fretry_always` (first attempts exempt too, i.e. `framemin=0`). Together with K3a: `list` 2036 -> 1598 Mcyc (`framemin=0` and `sidemin=0` give the same 1606 / 1606: nothing is lost by the retry gating).
+`sidenest=0,sidemin=0,framemin=0` (the side recordings unroll instead of linking) is also 1629: the link into the callee's root trace was never the gain, the unrolled continuation is.
+
+### 27.4 K4: not shipped
+
+K4 asked for ending a side recording at a traced loop head of the same frame instead of aborting `InnerLoop` / `TooLong[sideins]`. Two prototypes, both measured and reverted:
+
+* **`preplink`**: a side recording at a `FORPREP` of an inlined frame with data-dependent bounds records the prep (guards, loop registers in the exit snapshot) and the next step links to the root trace
+  of the loop head behind it (the `InnerLoop` abort of `raytrace` loop `pc 84`, `L63:10 Forprep`, 4 -> 0). Sound by construction (it reuses `close_frame_link`; the recorded dynamic count never reaches a
+  `FORLOOP`: a non-link next step aborts `InnerLoop` as before) but **no effect**: raytrace 40 1181 -> 1183 Mcyc (instructions -0.1 %), deltablue 1212 -> 1206, cd 2864 -> 2844 (K3 alone), i.e. noise.
+  The aborting sites are not where the time goes: after `preplink` the same loop's sides end `SideShort` at `L63:114 Forloop` (a 3-bytecode path into the lights loop head, below `sidemin`; `sidemin=0` does
+  not move cycles either: 1181 / 1169). `nest=2` (root recordings frame-link too, `render` / `Constraint:satisfy` `InnerLoop` at `Forprep`) also gives nothing: deltablue 1217 / 1212, raytrace 1188 / 1171
+  against 1206 / 1181.
+* **`sidecut`**: a side recording that exceeds `MAX_SIDE_INS` after 24 steps ends with a stitching exit before the instruction (the continuation is a side trace of that exit: a chain) instead of
+  `TooLong[sideins]`. Raytrace's loop `pc 11` exit has about 2000 IR of inlined `vec` / `V:add` constructors before the next loop head. Result: raytrace 100 2842 -> 2923 Mcyc (+2.8 %), instructions -1 %;
+  the family hits `maxside` (22 `MaxSide` side aborts in `raytrace 40`) and every cut materialises the live sunk tables and frames at the stitching exit. Cycles worse: not shipped. Raising `MAX_SIDE_INS`
+  stays as the study found (worse).
+
+So the raytrace / deltablue estimates of K4 (-10..15 % / -5..8 %) are not reachable by these rules; what is left there is C1 (headless callees behind tier-1 callers: `vec` 14.5 %, `V:add` 9.7 %,
+table constructors) and the side-aborts that are not exit-path problems (`TooLong` from the size of the inlined constructors).
+
+### 27.5 Measurements
+
+Release `rn-cli` (JIT on), `RUSTYNAIL_SEED=0`, `taskset -c 4`, `perf stat cycles:u,instructions:u`, min of 5 serial runs, both binaries copied to the same path before every run; base b8aeacc against this branch.
+
+| program | Mcycles base -> K3 | Minstr base -> K3 |
+|---|---:|---:|
+| awfy/list 7000 | 1993 -> 1573 (**-21.1 %**) | 10249 -> 7438 (**-27.4 %**) |
+| awfy/cd 20 | 2888 -> 2849 (-1.4 %) | 10767 -> 10717 (-0.5 %) |
+| awfy/deltablue 400 | 1218 -> 1223 (+0.4 %) | 4516 -> 4516 |
+| awfy/richards 500 | 803 -> 812 (+1.1 %) | 2828 -> 2828 |
+| awfy/permute 3000 | 1162 -> 1163 | 7035 -> 7035 |
+| awfy/havlak | 158 -> 157 | 510 -> 510 |
+| apps/raytrace 40 / default | 1198 -> 1180 / 116 -> 116 | 4619 -> 4618 / 380 -> 380 |
+| apps/expr_lang | 136 -> 137 (+0.7 %) | 560 -> 561 (+0.2 %) |
+| nbody 1000000, fib 32, binary_trees 14 | 343 -> 342, 111 -> 110, 303 -> 302 | 2160, 703, 1547: identical |
+| bounce, json, queens, sieve, storage, towers, mandelbrot (awfy) | +-0.0 | identical (json -0.4 %) |
+| apps/events, lru_cache, markdown | +0.6, +0.7, -1.7 % (noise: identical instructions) | identical |
+| programs/fannkuch, heapsort, oop_methods, spectral_norm, metamethods, closures, string_ops, matmul | -0.3 .. +1.7 % (noise) | identical |
+
+Deltablue and richards are unchanged in instructions: their `LeaveFrame` side aborts (`Plan:execute` `L216:9 Return0`: the loop exits into the function's `RETURN`) are exits of the *root* frame, not
+frame exits, and K3 does not touch them (the `retf` machinery owns that path).
+
+### 27.6 Tests, mutants
+
+* `tr_core::k3_frame_loop_programs` (program `tests/vm/k3_01_frame_loop_exits.lua`: the `list` shape plus a callee `while` loop with several early returns called from a numeric `for`): same output as the
+  interpreter in `always` / `on2` with `+verify`, exit storms, budget 17, GC stress 2, emulator, with `fretry=1/0`, `framemin=8/0`, `sidemin=4/0`. Assertions: the retry installs more side traces than `fretry=0`
+  (`fretry_never`), records more than `framemin=0` (`fretry_always`), and `sidemin=4` installs about as many side traces as `sidemin=0` in `always` (`frame_short_aborts`).
+* Mutants: 740 -> **743** (`frame_short_aborts`, `fretry_never`, `fretry_always`; registry count in `mutants.rs`, rows in `tests/tr_mutants.rs`, `scripts/gate-mutant-map.tsv` regenerated). All three are caught by
+  the detector above (checked one by one with `RUSTYNAIL_JIT_MUT`).
+* Oracle: every program of `PROGS` is an oracle job, so `k3_01_frame_loop_exits` is covered by `oracle_options` in every cell.
+* New limit `fretry` (default 1) parsed in `TrLimits::parse`.

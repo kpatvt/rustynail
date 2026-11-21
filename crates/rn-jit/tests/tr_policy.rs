@@ -1845,6 +1845,30 @@ fn k2_policy() {
     }
 }
 
+/// K3: the `fretry` knob (the retry of a `SideShort` frame attempt is not held to `framemin`): default 1 in the tests and in a process, 0 turns it off, capped at 1;
+/// `fretry_due` applies it only to a framed exit whose last attempt ended `SideShort`.
+#[test]
+fn k3_policy() {
+    use rn_jit::tr::cache::{fretry_due, TrConfig, TrMode, FRETRY_PROCESS};
+    assert_eq!(FRETRY_PROCESS, 1);
+    assert_eq!(TrConfig::for_mode(TrMode::On).limits.fretry, FRETRY_PROCESS);
+    for (env, want) in [
+        (None, 1),
+        (Some("framemin=0"), 1),
+        (Some("fretry=0"), 0),
+        (Some("fretry=7"), 1),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.fretry, want, "limits env {env:?}");
+    }
+    assert!(fretry_due(1, Some("SideShort"), true));
+    assert!(!fretry_due(0, Some("SideShort"), true));
+    assert!(!fretry_due(1, Some("SideShort"), false));
+    assert!(!fretry_due(1, Some("Recursion"), true));
+    assert!(!fretry_due(1, None, true));
+}
+
 /// BUNDLE-F: `stitch0` and `fibdiet` are 0 in the struct default (tests) and the `*_PROCESS` constants in a process; a named value wins and the two are
 /// independent of each other.
 #[test]

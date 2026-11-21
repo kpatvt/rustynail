@@ -16029,4 +16029,9 @@ print(r[1], r[60], #full, #half, #hole)
         small: false,
         src: include_str!("../../../../tests/vm/k2_04_nonrecursive_methods.lua"),
     },
+    Prog {
+        name: "k3_01_frame_loop_exits",
+        small: false,
+        src: include_str!("../../../../tests/vm/k3_01_frame_loop_exits.lua"),
+    },
 ];

@@ -1948,7 +1948,8 @@ fn h1_int_keys_do_not_exit_per_key() {
 fn h1_frame_side_thresholds() {
     let job = |lim: &str| {
         let mut j = Job::new("h1_towers_piles", "always").opts("+verify");
-        j.limits = format!("{H1_PROC},{lim}");
+        // (K3: `fretry=0`: the retry of a short attempt is exempt from `framemin`, which this test is about)
+        j.limits = format!("{H1_PROC},fretry=0,{lim}");
         j
     };
     let res = compare(vec![
@@ -5788,7 +5789,7 @@ fn sinkf_side_alloc_failure_raises_memory_error() {
 fn sinkroot_programs() {
     // (the shipped process defaults of the recorder that make the producer / consumer closures traceable; `second=0`: the shipped second chance
     // of a blacklisted head would also keep the head of the `sinkroot=0` run out of the blacklist, which is what this test counts)
-    const BASE: &str = "recnat=1,recany=1,loopany=1,loopanymax=4,second=0,sinkside=0";
+    const BASE: &str = "recnat=1,recany=1,loopany=1,loopanymax=4,second=0,sinkside=0,fretry=0";
     let mut jobs = Vec::new();
     for p in ["sinkroot_pre", "sinkf_side"] {
         for sr in ["sinkroot=0", "sinkroot=1", "sinkroot=2"] {
@@ -7746,6 +7747,102 @@ fn k2_methrec_programs() {
             fs(&off),
             fs(&on),
             "[{trace}] a non-recursive function is not marked"
+        );
+    }
+}
+
+/// K3: side traces for loop exits inside inlined frames (program `k3_01_frame_loop_exits`: the awfy `list` shape, a callee `while` loop unrolled by the root
+/// trace of its caller, and a second loop with several early returns). Same output as the interpreter in every mode (lockstep, exit storms, budgets, GC stress,
+/// emulator). Two rules, each with its own limit and mutants:
+/// * a side recording inside inlined frames that reaches the loop head of a callee frame with a root trace after fewer than `sidemin` bytecodes goes on through
+///   the loop instead of aborting `SideShort` (detector of `frame_short_aborts`: `sidemin=4` installs about as many side traces as `sidemin=0`);
+/// * `fretry=1`: the retry of a side attempt inside frames whose previous attempt ended `SideShort` is not held to `framemin` (detectors of `fretry_never`:
+///   more side traces are installed than with `fretry=0`; `fretry_always`: the first attempts are held, so more recordings are made than with `framemin=0`).
+#[test]
+fn k3_frame_loop_programs() {
+    let p = "k3_01_frame_loop_exits";
+    let base = "sidemin=4";
+    let lims = [
+        format!("{base},framemin=8,fretry=1"),
+        format!("{base},framemin=8,fretry=0"),
+        format!("{base},framemin=0,fretry=0"),
+        "sidemin=0,framemin=0,fretry=0".to_string(),
+    ];
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for (i, lim) in lims.iter().enumerate() {
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            if i != 0 {
+                continue;
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        }
+    }
+    let res = compare(jobs);
+    let find = |trace: &str, lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.trace == trace && j.limits == lim && j.opts == "+verify" && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
+    };
+    for trace in ["always", "on2"] {
+        let (a, b, c, z) = (
+            find(trace, &lims[0]),
+            find(trace, &lims[1]),
+            find(trace, &lims[2]),
+            find(trace, &lims[3]),
+        );
+        let ss = |s: &TStats| s.side_aborts.get("SideShort").copied().unwrap_or(0);
+        eprintln!(
+            "k3 [{trace}] sidemin 4 / 0 (framemin 0, no retry): SideShort {} / {}, installed {} / {}",
+            ss(&c),
+            ss(&z),
+            c.side_installed,
+            z.side_installed
+        );
+        eprintln!(
+            "k3 [{trace}] retry: {} sl {} | no retry: {} sl {} | framemin 0: {} sl {}",
+            a.line(),
+            a.side_links,
+            b.line(),
+            b.side_links,
+            c.line(),
+            c.side_links
+        );
+        if trace == "always" {
+            // (K3a: the short side paths that reach a callee loop head with a root trace go on: `sidemin=4` loses almost no side trace against `sidemin=0`)
+            assert!(
+                c.side_installed + 3 >= z.side_installed,
+                "[{trace}] a short side path that reaches a callee loop head aborts: {} vs {}",
+                c.side_installed,
+                z.side_installed
+            );
+        }
+        assert!(
+            a.side_installed > b.side_installed,
+            "[{trace}] fretry=1 installs more side traces than fretry=0: {} vs {}",
+            a.side_installed,
+            b.side_installed
+        );
+        // (5.4 `on2`: the formation of the two runs records the same number)
+        assert!(
+            a.side_recorded > c.side_recorded || trace != "always",
+            "[{trace}] the first attempts are held to framemin: {} vs {}",
+            a.side_recorded,
+            c.side_recorded
         );
     }
 }

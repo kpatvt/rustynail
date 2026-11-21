@@ -3136,6 +3136,21 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "c38_side_programs")],
     },
     Row {
+        name: "frame_short_aborts",
+        owner: "K3",
+        dets: &[d("tr_core", "k3_frame_loop_programs")],
+    },
+    Row {
+        name: "fretry_never",
+        owner: "K3",
+        dets: &[d("tr_core", "k3_frame_loop_programs")],
+    },
+    Row {
+        name: "fretry_always",
+        owner: "K3",
+        dets: &[d("tr_core", "k3_frame_loop_programs")],
+    },
+    Row {
         name: "sbump_never",
         owner: "BUNDLE-C",
         dets: &[d("tr_core", "bc_sbump_programs")],

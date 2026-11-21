@@ -661,6 +661,11 @@ pub const NAMES: &[&str] = &[
     "inner_retry_unbounded",
     // C38: `sidenest`
     "side_frame_link_never",
+    // K3: a side recording that reaches a callee loop head with a root trace before `sidemin` bytecodes goes on through the loop; `fretry` (the retry of a
+    // `SideShort` frame attempt is not held to `framemin`)
+    "frame_short_aborts",
+    "fretry_never",
+    "fretry_always",
     // BUNDLE-C: `sbump` (the retry of a side attempt that ended `SideShort` unrolls one level deeper) and `fnpromo` (per-site function roots)
     "sbump_never",
     "fnpromo_never",
@@ -965,7 +970,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 740);
+        assert_eq!(NAMES.len(), 743);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

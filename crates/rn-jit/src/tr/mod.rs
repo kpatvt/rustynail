@@ -811,7 +811,7 @@ pub fn driver_start_side(
             frames: start.frames.clone(),
             max_extent: start.max_extent,
             max_ci: start.max_ci,
-            frame_min: cfg.limits.framemin,
+            frame_min: if start.fretry { 0 } else { cfg.limits.framemin },
             carry: start.carry.clone(),
         }),
         loop_unroll: cfg.limits.loopunroll,
