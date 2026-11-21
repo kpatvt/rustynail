@@ -2970,3 +2970,87 @@ runs lay out the heap differently**, so anything that depends on an object's add
 
 * Programs `tests/vm/k7_01_aref_phi.lua` (`tr_core::k7_aref_phi_programs`), `bb_tset_tkey` (in `bb_tset_programs`). Mutant `aref_phi_cse` (caught by `k7_aref_phi_programs`): registry 746 -> **747**
   (`mutants.rs`, `tests/tr_mutants.rs` row, `scripts/gate-mutant-map.tsv` regenerated).
+
+## 30. L1 / L2: inline `string.byte` of external strings, the first two keys of a fresh table (2026-11-21, base 1e3a827)
+
+Handles of docs/STUDY_LUAJIT_GAP.md (the study of the programs still weak against LuaJIT: permute, fib, raytrace, cd, lua_lexer, classic_vector).
+Two built; the larger ones that study ranks (P1 presize from recorded `NEWREF`s, S1 lazy inline exit stubs, L3 recorded pattern `find`) are not built
+(reasons and estimates there). Registry 747 -> 749.
+
+### 30.1 L1 (`bytext`): `string.byte` of long strings with external bytes
+
+`Asm::byte_fast` (F2) read only regular long strings (`shrlen == -1`) inline and called the `ALLOC_LIB` helper for every other long kind. In 5.5 a library
+buffer longer than `BUFFER_STR_MIN` (1024 bytes) is adopted without a copy: `table.concat`, `string.pack`, `string.dump` results are **external** strings
+(`LSTRMEM`, `shrlen == -3`; `LSTRFIX` -2 from the C API), whose bytes are behind a pointer at the contents offset, and `push_filled` results
+(`string.rep`, ...) are library-buffer strings (`shrlen == -4`, bytes inline). `corpus/lua_lexer` lexes a 138904-byte `table.concat` result: 8.05 M
+`string.byte` helper calls, `jit_tr_alloc` 17.9 % of the cycles. Now the inline form dispatches on the kind byte: -1 / -4 read behind the header as before, -2 / -3
+load the pointer and read through it (the same bound checks against the length at `u.len`, which every long kind keeps), anything else (none exists) takes
+the helper. 5.4 copies buffers into regular strings, so the change is inert there. Knob `bytext` (default 1; 0 = the old inline form). Mutant
+`bytext_inline_read` (an external string read behind the header), caught by `tr_core::f2_programs` with the new program `l1_byte_ext` (external,
+buffer, regular and short strings; positions at both ends, past the end, zero, negative, constant and variable; one site seeing four kinds in turn; the
+strings die and are re-made; every trace mode, verify, exit storms, budgets, GC stress 1/2, stack-move stress, emulator).
+
+### 30.2 L2: `insert_small`, the first two keys of a fresh table
+
+The object idiom `setmetatable({}, C)` + `self.x = ..; self.y = ..` grows the hash part twice (dummy -> 1 node -> 2 nodes). The general path
+(`newkey` -> `insertkey` failure -> `rehash` (counting loop) -> `resize_hash` -> `setnodevector`, reinsert, free -> `newcheckedkey` (array test) -> `insertkey`, then the
+caller's second lookup) cost 241 instructions per key in classic_vector. rn-core `insert_small` (called from `newkey` for a short-string key into a table
+with `asize == 0` and `lsizenode == 0`) does the same for exactly two shapes and declines everything else:
+
+* the dummy part: one node (`rehash` counts the dummy as one deleted entry: `nsize = 1 + (1 >> 2) = 1`), the key inserted by `insertkey` (its
+  `mainposition` computes the string's hash on first use: I-H lazy hashes; a first version that wrote node 0 directly left the hash uncomputed and
+  `tests_gc::stress_random_workload_with_invariants` lost a field: every later lookup of that string was a miss);
+* one node holding a live entry whose key is not an integer (an integer key sends `rehash` to the counting path, a deleted entry is reused in place,
+  the same key is no insertion): two nodes, the old entry reinserted first, the old vector freed, then the new key, both through `insertkey`, exactly
+  `resize_hash` + `newcheckedkey`'s order (the order decides which key gets the free node on a collision);
+* then the two write barriers of `newkey`.
+
+Result: same node vector sizes, layout, `lastfree` state (none below 8 nodes), accounting, barriers. 5.4 keeps the general path (its `rehash` differs; not
+measured there). Tests: rn-core `tests_table::smallins_matches_generic` (400 seeds x 200 fresh tables, 1-4 insertions of pooled / fresh / integer / float /
+boolean keys, nil stores, one-node constructor parts holding each key kind, deleted entries; after every insertion the fingerprint (sizes, nodes, links,
+traversal, border), the accounted bytes, and a lookup of every key against the general path with the thread-local `NO_INSERT_SMALL`); the existing
+`growth_fast_paths_match_generic` and the GC workload tests. rn-jit `tr_smallins::smallins_pairs_order_matches_the_reference` runs
+`tests/vm_seed0/l2_small_insert_order.lua` (object idiom, three and four keys, constructors, deletions, array parts, `rawset`, a hot loop) in-process with
+seed 0 against the seed-0 reference's output (`tests/data/l2_small_insert_order.expected`); mutant `smallins_order_swap` (the new key inserted
+first). An "integer key let through" variant is caught by the unit test only (no Lua program reaches it: our VM never leaves the key 1 in a one-node part
+of a table without an array part, and for every other integer key the general path sizes the same two-node part), so it is not a registry mutant.
+Note: the rn-core unit tests are not part of `gate-light.sh` / `gate-heavy.sh`; run `cargo test -p rn-core` for a change there.
+
+### 30.3 Measured (release `rn-cli`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, min of 5 cycles, instructions of the first run, binaries at equal-length paths)
+
+| program | base 1e3a827 Mcyc / Minstr | L1+L2 (6ee0b68) Mcyc / Minstr | d cycles | d instr | ratio to LuaJIT (cycles) before -> after |
+|---|---|---|---:|---:|---|
+| awfy/permute | 42 / 235 | 42 / 235 | +0.0 % | +0.0 % | 3.23 -> 3.23 |
+| programs/fib | 1244 / 7780 | 1250 / 7780 | +0.5 % | +0.0 % | 2.65 -> 2.66 |
+| apps/raytrace | 116 / 383 | 116 / 383 | +0.0 % | +0.0 % | 2.90 -> 2.90 |
+| awfy/cd | 260 / 805 | 258 / 805 | -0.8 % | +0.0 % | 1.93 -> 1.91 |
+| corpus/lua_lexer | 1239 / 5127 | 1089 / 4421 | -12.1 % | -13.8 % | 2.74 -> 2.41 |
+| corpus/classic_vector | 640 / 2794 | 561 / 2376 | -12.3 % | -15.0 % | 2.61 -> 2.29 |
+| awfy/richards | 59 / 180 | 59 / 180 | +0.0 % | +0.0 % | 1.69 -> 1.69 |
+| awfy/havlak | 158 / 516 | 155 / 517 | -1.9 % | +0.2 % | 1.37 -> 1.35 |
+| awfy/deltablue | 108 / 335 | 109 / 334 | +0.9 % | -0.3 % | 1.04 -> 1.05 |
+| programs/nbody | 353 / 1986 | 353 / 1986 | +0.0 % | +0.0 % | - |
+| programs/binary_trees | 1481 / 7298 | 1449 / 7298 | -2.2 % | +0.0 % | - |
+| programs/queens | 1838 / 5391 | 1825 / 5391 | -0.7 % | +0.0 % | - |
+| awfy/list | 95 / 414 | 95 / 414 | +0.0 % | +0.0 % | - |
+| lib/tremove_front | 145 / 862 | 146 / 862 | +0.7 % | +0.0 % | - |
+| corpus2/heldout/dijkstra_routes | 1170 / 3071 | 1174 / 3071 | +0.3 % | +0.0 % | - |
+| awfy/json | 140 / 463 | 141 / 463 | +0.7 % | +0.0 % | - |
+| apps/expr_lang | 143 / 565 | 140 / 557 | -2.1 % | -1.4 % | - |
+| programs/string_ops | 1107 / 2879 | 1111 / 2879 | +0.4 % | +0.0 % | - |
+| corpus/class_middleclass | 480 / 2254 | 481 / 2254 | +0.2 % | +0.0 % | - |
+| apps/lru_cache | 145 / 343 | 146 / 343 | +0.7 % | +0.0 % | - |
+| corpus/msgpack_pure | 2023 / 7901 | 1974 / 7781 | -2.4 % | -1.5 % | - |
+
+Cycles move by +-1..2 % run to run at equal instructions (fib, binary_trees, queens, havlak: layout). The micro of the object idiom
+(`setmetatable({}, mt); t.x = i; t.y = i`, 5 M): 995 -> 805 Mcyc (LuaJIT 849). 5.4: both handles are inert by construction (5.4 copies library
+buffers into regular strings; `insert_small` is 5.5 only); the 5.4 suites pass. LuaJIT ratios use its min of 3 at the default size (permute: its
+best run of a very unstable series, see the study). Not kept: a prefetch of the next free pool block at every pop (`alloc_small`): classic_vector
+559 -> 553, raytrace 115 -> 117, cd 258 -> 257, binary_trees 1472 -> 1487 Mcyc: noise.
+
+### 30.4 Gates
+
+Light gate per commit (L1 at 1c9c5d0, L2 at 6ee0b68): PASS (fmt, mutant map, clippy 5.5 / 5.5-jit / 5.4, trace suites 5.5 and 5.4, vm_corpus, jit-diff 1-50, the changed-file mutant groups incl. `bytext_inline_read`; for L2 the `smallins_`, `shape_`, `newkey_`, `newref_`, `tins_`, `tnew_` groups). `cargo test -p rn-core` (5.5 and 5.4 lib): PASS.
+
+`gate-heavy.sh` (2026-11-21, at 6ee0b68, 4451 s): OK. light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only); tests-5.4-oracle PASS;
+`oracle_options` PASS; jit-diff 1-200 (7 modes) PASS; mutant runner PASS (741 ran, 741 caught, no survivors; registry 749). `scripts/gate-mutant-times.tsv` refreshed by that run.
