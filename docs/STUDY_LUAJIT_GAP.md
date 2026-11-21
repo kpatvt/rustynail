@@ -83,7 +83,7 @@ arithmetic of a spring system. Ours 231 cycles per object, LuaJIT 88.
 * After L2 (560 Mcyc / 2376 Minstr): `insert_small` 24 % of the cycles (the allocation of the node vectors into cold pool blocks: the
   stores after the pop of the free list stall), materialisation of sunk tables 3.7 % (555 K tables materialised at exits), the GC list
   maintenance 4 %, traces 21 %.
-* Candidate P1 (not built, the largest remaining handle here): **presize the hash part of a `TNEW` from the `NEWREF`s the trace records on it**.
+* Candidate P1 (**built**, section 6 and docs/JIT_TRACE.md section 32): **presize the hash part of a `TNEW` from the `NEWREF`s the trace records on it**.
   Ceiling measured by the source rewrite (`{x = false, y = false}`): 560 -> 453 Mcyc (-19 % after L2; -29 % against the base). The
   layout of a table grown by two string keys equals the layout of a two-node part filled in the same order (shown in section 30.2 for the
   `insert_small` argument), so the end state is exact; the obstacle is TR29.1 in the window between the `TNEW` and the second `NEWREF`: an
@@ -153,7 +153,7 @@ No cheap handle found.
 |---|---|---|---|---|---|
 | L1 | inline `string.byte` of external and buffer long strings | lua_lexer **-12.1 % (measured)** | S | low (bound checks unchanged, a kind dispatch; one mutant) | **built** |
 | L2 | `insert_small`: the first two keys of a fresh table without the generic rehash chain | classic_vector **-12.8 % (measured)**, micro -19 % | S-M | low (same layout by construction; rn-core property test against the general path, a seed-0 reference test, one mutant) | **built** |
-| P1 | presize a recorded `TNEW` from its `NEWREF`s (with the window exits shrinking the part back) | classic_vector -19 % more (source-rewrite ceiling) | L | medium-high (TR29.1, snapshots, side traces, sinking) | not built: risk / effort above the time box |
+| P1 | presize a recorded `TNEW` from its `NEWREF`s (with the window exits shrinking the part back) | classic_vector -19 % more (source-rewrite ceiling) | L | medium-high (TR29.1, snapshots, side traces, sinking) | **built** in the narrower form of section 6 (no window exits at all instead of shrinking): classic_vector **-14.8 % (measured)** |
 | S1 | lazy inline exit stubs | cd -6..10 % (arithmetic); **measured -2..3 %** (expr_lang -3.5 %, raytrace -3.4 %) | L | medium | **built** (`lazystub`, JIT_TRACE section 31) |
 | L3 | `string.find` with a real pattern (no captures) as a recorded helper | lua_lexer -2..4 % (arithmetic) | M | low-medium | not built: below the bar |
 | - | H3 inline `TNEW` / pool reuse order | raytrace / classic_vector a few % | L | high (STUDY_ALLOC_CALL) | not revisited |
@@ -172,3 +172,17 @@ The other 17 programs of the sanity set (permute, fib, raytrace, cd, richards, h
 dijkstra_routes, json, string_ops, class_middleclass, lru_cache) have identical instructions (havlak +0.2 %, deltablue -0.3 %) and cycles within
 +-2 % (docs/JIT_TRACE.md section 30.3 has the full table). permute, fib, raytrace and cd are unchanged: their gaps are the protocol, coverage,
 allocation and compile-time items of sections 2-4, all of them L-effort, and P1 / S1 are the next candidates with a credible >= 5 % gain.
+
+## 6. P1 built (base 504b832, docs/JIT_TRACE.md section 32)
+
+Built in a narrower form than section 2 sketched: instead of exits that shrink the part back, a group is presized only when **nothing between its
+first and last insertion can exit or look at the table** (the recorder's `__newindex` memo removes the repeated metatable guards that sat there),
+the first insertion presizes through a helper that **replays the interpreter's growth steps on the allocator** (accounting, memory-limit checks and
+free lists end as the interpreter's), the others are A1 inline plans, and the group is applied only when the simulated presized layout **equals
+the layout the interpreter's own growth produced at record time** (always for two keys; for three or more only for some key sets). Knob `presize`.
+Result (cycles min of 5, CPU 4): classic_vector **550 -> 469 Mcyc (-14.8 %), 2372 -> 2051 Minstr (-13.5 %)** on 5.5, **785 -> 647 (-17.6 %),
+-21.9 % instructions** on 5.4; ratio to LuaJIT 2.29 -> 1.91. Only classic_vector and deltablue (-0.7 % instructions) form groups among 42
+programs; the object idioms of oop_mixins / class_middleclass allocate in one trace and initialise in another (function-entry traces of `init`),
+which this design does not reach (the `TNEW` must be in the same trace). No program executes measurably more instructions (max +0.34 %, the binary;
+same with the knob off).
+

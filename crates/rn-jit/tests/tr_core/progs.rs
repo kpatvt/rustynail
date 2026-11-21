@@ -16177,4 +16177,11 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/k7_01_aref_phi.lua"),
     },
+    // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
+    // `tr_presize::presize_pairs_order_matches_the_reference`)
+    Prog {
+        name: "p1_presize",
+        small: true,
+        src: include_str!("../../../../tests/vm_seed0/p1_presize_order.lua"),
+    },
 ];

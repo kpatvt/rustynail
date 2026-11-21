@@ -404,6 +404,29 @@ pub mod nrplan {
             layout: aux >> 29 & 1 != 0,
         }
     }
+    /// P1 (`presize`): a helper `NEWREF` (bit 31 clear) whose recorder note is `TraceIr::presize[aux & NOTE_MASK]`. Only the pass
+    /// `presize` reads it (and clears it); the helper call is the plain one.
+    pub const NOTE: u32 = 1 << 30;
+    /// The note index bits of a [`NOTE`].
+    pub const NOTE_MASK: u32 = (1 << 20) - 1;
+    /// P1: a helper `NEWREF` that first gives the empty table the hash part of `2^(aux & 3)` nodes (`TableRef::newref_presize`): the
+    /// first insertion of a group whose other insertions are inline plans.
+    pub const PRESIZE: u32 = 1 << 29;
+    /// Is `aux` (of a `NEWREF`) the presizing helper form? Its node-count exponent.
+    pub fn presize_of(aux: u32) -> Option<u8> {
+        (aux & INLINE == 0 && aux & PRESIZE != 0).then_some((aux & 3) as u8)
+    }
+}
+
+/// P1 (`presize`, docs/JIT_TRACE.md section 32): what the recorder saw of a helper `NEWREF` of a constant key into a table this trace
+/// allocated (the instruction carries [`nrplan::NOTE`] with the index of its note).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PresizeNote {
+    /// The table had neither an array part nor a hash part before the insertion (the dummy node).
+    pub empty_before: bool,
+    /// The table's `flags` byte and hash image right after the VM's insertion (read at the next recorder step; `None` if the recording
+    /// ended before).
+    pub after: Option<(u8, rn_core::table::HashImage)>,
 }
 
 /// Kinds of [`TOp::Lib`] (the low byte of its `aux`).
@@ -821,6 +844,8 @@ pub struct TraceIr {
     /// R1: the slots of the parent's exit map the side trace never reads (its carried loads were dropped by `mod::carry_demote`): the carry entry stores
     /// them to the stack (slot, type, where the parent's exit map has the value, the stack already holds the tag).
     pub carry_store: Vec<(u16, Ty, CarrySrc, bool)>,
+    /// P1 (`presize`): the recorder's notes of the helper `NEWREF`s tagged [`nrplan::NOTE`] (empty when the knob is off).
+    pub presize: Vec<PresizeNote>,
 }
 
 /// R1: where the exit map of a parent trace holds the value of a slot a side trace takes over in a register.

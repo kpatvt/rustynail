@@ -17,6 +17,7 @@ pub mod mutants;
 pub mod opt_loop;
 pub mod opt_mem;
 pub mod phase;
+pub mod presize;
 pub mod print;
 pub mod ra;
 pub mod record;
@@ -704,6 +705,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         side_stitch_min: cfg.limits.sidestitchmin,
         stitch0: cfg.limits.stitch0 != 0,
         nrinline: true,
+        presize: cfg.limits.presize != 0,
         pcall: true,
         landcache: true,
         storm_step: storm_step(st, cfg.limits.allocguard),
@@ -883,6 +885,7 @@ pub fn driver_start_side(
         side_stitch_min: cfg.limits.sidestitchmin,
         stitch0: cfg.limits.stitch0 != 0,
         nrinline: true,
+        presize: cfg.limits.presize != 0,
         pcall: true,
         landcache: true,
         fn_root: fn_side,
@@ -1639,6 +1642,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             }
         }
     }
+    // P1: presized insertion groups (the notes are cleared either way: a NEWREF keeps its plain helper form)
+    let groups = presize::run(&mut rec.ir);
+    presize::GROUPS.fetch_add(groups as u64, std::sync::atomic::Ordering::Relaxed);
     let ir = &rec.ir;
     if cache::verbose_aborts() {
         eprintln!(

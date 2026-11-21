@@ -369,6 +369,10 @@ pub struct RecCfg {
     /// A1: lower the `NEWREF` of a short-string key into a table allocated by the same trace to stores at record-time-known nodes
     /// (see `Rec::nr_plan`).
     pub nrinline: bool,
+    /// P1 (`presize`, docs/JIT_TRACE.md section 32): note what the VM did at each helper `NEWREF` of a constant key into a table of this
+    /// trace (the pass `presize` turns a group of them into one presizing insertion and inline plans), and leave out the `__newindex`
+    /// guard of a `NEWREF` that only the previous `NEWREF` into the same table and pure instructions separate from the last one.
+    pub presize: bool,
     /// P-E2: fewest bytecodes a function-entry recording must execute (shorter ones abort `LeaveFrame`).
     pub fn_min: u32,
     /// P-B: bytes the collector lets the program allocate between two steps (`Heap::jit_gc_step_hint`) when the allocation storm guard is on
@@ -565,6 +569,7 @@ impl Default for RecCfg {
             side_stitch_min: 0,
             stitch0: false,
             nrinline: false,
+            presize: false,
             pcall: false,
             fn_min: 0,
             storm_step: 0,
@@ -1241,6 +1246,12 @@ struct Rec {
     /// A1: per `TNEW` ref, the hash image of its table after the last inline `NEWREF` (`None`: poisoned, a helper `NEWREF` or
     /// anything else changed it).
     nr_img: HashMap<Ref, Option<NrImage>>,
+    /// P1: the note (index into `TraceIr::presize`) of the last noted `NEWREF` and its table, until the next step reads the table.
+    p1_pend: Option<(usize, TableRef)>,
+    /// P1: `(table ref, IR length before the NEWREF)` of the last `NEWREF` into a table of this trace that took (or skipped) the
+    /// `__newindex` guard and whose key cannot create a metamethod: the next `NEWREF` into it needs no guard while nothing but that
+    /// insertion and pure instructions lie in between ([`Rec::p1_memo_holds`]).
+    p1_memo: Option<(Ref, usize)>,
     /// BUNDLE-M C1 (lockstep off): for each `NEWREF` / `TSET` in IR order, the table the recorder knew at record time (`None`: a table
     /// of this trace made by a `TNEW` of the same step, see [`Rec::light_new`]).
     ls_tabs: std::collections::VecDeque<Option<TableRef>>,
@@ -1549,6 +1560,8 @@ impl Rec {
             newref_keys: Default::default(),
             newref_exp: Default::default(),
             nr_img: HashMap::default(),
+            p1_pend: None,
+            p1_memo: None,
             ls_tabs: Default::default(),
             ls_tnew: HashMap::default(),
             last_tset: 0,
@@ -1748,6 +1761,8 @@ impl Rec {
         self.newref_keys.clear();
         self.newref_exp.clear();
         self.nr_img.clear();
+        self.p1_pend = None;
+        self.p1_memo = None;
         self.ls_tabs.clear();
         self.ls_tnew.clear();
         self.last_tset = 0;
@@ -1901,6 +1916,12 @@ impl Rec {
         // F8: a table the recording holds a handle to was freed by a collector step since the last step
         if st.heap().watch_hit() {
             return Err(AbortReason::DepFreed);
+        }
+        // P1: the VM has run the `NEWREF`'s instruction: what it left in the table
+        if let Some((ix, t)) = self.p1_pend.take() {
+            if let Some(n) = self.b.ir.presize.get_mut(ix) {
+                n.after = Some((t.flags(), t.hash_image()));
+            }
         }
         // TR32: a dependency freed since the last step flags the recording
         if let Some(h) = self.cfg.deps.clone() {
@@ -5314,6 +5335,35 @@ impl Rec {
         Some((aux, img))
     }
 
+    /// P1: may the `NEWREF` into `t` that is being recorded leave out its `__newindex` guard? Yes when the last `NEWREF` (into the same table
+    /// of this trace, with a constant key not starting with `__`) took or skipped it and since then the IR holds only that `NEWREF`, its
+    /// `NE` guard, the `HSTORE` into its node, a `TBAR` of the table and pure instructions: none of them sets a metatable, runs code, or
+    /// writes a key into any table but that one key (which cannot be `__newindex`, so even a table that is its own metatable gets no
+    /// metamethod), so the metatable and the absence of its `__newindex` are what the guard saw. The guard-free run between the
+    /// insertions is what lets the pass `presize` group them. (MUTANT `p1_memo_any`: whatever lies in between.)
+    fn p1_memo_holds(&self, t: Ref) -> bool {
+        let Some((mt, at)) = self.p1_memo else {
+            return false;
+        };
+        if mt != t || at > self.b.ir.ins.len() {
+            return false;
+        }
+        if mutants::active("p1_memo_any") {
+            return true;
+        }
+        let ir = &self.b.ir;
+        let on_t = |r: Ref| TraceIr::is_ins(r) && ir.at(r).op == TOp::Newref && ir.at(r).a == t;
+        // (exactly one `NEWREF`: the one that set the memo)
+        ir.ins[at..].iter().filter(|i| i.op == TOp::Newref).count() == 1
+            && ir.ins[at..].iter().all(|i| match i.op {
+                TOp::Newref => i.a == t,
+                TOp::Ne => on_t(i.a) && !TraceIr::is_ins(i.b) && ir.kval(i.b) == KVal::Int(0),
+                TOp::Hstore => on_t(i.a) && i.flags & F_GUARD == 0,
+                TOp::Tbar => i.a == t,
+                op => i.flags & F_GUARD == 0 && super::presize::pure_op(op),
+            })
+    }
+
     /// `t[key] = val` for a short-string key that is **absent** from the hash part of `tbl` (F3): the metatable has no
     /// `__newindex` (TR14 flag guard), `NEWREF` inserts the key through the table's own `set` (class A: 0 and no effect
     /// when the key is present after all or the insertion cannot be done without an error), the guard `NE %newref, 0`
@@ -5336,9 +5386,19 @@ impl Rec {
             return self.hash_absent(t.0, tbl, key);
         }
         // `__newindex` absent: no metatable, or a cached "absent" bit (the key is absent, so the table has no raw value)
+        // P1: unless the previous insertion into this table took the same guard and nothing that can change the answer came since
+        let memo = self.p1_memo_holds(t.0);
         if !mutants::active("newref_no_newindex_guard") {
-            self.meta_guard(t.0, tbl, rn_core::meta::Tm::NewIndex)?;
+            if memo {
+                // (what the guard would check holds now: the recording's own state)
+                if !TableRef::no_tm(tbl.metatable(), rn_core::meta::Tm::NewIndex) {
+                    return Err(AbortReason::Metamethod);
+                }
+            } else {
+                self.meta_guard(t.0, tbl, rn_core::meta::Tm::NewIndex)?;
+            }
         }
+        let memo_at = self.b.ir.ins.len();
         self.first_store.get_or_insert(self.b.ir.ins.len());
         self.stale_above_frame();
         // (an inline insertion plan fixes the node the recorded key lands on: not for a dynamic key)
@@ -5352,6 +5412,25 @@ impl Rec {
             None => self.ins(TOp::Newref, Ty::P64, t.0, key.0)?,
         };
         self.shape_note_insert(tbl);
+        let fresh = self.cfg.presize
+            && TraceIr::is_ins(t.0)
+            && self.b.ir.at(t.0).op == TOp::Tnew
+            && ((t.0 - REF_BIAS) as usize) >= self.last_tset;
+        if fresh && plan.is_none() && !TraceIr::is_ins(key.0) && TraceIr::is_ins(n) {
+            let ix = self.b.ir.presize.len();
+            if ix <= nrplan::NOTE_MASK as usize {
+                self.b.ir.presize.push(PresizeNote {
+                    empty_before: tbl.hash_size() == 0 && tbl.array_size() == 0,
+                    after: None,
+                });
+                self.b.ir.ins[(n - REF_BIAS) as usize].aux = nrplan::NOTE | ix as u32;
+                self.p1_pend = Some((ix, tbl));
+            }
+        }
+        // P1: a key that could name a metamethod (`__newindex` when the table is its own metatable) ends the guard-free run
+        let dunder =
+            key.1.get().as_bytes().starts_with(b"__") && !mutants::active("p1_memo_dunder");
+        self.p1_memo = (fresh && !TraceIr::is_ins(key.0) && !dunder).then_some((t.0, memo_at));
         let z = self.kint(0);
         if !mutants::active("newref_ne_guard_skip") {
             self.guard(TOp::Ne, Ty::I64, n, z, 0)?;

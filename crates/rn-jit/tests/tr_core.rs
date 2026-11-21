@@ -461,6 +461,8 @@ fn child_main(spec: &str) {
 struct TStats {
     /// S1 (`lazystub`): bytes of trace code installed, deferred stubs assembled / patched in / failed.
     code_bytes: u64,
+    /// P1 (`presize`): presized insertion groups installed (`presize: groups N`).
+    presized: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -664,6 +666,8 @@ impl TStats {
                     s.dstub_patched = p;
                     s.dstub_failed = f;
                 }
+            } else if let Some(r) = l.strip_prefix("presize: groups ") {
+                s.presized = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.barrier_table = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -12134,4 +12138,69 @@ fn s1_lazystub_programs() {
         }
     }
     assert!(built > 0, "no deferred stub was assembled in any job");
+}
+
+/// P1 (`presize`, docs/JIT_TRACE.md section 32): `p1_presize` (the seed-0 script `tests/vm_seed0/p1_presize_order.lua`, whose interpreter output
+/// `tr_presize` checks against the reference) in every trace mode with `+verify`, exit storms (the guard of the presizing `NEWREF` is exempt: it
+/// fails only when the helper did nothing), count budgets, GC stress 1 / 2 (generational and incremental), the stack-move stress, the
+/// emulator, without sinking, and with `presize=0` (the twin: no group): every run prints the interpreter's layouts. With the knob on, groups are
+/// presized (two keys always, more keys when the recorded interpreter layout equals the presized one). Detector of `p1_image_check_skip` (a
+/// group of 3+ keys whose growth layout differs is presized: `pairs` order), `p1_window_any` (a guard inside the group: its exit leaves a
+/// presized table, a later integer key goes to the hash part), `p1_memo_any` (the `__newindex` guard of the second store is left out across a
+/// `setmetatable`), `p1_memo_dunder` (left out after a `__newindex` store into a table that is its own metatable) and `presize_no_free`
+/// (the accounted bytes drift: the heap's leak check at the end).
+#[test]
+fn p1_presize_programs() {
+    std::env::set_var("TR_CORE_SEED", "0");
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["presize=1", "presize=0"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("+exitstorm=7 +verify +randra=5", 0),
+                ("-sink", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("p1_presize", trace).opts(opts).limits_s(lim);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            for gc in ["1", "2"] {
+                jobs.push(
+                    Job::new("p1_presize", trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .limits_s(lim),
+                );
+                jobs.push(
+                    Job::new("p1_presize", trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .env("RUSTYNAIL_GC_MODE", "inc")
+                        .limits_s(lim),
+                );
+            }
+            jobs.push(
+                Job::new("p1_presize", trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s(lim),
+            );
+        }
+        jobs.push(Job::new("p1_presize", trace).opts("+emurun"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits.contains("presize=0") {
+            assert_eq!(o.stats.presized, 0, "{}: presize=0 presized", j.tag());
+        } else if j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
+            assert!(
+                o.stats.presized >= 4,
+                "{}: too few presized groups: {}",
+                j.tag(),
+                o.stats.presized
+            );
+        }
+    }
 }

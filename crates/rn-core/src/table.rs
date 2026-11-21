@@ -1865,6 +1865,91 @@ fn mut_smallins(bit: u8) -> bool {
     }
 }
 
+/// Test-only mutants of [`TableRef::newref_presize`] (P1, feature `jit_trace_mut`): a bit mask, `1` `presize_no_free` (the intermediate
+/// vector of the last replayed growth step is not freed: the accounted bytes drift from the interpreter's).
+#[cfg(feature = "jit_trace_mut")]
+static MUT_PRESIZE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Select the [`TableRef::newref_presize`] mutants (feature `jit_trace_mut`); see [`MUT_PRESIZE`] for the bits.
+#[cfg(feature = "jit_trace_mut")]
+pub fn set_mut_presize(mask: u8) {
+    MUT_PRESIZE.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline(always)]
+fn mut_presize(bit: u8) -> bool {
+    #[cfg(feature = "jit_trace_mut")]
+    return MUT_PRESIZE.load(std::sync::atomic::Ordering::Relaxed) & bit != 0;
+    #[cfg(not(feature = "jit_trace_mut"))]
+    {
+        let _ = bit;
+        false
+    }
+}
+
+/// P1 (docs/JIT_TRACE.md section 32): the layout of a hash part of `2^ceillog2(n)` nodes into which the `n` short-string keys `keys`
+/// (live interned strings, distinct) are inserted in order, starting from an empty part: what [`TableRef::newref_presize`] leaves
+/// after the first key and what the trace's inline `NEWREF`s (A1 plans) do for the others. Simulated with the table's own
+/// `insertkey` on a scratch node vector outside the heap (nothing is allocated through the heap, nothing is accounted). `flags`
+/// is the table's header byte after the first insertion (the interpreter's, read by the recorder). Returns `(lsize, plans of
+/// keys[1..], final image)`, or `None` when `n` is not 2..=8 or an insertion is not one of the A1 shapes. The caller compares
+/// the image with the one the interpreter's own growth produced (the recorder reads it from the VM): only an equal image makes
+/// the presized group exact (for three or more keys the reinsertion order of a growth step can place colliding keys
+/// differently).
+pub fn presize_sim(keys: &[StrRef], flags: u8) -> Option<(u8, Vec<InsertPlan>, HashImage)> {
+    let n = keys.len();
+    if !(2..=8).contains(&n) {
+        return None;
+    }
+    let lsize = ceillog2(n as u32) as u8;
+    let nn = 1usize << lsize;
+    let pre = prefix_bytes(lsize);
+    let mut buf = vec![0u64; pre / 8 + nn * (std::mem::size_of::<Node>() / 8)];
+    // SAFETY: `buf` holds the prefix words and `nn` nodes (8-aligned, `Node` is three words); the scratch table points at it for
+    // the lifetime of this function only and is never seen by the heap (no GC header is linked, nothing is freed through it).
+    unsafe {
+        let node = buf.as_mut_ptr().cast::<u8>().add(pre).cast::<Node>();
+        if sized_haslastfree(lsize) {
+            *node.cast::<u8>().sub(LASTFREE_BYTES).cast::<*mut Node>() = node.add(nn);
+        }
+        if sized_hasid(lsize) {
+            *node
+                .cast::<u8>()
+                .sub(LASTFREE_BYTES + LAYOUT_BYTES)
+                .cast::<u64>() = born_layout_id();
+        }
+        for i in 0..nn {
+            node.add(i).write(Node {
+                val: Payload::ZERO,
+                val_tt: LUA_VEMPTY,
+                key_tt: LUA_TNIL,
+                next: 0,
+                key: Payload::ZERO,
+            });
+        }
+        let mut st = blank_table();
+        st.node = node;
+        st.lsizenode = lsize;
+        st.flags = flags & !BITDUMMY & !MASKFLAGS;
+        let t: *mut Table = &mut st;
+        let tr = TableRef::from_raw(t);
+        if !insertkey(t, &Value::string(keys[0]), &Value::TRUE) {
+            return None;
+        }
+        let mut plans = Vec::with_capacity(n - 1);
+        for &k in &keys[1..] {
+            let plan = tr.plan_shortstr_insert(k)?;
+            let mut img = tr.hash_image();
+            plan.apply(&mut img, k.as_ptr() as usize as u64);
+            if !insertkey(t, &Value::string(k), &Value::TRUE) || tr.hash_image() != img {
+                return None;
+            }
+            plans.push(plan);
+        }
+        Some((lsize, plans, tr.hash_image()))
+    }
+}
+
 // Test-only switch (unit tests of this module): the general path for every insertion, to compare layouts with [`insert_small`].
 #[cfg(test)]
 thread_local! {
@@ -2247,6 +2332,60 @@ impl TableRef {
             } else {
                 Some(n.offset_from((*t).node) as usize)
             }
+        }
+    }
+    /// P1 (docs/JIT_TRACE.md section 32): the first `NEWREF` of a group of `n` short-string keys that a trace inserts into a table it
+    /// allocated, with nothing in between that can exit or look at the table: the hash part goes straight to the size the interpreter
+    /// reaches after the `n` insertions (`2^lsize` nodes, `lsize = ceillog2(n)`) and `key` is inserted into it with the value `true`
+    /// (the `HSTORE` that follows overwrites it), as [`TableRef::newref_shortstr`] does (barriers, `invalidateTMcache`). The growth
+    /// steps the interpreter takes on the way (dummy -> 1 -> 2 -> 4 ... nodes, each new vector allocated before the old one is freed)
+    /// are replayed on the allocator: the same `alloc_counted` / `free_counted` calls with the same sizes in the same order, without
+    /// initialising the intermediate vectors. So the accounting, the memory-limit checks (each step checks exactly what the
+    /// interpreter's step checks) and the allocator's free lists end as the interpreter leaves them. Returns the node index of
+    /// `key`; `None` (nothing done, every intermediate block freed again) when the table is not empty (an array part, a hash part),
+    /// `lsize` is not 1..=3, or an allocation fails: the trace then exits before the instruction and the interpreter inserts the
+    /// keys one by one with its own error behaviour.
+    pub fn newref_presize(self, heap: &mut Heap, key: StrRef, lsize: u8) -> Option<usize> {
+        // SAFETY: handle invariants; every intermediate block is a fresh allocation freed with its own size and accounted bytes;
+        // `setnodevector` writes the table only after its allocation succeeded.
+        unsafe {
+            let t = self.as_ptr();
+            if !isdummy(t) || (*t).asize != 0 || !(1..=3).contains(&lsize) {
+                return None;
+            }
+            let mut prev: Option<(*mut u8, u8)> = None;
+            let free = |heap: &mut Heap, p: Option<(*mut u8, u8)>| {
+                if let Some((b, l)) = p {
+                    heap.mem
+                        .free_counted(b, sizehash_alloc(l), sizehash_bytes(l));
+                }
+            };
+            for l in 0..lsize {
+                let b = match heap.mem.alloc_counted(sizehash_alloc(l), sizehash_bytes(l)) {
+                    Ok(b) => b.as_ptr(),
+                    Err(_) => {
+                        free(heap, prev);
+                        return None;
+                    }
+                };
+                free(heap, prev);
+                prev = Some((b, l));
+            }
+            if setnodevector(heap, t, 1u32 << lsize).is_err() {
+                free(heap, prev);
+                return None;
+            }
+            if !mut_presize(1) {
+                free(heap, prev);
+            }
+            let kv = Value::string(key);
+            let done = insertkey(t, &kv, &Value::TRUE);
+            debug_assert!(done);
+            heap.barrier_back(t.cast(), &kv);
+            heap.barrier_back(t.cast(), &Value::TRUE);
+            self.invalidate_tm_cache();
+            let n = hgetshortstr(t, key.as_ptr());
+            (!n.is_null()).then(|| n.offset_from((*t).node) as usize)
         }
     }
     /// Address of node `idx` (`idx < 2^lsizenode`). Read-only (J5 `NEWREF` hands it to the trace).

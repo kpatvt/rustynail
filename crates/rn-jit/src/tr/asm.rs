@@ -920,7 +920,7 @@ pub unsafe extern "C" fn jit_tr_tset(
 pub unsafe extern "C" fn jit_tr_newref(
     th: *mut rn_core::state::Thread,
     _ci: *mut rn_core::state::CallInfo,
-    _a: u32,
+    a: u32,
     _y: u32,
 ) -> u32 {
     // SAFETY: `th` is the live thread pinned in `r12`.
@@ -934,8 +934,43 @@ pub unsafe extern "C" fn jit_tr_newref(
             .cast::<super::ExitArea>()
     };
     // SAFETY: the contract above: live table, live interned short string.
-    area.args[0] = unsafe { newref_core(&mut st, arg(area, 0), arg(area, 1)) };
+    area.args[0] = unsafe { newref_entry(&mut st, a >> 8, arg(area, 0), arg(area, 1)) };
     0
+}
+
+/// `NEWREF` (`x == 0`) or its P1 presizing form (`x` = the node-count exponent of the final hash part).
+///
+/// # Safety
+/// As [`newref_core`].
+#[inline(always)]
+unsafe fn newref_entry(st: &mut rn_core::state::State, x: u32, t: u64, key: u64) -> u64 {
+    if x == 0 {
+        // SAFETY: forwarded.
+        return unsafe { newref_core(st, t, key) };
+    }
+    // SAFETY: forwarded.
+    unsafe { newref_presize_core(st, x, t, key) }
+}
+
+/// The P1 arm of [`newref_entry`], out of line.
+///
+/// # Safety
+/// As [`newref_core`].
+#[inline(never)]
+unsafe fn newref_presize_core(st: &mut rn_core::state::State, x: u32, t: u64, key: u64) -> u64 {
+    // SAFETY: forwarded caller contract (as in `newref_core`).
+    let (t, key) = unsafe {
+        let kv: rn_core::value::Value = std::mem::transmute::<[u64; 2], rn_core::value::Value>([
+            u64::from(rn_core::value::ctb(rn_core::value::LUA_VSHRSTR)),
+            key,
+        ]);
+        (
+            rn_core::table::TableRef::from_raw(t as *mut rn_core::table::Table),
+            kv.as_strref().expect("short string key"),
+        )
+    };
+    t.newref_presize(st.heap(), key, x as u8)
+        .map_or(0, |ix| t.node_addr(ix) as u64)
 }
 
 /// BUNDLE-A (`libnum`): the conversion of `STRTO` in tonumber mode: what `tonumber(s)` of the string value `v` returns as `(payload, tag byte)`
@@ -984,7 +1019,7 @@ pub unsafe extern "C" fn jit_tr_alloc(
         ALLOC_TNEW => tnew_core(&mut st, x, y),
         ALLOC_NEWREF => {
             // SAFETY: the contract above: live table, live interned short string.
-            unsafe { newref_core(&mut st, arg(area, 0), arg(area, 1)) }
+            unsafe { newref_entry(&mut st, x, arg(area, 0), arg(area, 1)) }
         }
         ALLOC_TSET => {
             // SAFETY: the contract above: a live table; `Value` is `repr(C)` `{ tag word, payload }` and the pair is a
@@ -2614,6 +2649,9 @@ impl<'a> Cx<'a> {
                     // (memory limit); a spurious exit behind a successful store resumes at the `CALL` and stores the element a second time
                     // (found by `tr_oracle::oracle_exits`: `bench/programs/table_array` with `+exitstorm=7 +randra=5`, `#u` 377 instead of 375)
                     || self.ir.at(g.a).op == TOp::Tset
+                    // P1: the presizing `NEWREF` has inserted the key and sized the part when its guard runs: a spurious exit would hand the
+                    // interpreter the presized part (it fails for real only when the helper did nothing)
+                    || (self.ir.at(g.a).op == TOp::Newref && nrplan::presize_of(self.ir.at(g.a).aux).is_some())
                     // BUNDLE-GM: the `gmatch` helper has advanced the iterator's position when its guards run: a spurious exit would
                     // make the interpreter's call skip a match (mutant `gm_storm_guard`: the storm fails them too)
                     || (self.ir.at(g.a).op == TOp::Lib && self.ir.at(g.a).aux & 0xFF == lib::GMATCH && !mutants::active("gm_storm_guard"))
@@ -6882,7 +6920,16 @@ impl Cx<'_> {
         };
         let (a, y, nops) = match ins.op {
             TOp::Tnew => (ALLOC_TNEW | u32::from(ins.a) << 8, ins.aux, 0),
-            TOp::Newref => (ALLOC_NEWREF, 0, 2),
+            // P1: the presizing form passes the node-count exponent (the helper replays the growth and inserts into the final part)
+            TOp::Newref => match nrplan::presize_of(ins.aux) {
+                Some(l) => {
+                    if self.env.alloc != jit_tr_alloc as *const () as usize as u64 {
+                        return unsup("presizing NEWREF with a test double of the helper");
+                    }
+                    (ALLOC_NEWREF | u32::from(l) << 8, 0, 2)
+                }
+                None => (ALLOC_NEWREF, 0, 2),
+            },
             TOp::Strto => {
                 let st = self.ir.ty_of(ins.a);
                 if !matches!(st, Ty::ShrStr | Ty::LngStr) {

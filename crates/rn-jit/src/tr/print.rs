@@ -213,6 +213,11 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     }
     let _ = writeln!(o, "{}", super::phase::report());
     let _ = writeln!(o, "{}", super::sink::report());
+    let _ = writeln!(
+        o,
+        "[trace] presize: groups {}",
+        super::presize::GROUPS.load(std::sync::atomic::Ordering::Relaxed)
+    );
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,

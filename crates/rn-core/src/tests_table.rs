@@ -672,3 +672,207 @@ fn append_growth_sizes_and_bytes() {
         );
     }
 }
+
+/// P1: an allocator that logs every block operation (`(alloc?, size, pointer)`), for comparing the allocator traffic of two table builds.
+struct LogAlloc {
+    inner: crate::alloc::PoolAllocator,
+    log: std::rc::Rc<std::cell::RefCell<Vec<(bool, usize, usize)>>>,
+}
+impl crate::alloc::Allocator for LogAlloc {
+    unsafe fn realloc(&mut self, ptr: *mut u8, old: usize, new: usize) -> *mut u8 {
+        // SAFETY: forwarded caller contract.
+        let p = unsafe { self.inner.realloc(ptr, old, new) };
+        if old > 0 {
+            self.log.borrow_mut().push((false, old, ptr as usize));
+        }
+        if new > 0 {
+            self.log.borrow_mut().push((true, new, p as usize));
+        }
+        p
+    }
+    unsafe fn alloc_block(&mut self, new: usize) -> *mut u8 {
+        // SAFETY: forwarded caller contract.
+        let p = unsafe { self.inner.alloc_block(new) };
+        self.log.borrow_mut().push((true, new, p as usize));
+        p
+    }
+    unsafe fn free_block(&mut self, ptr: *mut u8, old: usize) {
+        self.log.borrow_mut().push((false, old, ptr as usize));
+        // SAFETY: forwarded caller contract.
+        unsafe { self.inner.free_block(ptr, old) }
+    }
+}
+
+/// `(alloc?, size, block id)` with the blocks numbered in order of first appearance: equal for two builds that make the same allocator
+/// calls on blocks in the same pattern (the same block freed that was allocated, the same block reused).
+fn log_shape(log: &[(bool, usize, usize)]) -> Vec<(bool, usize, usize)> {
+    let mut ids: HashMap<usize, usize> = HashMap::new();
+    log.iter()
+        .map(|&(a, s, p)| {
+            let n = ids.len();
+            (a, s, *ids.entry(p).or_insert(n))
+        })
+        .collect()
+}
+
+/// P1 (`newref_presize` + `presize_sim`): `n` (2..8) distinct short-string keys inserted into a fresh table through the interpreter's growth
+/// (`set_str`) against the presized build (the first key by `newref_presize`, the others by `set_str` into the free nodes, which is what the
+/// trace's inline plans store), on two heaps with the same history: the simulated plans are the plans of the real presized table, the
+/// presized table's image is the simulated one, the accounted bytes and the allocator traffic (sizes, order, block reuse) are the growth's,
+/// and whenever the simulated image equals the growth's the whole layout (traversal order, border) is the growth's. Two keys always give
+/// the growth's image; for more keys the image equality is what the trace compiler checks, and both outcomes occur.
+#[test]
+fn presize_matches_growth() {
+    use crate::table::presize_sim;
+    let (seeds, tables): (u64, usize) = if cfg!(miri) { (2, 10) } else { (60, 150) };
+    let (mut same, mut differ) = (0usize, 0usize);
+    for seed in 1..=seeds {
+        let logs: Vec<_> = (0..2)
+            .map(|_| std::rc::Rc::new(std::cell::RefCell::new(Vec::new())))
+            .collect();
+        let mut hs: Vec<Heap> = logs
+            .iter()
+            .map(|l| {
+                Heap::with_allocator(
+                    Box::new(LogAlloc {
+                        inner: crate::alloc::PoolAllocator::new(),
+                        log: l.clone(),
+                    }),
+                    11,
+                )
+                .unwrap()
+            })
+            .collect();
+        let names: Vec<String> = (0..48).map(|i| format!("f{seed}_{i}")).collect();
+        let strs: Vec<Vec<crate::string::StrRef>> = hs
+            .iter_mut()
+            .map(|h| {
+                names
+                    .iter()
+                    .map(|s| h.new_str(s.as_bytes()).unwrap())
+                    .collect()
+            })
+            .collect();
+        let mut r = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
+        for tn in 0..tables {
+            let n = 2 + r.below(7) as usize;
+            let mut ix: Vec<usize> = Vec::new();
+            while ix.len() < n {
+                let k = r.below(names.len() as u64) as usize;
+                if !ix.contains(&k) {
+                    ix.push(k);
+                }
+            }
+            let what = format!("seed {seed} table {tn} n {n}");
+            // heap 0: the interpreter's growth; heap 1: the presized build
+            let g = hs[0].new_table().unwrap();
+            let p = hs[1].new_table().unwrap();
+            logs[0].borrow_mut().clear();
+            logs[1].borrow_mut().clear();
+            let b0 = hs[0].total_bytes();
+            let mut flags1 = 0u8;
+            for (j, &k) in ix.iter().enumerate() {
+                g.set_str(&mut hs[0], strs[0][k], &Value::int(j as i64 + 1))
+                    .unwrap();
+                if j == 0 {
+                    flags1 = g.flags();
+                }
+            }
+            let gbytes = hs[0].total_bytes() - b0;
+            let keys1: Vec<_> = ix.iter().map(|&k| strs[1][k]).collect();
+            let Some((lsize, plans, img)) = presize_sim(&keys1, flags1) else {
+                assert!(n > 2, "{what}: two keys always simulate");
+                continue;
+            };
+            let b1 = hs[1].total_bytes();
+            let first = p.newref_presize(&mut hs[1], keys1[0], lsize);
+            assert!(first.is_some(), "{what}: presize");
+            p.set_str(&mut hs[1], keys1[0], &Value::int(1)).unwrap();
+            for (j, &k) in keys1.iter().enumerate().skip(1) {
+                assert_eq!(
+                    p.plan_shortstr_insert(k),
+                    Some(plans[j - 1]),
+                    "{what}: plan of key {j}"
+                );
+                p.set_str(&mut hs[1], k, &Value::int(j as i64 + 1)).unwrap();
+            }
+            let pbytes = hs[1].total_bytes() - b1;
+            assert_eq!(gbytes, pbytes, "{what}: accounted bytes");
+            assert_eq!(
+                log_shape(&logs[0].borrow()),
+                log_shape(&logs[1].borrow()),
+                "{what}: allocator traffic"
+            );
+            assert_eq!(p.hash_image(), img, "{what}: presized image");
+            // (images hold key addresses: translate the growth's keys of heap 0 to the same strings of heap 1)
+            let mut gi = g.hash_image();
+            for e in gi.0.iter_mut() {
+                if let Some(pos) = strs[0]
+                    .iter()
+                    .position(|s| s.as_ptr() as usize as u64 == e.1)
+                {
+                    e.1 = strs[1][pos].as_ptr() as usize as u64;
+                }
+            }
+            if gi == img {
+                same += 1;
+                assert_eq!(
+                    fingerprint(p, &hs[1]).5,
+                    fingerprint(g, &hs[0]).5,
+                    "{what}: order"
+                );
+                assert_eq!(p.len(&hs[1]), g.len(&hs[0]), "{what}: border");
+            } else {
+                assert!(n > 2, "{what}: two keys always give the growth's image");
+                differ += 1;
+            }
+        }
+    }
+    assert!(
+        same > 0 && (cfg!(miri) || differ > 0),
+        "same {same} differ {differ}"
+    );
+}
+
+/// P1: `newref_presize` under a memory limit makes the interpreter's checks: under a limit the final vector does not fit under it does
+/// nothing (the table stays empty, the accounted bytes are back where they were) and the interpreter's growth fails under it too; without a
+/// limit it presizes to the growth's bytes. A non-empty table and sizes outside 1..=3 are refused.
+#[test]
+fn presize_memory_limit_and_refusals() {
+    let mut h = Heap::new(3).unwrap();
+    let keys: Vec<_> = (0..8)
+        .map(|i| h.new_str(format!("m{i}").as_bytes()).unwrap())
+        .collect();
+    let g = h.new_table().unwrap();
+    let base = h.total_bytes();
+    for (j, &k) in keys.iter().enumerate() {
+        g.set_str(&mut h, k, &Value::int(j as i64)).unwrap();
+    }
+    let full = h.total_bytes() - base;
+    let t = h.new_table().unwrap();
+    let before = h.total_bytes();
+    h.mem.set_limit(before + full - 1);
+    assert_eq!(t.newref_presize(&mut h, keys[0], 3), None);
+    assert_eq!(h.total_bytes(), before);
+    assert_eq!(t.hash_size(), 0);
+    let u = h.new_table().unwrap();
+    let failed = keys
+        .iter()
+        .enumerate()
+        .any(|(j, &k)| u.set_str(&mut h, k, &Value::int(j as i64)).is_err());
+    assert!(failed);
+    h.mem.set_limit(usize::MAX);
+    let before = h.total_bytes();
+    let at = t.newref_presize(&mut h, keys[0], 3);
+    assert_eq!(at, t.short_str_node(keys[0]));
+    assert!(at.is_some());
+    assert_eq!(t.lsizenode(), 3);
+    assert_eq!(h.total_bytes() - before, full);
+    assert_eq!(t.newref_presize(&mut h, keys[1], 3), None);
+    let a = h.new_table().unwrap();
+    a.set_int(&mut h, 1, &Value::int(1)).unwrap();
+    assert_eq!(a.newref_presize(&mut h, keys[1], 1), None);
+    let b = h.new_table().unwrap();
+    assert_eq!(b.newref_presize(&mut h, keys[1], 0), None);
+    assert_eq!(b.newref_presize(&mut h, keys[1], 4), None);
+}

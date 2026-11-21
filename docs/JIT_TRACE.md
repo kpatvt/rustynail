@@ -3199,3 +3199,142 @@ Light gate (with the changed-file mutant plan: 162 mutants incl. the five new on
 
 `gate-heavy.sh` (2026-11-21, at acaf7de, 4373 s): OK. light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only); tests-5.4-oracle PASS; `oracle_options` PASS;
 jit-diff 1-200 (7 modes) PASS; mutant runner PASS (746 ran, 746 caught, no survivors; registry 754). `scripts/gate-mutant-times.tsv` refreshed by that run.
+
+## 32. P1 (`presize`): constant-key insertion groups into a fresh table presized to the interpreter's final layout (2026-11-21, base 504b832)
+
+Candidate P1 of docs/STUDY_LUAJIT_GAP.md. Finding there: on `corpus/classic_vector` 48 % of the instructions were the two rehashes of every
+`setmetatable({}, C)` + `self.x = ..; self.y = ..` object (L2 cut part of it, -12 %), and the source rewrite `{x = false, y = false}` showed a further
+-19 % ceiling. The obstacle the study named is TR29.1 (content, `#t` and `next` order of every table identical to the interpreter's) in the window
+between the allocation and the last insertion.
+
+### 32.1 What the interpreter's growth is, and when presizing reproduces it
+
+* A fresh table (`{}`: dummy hash part, no array part) that receives short-string keys `k1..kn` grows at the 1st, 2nd, 3rd, 5th, 9th key to
+  1, 2, 4, 8, 16 nodes (5.5 `rehash`: the dummy counts as one deleted entry, `1 + 1 >> 2 = 1`; 5.4: no bonus, the same sizes), each step allocating
+  the new vector, reinserting the old nodes **in node-index order**, freeing the old vector, then inserting the new key.
+* Presizing to `N = 2^ceillog2(n)` nodes and inserting `k1..kn` in order gives the same node vector for two keys always (the one-node step holds
+  only `k1`, the two-node step reinserts it and inserts `k2`: exactly the presized order). For three or more keys it depends on the hashes: a growth
+  step reinserts colliding keys in node order, which can differ from insertion order (rn-core `tests_table::presize_matches_growth`: both outcomes
+  occur, for 3..8 keys). So the final layout **is** a pure function of the key sequence and the key hashes, but presizing is exact only for some key
+  sets; the compiler must check each group.
+* No size hint for the interpreter or tier 1 (a `NEWTABLE` hint derived from the constructor's following `SETFIELD`s): a hinted `{}` would hold
+  the presized layout at every intermediate point of the interpreter's execution (observable with `pairs` / `next` between the stores, with integer
+  keys that the growth sends to the array part, and in `collectgarbage("count")` between statements), would differ from the growth for 3+ keys on
+  some key sets (seed dependent, not checkable at compile time) and from the reference's `pairs` order (tests/vm_seed0 expectations). Rejected.
+
+### 32.2 Design (the narrowest sound form)
+
+* **Recorder notes** (`RecCfg::presize`): at every helper `NEWREF` of a constant key into a table allocated by this trace (a `TNEW` after the last
+  `TSET`, the A1 condition), the recorder tags the instruction (`nrplan::NOTE` + index) and keeps a `PresizeNote`: was the table empty before, and
+  the VM's `flags` and hash image right after its insertion (read at the next recorder step). These images are the **interpreter's own layout** for
+  the recorded key objects.
+* **The group** (pass `presize::run`, last pass before register allocation, so it sees the final IR): a run `NEWREF(t, k1) .. NEWREF(t, kn)` (2..8
+  members, all tagged, the first on an empty table) in which every instruction between the first and the last member is a member, the `NE` guard of
+  a member, an `HSTORE` into a member's node, a `TBAR` of `t`, or a pure instruction without guard (arithmetic, conversions, `SLOAD` / `FLOAD` of
+  other objects; no `FLOAD` of `t`). No other guard, no call, no allocation, no snapshot use: **nothing can exit or look at the table between the
+  insertions**, so no exit, side trace, collector step or observer ever sees an intermediate state. A guard between two stores (a type guard of a
+  loaded value, `x or 0` with an unknown `x`) ends the group there.
+* **Exactness check**: `rn_core::table::presize_sim(keys, flags)` simulates the presized group with the table's own `insertkey` on a scratch node
+  vector outside the heap and returns the A1 plan of every key after the first and the final image; the group is rewritten only when that image
+  equals the interpreter's image after the last member (the note), every plan is encodable and the flags agree. A group whose image differs is tried
+  again with its prefixes (the rest then grows through the helper from the interpreter's own intermediate state).
+* **Rewrite**: the first member becomes the presizing helper (`nrplan::PRESIZE | lsize`; `class_a` passes `lsize` as `x`, `jit_tr_newref` ->
+  `TableRef::newref_presize`), the others inline plans (A1: stores at the planned nodes, no helper call, their `NE` guards assembled to nothing).
+* **`newref_presize`** checks at run time that the table is still empty (dummy part, no array part) and otherwise does nothing (the trace exits
+  before the instruction, the interpreter inserts). It **replays the interpreter's growth steps on the allocator**: the same `alloc_counted` /
+  `free_counted` calls with the same sizes in the same order (`A(1) A(2) F(1) A(4) F(2) .. A(N) F(N/2)`), without initialising the intermediate
+  vectors, then initialises the final vector as `setnodevector` does and inserts `k1` through `insertkey` (barriers, `invalidateTMcache`). So the
+  accounted bytes, every memory-limit check (each step checks what the interpreter's step checks; a failing step makes the helper free what it took
+  and do nothing, and the interpreter then fails at the same key with its own error) and the pool allocator's free lists end as the interpreter
+  leaves them: later objects get the same addresses (`tests_table::presize_matches_growth` compares the allocator traffic block by block).
+  The replay costs about 2 % of classic_vector's instructions (a prototype without it: 2203 instead of 2253 M instructions); with it, nothing
+  address-dependent changes.
+* **The `__newindex` memo** (recorder): the second store of `self.x = ..; self.y = ..` repeated the metatable guards of the first (the `NEWREF` is a
+  header-mutating op, so nothing merged them), and those guards sat in the window. `Rec::p1_memo_holds`: a `NEWREF` into a table of this trace
+  leaves out its `__newindex` guard when the previous `NEWREF` into the same table took or skipped it, its key does not start with `__`, and the IR
+  since then holds only that `NEWREF`, its `NE` guard, the `HSTORE` into its node, a `TBAR` of the table and pure instructions. Then neither the
+  metatable field nor any table's contents changed except by that one key, which cannot be `__newindex` (so even a table that is its own metatable
+  gets no metamethod); the record-time check `no_tm` still runs. Without a group the memo is still sound (it only removes a guard that cannot fail).
+* **Exit storms**: the guard of the presizing `NEWREF` joins the allocation guards that `+exitstorm` leaves alone (it fails for real only when the
+  helper did nothing; a spurious exit would hand the interpreter the presized part).
+* Knob `presize` (default 1; 0 = no notes, no memo, every insertion through the helper as before); verbose statistic `[trace] presize: groups N`.
+  Applies to 5.4 as well (same growth sizes; 5.4 hash parts all carry `lastfree`, which the plans already handle; the 5.4 unit test and trace
+  suite run it).
+
+Not covered (by design): a constructor whose `TNEW` is in another trace than the stores (function-entry traces of `init` methods, `oop_mixins`,
+`class_middleclass`), stores separated by guards, tables with a constructor hash size (they take A1 directly), dynamic keys.
+
+### 32.3 Soundness argument (TR29.1, TR29.6)
+
+1. *End state*: after the last member the table's node vector (keys, chain links, empty values, `lastfree`, layout-id slot), `lsizenode`, flags and
+   array part are the interpreter's: the image equality was checked against the VM's own result for the same key objects, the image is a function of
+   the key sequence and their hashes, which do not change between runs (constant keys, the table is new and checked empty at the first member).
+2. *No intermediate state is observable*: between the first member's guard and the last member nothing can exit, call, allocate, step the collector
+   or read the table (the group condition); the first member's guard fails only when the helper did nothing (the table is still empty: exactly the
+   interpreter's state before the instruction).
+3. *Accounting and allocator*: equal by construction (the replayed calls), checked by the unit test's allocator log; GC colour and age of the table
+   are untouched (no collector step), barriers are the interpreter's (`newkey`'s two `barrier_back`s; the inline plans rely on the table being white
+   as A1 does).
+4. *Memory errors*: the replay makes the interpreter's checks in its order; any failure means no change and an exit before the first store.
+5. With sinking off (TR29.6) every GC observable is therefore exactly JIT-off: the trace never makes the table differ from the interpreter's at a
+   point where anything can look.
+
+### 32.4 Tests and mutants
+
+* rn-core `tests_table::presize_matches_growth` (60 seeds x 150 tables, 2..8 keys from a 48-name pool, two heaps with logging allocators: plans of
+  the real presized table = simulated plans, presized image = simulated image, accounted bytes and allocator traffic = the growth's, `pairs` order
+  and border = the growth's whenever the images are equal; both outcomes occur), `presize_memory_limit_and_refusals` (5.5 and 5.4).
+* `tests/vm_seed0/p1_presize_order.lua`: groups of 2..9 keys with several name sets, growth past the presized part and integer keys after it, the
+  object idiom (constructor + `init`, three-field constructor), a guard inside a group whose exit is followed by an integer key, metatables changed
+  between two stores (`__newindex` appears), a table that becomes its own metatable at run time and then gets `__newindex` from the first store,
+  nil / dynamic keys inside a group, constructors with a hash size. `tr_presize::presize_pairs_order_matches_the_reference`: its interpreter output
+  equals `ref/55/build-seed0/lua`'s (`tests/data/p1_presize_order.expected`; `ref/54` prints the same).
+* `tr_core::p1_presize_programs`: that script (`p1_presize`) in `always` / `on2` x plain, `+verify`, exit storms 3 and 7 (`+randra=5`), `-sink`,
+  budget 17, GC stress 1 / 2 (generational and incremental), the stack-move stress, each with `presize=1` and the twin `presize=0`, plus `+emurun`:
+  every run prints the interpreter's output, `presize=0` presizes nothing, the plain runs presize at least four groups.
+* Mutants (registry 754 -> **759**), all caught by `p1_presize_programs`: `p1_image_check_skip` (a 3+ key group whose growth layout differs is
+  presized: `pairs` order), `p1_window_any` (a guard inside the group: its exit leaves the presized part, the later `t[1]` goes to the hash part),
+  `p1_memo_any` (the second store's `__newindex` guard is left out across a `setmetatable`), `p1_memo_dunder` (left out after a `__newindex` store
+  into a table that is its own metatable), `presize_no_free` (rn-core: the last replayed vector is not freed: the heap's leak check at the end).
+  The storm exemption of the presizing guard and the allocator replay are not registry mutants: no program output depends on them (a storm exit
+  there resumes at the same store, which then finds its key and the free nodes; the replay only fixes which addresses later objects get).
+
+### 32.5 Measured (release `rn-cli`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, cycles min of 5, instructions of the first run, binaries at equal-length paths; base 504b832)
+
+| program | 5.5 Mcyc base -> P1 | d | 5.5 Minstr | d | 5.4 Mcyc base -> P1 | d | 5.4 Minstr | d |
+|---|---|---:|---|---:|---|---:|---|---:|
+| corpus/classic_vector | 550.2 -> 468.7 | **-14.8 %** | 2371.5 -> 2050.5 | **-13.5 %** | 785.0 -> 646.6 | **-17.6 %** | 3541.2 -> 2765.0 | **-21.9 %** |
+| awfy/deltablue | 108.4 -> 107.2 | -1.1 % | 325.5 -> 323.1 | -0.7 % | 117.1 -> 117.5 | +0.3 % | 350.4 -> 347.8 | -0.7 % |
+| corpus2/dev/oop_mixins | 1420.1 -> 1421.5 | +0.1 % | 5547.7 -> 5551.0 | +0.06 % | 1456.0 -> 1419.4 | -2.5 % | 5773.1 -> 5777.3 | +0.07 % |
+| real/game_loop | 33.6 -> 33.9 | +0.9 % | 148.1 -> 148.1 | 0 | 38.3 -> 38.3 | 0 | 170.3 -> 170.2 | 0 |
+| corpus2/heldout/roguelike_turns | 800.4 -> 802.5 | +0.3 % | 2773.7 -> 2774.0 | 0 | 862.3 -> 859.3 | -0.3 % | 3074.9 -> 3074.6 | 0 |
+| programs/binary_trees | 1491.2 -> 1489.5 | -0.1 % | 7305.1 | 0 | 1766.3 -> 1745.8 | -1.2 % | 8237.4 | 0 |
+| apps/raytrace | 108.0 -> 107.9 | -0.1 % | 352.0 -> 351.1 | -0.3 % | 116.4 -> 117.4 | +0.9 % | 364.3 -> 363.5 | -0.2 % |
+| apps/raytrace 40 | 1174.0 -> 1166.4 | -0.6 % | 4614.2 -> 4607.4 | -0.2 % | 1196.3 -> 1191.2 | -0.4 % | 4519.6 -> 4509.9 | -0.2 % |
+| awfy/cd | 253.8 -> 253.0 | -0.3 % | 770.5 -> 770.2 | 0 | 279.9 -> 279.0 | -0.3 % | 841.2 -> 840.9 | 0 |
+| awfy/richards | 59.5 -> 59.6 | +0.2 % | 176.7 | 0 | 58.9 -> 59.7 | +1.4 % | 177.5 | 0 |
+| programs/nbody | 347.6 -> 347.4 | -0.1 % | 1985.6 | 0 | 350.8 -> 350.5 | -0.1 % | 2037.6 | 0 |
+| programs/fib | 1232.1 -> 1233.4 | +0.1 % | 7780.7 | 0 | 1242.1 -> 1248.1 | +0.5 % | 7780.7 | 0 |
+| programs/queens | 1859.6 -> 1847.9 | -0.6 % | 5391.2 | 0 | 1919.2 -> 1923.0 | +0.2 % | 5878.6 | 0 |
+| awfy/list | 93.0 -> 92.5 | -0.5 % | 394.3 -> 394.4 | 0 | 97.3 -> 97.0 | -0.3 % | 414.4 -> 414.5 | 0 |
+| corpus/lua_lexer | 1089.8 -> 1092.8 | +0.3 % | 4415.7 -> 4415.8 | 0 | 1149.5 -> 1138.0 | -1.0 % | 4496.3 -> 4496.4 | 0 |
+| apps/expr_lang | 147.4 -> 147.0 | -0.3 % | 570.5 -> 571.2 | +0.1 % | 158.7 -> 156.4 | -1.4 % | 609.0 -> 609.5 | +0.1 % |
+| corpus2/heldout/dijkstra_routes | 1174.5 -> 1169.1 | -0.5 % | 3056.6 -> 3056.7 | 0 | 1461.0 -> 1450.2 | -0.7 % | 4124.0 | 0 |
+| lib/tremove_front | 149.9 -> 147.1 | -1.9 % | 862.0 | 0 | 183.6 -> 182.3 | -0.7 % | 1044.7 -> 1044.8 | 0 |
+| awfy/permute | 43.5 -> 43.0 | -1.1 % | 235.2 | 0 | 43.6 -> 43.7 | +0.2 % | 242.0 | 0 |
+
+Sanity set (23 more programs: havlak, json, string_ops, class_middleclass, lru_cache, msgpack_pure, storage, bounce, towers, sieve, mandelbrot,
+awfy/nbody, ecs_world, particles_physics, text_adventure, lua_parser, event_promise, memo_cache, events, markdown, json_roundtrip,
+template_engine): identical output, instructions within +-0.35 % on both versions (the largest: lru_cache +0.34 % / +0.26 %, particles_physics
+-0.25 %). Only classic_vector (27 groups) and deltablue (3) form presized groups at all; every other difference is the binary. Cycles at equal
+instructions: msgpack_pure +2.1 % and template_engine +1.5..2.0 % on 5.5, text_adventure / json_roundtrip / event_promise +2 % on 5.4 (event_promise
+on 5.5 varies 345..386 Mcyc between identical runs); the same binary with `presize=0` measures the same as with `presize=1` on those programs
+(msgpack 2034 / 2033, template_engine 730 / 730), so they are code placement of the new binary, not the change's behaviour (a variant with the new
+functions marked `#[cold]` moved them around: msgpack +1.5 %, template_engine -0.8 %, classic_vector +0.7 % instructions; not kept). The knob-off
+residue of +0.3 % instructions on lru_cache is in the compile pipeline and the GC step code of the rebuilt crate, the JIT's decisions are identical
+(verbose summaries equal).
+
+5.4 gains more (no `insert_small` there: every one of the two growth steps took the general rehash chain, which P1 now skips). Against LuaJIT
+(245 Mcyc): classic_vector 2.29 -> 1.91 (5.5). The source-rewrite ceiling was 453 Mcyc after L2; P1 reaches 469 (the remaining difference: the
+first key still goes through a helper call and the replayed growth steps).
+

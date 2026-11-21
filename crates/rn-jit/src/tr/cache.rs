@@ -63,6 +63,8 @@ pub const HSTOREGUARD_PROCESS: u32 = 1;
 pub const SLOTLIVE_PROCESS: u32 = 1;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
 pub const LAZYSTUB_PROCESS: u32 = 1;
+/// P1: the process default of [`TrLimits::presize`] (also the struct default).
+pub const PRESIZE_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
@@ -628,6 +630,11 @@ pub struct TrLimits {
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
     pub lazystub: u32,
+    /// P1 (`presize`, docs/JIT_TRACE.md section 32): a group of constant-key insertions into a table the trace allocated, with nothing that can exit or
+    /// look at the table in between, inserts its first key into the hash part the interpreter's growth reaches after the group (the growth steps
+    /// replayed on the allocator) and the others inline, when the recorded interpreter layout equals the presized one: 1 = on (default
+    /// [`PRESIZE_PROCESS`]), 0 = every insertion through the helper as before.
+    pub presize: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -754,6 +761,7 @@ impl Default for TrLimits {
             slotlive: SLOTLIVE_PROCESS,
             bytext: BYTEXT_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
+            presize: PRESIZE_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -938,6 +946,7 @@ impl TrLimits {
                 "slotlive" => l.slotlive = v.min(1),
                 "bytext" => l.bytext = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
+                "presize" => l.presize = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),

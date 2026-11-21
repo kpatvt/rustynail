@@ -4195,6 +4195,31 @@ const TABLE: &[Row] = &[
         owner: "S1L",
         dets: &[d("tr_core", "s1_lazystub_programs")],
     },
+    Row {
+        name: "p1_image_check_skip",
+        owner: "P1",
+        dets: &[d("tr_core", "p1_presize_programs")],
+    },
+    Row {
+        name: "p1_window_any",
+        owner: "P1",
+        dets: &[d("tr_core", "p1_presize_programs")],
+    },
+    Row {
+        name: "p1_memo_any",
+        owner: "P1",
+        dets: &[d("tr_core", "p1_presize_programs")],
+    },
+    Row {
+        name: "p1_memo_dunder",
+        owner: "P1",
+        dets: &[d("tr_core", "p1_presize_programs")],
+    },
+    Row {
+        name: "presize_no_free",
+        owner: "P1",
+        dets: &[d("tr_core", "p1_presize_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

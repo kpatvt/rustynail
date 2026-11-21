@@ -912,6 +912,12 @@ pub const NAMES: &[&str] = &[
     "lazystub_resume_xmm",
     "lazystub_dbl_skip",
     "lazystub_site_rel_pos",
+    // P1 (`presize`): constant-key insertion groups into a fresh table presized to the interpreter's final layout (docs/JIT_TRACE.md section 32)
+    "p1_image_check_skip",
+    "p1_window_any",
+    "p1_memo_any",
+    "p1_memo_dunder",
+    "presize_no_free",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -951,6 +957,7 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
     rn_core::table::set_mut_smallins(u8::from(active("smallins_order_swap")));
+    rn_core::table::set_mut_presize(u8::from(active("presize_no_free")));
     rn_core::table::set_mut_shape(
         u8::from(active("shape_stamp_not_bumped_on_newkey"))
             | u8::from(active("shape_collide_move_no_clear")) << 1
@@ -987,7 +994,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 754);
+        assert_eq!(NAMES.len(), 759);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
