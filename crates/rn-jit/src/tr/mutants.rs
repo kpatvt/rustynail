@@ -906,6 +906,12 @@ pub const NAMES: &[&str] = &[
     "smallins_order_swap",
     // K7 (an AREF is never a PHI)
     "aref_phi_cse",
+    // S1 (`lazystub`): deferred exit stubs (docs/JIT_TRACE.md section 31)
+    "lazystub_reloadk",
+    "lazystub_resume_v8",
+    "lazystub_resume_xmm",
+    "lazystub_dbl_skip",
+    "lazystub_site_rel_pos",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -981,7 +987,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 749);
+        assert_eq!(NAMES.len(), 754);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -3054,3 +3054,145 @@ Light gate per commit (L1 at 1c9c5d0, L2 at 6ee0b68): PASS (fmt, mutant map, cli
 
 `gate-heavy.sh` (2026-11-21, at 6ee0b68, 4451 s): OK. light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only); tests-5.4-oracle PASS;
 `oracle_options` PASS; jit-diff 1-200 (7 modes) PASS; mutant runner PASS (741 ran, 741 caught, no survivors; registry 749). `scripts/gate-mutant-times.tsv` refreshed by that run.
+
+## 31. S1 (`lazystub`): exit stubs assembled at the first exit (2026-11-21, base d2f5114)
+
+Candidate S1 of docs/STUDY_LUAJIT_GAP.md. Finding there: at the default size `awfy/cd` spends a quarter of its cycles in the trace compiler, and the
+installed trace code is 1.58 MB, most of it exit stubs. Measured at the base (stub region per trace, `[trace] code` line of this change): cd 1111 KB of
+stubs in 1578 KB of trace code (70 %; about 300 bytes per stub), expr_lang 402 of 575 KB, lru_cache 531 of 786 KB, raytrace 485 of 628 KB; and 91 % of
+the snapshots of cd (4111 of 4499) never exit at all (exit counters at the flush: 4 snapshots exit once, 21 two or three times, 48 four to fifteen
+times, 315 sixteen times or more). An oracle prototype (stubs of the snapshots that exit in a previous run assembled as before, the others reduced
+to the generic stub) gave the bound: cd -5 % cycles and -4.9 % instructions, expr_lang -6.6 %, raytrace -5.5 %, lru_cache -3.8 %, deltablue -2.6 %
+(within the instrumented binary).
+
+### 31.1 Design
+
+* **What is deferred.** Every stub the loop of `Cx::stubs_and_tail` would give an inline part: the `inline_stub` (frameless, frame-cell, sunk-table,
+  `mat_stub` frame rebuild), `sunk_frame_stub` and `link_mat_stub` kinds. Generic-only stubs (they are already short), entry-check stubs (they use the
+  extension slots of the trace's allocation), poll and shape stubs keep their form. The decision is the old code moved into `Cx::stub_plan`
+  (`StubPlan::{SunkFrames, LinkMat, Inline, Generic}`), the emission into `Cx::emit_stub`; the eager path is unchanged (`lazystub=0`).
+* **The trace's code for a deferred exit** (`Cx::defer_stub`): at the stub label a 5-byte `nop`, then the generic stub tagged
+  `exit::EXIT_DEFER` (bit 28 of `exitno`): 5 + about 21 bytes instead of about 300. What the eager stub tells the installer is told at once (the
+  double-counting `mat_stub` snapshot goes into `Asm::dbl`).
+* **First exit** (`exit::jit_tr_exit` -> `defer_build`, before `exit_entry` runs, so nothing is restored or counted): the handler assembles the stub of
+  that snapshot with `asm::assemble_deferred` (a fresh `Cx` over the same `ExitSnap`, `AsmEnv` and IR-derived tables, kept in `ExitMeta::defer` as
+  `DeferCtx`; the stub plan is recomputed from the same inputs and must not be `Generic`), with its generic twin jumping to the trace's embedded shared
+  exit routine (untagged `exitno`), places it (`rt::place_code_with`, the J-PACK tail page), patches the branches of the trace that go to the `nop`
+  (the `jmp` / `jcc rel32` fixups of the stub label, collected by `x86::emit_ex` and checked by opcode) and the `nop` itself (`jmp rel32`) to the new
+  stub (`CodeArena::patch`: the pages RW, written, RX again, docs/UNSAFE.md J-PATCH), and returns `exit::EXIT_RESUME` (2) with the stub address in
+  `ExitArea.args[0]`. The shared exit routine (`append_shared_exit` with `resume`) then reloads every GPR (except the dead `V7`) and XMM register from
+  the exit area, where it had saved them, and jumps to the stub (`KEEP_R14`: no `ReloadK` in front of that jump, nor in front of the twin's jump to the
+  shared routine, so a value of the exit map in `r14` survives). So the first exit, and every later one, runs exactly the stub the eager assembly would
+  have emitted, with the same registers: counting, hot diverts, side-trace cells, carry paths, sunk-table materialisation, lazy leave blocks and frame
+  rebuilds behave as before by construction (the twin test below checks that the exit counts and installs are identical).
+* **Later exits** branch straight to the stub (no extra jump: the guard's own `jcc` was patched). Should a patch be impossible (a rel32 out of
+  range, `mprotect` refused), the exit keeps going through the tagged generic stub and the handler resumes in the built stub every time
+  (`DeferInfo::built`); should the assembly or the placement fail (code cap, memory limit), the exit is marked failed and handled as an untagged
+  exit by the handler from then on (correct; its counter then advances by one per exit through the handler, as in `generic_only` mode).
+* **Shared blocks.** The frame-rebuild chains (`mat_shared`) and the lazy leave blocks are emitted once per trace: the first deferred stub that needs
+  one emits it, later ones jump to it (`DeferShared`, the jump retargeted to a direct `jmp rel32` once the stub's address is known:
+  `DeferredStub::relocate`). Without that the rebuild code was duplicated per stub and the L1i misses of cd went up (3.8 M -> 6.6 M).
+* **Lifetime.** The stub blocks belong to the trace (`Trace::dstubs`, charged like the trace code, freed and refunded in `cache::retire`); perf map names
+  `TRACE-<no>-STUB`; the sampler attributes them to the trace.
+* **Not under the emulator** (`+emurun` / `+emuverify`: the emulated program would need the code assembled later), and the trace modes that send
+  every exit to the handler keep doing so.
+* Knob `lazystub` (default 1; 0 = every stub with the trace). Verbose statistics: `[trace] code: traces N B; lazystub: stubs built S (B B), patched P,
+  failed F`, and the compile phase `lazystub` (assembly + placement + patch of the deferred stubs) in `[trace] phases`.
+
+What did not work or did not matter (measured on cd, equal-length binaries): a jump through a per-exit data cell instead of patching (+3 instructions
+and a dependent load per exit: -1.7 % instead of -2.3 %); patching only the `nop` (one extra `jmp` per exit: +1 instruction per exit on the exit storms,
+fib +39 M instructions); 64-byte alignment of the stub blocks (short_inner 1120 vs 1101 Mcyc at 16-byte alignment); four extra `mprotect` pairs per
+stub (no change in user cycles; the kernel time of the two `mprotect` pairs per built stub is about 2.6 us each pair, 1 ms on cd, inside the wall-time
+gain below). The gap to the oracle (about 1.5 %) is build cost per stub (a fresh assembler and x86 emitter, about 7.8 k TSC ticks per stub of which
+the system calls are most) and layout (branch misses +4 %).
+
+### 31.2 Measured (release `rn-cli`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, binaries at equal-length paths; base d2f5114 = `bas`)
+
+Code size and compile time per program, the same binary with `lazystub=0` (eager, byte-identical stubs to the base) and `lazystub=1`: trace code KB
+(the blocks of the traces), the deferred stubs built (KB, count), the assembly-side compile phases `asm + x86 + install` in million TSC ticks (min of
+3 runs), the `lazystub` phase (assembling, placing and patching the deferred stubs, system calls included), and the change of the whole compile
+pipeline (`pipeline + lazystub` against `pipeline`):
+
+| program | trace code KB eager -> lazy | stubs built KB (n) | asm+x86+install Mt eager -> lazy | lazystub Mt | pipeline |
+|---|---|---|---|---:|---:|
+| awfy/cd | 1541 -> 447 | 147 (380) | 20.6 -> 11.4 | 5.59 | -4.9 % |
+| apps/expr_lang | 562 -> 174 | 36 (103) | 5.29 -> 2.73 | 1.09 | -14.9 % |
+| apps/lru_cache | 768 -> 245 | 96 (236) | 7.15 -> 3.93 | 2.68 | -1.6 % |
+| apps/raytrace | 614 -> 153 | 21 (55) | 5.55 -> 2.76 | 0.69 | -16.8 % |
+| awfy/deltablue | 391 -> 135 | 19 (74) | 3.93 -> 2.24 | 0.78 | -10.9 % |
+| awfy/richards | 179 -> 74 | 14 (49) | 1.87 -> 1.23 | 0.59 | +3.7 % |
+| awfy/havlak | 139 -> 71 | 11 (52) | 1.70 -> 1.14 | 0.49 | -1.5 % |
+| awfy/json | 428 -> 177 | 23 (92) | 4.38 -> 2.71 | 0.95 | -6.7 % |
+| awfy/list | 144 -> 61 | 14 (48) | 1.58 -> 0.97 | 0.48 | -2.4 % |
+| corpus/lua_lexer | 394 -> 153 | 34 (129) | 4.01 -> 2.40 | 1.29 | -1.9 % |
+| corpus/classic_vector | 312 -> 137 | 7 (16) | 3.46 -> 2.26 | 0.26 | -9.2 % |
+| corpus/class_middleclass | 513 -> 181 | 40 (111) | 5.22 -> 3.28 | 1.24 | -3.9 % |
+| corpus/msgpack_pure | 283 -> 125 | 26 (83) | 3.25 -> 2.15 | 0.99 | +2.5 % |
+| corpus2/heldout/dijkstra_routes | 771 -> 258 | 87 (320) | 6.93 -> 4.06 | 3.17 | +6.1 % |
+| programs/nbody | 34 -> 13 | 1 (3) | 0.44 -> 0.28 | 0.05 | -6.0 % |
+| programs/queens | 43 -> 31 | 5 (43) | 0.63 -> 0.54 | 0.32 | +22 % (of 1.5 Mt) |
+| programs/fib, binary_trees, permute, short_inner | 7-24 KB, nearly every stub is taken | 0.5-3 | | 0.05-0.13 | +3..37 % (of 0.5 Mt or less) |
+
+Trace code shrinks by 60-75 % (with the stubs built: cd 1541 -> 594 KB). The pipeline gains least where most stubs are taken and the traces are few
+(a deferred stub costs about twice its eager assembly: a fresh assembler, emitter and placement with two `mprotect` pairs each); those programs
+compile for well under a millisecond either way.
+
+Cycles and instructions (`cycles:u`, `instructions:u`, min of 5; the jit-trace set min of 3):
+
+| program | Mcyc bas -> new | d cyc | Minstr bas -> new | d instr |
+|---|---|---:|---|---:|
+| awfy/cd | 257.6 -> 253.4 | -1.6 % | 805.3 -> 770.8 | -4.3 % |
+| apps/expr_lang | 139.4 -> 133.9 | -3.9 % | 557.5 -> 544.3 | -2.4 % |
+| apps/lru_cache | 145.6 -> 142.3 | -2.2 % | 337.2 -> 322.0 | -4.5 % |
+| apps/raytrace | 116.7 -> 112.9 | -3.3 % | 383.1 -> 367.1 | -4.2 % |
+| awfy/deltablue | 108.5 -> 107.0 | -1.4 % | 334.6 -> 325.6 | -2.7 % |
+| awfy/richards | 58.3 -> 59.1 | +1.3 % | 180.0 -> 176.7 | -1.8 % |
+| awfy/havlak | 154.3 -> 152.7 | -1.0 % | 516.9 -> 515.0 | -0.4 % |
+| programs/nbody | 353.5 -> 352.9 | -0.2 % | 1986.7 -> 1985.6 | -0.1 % |
+| programs/fib | 1241.7 -> 1250.7 | +0.7 % | 7780.7 -> 7780.7 | 0.0 % |
+| programs/binary_trees | 1480.9 -> 1466.0 | -1.0 % | 7301.1 -> 7301.2 | 0.0 % |
+| programs/queens | 1827.3 -> 1850.4 | +1.3 % | 5391.2 -> 5391.2 | 0.0 % |
+| awfy/list | 95.5 -> 95.5 | 0.0 % | 411.6 -> 409.4 | -0.5 % |
+| awfy/permute | 42.7 -> 43.0 | +0.8 % | 235.6 -> 235.2 | -0.2 % |
+| corpus/lua_lexer | 1092.0 -> 1090.5 | -0.1 % | 4421.5 -> 4415.1 | -0.1 % |
+| corpus/classic_vector | 560.6 -> 554.7 | -1.1 % | 2376.5 -> 2372.1 | -0.2 % |
+| corpus2/heldout/dijkstra_routes | 1173.0 -> 1171.4 | -0.1 % | 3071.3 -> 3056.7 | -0.5 % |
+| lib/tremove_front | 145.4 -> 150.0 | +3.2 % | 862.1 -> 862.0 | 0.0 % |
+| awfy/json | 140.2 -> 140.0 | -0.1 % | 463.6 -> 454.6 | -1.9 % |
+| programs/string_ops | 1090.4 -> 1108.1 | +1.6 % | 2879.1 -> 2879.1 | 0.0 % |
+| corpus/class_middleclass | 480.7 -> 482.7 | +0.4 % | 2254.9 -> 2244.3 | -0.5 % |
+| corpus/msgpack_pure | 1986.5 -> 1988.8 | +0.1 % | 7781.3 -> 7776.7 | -0.1 % |
+
+The 29 jit-trace programs (the hot-exit and exit-storm set): instructions identical or lower everywhere (largest -0.5 %, rec_loop), cycles -0.6 ..
++2.9 % (tfor_loops +2.9 %, sink_tuple +1.8 %, alloc_ctor +1.4 %, the rest within +-1.2 %). No program executes more instructions: a hot exit runs the
+same stub code as before (its guard was patched to branch to the stub directly; the first version that patched only the `nop` cost one `jmp` per exit,
++39 M instructions on fib). The cycle increases at equal instructions are layout: lib/tremove_front measures 150-153 Mcyc with the new binary at
+`lazystub=0` as well as `=1` (base 145-149: the binary's own code moved), tfor_loops 223-233 in both settings of the new binary against 220-238 at the
+base, string_ops lower with the new binary in both settings; fib and queens are bimodal by ASLR at the base already (fib 1244-1407 over 14 base runs).
+Wall time of cd (20 runs, kernel time included): 53.8 -> 52.6 ms.
+
+Against the time box: cd gains -1.6 .. -2.6 % cycles over the runs of this session (-4.3 % instructions), below the 3 % bar the task set for cd;
+the change was kept because it is behaviour-identical by construction (the twin test), knob-guarded, never adds instructions, cuts trace code by
+60-75 % and the compile pipeline by 5-17 % on the short programs, and gains 2-4 % cycles on expr_lang, raytrace, lru_cache, deltablue. The study's
+-6..10 % for cd was an overestimate (it assumed the stub share of compile time was larger than the 15 % the oracle shows).
+
+### 31.3 Tests and mutants
+
+* `tr_core::s1_lazystub_programs`: eight program / limit combinations (`s1_lazy_exits`, new: first exits with live floats and integers, inlined
+  frames, sunk tables, hot exits; `h2_fmat`, `sinkf_side`, `j1_sinkf`, `r1_nbody_pairs`, `s1_frame_sides`; `s1_lazy_exits` and `p2_xregs` with
+  `xregs=3`) x `always` / `on2` x plain, `+verify`, exit storms 3 and 7 (`+randra=5`), budget 17, GC stress 2, stack-move stress, each with
+  `lazystub=1` and `lazystub=0`: every job equals the interpreter, the twins have the same exits, installs, side traces and recordings, no deferred
+  stub fails, at least one is built, and the lazy trace code is smaller.
+* `mem::tests::patch_rewrites_committed_code` (two `mprotect`s per patch, refusal outside committed code). The existing suites run with deferral
+  on (it is the default of the test limits too), so every trace test exercises it; the emulator modes run with it off.
+* Mutants (registry 749 -> **754**), all caught by `s1_lazystub_programs`: `lazystub_resume_xmm` (the resume path does not reload the XMM registers),
+  `lazystub_resume_v8` (nor `V8`), `lazystub_reloadk` (a `ReloadK` in front of the jumps that must keep `r14`), `lazystub_dbl_skip` (the
+  double-counting snapshot of a deferred `mat_stub` is not told to the installer: the twins' exit counts differ), `lazystub_site_rel_pos` (the patched
+  rel32 is relative to the field, not the end of the instruction). Perf-only variants (no patch, an indirect jump to the shared blocks, a copy of the
+  rebuild chain per stub) are not registry mutants: they keep behaviour.
+* Bug found by the gate and fixed before the commit: under `+emurun` the program is replaced after assembly, so the embedded shared routine's label
+  must not be looked up in the emitted code (index out of range in 299 trace-suite tests); the lookup now happens only when a stub was deferred.
+
+### 31.4 Gates
+
+Light gate (with the changed-file mutant plan: 162 mutants incl. the five new ones): PASS (1047 s; `core-5.5` / `core-5.4` are the new rn-core steps).

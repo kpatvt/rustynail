@@ -17,6 +17,8 @@
 //!   per chunk (batching: a compile unit does several allocs and one commit), fills the rest of the last
 //!   page with `int3`, and advances `sealed_end` to the next page boundary. A page is therefore never both
 //!   writable and executable, and never flips back while any block in its chunk is live.
+//! * [`CodeArena::patch`] (S1, deferred exit stubs) rewrites a few bytes of committed code: the pages it touches go RX -> RW -> RX
+//!   around the write (the trace exit handler calls it while no generated code runs; docs/UNSAFE.md J-PATCH).
 //! * A chunk whose blocks have all been freed is parked in a small pool (still RX: the flip back to RW is
 //!   deferred until the chunk is reused, so a free costs no syscall), or unmapped. Pooled chunks beyond
 //!   1 MiB of total size are additionally trimmed with `madvise(MADV_DONTNEED)`.
@@ -434,6 +436,8 @@ pub struct CodeArena {
     pending: Vec<usize>,
     next_gen: u64,
     mprotects: u64,
+    /// S1: successful [`CodeArena::patch`] calls.
+    patches: u64,
     perf: Option<PerfMap>,
     _not_sync: PhantomData<Cell<()>>,
 }
@@ -493,6 +497,7 @@ impl CodeArena {
             pending: Vec::new(),
             next_gen: 1,
             mprotects: 0,
+            patches: 0,
             perf: PerfMap::from_env(),
             _not_sync: PhantomData,
         }
@@ -786,6 +791,63 @@ impl CodeArena {
         true
     }
 
+    /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): writes each `(addr, bytes)` of `patches`, which must all lie in the committed (RX) part of one chunk:
+    /// the pages from the lowest to the highest patched byte are flipped to RW, written and flipped back to RX (two `mprotect`s). A page is never
+    /// writable and executable at once. If the flip back fails the process aborts (the pages would be left non-executable under live code).
+    /// `BadRequest` (nothing written) if a patch is outside the committed part of the chunk of the first one.
+    ///
+    /// # Safety
+    /// No thread may execute code in the touched pages while this runs (they are not executable meanwhile), and the bytes written must leave the blocks
+    /// valid code for every path that can reach them. The trace compiler patches only from the exit handler of the trace that owns the bytes (the
+    /// handler is a call from the trace's shared exit routine and returns into it only after this has finished).
+    pub unsafe fn patch(&mut self, patches: &[(usize, &[u8])]) -> Result<(), ArenaError> {
+        let pg = page_size();
+        let lo = patches
+            .iter()
+            .map(|p| p.0)
+            .min()
+            .ok_or(ArenaError::BadRequest)?;
+        let mut hi = lo;
+        for (a, code) in patches {
+            hi = hi.max(a.checked_add(code.len()).ok_or(ArenaError::BadRequest)?);
+        }
+        let id = self
+            .slots
+            .iter()
+            .position(|c| {
+                c.as_ref().is_some_and(|c| {
+                    let b = c.base as usize;
+                    lo >= b && hi <= b + c.sealed_end
+                })
+            })
+            .ok_or(ArenaError::BadRequest)?;
+        let c = self.chunk(id);
+        let b = c.base as usize;
+        let start = (lo - b) & !(pg - 1);
+        let stop = align_up(hi - b, pg).ok_or(ArenaError::BadRequest)?;
+        // SAFETY: `[start, stop)` is page aligned and inside the committed part of the chunk (checked above).
+        let p = unsafe { c.base.add(start) };
+        self.protect(p, stop - start, libc::PROT_READ | libc::PROT_WRITE)?;
+        for (a, code) in patches {
+            // SAFETY: inside `[lo, hi)`, which is writable now; the caller guarantees nothing executes it meanwhile.
+            unsafe { std::ptr::copy_nonoverlapping(code.as_ptr(), *a as *mut u8, code.len()) };
+        }
+        if self
+            .protect(p, stop - start, libc::PROT_READ | libc::PROT_EXEC)
+            .is_err()
+        {
+            eprintln!("rn-jit: cannot seal a patched code page again (mprotect failed); aborting");
+            std::process::abort();
+        }
+        self.patches += 1;
+        Ok(())
+    }
+
+    /// Number of [`CodeArena::patch`] calls that wrote (for tests).
+    pub fn patch_calls(&self) -> u64 {
+        self.patches
+    }
+
     /// Total bytes of sealed (committed) pages over all live chunks.
     pub fn sealed_bytes(&self) -> usize {
         self.slots.iter().flatten().map(|c| c.sealed_end).sum()
@@ -994,6 +1056,43 @@ mod tests {
             }
         }
         assert_eq!(a.used(), 0);
+    }
+
+    /// S1: `patch` rewrites committed code (two `mprotect`s per call, the pages executable again afterwards) and refuses bytes outside the committed part.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn patch_rewrites_committed_code() {
+        let mut a = CodeArena::new();
+        let b1 = put(&mut a, &RET42);
+        let b2 = put(&mut a, &LEA3);
+        a.commit().unwrap();
+        let before = a.mprotect_calls();
+        // SAFETY: nothing runs the blocks while they are patched; the new bytes are complete instructions.
+        unsafe {
+            a.patch(&[(b1.addr() + 1, &[7]), (b2.addr() + 4, &[0x02])])
+                .unwrap();
+            let f1: extern "C" fn() -> u32 = a.entry(&b1).unwrap();
+            let f2: extern "C" fn(u64) -> u64 = a.entry(&b2).unwrap();
+            assert_eq!(f1(), 7);
+            assert_eq!(f2(5), 17);
+        }
+        assert_eq!(a.mprotect_calls() - before, 2);
+        assert_eq!(a.patch_calls(), 1);
+        // an uncommitted block and an empty patch list are refused, nothing written
+        let b3 = put(&mut a, &RET42);
+        // SAFETY: refused before anything is written.
+        unsafe {
+            assert_eq!(
+                a.patch(&[(b3.addr(), &[0x90])]),
+                Err(ArenaError::BadRequest)
+            );
+            assert_eq!(a.patch(&[]), Err(ArenaError::BadRequest));
+        }
+        a.commit().unwrap();
+        for b in [b1, b2, b3] {
+            // SAFETY: not running.
+            unsafe { a.free(b).unwrap() };
+        }
     }
 
     #[test]

@@ -116,7 +116,7 @@ fields are presized by `NEWTABLE`). No new handle above the bar: the known ones 
   makes the code 15 % smaller but the run 10 % slower (the hot exits need the inline form).
 * The rest is the coverage / materialisation picture of docs/STUDY_COVERAGE.md (materialise + `jit_tr_mat` 9.6 %, tier 1 15 %: `put`,
   `compareTo`, `isRed`).
-* Candidate S1 (not built): **lazy inline stubs** (a short generic stub per exit, the inline stub assembled when the exit turns hot and
+* Candidate S1 (**built** as `lazystub`, docs/JIT_TRACE.md section 31: exit stubs assembled at the first exit, cd -2..3 % cycles, -4.6 % instructions, trace code 1.58 MB -> 0.45 MB + 0.15 MB of stubs; the arithmetic below overestimated the cycle gain): **lazy inline stubs** (a short generic stub per exit, the inline stub assembled when the exit turns hot and
   patched in). Arithmetic: assembly + x86 + exits + install are ~40 % of the pipeline time; if two thirds of the stub bytes are never
   needed, cd's compile share drops by ~10 points: cd -6..10 % at the default size, ~0 at 20x sizes. Effort L (patching, the stub
   variants of K/J/N bundles), risk medium.
@@ -154,7 +154,7 @@ No cheap handle found.
 | L1 | inline `string.byte` of external and buffer long strings | lua_lexer **-12.1 % (measured)** | S | low (bound checks unchanged, a kind dispatch; one mutant) | **built** |
 | L2 | `insert_small`: the first two keys of a fresh table without the generic rehash chain | classic_vector **-12.8 % (measured)**, micro -19 % | S-M | low (same layout by construction; rn-core property test against the general path, a seed-0 reference test, one mutant) | **built** |
 | P1 | presize a recorded `TNEW` from its `NEWREF`s (with the window exits shrinking the part back) | classic_vector -19 % more (source-rewrite ceiling) | L | medium-high (TR29.1, snapshots, side traces, sinking) | not built: risk / effort above the time box |
-| S1 | lazy inline exit stubs | cd -6..10 % (arithmetic) | L | medium | not built |
+| S1 | lazy inline exit stubs | cd -6..10 % (arithmetic); **measured -2..3 %** (expr_lang -3.5 %, raytrace -3.4 %) | L | medium | **built** (`lazystub`, JIT_TRACE section 31) |
 | L3 | `string.find` with a real pattern (no captures) as a recorded helper | lua_lexer -2..4 % (arithmetic) | M | low-medium | not built: below the bar |
 | - | H3 inline `TNEW` / pool reuse order | raytrace / classic_vector a few % | L | high (STUDY_ALLOC_CALL) | not revisited |
 | - | protocol items for fib / permute | see section 21 | - | unsound or measured small | not revisited |

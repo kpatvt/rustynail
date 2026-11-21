@@ -266,6 +266,27 @@ pub struct ExitMeta {
     /// N2c (`+verify`): extension slot + 1 of the exit area that holds the trace's entry `CallInfo` (0: no segment oracle). The handler checks
     /// that an exit after `k` `RETF`s runs in the entry frame popped `k` times, `seg_shift` slots lower.
     pub seg_oracle: u16,
+    /// S1 (`lazystub`): the deferred stubs of the trace (`None`: every stub was assembled with the trace).
+    pub defer: Option<Box<DeferInfo>>,
+}
+
+/// S1 (`lazystub`): what [`jit_tr_exit`] needs to assemble the deferred stub of an exit at its first exit.
+pub struct DeferInfo {
+    /// The assembler inputs ([`asm::assemble_deferred`](super::asm::assemble_deferred)).
+    pub ctx: super::asm::DeferCtx,
+    /// Per snapshot: the address of its patchable `nop` (0: the snapshot is not deferred).
+    pub patch_at: Vec<usize>,
+    /// Per snapshot: the `jmp` / `jcc rel32` instructions of the trace that branch to the `nop`, as `(address of the rel32 field, address of the end of the
+    /// instruction)`: patched to branch to the stub directly (a hot exit pays no extra jump).
+    pub sites: Vec<Vec<(usize, usize)>>,
+    /// The address of the trace's embedded shared exit routine (the generic twins of the deferred stubs jump to it).
+    pub shared_exit: usize,
+    /// Per snapshot: the address of its assembled stub (0: not yet).
+    pub built: Vec<Cell<usize>>,
+    /// Per snapshot: the stub could not be assembled or placed (the exit stays with the handler, which restores it as an untagged exit).
+    pub failed: Vec<Cell<bool>>,
+    /// The blocks the deferred stubs share (frame rebuilds, lazy leave blocks), placed with the first stub that needed each.
+    pub shared: RefCell<super::asm::DeferShared>,
 }
 
 impl ExitSnap {
@@ -896,7 +917,13 @@ pub struct SharedExitEnv {
     pub handler: u64,
     /// Offset of the stack data pointer inside the `Thread` (`ReloadFrame`).
     pub stack_off: i32,
+    /// S1 (`lazystub`): the routine has the resume path of the deferred stubs (the handler returns [`EXIT_RESUME`]: every register is reloaded from the
+    /// area and the routine jumps to `args[0]`, the stub the handler has just assembled).
+    pub resume: bool,
 }
+
+/// S1 (`lazystub`): the result of [`jit_tr_exit`] that sends the shared exit routine to its resume path (0 = landed, 1 = memory error).
+pub const EXIT_RESUME: u32 = 2;
 
 /// Appends the shared exit routine (5.6) to `p` and returns its label. Entry state: `r12` thread, `r13` root frame,
 /// `r15` budget word, `trace_id` / `exitno` stored, every `V` / `X` register as the trace left it (`V7` is dead).
@@ -924,6 +951,16 @@ pub fn append_shared_exit(p: &mut Program, env: &SharedExitEnv) -> L {
         a: 0,
         b: 0,
     });
+    // S1: the handler assembled the deferred stub of this exit and restored nothing: continue in the stub with the registers of the exit
+    let resume = env.resume.then(|| p.label());
+    if let Some(r) = resume {
+        p.push(Op::Br {
+            cc: Cc::Eq,
+            a: 0,
+            b: Src::Imm(EXIT_RESUME as i32),
+            to: r,
+        });
+    }
     // F8 (TR29.3): a non-zero result (V0) = the handler recorded a memory error (a sunk table could not be allocated
     // while materialising): leave compiled code with `JitExit::Error`; the frame was restored by the handler
     let err = p.label();
@@ -973,6 +1010,35 @@ pub fn append_shared_exit(p: &mut Program, env: &SharedExitEnv) -> L {
     p.push(Op::JmpR(3));
     p.push(Op::Bind(err));
     p.push(Op::Ret(JitExit::Error as u32));
+    if let Some(r) = resume {
+        // (the pinned registers are as at the exit: the handler is a C call, and it restored nothing)
+        p.push(Op::Bind(r));
+        for v in 0..NGPR as u8 {
+            if v != 7 && !(v == 8 && mutants::active("lazystub_resume_v8")) {
+                p.push(Op::Ld {
+                    dst: v,
+                    w: W::B8,
+                    m: area_m(exit_area::GPR + 8 * usize::from(v)),
+                });
+            }
+        }
+        if !mutants::active("lazystub_resume_xmm") {
+            for x in 0..NXMM as u8 {
+                p.push(Op::LdF {
+                    dst: x,
+                    m: area_m(exit_area::XMM + 8 * usize::from(x)),
+                });
+            }
+        }
+        p.push(Op::Ld {
+            dst: 7,
+            w: W::B8,
+            m: area_m(exit_area::ARGS),
+        });
+        // (not a jump out of compiled code: `r14` keeps the value of the exit)
+        p.push(super::asm::KEEP_R14);
+        p.push(Op::JmpR(7));
+    }
     l
 }
 
@@ -994,8 +1060,14 @@ pub const EXIT_POLL: u32 = 1 << 30;
 /// separately (`cache::shape_miss`) and demote the family to a recording without shape guards.
 pub const EXIT_SHAPE: u32 = 1 << 29;
 
+/// Bit 28 of `ExitArea.exitno` (S1, `lazystub`): the generic stub of a *deferred* exit (its stub is assembled at the first exit, see
+/// [`asm::assemble_deferred`](super::asm::assemble_deferred)). [`jit_tr_exit`] assembles the stub if it does not exist yet, patches the branches to
+/// it and resumes in it ([`EXIT_RESUME`]); a stub that exists but could not be patched in is resumed in again; one that could not be assembled leaves the
+/// exit to the handler as an untagged one (the bit is cleared).
+pub const EXIT_DEFER: u32 = 1 << 28;
+
 /// Every flag bit of `ExitArea.exitno`.
-pub const EXIT_FLAGS: u32 = EXIT_ENTRY | EXIT_POLL | EXIT_SHAPE;
+pub const EXIT_FLAGS: u32 = EXIT_ENTRY | EXIT_POLL | EXIT_SHAPE | EXIT_DEFER;
 
 /// The two stores of a generic stub, as `(offset in the ExitArea, width)`: `trace_id` then `exitno`, both `B4`.
 pub const GENERIC_STUB_STORES: [(usize, W); 2] =
@@ -2715,6 +2787,102 @@ pub unsafe extern "C" fn jit_tr_lazy_leave(
     0
 }
 
+/// S1 (`lazystub`): the stub to resume in for the deferred exit in `area` (`exitno` already untagged): assembled, placed and patched in now if it does
+/// not exist yet, the existing one if its patch could not be done; `None` when the exit is to be handled as an untagged one (the stub could not be
+/// assembled or placed: then it is never tried again).
+fn defer_build(st: &mut State, area: &ExitArea) -> Option<usize> {
+    let (id, meta) = cache::exit_meta_ptr(st, area.trace_id)?;
+    // SAFETY: the trace is live (its slot holds it), so its metadata is; nothing below flushes a trace (placing code does not, `add_defer_stub` does not)
+    // and the metadata is not mutated except through its `Cell`s / `RefCell`.
+    let meta: &ExitMeta = unsafe { &*meta };
+    let d = meta.defer.as_deref()?;
+    let k = area.exitno as usize;
+    let at = d.patch_at.get(k).copied().unwrap_or(0);
+    if at == 0 || d.failed[k].get() {
+        return None;
+    }
+    if d.built[k].get() != 0 {
+        // the stub exists but its `jmp` could not be patched in: every exit resumes in it from here
+        return Some(d.built[k].get());
+    }
+    let fail = |st: &mut State, why: &str| {
+        d.failed[k].set(true);
+        cache::note_defer_failed(st, id, k, why);
+        None
+    };
+    let stub = match super::asm::assemble_deferred(
+        &meta.snaps,
+        &d.ctx,
+        &d.shared.borrow(),
+        k as u32,
+        d.shared_exit as u64,
+    ) {
+        Ok(x) => x,
+        Err(e) => return fail(st, &format!("asm: {e:?}")),
+    };
+    let entry = stub.entry;
+    let mut em = match crate::x86::emit_ex(&stub.prog, &stub.far_labels()) {
+        Ok(em) => em,
+        Err(e) => return fail(st, &format!("x86: {e:?}")),
+    };
+    let Some(off) = em.label_off.get(entry as usize).copied().flatten() else {
+        return fail(st, "entry unbound");
+    };
+    let dp = crate::rt::data_ptr(st);
+    let placed = match crate::rt::place_code_with(st, dp, em.code.len(), 16, |base, buf| {
+        stub.relocate(&mut em, base);
+        buf.copy_from_slice(&em.code);
+    }) {
+        Ok(p) => p,
+        Err(_) => return fail(st, "place"),
+    };
+    let base = placed.block.addr();
+    let addr = base + off;
+    if !cache::add_defer_stub(st, id, placed.block, placed.own, em.code.len()) {
+        return fail(st, "trace gone");
+    }
+    d.shared.borrow_mut().add(&stub, &em.label_off, base);
+    d.built[k].set(addr);
+    // the branches to the `nop` go to the stub, and the `nop` becomes `jmp stub` (the trace's code is not running: this handler was called from it and
+    // returns through the resume path). If that cannot be done, the later exits come through the tagged generic stub and the handler resumes in the
+    // stub each time.
+    let rel = |end: usize| i32::try_from((addr as i64).wrapping_sub(end as i64)).ok();
+    let mut bytes: Vec<(usize, [u8; 5], usize)> = Vec::with_capacity(d.sites[k].len() + 1);
+    let mut ok = true;
+    match rel(at + super::asm::DEFER_PATCH_LEN) {
+        Some(r) => {
+            let mut j = [0xE9u8, 0, 0, 0, 0];
+            j[1..].copy_from_slice(&r.to_le_bytes());
+            bytes.push((at, j, 5));
+        }
+        None => ok = false,
+    }
+    for &(pos, end) in &d.sites[k] {
+        // (MUTANT `lazystub_site_rel_pos`: the displacement is taken from the field instead of the end of the instruction)
+        let from = if mutants::active("lazystub_site_rel_pos") {
+            pos
+        } else {
+            end
+        };
+        match rel(from) {
+            Some(r) => {
+                let mut j = [0u8; 5];
+                j[..4].copy_from_slice(&r.to_le_bytes());
+                bytes.push((pos, j, 4));
+            }
+            None => ok = false,
+        }
+    }
+    if ok {
+        let patches: Vec<(usize, &[u8])> = bytes.iter().map(|(a, b, n)| (*a, &b[..*n])).collect();
+        // SAFETY: the addresses are in the live block of this trace (`exit_meta_ptr`); no code of it runs until this handler returns.
+        if unsafe { (*dp).arena.patch(&patches) }.is_ok() {
+            cache::note_defer_patched(st);
+        }
+    }
+    Some(addr)
+}
+
 /// # Safety
 /// Called only from the shared exit routine with the running thread and its root Lua frame, after the routine saved the
 /// registers (`JitData` must place the area behind the budget word: P4 decisions in docs/JIT_TRACE_REF.md).
@@ -2725,11 +2893,31 @@ pub unsafe extern "C" fn jit_tr_exit(th: *mut Thread, ci: *mut CallInfo, _a: u32
         // SAFETY: `th` is the live thread pinned in `r12`.
         let mut st = unsafe { jit_hooks::state_from_thread(th.cast()) };
         let budget = crate::rt::cnt_ptr(&mut st);
+        // S1: the first exit of a deferred stub: assemble it and resume in it (nothing restored, nothing counted: the stub does what the eager one did)
+        {
+            // SAFETY: the area follows the budget word inside the same per-state allocation; nothing else accesses it during the handler.
+            let area = unsafe {
+                &mut *budget
+                    .cast::<u8>()
+                    .add(exit_area::FROM_R15 as usize)
+                    .cast::<ExitArea>()
+            };
+            if area.exitno & EXIT_DEFER != 0 {
+                area.exitno &= !EXIT_DEFER;
+                let t0 = super::phase::now();
+                let built = defer_build(&mut st, area);
+                super::phase::add(super::phase::LAZYSTUB, t0);
+                if let Some(addr) = built {
+                    area.args[0] = addr as u64;
+                    return EXIT_RESUME;
+                }
+            }
+        }
         // SAFETY: the contract of the function; the area follows the budget word in the per-state data.
-        unsafe { exit_entry(th, ci, budget) }.mem_error
+        u32::from(unsafe { exit_entry(th, ci, budget) }.mem_error)
     }));
     match r {
-        Ok(mem_error) => u32::from(mem_error),
+        Ok(rc) => rc,
         Err(e) => {
             let msg = e
                 .downcast_ref::<String>()

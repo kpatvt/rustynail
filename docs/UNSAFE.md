@@ -191,6 +191,13 @@ in rn-core, the hooks under `cfg(feature = "jit")` (`jit_hooks.rs`, the `'frame`
   a failed re-seal aborts. W^X per page holds at every instant that generated code can run, because a compile executes no
   generated code and the owning thread is the only one that can run it. `CodeArena::free` `madvise(MADV_DONTNEED)`s the whole
   pages strictly inside a freed block (never a page shared with a neighbour). Tests: `tests/jit_lifetime.rs`.
+- **J-PATCH (S1 `lazystub`, docs/JIT_TRACE.md section 31):** the trace exit handler places a deferred exit stub (`rt::place_code_with`, the
+  J-PACK path) and then `CodeArena::patch`es the trace's branches to it: the committed pages from the lowest to the highest patched byte
+  go RX -> RW, are written, and go back to RX before the handler returns (a failed re-seal aborts). The handler is a call from the
+  trace's own shared exit routine and no generated code runs until it returns (single owning thread), so W^X per page holds at every
+  instant code can run. The patched bytes are rel32 fields of `jmp` / `jcc` to the stub's 5-byte `nop` (found through the
+  assembler's fixups and checked by opcode) and the `nop` itself (`jmp rel32`). The stub block belongs to the trace and is freed with
+  it (`cache::retire`). Tests: `tr_core::s1_lazystub_programs` (twins `lazystub=1/0`, exit storms, GC and stack-move stress).
 - **J-STRESS:** `state::move_stack` (feature `jit`) re-allocates the stack block, fixes open upvalues, poisons and frees the old
   block; only reachable through `jit_hooks::stress_move_stack` when `RUSTYNAIL_JIT_STRESS=stackmove`.
 - **Charge accounting (replaces J-CHARGE):** `Mem::charge_ext` up front for whole pages, `Mem::uncharge_ext` for the unused part

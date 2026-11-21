@@ -2061,6 +2061,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     }
     let emurun = opts.emurun;
     let emuverify = opts.emuverify && !opts.emurun;
+    // S1 (`lazystub`): deferred exit stubs. Not under the emulator (it runs the program it was given, not code assembled and patched in later).
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let defer_on =
+        unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.lazystub != 0 } && !emurun && !emuverify;
+
     if (ir.rec_ret.is_some() || ir.rec_call.is_some()) && (emurun || emuverify) {
         // (the emulator cannot run the pinned-register switch of a native frame push)
         return Err(abort_err("emu-unsupported", "native self-call"));
@@ -2187,6 +2192,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         carry_exits: carry_exits_on,
         // R1 (half A): the carry entry skips the room checks of the plain entry: the trace may not need more than the parent's checks guarantee
         carry_entry: rec.ir.extent <= act.max_extent && rec.ir.depth <= act.max_ci,
+        defer: defer_on,
     };
     let t_asm = phase::now();
     let mut a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env).map_err(|e| {
@@ -2217,10 +2223,50 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     // A2: the second entry exists only for the real program (the emulator stubs enter through `entry`)
     let e2_label = if emurun || emuverify { None } else { a.entry2 };
     let t_x86 = phase::now();
-    let em = x86::emit(&a.prog).map_err(|e| abort_err("x86", format!("x86: {e:?}")))?;
+    // S1: the references to the deferred stubs' labels are wanted (the handler patches them to the stub)
+    let mut want: Vec<bool> = Vec::new();
+    for &(_, l) in &a.defer_g {
+        if want.len() <= l as usize {
+            want.resize(l as usize + 1, false);
+        }
+        want[l as usize] = true;
+    }
+    let em = x86::emit_ex(&a.prog, &want).map_err(|e| abort_err("x86", format!("x86: {e:?}")))?;
     phase::add(phase::X86, t_x86);
     let entry_off =
         em.label_off[entry as usize].ok_or_else(|| abort_err("x86", "entry unbound"))?;
+    // S1: the offsets of the patchable `nop`s of the deferred snapshots and of the shared exit routine
+    let mut doffs: Vec<(u32, usize)> = Vec::with_capacity(a.defer_g.len());
+    for &(k, l) in &a.defer_g {
+        let off =
+            em.label_off[l as usize].ok_or_else(|| abort_err("x86", "deferred stub unbound"))?;
+        doffs.push((k, off));
+    }
+    // (only with deferred stubs: under the emulator `a.prog` was replaced and the label means nothing in `em`)
+    let shared_off = if doffs.is_empty() {
+        None
+    } else {
+        a.shared_label
+            .and_then(|l| em.label_off.get(l as usize).copied().flatten())
+    };
+    // S1: the branches to each deferred stub's `nop` (a `jmp` or `jcc rel32`, checked by their opcode bytes; anything else keeps going through the `nop`)
+    let mut dsites: Vec<Vec<(usize, usize)>> = Vec::new();
+    if !doffs.is_empty() {
+        dsites = vec![Vec::new(); snaps.len()];
+        let mut snap_of: Vec<u32> = vec![u32::MAX; want.len()];
+        for &(k, l) in &a.defer_g {
+            snap_of[l as usize] = k;
+        }
+        for &(l, pos, end) in &em.refs {
+            let k = snap_of.get(l as usize).copied().unwrap_or(u32::MAX);
+            let branch = (pos >= 1 && em.code[pos - 1] == 0xE9)
+                || (pos >= 2 && em.code[pos - 2] == 0x0F && em.code[pos - 1] & 0xF0 == 0x80);
+            if k != u32::MAX && branch {
+                dsites[k as usize].push((pos, end));
+            }
+        }
+    }
+    let defer_ctx = a.defer.take();
     let e2_off = e2_label.and_then(|l| em.label_off[l as usize]).unwrap_or(0);
     let e2n_off = if e2_off != 0 {
         a.entry2n
@@ -2311,6 +2357,41 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     cache::note_hk_fused(st, hk_fused, hk_split);
     let gk = exit::guard_kinds(ir);
     let la = record::last_la_sites();
+    // S1: the deferred stubs (where their `nop`s are)
+    let defer = match (defer_ctx, shared_off, cache::trace_block(st, newid)) {
+        (Some(ctx), Some(so), Some((base, _))) if !doffs.is_empty() => {
+            let n = snaps.len();
+            let mut patch_at = vec![0usize; n];
+            for &(k, off) in &doffs {
+                patch_at[k as usize] = base + off;
+            }
+            for v in dsites.iter_mut() {
+                for (pos, end) in v.iter_mut() {
+                    *pos += base;
+                    *end += base;
+                }
+            }
+
+            Some(Box::new(exit::DeferInfo {
+                ctx,
+                patch_at,
+                sites: dsites,
+                shared_exit: base + so,
+                built: (0..n).map(|_| std::cell::Cell::new(0)).collect(),
+                failed: (0..n).map(|_| std::cell::Cell::new(false)).collect(),
+                shared: Default::default(),
+            }))
+        }
+        _ => None,
+    };
+    if !doffs.is_empty() && defer.is_none() {
+        // (never: a deferred stub always jumps to the embedded shared exit routine, and the trace was installed just now)
+        cache::request_flush(st, newid, cache::FlushWhy::Off);
+        return Err(PipeErr {
+            kind: Fail::Done,
+            detail: "lazystub: no shared exit routine".into(),
+        });
+    }
     let meta = ExitMeta {
         root_code: rootp.code_ptr(),
         snaps,
@@ -2339,6 +2420,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         } else {
             0
         },
+        defer,
     };
     let attached = cache::attach_exits(st, newid, meta);
     if attached.is_some() && !gk.is_empty() {

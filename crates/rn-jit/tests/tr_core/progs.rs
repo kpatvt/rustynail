@@ -8910,6 +8910,47 @@ print(vsum, vn)
 "##,
     },
     Prog {
+        name: "s1_lazy_exits",
+        small: true,
+        src: r##"
+-- S1 (`lazystub`): exit stubs assembled at their first exit. The guards below are first taken at different iterations of different rounds, with
+-- many floats (XMM registers) and integers (every GPR) live, inside inlined frames, next to sunk tables, and some of them turn hot (side traces,
+-- the generic twin); the first exit of each stub resumes in it with the registers of the exit.
+local function mix(a, b, c) return a * 0.5 + b - c end
+local function pick(t, k) if t.n > k then return t.n - k end return k end
+local function pt(x, y) return {x = x, y = y} end
+local acc, facc, cnt = 0, 0.0, 0
+for r = 1, 40 do
+  local x, y, z, w = r * 1.5, r * 0.25, r + 0.125, r * 3.0
+  local u, v = r * 0.75, -r * 0.5
+  local i1, i2, i3, i4, i5, i6 = r, r * 2, r * 3, r * 5, r * 7, r * 11
+  local tab = {n = r}
+  for i = 1, 260 do
+    x = x + 0.5; y = y * 1.0001; z = z - 0.25; w = w + i; u = u + y; v = v - x
+    i1 = i1 + 1; i2 = i2 + i; i3 = i3 ~ i; i4 = i4 + i1; i5 = i5 - i2; i6 = i6 + (i3 & 7)
+    if i % 89 == r % 89 then
+      facc = facc + x + y + z + w + u + v
+      acc = acc + i1 + i2 + i3 + i4 + i5 + i6
+    end
+    if i == 120 + r then
+      local p = pt(x, i5)
+      if r % 3 == 0 then acc = acc + p.y end
+      facc = facc + mix(p.x, z, u)
+    end
+    if i > 250 and r % 4 == 0 then
+      cnt = cnt + pick(tab, i % 7) + (i6 & 3)
+      facc = facc + v * 0.001
+    end
+    if r > 30 and i % 13 == 0 then
+      facc = facc - w * 0.0001
+      acc = acc + (i4 & 255)
+    end
+  end
+end
+print(string.format("%.6f", facc), acc, cnt)
+"##,
+    },
+    Prog {
         name: "l1_byte_ext",
         small: true,
         src: r##"

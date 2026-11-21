@@ -61,6 +61,8 @@ pub const SNAPPRUNE_PROCESS: u32 = 1;
 pub const HSTOREGUARD_PROCESS: u32 = 1;
 /// K5: the process default of [`TrLimits::slotlive`] (also the struct default).
 pub const SLOTLIVE_PROCESS: u32 = 1;
+/// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
+pub const LAZYSTUB_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
@@ -622,6 +624,10 @@ pub struct TrLimits {
     /// `table.concat` / `string.rep` / `string.pack` result adopted without a copy in 5.5) and library-buffer strings (`shrlen == -4`) instead of
     /// calling the helper for them: 0 = only regular long strings inline, 1 = all long kinds (default [`BYTEXT_PROCESS`]).
     pub bytext: u32,
+    /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
+    /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
+    /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
+    pub lazystub: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -747,6 +753,7 @@ impl Default for TrLimits {
             hstoreguard: HSTOREGUARD_PROCESS,
             slotlive: SLOTLIVE_PROCESS,
             bytext: BYTEXT_PROCESS,
+            lazystub: LAZYSTUB_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -930,6 +937,7 @@ impl TrLimits {
                 "hstoreguard" => l.hstoreguard = v.min(1),
                 "slotlive" => l.slotlive = v.min(1),
                 "bytext" => l.bytext = v.min(1),
+                "lazystub" => l.lazystub = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
@@ -2276,6 +2284,14 @@ pub struct TrStats {
     pub black_handled: u64,
     /// F2a: side traces flushed (`flushes` counts the roots only).
     pub side_flushes: u64,
+    /// S1 (`lazystub`): bytes of trace code installed (the trace blocks, without the deferred stubs).
+    pub code_bytes: u64,
+    /// S1: deferred stubs assembled at their first exit, their bytes, and the ones that could not be assembled or placed.
+    pub dstubs: u64,
+    pub dstub_bytes: u64,
+    pub dstub_failed: u64,
+    /// S1: deferred stubs whose `nop` was patched into a `jmp` (the others resume through the handler at every exit).
+    pub dstub_patched: u64,
     /// F2a: side recordings aborted, by reason.
     pub side_aborted: BTreeMap<&'static str, u64>,
     /// F2b: root traces installed that end with a link into an inner loop's trace (nest roots).
@@ -2421,6 +2437,9 @@ struct Trace {
     shape_miss: u32,
     /// P3: per exit, the exits counted before the counter was re-based by [`chain_check`] (one count per exit).
     chain_off: Vec<u64>,
+    /// S1 (`lazystub`): the blocks of the deferred stubs assembled so far ([`add_defer_stub`]); freed with the trace, refunded with `dstub_own`.
+    dstubs: Vec<CodeBlock>,
+    dstub_own: usize,
 }
 
 // (a slot of the trace table: boxing `Trace` would cost an indirection in the exit handler's lookups for nothing)
@@ -3740,6 +3759,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
     let d = d_of(st);
     let entry = placed.block.addr() + ti.entry_off;
     let block_addr = placed.block.addr();
+    d.tr.stats.code_bytes += ti.code.len() as u64;
     if d.tr.cfg.verbose >= 1 || super::diag::sampling() {
         if let Some(tp) = tr_of(d, root) {
             let (l, pc) = (tp.line, tp.head(head).pc);
@@ -3805,6 +3825,8 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         chain_done: vec![0; nex],
         chain_n: 0,
         shape_miss: 0,
+        dstubs: Vec::new(),
+        dstub_own: 0,
         chain_off: vec![0; nex],
     });
     d.tr.active = None;
@@ -4160,7 +4182,80 @@ fn retire(d: &mut JitData, t: Trace) -> usize {
         // detached there is retired at a safe point instead; the head cell no longer points into the block.
         let _ = unsafe { d.arena.free(b) };
     }
-    t.own + t.meta
+    for b in t.dstubs {
+        // SAFETY: as for the trace block: a deferred stub runs only as a part of an exit of its trace (the trace's patched branches lead to it).
+        let _ = unsafe { d.arena.free(b) };
+    }
+    t.own + t.meta + t.dstub_own
+}
+
+/// S1 (`lazystub`): attaches the block of a deferred stub just placed for trace `id` (freed and refunded with the trace). If the trace is gone the block is freed
+/// and refunded at once and the result is false.
+pub fn add_defer_stub(
+    st: &mut State,
+    id: TrId,
+    block: CodeBlock,
+    own: usize,
+    bytes: usize,
+) -> bool {
+    let d = d_of(st);
+    let owner = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => Some((t.no, t.root, t.head)),
+        _ => None,
+    };
+    let Some((no, root, head)) = owner else {
+        // SAFETY: never executed (the address was not published).
+        let _ = unsafe { d.arena.free(block) };
+        jit_hooks::uncharge_code(st, own);
+        return false;
+    };
+    if d.arena.perf_names() {
+        let _ = d
+            .arena
+            .register_range(block.addr(), bytes, &format!("TRACE-{no}-STUB"));
+    }
+    if d.tr.cfg.verbose >= 1 || super::diag::sampling() {
+        // (the sampler attributes the stub's samples to its trace, as for the trace block)
+        if let Some(tp) = tr_of(d, root) {
+            let (l, pc) = (tp.line, tp.head(head).pc);
+            super::diag::note_range(
+                block.addr(),
+                bytes,
+                super::diag::Owner::Trace(no, root, l, pc),
+            );
+        }
+    }
+    d.tr.stats.dstubs += 1;
+    d.tr.stats.dstub_bytes += bytes as u64;
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot_mut(id)
+    {
+        t.dstubs.push(block);
+        t.dstub_own += own;
+    }
+    true
+}
+
+/// S1 (`lazystub`): a deferred stub's `nop` was patched into a `jmp`.
+pub fn note_defer_patched(st: &mut State) {
+    d_of(st).tr.stats.dstub_patched += 1;
+}
+
+/// S1 (`lazystub`): the deferred stub of exit `k` of trace `id` could not be assembled or placed (the exit stays with the handler).
+pub fn note_defer_failed(st: &mut State, id: TrId, k: usize, why: &str) {
+    let d = d_of(st);
+    d.tr.stats.dstub_failed += 1;
+    vlog(d, || {
+        format!(
+            "lazystub: exit {k} of trace slot {} not assembled: {why}",
+            id.slot
+        )
+    });
 }
 
 /// Detaches `id` and retires it now, or parks it in the graveyard while an exit handler runs. Returns the bytes
@@ -5698,6 +5793,14 @@ pub(crate) fn report(d: &JitData) {
         }
     }
     eprintln!("[trace] exits {exits} (live traces {traces})");
+    eprintln!(
+        "[trace] code: traces {} B; lazystub: stubs built {} ({} B), patched {}, failed {}",
+        d.tr.stats.code_bytes,
+        d.tr.stats.dstubs,
+        d.tr.stats.dstub_bytes,
+        d.tr.stats.dstub_patched,
+        d.tr.stats.dstub_failed
+    );
     // H8: the per-head table (and the sampler's shares, when it ran)
     let prof = super::diag::profile();
     let live = |k: usize, l: i32, pc: u32| -> Option<super::diag::LiveHead> {

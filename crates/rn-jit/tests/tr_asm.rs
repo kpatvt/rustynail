@@ -669,6 +669,7 @@ fn compile(
 fn base_env(w: &mut World) -> AsmEnv {
     AsmEnv {
         seg_oracle: false,
+        defer: false,
         link_mat: false,
         trace_id: 0,
         counters: w.counters.as_ptr() as u64,
@@ -3145,6 +3146,7 @@ mod e2e {
         .ok_or("no trace table")?;
         let env = AsmEnv {
             seg_oracle: false,
+            defer: false,
             link_mat: false,
             trace_id: id.slot,
             counters: counters as u64,
@@ -3252,6 +3254,7 @@ mod e2e {
         .map_err(|e| format!("install: {e:?}"))?;
         let meta = exit::ExitMeta {
             seg_oracle: 0,
+            defer: None,
             root_code: {
                 // SAFETY: the root proto is live (running frame).
                 unsafe { &*(root as *const rn_core::func::Proto) }.code_ptr()

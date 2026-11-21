@@ -1281,6 +1281,20 @@ pub(crate) fn place_code(
     code: &[u8],
     align: usize,
 ) -> Result<Placed, Fail> {
+    place_code_with(st, dp, code.len(), align, |_, buf| {
+        buf.copy_from_slice(code)
+    })
+}
+
+/// [`place_code`] of `len` bytes that `fill` writes, given the address of the block (S1: a deferred exit stub retargets its jumps to absolute
+/// addresses once its own address is known).
+pub(crate) fn place_code_with(
+    st: &mut State,
+    dp: *mut JitData,
+    len: usize,
+    align: usize,
+    fill: impl FnOnce(usize, &mut [u8]),
+) -> Result<Placed, Fail> {
     // SAFETY: `dp` is the live per-state data (see `set_mode`).
     let d = unsafe { &mut *dp };
     let thunk_code = if d.thunk.is_none() {
@@ -1292,7 +1306,7 @@ pub(crate) fn place_code(
     // really sealed is refunded after the commit. Compiles are packed into the partially used last page
     // of the current chunk (`reopen_tail`), so small functions cost about their size.
     let thunk_pages = thunk_code.as_ref().map_or(0, |c| round_page(c.len()));
-    let want = round_page(code.len()) + thunk_pages;
+    let want = round_page(len) + thunk_pages;
     if !jit_hooks::charge_code(st, want) {
         d.deny = 32;
         return Err(Fail::Retry); // memory limit: transient (freeing code or objects makes room)
@@ -1313,7 +1327,7 @@ pub(crate) fn place_code(
         }
         jit_hooks::uncharge_code(st, refund);
     };
-    let mut block = match d.arena.alloc(code.len(), align) {
+    let mut block = match d.arena.alloc(len, align) {
         Ok(b) => b,
         Err(e) => {
             fail(st, d, Vec::new(), want);
@@ -1324,8 +1338,9 @@ pub(crate) fn place_code(
             return Err(Fail::Permanent);
         }
     };
+    let addr = block.addr();
     match d.arena.writer(&mut block) {
-        Ok(mut w) => w.write_at(0, code),
+        Ok(mut w) => fill(addr, &mut w),
         Err(_) => {
             fail(st, d, vec![block], want);
             return Err(Fail::Permanent);
@@ -1369,8 +1384,8 @@ pub(crate) fn place_code(
     let consumed = d.arena.sealed_bytes().saturating_sub(sealed_before);
     let own = consumed
         .saturating_sub(thunk_pages)
-        .max(code.len().next_multiple_of(16))
-        .min(round_page(code.len()));
+        .max(len.next_multiple_of(16))
+        .min(round_page(len));
     jit_hooks::uncharge_code(st, want.saturating_sub(own + thunk_pages));
     Ok(Placed { block, own })
 }

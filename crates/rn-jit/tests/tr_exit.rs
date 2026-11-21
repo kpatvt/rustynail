@@ -1736,6 +1736,7 @@ fn shared_exit_routine_saves_registers_and_jumps_through_the_landing_cell() {
         &SharedExitEnv {
             handler: 0xABCD,
             stack_off: 0,
+            resume: false,
         },
     );
     // op order of the routine: the handler may move the stack, so `ReloadFrame` must come after `SetCi` (and `SetK`
@@ -2543,6 +2544,7 @@ mod slice {
                 &SharedExitEnv {
                     handler: 0xFACE,
                     stack_off: 0,
+                    resume: false,
                 },
             );
             targets.push((0xFEED_0000, l));
@@ -2626,6 +2628,7 @@ mod slice {
         let (snaps, descs) = build_exits(&t, &al, &res).expect("builds");
         let meta = ExitMeta {
             seg_oracle: 0,
+            defer: None,
             root_code: code().as_ptr(),
             snaps: snaps.clone(),
             exits: descs,
@@ -2969,6 +2972,7 @@ mod handler {
         let tid = c::install(st, id, ti).expect("install");
         let meta = ExitMeta {
             seg_oracle: 0,
+            defer: None,
             root_code: code().as_ptr(),
             snaps: vec![ExitSnap {
                 pc: 0,
@@ -3170,6 +3174,7 @@ mod handler {
             .collect();
         let meta = ExitMeta {
             seg_oracle: 0,
+            defer: None,
             root_code: code().as_ptr(),
             snaps,
             exits,
@@ -3216,6 +3221,7 @@ mod handler {
         let tid = c::install(st, id, ti).expect("install side");
         let meta = ExitMeta {
             seg_oracle: 0,
+            defer: None,
             root_code: code().as_ptr(),
             snaps: (0..n)
                 .map(|_| ExitSnap {

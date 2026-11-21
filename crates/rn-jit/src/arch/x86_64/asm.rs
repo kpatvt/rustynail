@@ -252,6 +252,21 @@ impl Assembler {
         }
     }
 
+    /// S1 (`lazystub`): the plain references so far (fields without a trailing immediate or a constant, e.g. `jmp` / `jcc rel32`) to the labels with
+    /// `want[index]`: `(label index, offset of the displacement field, offset of the end of the instruction)`.
+    pub fn label_refs(&self, want: &[bool]) -> Vec<(u32, usize, usize)> {
+        self.fixups
+            .iter()
+            .filter(|f| {
+                f.label.asm == self.id
+                    && f.trail == 0
+                    && f.disp == 0
+                    && want.get(f.label.idx as usize).copied().unwrap_or(false)
+            })
+            .map(|f| (f.label.idx, f.pos, f.pos + 4))
+            .collect()
+    }
+
     /// Resolves every label reference and returns the machine code, or the first error.
     pub fn finish(mut self) -> Result<Vec<u8>, AsmError> {
         if let Some(e) = self.error {

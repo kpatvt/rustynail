@@ -78,10 +78,19 @@ pub struct Emitted {
     pub code: Vec<u8>,
     /// Offset of every label (`None` if the label was never bound).
     pub label_off: Vec<Option<usize>>,
+    /// S1 (`lazystub`): with [`emit_ex`], the plain references (`jmp` / `jcc rel32`) to the labels it asked for: `(label, offset of the rel32 field,
+    /// offset of the end of the instruction)`; empty otherwise.
+    pub refs: Vec<(L, usize, usize)>,
 }
 
 /// Assemble `prog`.
 pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
+    emit_ex(prog, &[])
+}
+
+/// Assemble `prog`; [`Emitted::refs`] lists the references to the labels `l` with `refs[l]` (S1: the branches to a deferred exit stub are patched to
+/// the stub once it exists; a deferred stub's jumps to absolute addresses are retargeted once it is placed).
+pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
     let mut a = Assembler::new();
     let labels: Vec<Label> = (0..prog.nlabels).map(|_| a.new_label()).collect();
     let lab = |l: L| labels[l as usize];
@@ -317,8 +326,18 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
         }
     }
     let label_off = labels.iter().map(|&l| a.label_offset(l)).collect();
+    // (the labels were created first, in order: an assembler label's index is the program's label)
+    let refs = if refs.is_empty() {
+        Vec::new()
+    } else {
+        a.label_refs(refs)
+    };
     let code = a.finish()?;
-    Ok(Emitted { code, label_off })
+    Ok(Emitted {
+        code,
+        label_off,
+        refs,
+    })
 }
 
 /// `ucomisd` + jump with the NaN rules of [`Op::FBr`] (never by negating a condition code).

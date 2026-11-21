@@ -64,6 +64,7 @@ use rn_core::jit_hooks::thread as thr;
 use rn_core::jit_layout::{callinfo as ci, lclosure, node, table, upval};
 use rn_core::number::{fmod_lua, pow_lua};
 use rn_core::value::*;
+use std::borrow::Cow;
 
 /// Extension slots reserved in the exit area above the allocator's slots: `0` = the booked `pending` of the entry
 /// sequence, `1` = the `+exitstorm` counter, `2..` = save slots of temporaries (`save_slot`).
@@ -264,6 +265,10 @@ pub struct AsmEnv {
     pub carry_exits: bool,
     /// R1 (half A): the side trace may have a carry entry (it needs no more room than the checks of its parent guarantee: that entry skips the room checks).
     pub carry_entry: bool,
+    /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): an exit whose stub would have an inline part gets a 5-byte `nop` and a generic stub tagged
+    /// [`exit::EXIT_DEFER`] instead; the exit handler assembles the real stub at the first exit ([`assemble_deferred`]), patches the `nop` into a `jmp` to it
+    /// and resumes in it. Off: every stub is assembled with the trace.
+    pub defer: bool,
 }
 
 /// The link at the end of a side trace (7.8, TR22).
@@ -370,6 +375,7 @@ impl Default for AsmEnv {
             stale_flag: 0,
             carry_exits: false,
             carry_entry: false,
+            defer: false,
         }
     }
 }
@@ -446,6 +452,143 @@ pub struct Asm {
     pub carry: Vec<exit::CarryDst>,
     /// R1: the `n` of the root's `BUDGET` (the carrying link charges it).
     pub carry_budget: u16,
+    /// S1 (`lazystub`): what the exit handler needs to assemble a deferred stub later (`None`: no stub was deferred).
+    pub defer: Option<DeferCtx>,
+    /// S1: the deferred snapshots with the label of their patchable `nop` (the stub label).
+    pub defer_g: Vec<(u32, L)>,
+    /// S1: the label of the embedded shared exit routine (the generic twins of the deferred stubs jump to it), if the program has one.
+    pub shared_label: Option<L>,
+}
+
+/// S1 (`lazystub`): the inputs of the stub decision and emission that the main assembly derived from the IR, kept with the exit metadata so that the
+/// exit handler can assemble the stub of a deferred snapshot exactly as [`assemble`] would have ([`assemble_deferred`]).
+#[derive(Clone, Debug)]
+pub struct DeferCtx {
+    pub env: AsmEnv,
+    pub pre_snaps: Vec<bool>,
+    pub chain_snaps: Vec<bool>,
+    pub sites: Vec<super::cache::ExitSite>,
+    /// The trace allocated `V10` (`r14`): every `JmpR V7` out of a stub reloads the constants register first (as in the trace).
+    pub reload_k: bool,
+}
+
+/// S1 (`lazystub`): the blocks the deferred stubs of one trace share (frame rebuild chains by key and root code, the two lazy leave blocks), with their
+/// addresses: the first deferred stub that needs one emits it, the later ones jump to it.
+#[derive(Clone, Debug, Default)]
+pub struct DeferShared {
+    chains: Vec<(Vec<MatKey>, u64, u64)>,
+    leave: [u64; 2],
+}
+
+static NO_SHARED: DeferShared = DeferShared {
+    chains: Vec::new(),
+    leave: [0; 2],
+};
+
+/// S1: a deferred stub assembled by [`assemble_deferred`].
+pub struct DeferredStub {
+    pub prog: Program,
+    pub entry: L,
+    /// The shared blocks this stub emitted (to be recorded in [`DeferShared`] once placed).
+    chains: Vec<(Vec<MatKey>, u64, L)>,
+    leave: [Option<L>; 2],
+    /// Labels whose code jumps to an absolute address (the shared blocks of earlier stubs): a `jmp` / `jcc` to such a label can be retargeted at the
+    /// address once the stub's own address is known ([`DeferredStub::relocate`]).
+    far: Vec<(L, u64)>,
+}
+
+impl DeferredStub {
+    /// The labels [`DeferredStub::relocate`] needs the references of (`x86::emit_ex`).
+    pub fn far_labels(&self) -> Vec<bool> {
+        let mut v = Vec::new();
+        for &(l, _) in &self.far {
+            if v.len() <= l as usize {
+                v.resize(l as usize + 1, false);
+            }
+            v[l as usize] = true;
+        }
+        v
+    }
+
+    /// Retargets the branches of `em` (this stub's machine code, to be placed at `base`) to the `far` labels at their absolute addresses where a rel32 reaches.
+    pub fn relocate(&self, em: &mut crate::x86::Emitted, base: usize) {
+        if self.far.is_empty() {
+            return;
+        }
+        for &(l, pos, end) in &em.refs {
+            let Some(&(_, addr)) = self.far.iter().find(|f| f.0 == l) else {
+                continue;
+            };
+            let branch = (pos >= 1 && em.code[pos - 1] == 0xE9)
+                || (pos >= 2 && em.code[pos - 2] == 0x0F && em.code[pos - 1] & 0xF0 == 0x80);
+            if let (true, Ok(rel)) = (
+                branch,
+                i32::try_from((addr as i64).wrapping_sub((base + end) as i64)),
+            ) {
+                em.code[pos..pos + 4].copy_from_slice(&rel.to_le_bytes());
+            }
+        }
+    }
+}
+
+impl DeferShared {
+    /// Records the shared blocks of `stub`, placed at `base` with the label offsets `off`.
+    pub fn add(&mut self, stub: &DeferredStub, off: &[Option<usize>], base: usize) {
+        for (key, code, l) in &stub.chains {
+            if let Some(Some(o)) = off.get(*l as usize) {
+                self.chains.push((key.clone(), *code, (base + o) as u64));
+            }
+        }
+        for k in 0..2 {
+            if let Some(l) = stub.leave[k] {
+                if let Some(Some(o)) = off.get(l as usize) {
+                    self.leave[k] = (base + o) as u64;
+                }
+            }
+        }
+    }
+}
+
+/// S1: the bytes of the patchable `nop` of a deferred exit (`jmp rel32`).
+pub const DEFER_PATCH_LEN: usize = 5;
+
+/// S1: marks the next `JmpR V7` as one that must keep `r14` (it does not leave compiled code: the generic twin of a deferred stub jumping to the shared exit
+/// routine, the jumps to the shared blocks of earlier deferred stubs, the resume jump of the shared exit routine): [`reload_k_pass`] inserts no `ReloadK` in
+/// front of it. Emits nothing.
+pub const KEEP_R14: Op = Op::Align(1);
+
+/// P2 bundle 1 (`xregs`): a `ReloadK` in front of every `JmpR V7` that leaves compiled code (see [`KEEP_R14`]).
+fn reload_k_pass(p: &mut Program) {
+    let old = std::mem::take(&mut p.ops);
+    let mut keep = false;
+    for o in old {
+        // (`JmpR V3` of the shared exit routine and `JmpR V6` of the frame-rebuilding stubs follow their own `SetK`)
+        if o == Op::JmpR(7) && (!keep || mutants::active("lazystub_reloadk")) {
+            p.ops.push(Op::ReloadK);
+        }
+        keep = o == KEEP_R14;
+        p.ops.push(o);
+    }
+}
+
+/// S1: what the stub loop emits for one snapshot (decided by [`Cx::stub_plan`]).
+#[derive(Clone, Copy, Debug)]
+enum StubPlan {
+    /// J1-2: the frameful sunk-table stub (`sunk_frame_stub`) and its generic twin.
+    SunkFrames {
+        site: super::cache::ExitSite,
+        frame_cell: bool,
+    },
+    /// N3b: the linking exit of a side trace (`link_mat_stub`) and its generic twin.
+    LinkMat,
+    /// The inline stub (`inline_stub`, `mat_stub` when `mat` is set), with its generic twin when `twin`.
+    Inline {
+        frame_cell: bool,
+        mat: Option<super::cache::ExitSite>,
+        twin: bool,
+    },
+    /// The generic stub only.
+    Generic,
 }
 
 /// J1-1: the cold disambiguator of a fused `HREFK`+`HLOAD` pair with two exits.
@@ -2150,11 +2293,11 @@ struct Cx<'a> {
     saved: Vec<(Loc, u16)>,
     nstubs: usize,
     /// `exit::pre_roll_snaps(ir)`.
-    pre_snaps: Vec<bool>,
+    pre_snaps: Cow<'a, [bool]>,
     /// P3: snapshots used by a callee identity guard (`exit::guard_kinds` bit 1), empty without `AsmEnv::chain`.
-    chain_snaps: Vec<bool>,
+    chain_snaps: Cow<'a, [bool]>,
     /// H2: `exit::site_classes(ir)`.
-    sites: Vec<super::cache::ExitSite>,
+    sites: Cow<'a, [super::cache::ExitSite]>,
     /// H2: the frame chains whose rebuild code is shared (`mat_stub`), with their labels, and the chains themselves.
     mat_shared: Vec<(Vec<MatKey>, L)>,
     mat_frames: Vec<Vec<exit::FrameRestore>>,
@@ -2196,11 +2339,75 @@ struct Cx<'a> {
     hk_fused_n: u32,
     hk_split_n: u32,
     dbl: Vec<u32>,
+    /// S1: the deferred snapshots and the labels of their patchable `nop`s (`Asm::defer_g`).
+    defer_g: Vec<(u32, L)>,
+    /// S1: the label of the embedded shared exit routine (`Asm::shared_label`).
+    shared_l: Option<L>,
+    /// S1: assembling a deferred stub ([`assemble_deferred`]): the address of the trace's shared exit routine, which the generic twin jumps to (0: the normal
+    /// assembly).
+    twin_abs: u64,
+    /// S1: the shared blocks the earlier deferred stubs of the trace placed (empty in the normal assembly).
+    dshared: &'a DeferShared,
+    ext_leave_used: [bool; 2],
+    /// S1: labels that jump to such a block.
+    tramps: Vec<(L, u64)>,
+    /// S1: the emitted ones (`DeferredStub::far`).
+    far: Vec<(L, u64)>,
     /// BUNDLE-K L1: labels of the shared leave blocks (`[0]`: plain, `[1]`: the innermost frame was just pushed natively), see [`Cx::lazy_leave_block`].
     lz_leave: [Option<L>; 2],
 }
 
-impl Cx<'_> {
+impl<'a> Cx<'a> {
+    /// An assembler state with nothing emitted; the IR-derived tables (`pre_snaps`, `chain_snaps`, `sites`, `wb_ents`) are empty (the caller fills them).
+    fn new(ir: &'a TraceIr, al: &'a Allocation, snaps: &'a [ExitSnap], env: &'a AsmEnv) -> Cx<'a> {
+        Cx {
+            ir,
+            al,
+            snaps,
+            env,
+            p: Program::default(),
+            stubs: Vec::new(),
+            stub_ix: Default::default(),
+            disp_ix: Default::default(),
+            disps: Vec::new(),
+            first_flag: false,
+            ext: al.nspill,
+            saved: Vec::new(),
+            nstubs: 0,
+            pre_snaps: Cow::Borrowed(&[]),
+            chain_snaps: Cow::Borrowed(&[]),
+            sites: Cow::Borrowed(&[]),
+            mat_shared: Vec::new(),
+            mat_frames: Vec::new(),
+            mat_codes: Vec::new(),
+            ktag: Vec::new(),
+            wb_ents: Vec::new(),
+            in_e2: false,
+            e2n: None,
+            hk_fused: None,
+            hk_cold: Vec::new(),
+            shape_cold: Vec::new(),
+            shape_dropped: Vec::new(),
+            rec_ci_cold: Vec::new(),
+            root_ci_cold: Vec::new(),
+            bud_cold: Vec::new(),
+            rc_cold: Vec::new(),
+            dense_cold: Vec::new(),
+            carry_slow: Vec::new(),
+            hk_fused_n: 0,
+            hk_split_n: 0,
+            dbl: Vec::new(),
+            defer_g: Vec::new(),
+            shared_l: None,
+            twin_abs: 0,
+            dshared: &NO_SHARED,
+            ext_leave_used: [false; 2],
+            tramps: Vec::new(),
+            far: Vec::new(),
+            lz_leave: [None, None],
+        }
+    }
+
     /// Places the loop head at a deterministic position inside a 64-byte line: `HEAD_OFFSET` bytes after a line start.
     fn head_pad(&mut self) {
         self.push(Op::Align(LINE));
@@ -2721,52 +2928,20 @@ pub fn assemble(
     if !rolled && al.backedge_after != ir.ins.len() {
         return unsup("back-edge moves before the last instruction");
     }
-    let mut cx = Cx {
-        ir,
-        al,
-        snaps,
-        env,
-        p: Program::default(),
-        stubs: Vec::new(),
-        stub_ix: Default::default(),
-        disp_ix: Default::default(),
-        disps: Vec::new(),
-        first_flag: false,
-        ext: al.nspill,
-        saved: Vec::new(),
-        nstubs: 0,
-        pre_snaps: exit::pre_roll_snaps(ir),
-        chain_snaps: if env.chain && env.side.is_some() && !mutants::active("chain_stub_never") {
+    let mut cx = Cx::new(ir, al, snaps, env);
+    cx.pre_snaps = Cow::Owned(exit::pre_roll_snaps(ir));
+    cx.chain_snaps = Cow::Owned(
+        if env.chain && env.side.is_some() && !mutants::active("chain_stub_never") {
             exit::guard_kinds(ir).iter().map(|g| g & 1 != 0).collect()
         } else {
             Vec::new()
         },
-        sites: exit::site_classes(ir),
-        mat_shared: Vec::new(),
-        mat_frames: Vec::new(),
-        mat_codes: Vec::new(),
-        ktag: Vec::new(),
-        wb_ents: exit::wb_ents_ex(
-            ir,
-            (env.guarddiet && env.side.is_some()).then_some(&env.entry_tags),
-        ),
-        in_e2: false,
-        e2n: None,
-        hk_fused: None,
-        hk_cold: Vec::new(),
-        shape_cold: Vec::new(),
-        shape_dropped: Vec::new(),
-        rec_ci_cold: Vec::new(),
-        root_ci_cold: Vec::new(),
-        bud_cold: Vec::new(),
-        rc_cold: Vec::new(),
-        dense_cold: Vec::new(),
-        carry_slow: Vec::new(),
-        hk_fused_n: 0,
-        hk_split_n: 0,
-        dbl: Vec::new(),
-        lz_leave: [None, None],
-    };
+    );
+    cx.sites = Cow::Owned(exit::site_classes(ir));
+    cx.wb_ents = exit::wb_ents_ex(
+        ir,
+        (env.guarddiet && env.side.is_some()).then_some(&env.entry_tags),
+    );
     cx.shape_dropped = shape_dropped(ir, env.shape_min);
     cx.first_flag = rolled
         && env.head != 0
@@ -3115,17 +3290,20 @@ pub fn assemble(
     {
         return incons("V10 (r14) allocated in a trace with a native frame push / pop");
     }
-    if al.uses_gpr(10) && !mutants::active("xregs_no_reloadk") {
-        let old = std::mem::take(&mut cx.p.ops);
-        for o in old {
-            // (`JmpR V3` of the shared exit routine and `JmpR V6` of the frame-rebuilding stubs follow their own `SetK`)
-            if o == Op::JmpR(7) {
-                cx.p.ops.push(Op::ReloadK);
-            }
-            cx.p.ops.push(o);
-        }
+    let reload_k = al.uses_gpr(10) && !mutants::active("xregs_no_reloadk");
+    if reload_k {
+        reload_k_pass(&mut cx.p);
     }
     let stubs = cx.nstubs;
+    let defer_g = std::mem::take(&mut cx.defer_g);
+    let shared_label = cx.shared_l;
+    let defer = (!defer_g.is_empty()).then(|| DeferCtx {
+        env: *env,
+        pre_snaps: std::mem::take(&mut cx.pre_snaps).into_owned(),
+        chain_snaps: std::mem::take(&mut cx.chain_snaps).into_owned(),
+        sites: std::mem::take(&mut cx.sites).into_owned(),
+        reload_k,
+    });
     let hk_fused = cx.hk_fused_n;
     let hk_split = cx.hk_split_n;
     let dbl = std::mem::take(&mut cx.dbl);
@@ -3145,6 +3323,68 @@ pub fn assemble(
         entry_c,
         carry,
         carry_budget,
+        defer,
+        defer_g,
+        shared_label,
+    })
+}
+
+/// S1 (`lazystub`): the stub of the deferred snapshot `snap` of a trace, assembled at its first exit: exactly what the loop of the trace's assembly would have
+/// emitted for it ([`Cx::stub_plan`] and [`Cx::emit_stub`] over the same inputs), with the cold blocks it needs (carry path, dense stores; the shared frame
+/// rebuilds and lazy leave blocks are emitted once per trace: `shared_blocks` has the ones earlier deferred stubs placed), and the generic twin jumping to
+/// `twin`, the trace's shared exit routine. Entered with the registers of the exit (the `jmp` patched over the `nop`, or the shared exit routine's resume path).
+pub fn assemble_deferred<'a>(
+    snaps: &'a [ExitSnap],
+    d: &'a DeferCtx,
+    shared_blocks: &'a DeferShared,
+    snap: u32,
+    twin: u64,
+) -> Result<DeferredStub, AsmError> {
+    let es = match snaps.get(snap as usize) {
+        Some(es) if es.usable => es.clone(),
+        _ => return incons(format!("deferred stub of an unusable snapshot {snap}")),
+    };
+    if twin == 0 || !d.env.defer {
+        return incons("deferred stub without the shared exit routine");
+    }
+    // (the stub code reads neither the IR nor the allocation: their parts it needs are in `d`)
+    let ir = TraceIr::default();
+    let al = Allocation::default();
+    let mut cx = Cx::new(&ir, &al, snaps, &d.env);
+    cx.pre_snaps = Cow::Borrowed(&d.pre_snaps);
+    cx.chain_snaps = Cow::Borrowed(&d.chain_snaps);
+    cx.sites = Cow::Borrowed(&d.sites);
+    cx.dshared = shared_blocks;
+    cx.twin_abs = twin;
+    let entry = cx.label();
+    cx.bind(entry);
+    let plan = cx.stub_plan(snap, false, &es);
+    if matches!(plan, StubPlan::Generic) {
+        return incons(format!("snapshot {snap} has no deferred stub"));
+    }
+    let mut shared = None;
+    cx.emit_stub(snap, false, &es, plan, &mut shared)?;
+    if shared.is_some() {
+        return incons("a deferred stub reached the shared exit routine");
+    }
+    let chains: Vec<(Vec<MatKey>, u64, L)> = cx
+        .mat_shared
+        .iter()
+        .zip(&cx.mat_codes)
+        .map(|((k, l), c)| (k.clone(), *c, *l))
+        .collect();
+    let leave = [0, 1].map(|k| cx.lz_leave[k].filter(|_| !cx.ext_leave_used[k]));
+    cx.emit_tails(None);
+    if d.reload_k {
+        reload_k_pass(&mut cx.p);
+    }
+    let far = std::mem::take(&mut cx.far);
+    Ok(DeferredStub {
+        prog: cx.p,
+        entry,
+        chains,
+        leave,
+        far,
     })
 }
 
@@ -8033,6 +8273,13 @@ impl Cx<'_> {
         if let Some(l) = self.lz_leave[k] {
             return l;
         }
+        if self.dshared.leave[k] != 0 {
+            // S1: the leave block an earlier deferred stub of the trace placed
+            let l = self.tramp(self.dshared.leave[k]);
+            self.lz_leave[k] = Some(l);
+            self.ext_leave_used[k] = true;
+            return l;
+        }
         let l = self.label();
         self.lz_leave[k] = Some(l);
         l
@@ -8153,9 +8400,19 @@ impl Cx<'_> {
     }
 
     /// The bodies of the shared leave blocks requested so far.
+    /// S1: a label whose code jumps to `addr` (a block of an earlier deferred stub of the same trace; `V7` is dead where these blocks are entered).
+    fn tramp(&mut self, addr: u64) -> L {
+        let l = self.label();
+        self.tramps.push((l, addr));
+        l
+    }
+
     fn emit_lazy_leave_blocks(&mut self) {
         for k in 0..2usize {
             let Some(l) = self.lz_leave[k] else { continue };
+            if self.ext_leave_used[k] {
+                continue;
+            }
             self.bind(l);
             self.lazy_leave_seq(k == 1, true);
             self.push(Op::JmpR(6));
@@ -8369,145 +8626,21 @@ impl Cx<'_> {
             if entry {
                 self.entry_failure_ops(true, false);
             }
-            let regs: Vec<u8> = es
-                .slots
-                .iter()
-                .map(|s| s.src)
-                .chain(
-                    es.sunk
-                        .iter()
-                        .flat_map(|t| t.fields.iter().map(|f| f.src).chain(t.mt.map(|m| m.1))),
-                )
-                .filter_map(|src| {
-                    if let ValSrc::Reg(r) = src {
-                        Some(r)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            // (the same scratch register `inline_stub` looks for: one that no slot reads and that is not the budget register)
-            let scratch_free = [0u8, 1, 2, 3, 4, 5, 6, 8]
-                .iter()
-                .any(|r| !regs.contains(r) && Some(*r) != self.env.budget_reg);
-            let counting = self.env.counters != 0;
-            // P-L: without a free scratch register the exit counter is kept with memory-destination ops (`cmp/add [ctr]`,
-            // V7 only); the pre-roll test of Q2 needs a value in a register, so those sites keep the generic stub
-            let frame_cell = self.env.frame_cells
-                && self.env.exit_cells != 0
-                && snap != self.env.frame_link_snap
-                && es.frame_side_ok();
-            // J1-2: a frameless exit that materialises sunk tables is restored by its inline stub (slot stores, then the light
-            // helper `jit_tr_mat` creates the tables); the hot exits and the policy keep going through the handler (the generic twin)
-            let lz = self.env.lazy;
-            let sunk_stub = !es.sunk.is_empty()
-                && !lz
-                && self.env.sink_stub
-                && self.env.mat_fn != 0
-                && !mutants::active("sinkstub_never")
-                && exit::sunk_stub_ok(&es)
-                && !entry
-                && !matches!(
-                    self.sites.get(snap as usize),
-                    Some(super::cache::ExitSite::Alloc)
-                );
-            // J1-2: the same for a frameful exit (the callee of an inlined constructor): hook test, the counter of the `fmat` stub, slot
-            // stores, budget, the helper, then the frames are rebuilt in place (`mat_shared`) and the stub lands in tier 1
-            let site = self.sites.get(snap as usize).copied();
-            let sunk_frames = !es.sunk.is_empty()
-                && !lz
-                && self.env.sink_stub
-                && self.env.mat_fn != 0
-                && !mutants::active("sinkstub_never")
-                && !mutants::active("sinkstub_frames_never")
-                && exit::sunk_frame_stub_ok(&es)
-                && self.env.root_code != 0
-                && self.env.counters != 0
-                && !self.env.generic_only
-                && !entry
-                && match site {
-                    Some(super::cache::ExitSite::TypeGuard) => self.env.hot_exit >= 2,
-                    Some(super::cache::ExitSite::Other) => {
-                        self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2
-                    }
-                    _ => false,
-                };
-            if sunk_frames {
-                let generic_l = self.label();
-                self.sunk_frame_stub(&es, snap, generic_l, site.expect("site"), frame_cell)?;
-                self.bind(generic_l);
-                self.generic_stub(snap, entry, false, &mut shared);
+            let plan = self.stub_plan(snap, entry, &es);
+            // S1 (`lazystub`): a stub with an inline part is assembled when its exit is first taken (entry checks keep theirs: they use the extension slots)
+            if self.env.defer && !entry && !matches!(plan, StubPlan::Generic) {
+                self.defer_stub(snap, plan, label, &mut shared);
                 continue;
             }
-            // BUNDLE-K L1: a lazy-aware trace has inline stubs only for frameless exits that continue through their cell (the stub
-            // completes the chain before it lands at the tier-1 label); every other exit goes through the handler, which does
-            let lz_ok = !lz
-                || ((es.frames.is_empty() || frame_cell)
-                    && es.sunk.is_empty()
-                    && self.env.exit_cells != 0);
-            let inline = (es.frames.is_empty() || frame_cell)
-                && lz_ok
-                && !(self.env.seg_oracle && es.seg_pops > 0)
-                && (es.sunk.is_empty() || sunk_stub)
-                && es.top.is_none()
-                && !self.env.generic_only
-                && (scratch_free || !counting || entry || !self.pre_snaps[snap as usize]);
-            // H2: while the cell is 0 (no side trace attached) the stub rebuilds the inlined frames itself instead of calling the
-            // handler; the handler keeps the exits that do bookkeeping per exit (entry checks, allocation sites, pre-roll sites,
-            // hooked threads) and the report at the hot counts
-            let site = self.sites.get(snap as usize).copied();
-            let mat = inline
-                && frame_cell
-                && counting
-                && self.env.root_code != 0
-                && !entry
-                && !self.pre_snaps[snap as usize]
-                && exit::frame_mat_ok(&es)
-                && self.env.counters != 0
-                && match site {
-                    Some(super::cache::ExitSite::TypeGuard) => self.env.hot_exit >= 2,
-                    Some(super::cache::ExitSite::Other) => {
-                        self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2
-                    }
-                    _ => false,
-                };
-            // N3b: the linking exit of a side trace (frames rebuilt, then the head's dispatch cell): an inline stub instead of the handler
-            let link_mat = self.env.link_mat
-                && snap == self.env.frame_link_snap
-                && !lz
-                && !entry
-                && !self.env.generic_only
-                && !(self.env.seg_oracle && es.seg_pops > 0)
-                && self.env.root_code != 0
-                && self.env.counters != 0
-                && !self.pre_snaps[snap as usize]
-                && exit::frame_link_mat_ok(&es);
-            if link_mat {
-                let generic_l = self.label();
-                self.link_mat_stub(&es, snap, generic_l)?;
-                self.bind(generic_l);
-                self.generic_stub(snap, entry, false, &mut shared);
-                continue;
-            }
-            if inline {
-                let generic_l = self.label();
-                self.inline_stub(
-                    &es,
-                    snap,
-                    generic_l,
-                    entry,
-                    frame_cell,
-                    if mat { site } else { None },
-                )?;
-                if counting || frame_cell {
-                    // the generic twin the hot divert jumps to
-                    self.bind(generic_l);
-                    self.generic_stub(snap, entry, false, &mut shared);
-                }
-            } else {
-                self.generic_stub(snap, entry, false, &mut shared);
-            }
+            self.emit_stub(snap, entry, &es, plan, &mut shared)?;
         }
+        self.emit_tails(shared);
+        Ok(())
+    }
+
+    /// The cold blocks the stubs requested (dense stores, carry paths, lazy leave blocks, shared frame rebuilds) and the embedded copy of the shared exit
+    /// routine (when a generic stub jumps to it).
+    fn emit_tails(&mut self, shared: Option<L>) {
         for (label, back, ops) in std::mem::take(&mut self.dense_cold) {
             self.bind(label);
             self.st(W::B4, rm(7, 0), Src::Imm(0));
@@ -8523,6 +8656,14 @@ impl Cx<'_> {
             self.emit_carry_path(&es, ac, generic_l);
         }
         self.emit_lazy_leave_blocks();
+        for (l, addr) in std::mem::take(&mut self.tramps) {
+            // (`jmp l` at the users: [`DeferredStub::far`] lets the placement turn them into `jmp addr`; this indirect form stays for a far target)
+            self.bind(l);
+            self.push(Op::Mov(7, addr));
+            self.push(KEEP_R14);
+            self.push(Op::JmpR(7));
+            self.far.push((l, addr));
+        }
         let chains = std::mem::take(&mut self.mat_frames);
         let labels: Vec<L> = self.mat_shared.iter().map(|(_, l)| *l).collect();
         let codes = std::mem::take(&mut self.mat_codes);
@@ -8550,11 +8691,195 @@ impl Cx<'_> {
                 &SharedExitEnv {
                     handler: self.env.exit_handler,
                     stack_off: self.env.stack_off,
+                    resume: self.env.defer,
                 },
             );
             self.p.ops.insert(at, Op::Bind(l));
+            self.shared_l = Some(l);
+        }
+    }
+
+    /// The stub the loop of [`Cx::stubs_and_tail`] emits for a non-poll, non-shape snapshot (S1: also what a deferred stub becomes).
+    fn stub_plan(&self, snap: u32, entry: bool, es: &ExitSnap) -> StubPlan {
+        let regs: Vec<u8> = es
+            .slots
+            .iter()
+            .map(|s| s.src)
+            .chain(
+                es.sunk
+                    .iter()
+                    .flat_map(|t| t.fields.iter().map(|f| f.src).chain(t.mt.map(|m| m.1))),
+            )
+            .filter_map(|src| {
+                if let ValSrc::Reg(r) = src {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // (the same scratch register `inline_stub` looks for: one that no slot reads and that is not the budget register)
+        let scratch_free = [0u8, 1, 2, 3, 4, 5, 6, 8]
+            .iter()
+            .any(|r| !regs.contains(r) && Some(*r) != self.env.budget_reg);
+        let counting = self.env.counters != 0;
+        // P-L: without a free scratch register the exit counter is kept with memory-destination ops (`cmp/add [ctr]`,
+        // V7 only); the pre-roll test of Q2 needs a value in a register, so those sites keep the generic stub
+        let frame_cell = self.env.frame_cells
+            && self.env.exit_cells != 0
+            && snap != self.env.frame_link_snap
+            && es.frame_side_ok();
+        // J1-2: a frameless exit that materialises sunk tables is restored by its inline stub (slot stores, then the light
+        // helper `jit_tr_mat` creates the tables); the hot exits and the policy keep going through the handler (the generic twin)
+        let lz = self.env.lazy;
+        let sunk_stub = !es.sunk.is_empty()
+            && !lz
+            && self.env.sink_stub
+            && self.env.mat_fn != 0
+            && !mutants::active("sinkstub_never")
+            && exit::sunk_stub_ok(es)
+            && !entry
+            && !matches!(
+                self.sites.get(snap as usize),
+                Some(super::cache::ExitSite::Alloc)
+            );
+        // J1-2: the same for a frameful exit (the callee of an inlined constructor): hook test, the counter of the `fmat` stub, slot
+        // stores, budget, the helper, then the frames are rebuilt in place (`mat_shared`) and the stub lands in tier 1
+        let site = self.sites.get(snap as usize).copied();
+        let sunk_frames = !es.sunk.is_empty()
+            && !lz
+            && self.env.sink_stub
+            && self.env.mat_fn != 0
+            && !mutants::active("sinkstub_never")
+            && !mutants::active("sinkstub_frames_never")
+            && exit::sunk_frame_stub_ok(es)
+            && self.env.root_code != 0
+            && self.env.counters != 0
+            && !self.env.generic_only
+            && !entry
+            && match site {
+                Some(super::cache::ExitSite::TypeGuard) => self.env.hot_exit >= 2,
+                Some(super::cache::ExitSite::Other) => {
+                    self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2
+                }
+                _ => false,
+            };
+        // BUNDLE-K L1: a lazy-aware trace has inline stubs only for frameless exits that continue through their cell (the stub
+        // completes the chain before it lands at the tier-1 label); every other exit goes through the handler, which does
+        let lz_ok = !lz
+            || ((es.frames.is_empty() || frame_cell)
+                && es.sunk.is_empty()
+                && self.env.exit_cells != 0);
+        let inline = (es.frames.is_empty() || frame_cell)
+            && lz_ok
+            && !(self.env.seg_oracle && es.seg_pops > 0)
+            && (es.sunk.is_empty() || sunk_stub)
+            && es.top.is_none()
+            && !self.env.generic_only
+            && (scratch_free || !counting || entry || !self.pre_snaps[snap as usize]);
+        // H2: while the cell is 0 (no side trace attached) the stub rebuilds the inlined frames itself instead of calling the
+        // handler; the handler keeps the exits that do bookkeeping per exit (entry checks, allocation sites, pre-roll sites,
+        // hooked threads) and the report at the hot counts
+        let site = self.sites.get(snap as usize).copied();
+        let mat = inline
+            && frame_cell
+            && counting
+            && self.env.root_code != 0
+            && !entry
+            && !self.pre_snaps[snap as usize]
+            && exit::frame_mat_ok(es)
+            && self.env.counters != 0
+            && match site {
+                Some(super::cache::ExitSite::TypeGuard) => self.env.hot_exit >= 2,
+                Some(super::cache::ExitSite::Other) => {
+                    self.env.hot_exit.is_power_of_two() && self.env.hot_exit >= 2
+                }
+                _ => false,
+            };
+        // N3b: the linking exit of a side trace (frames rebuilt, then the head's dispatch cell): an inline stub instead of the handler
+        let link_mat = self.env.link_mat
+            && snap == self.env.frame_link_snap
+            && !lz
+            && !entry
+            && !self.env.generic_only
+            && !(self.env.seg_oracle && es.seg_pops > 0)
+            && self.env.root_code != 0
+            && self.env.counters != 0
+            && !self.pre_snaps[snap as usize]
+            && exit::frame_link_mat_ok(es);
+        if sunk_frames {
+            return StubPlan::SunkFrames {
+                site: site.expect("site"),
+                frame_cell,
+            };
+        }
+        if link_mat {
+            return StubPlan::LinkMat;
+        }
+        if inline {
+            StubPlan::Inline {
+                frame_cell,
+                mat: if mat { site } else { None },
+                twin: counting || frame_cell,
+            }
+        } else {
+            StubPlan::Generic
+        }
+    }
+
+    /// Emits the stub of `plan` (the stub label is bound already).
+    fn emit_stub(
+        &mut self,
+        snap: u32,
+        entry: bool,
+        es: &ExitSnap,
+        plan: StubPlan,
+        shared: &mut Option<L>,
+    ) -> Result<(), AsmError> {
+        match plan {
+            StubPlan::SunkFrames { site, frame_cell } => {
+                let generic_l = self.label();
+                self.sunk_frame_stub(es, snap, generic_l, site, frame_cell)?;
+                self.bind(generic_l);
+                self.generic_stub(snap, entry, false, shared);
+            }
+            StubPlan::LinkMat => {
+                let generic_l = self.label();
+                self.link_mat_stub(es, snap, generic_l)?;
+                self.bind(generic_l);
+                self.generic_stub(snap, entry, false, shared);
+            }
+            StubPlan::Inline {
+                frame_cell,
+                mat,
+                twin,
+            } => {
+                let generic_l = self.label();
+                self.inline_stub(es, snap, generic_l, entry, frame_cell, mat)?;
+                if twin {
+                    // the generic twin the hot divert jumps to
+                    self.bind(generic_l);
+                    self.generic_stub(snap, entry, false, shared);
+                }
+            }
+            StubPlan::Generic => self.generic_stub(snap, entry, false, shared),
         }
         Ok(())
+    }
+
+    /// S1 (`lazystub`): the deferred form of the stub of `snap` (its label is bound): a 5-byte `nop` and the generic stub tagged [`exit::EXIT_DEFER`]. At the first
+    /// exit the handler assembles the stub of `plan` ([`assemble_deferred`]), patches the `nop` into `jmp stub` and resumes in the stub with the registers of the
+    /// exit, so every exit runs the stub the eager assembly would have emitted. What the eager stub would have told the installer is told now (the
+    /// double-counting `mat_stub`).
+    fn defer_stub(&mut self, snap: u32, plan: StubPlan, label: L, shared: &mut Option<L>) {
+        if let StubPlan::Inline { mat: Some(_), .. } = plan {
+            if self.env.exit_cells != 0 && !mutants::active("lazystub_dbl_skip") {
+                self.dbl.push(snap);
+            }
+        }
+        self.push(Op::Pad(DEFER_PATCH_LEN as u8));
+        self.generic_stub_flags(snap, exit::EXIT_DEFER, shared);
+        self.defer_g.push((snap, label));
     }
 
     fn generic_stub(&mut self, snap: u32, entry: bool, poll: bool, shared: &mut Option<L>) {
@@ -8565,6 +8890,16 @@ impl Cx<'_> {
 
     fn generic_stub_flags(&mut self, snap: u32, flags: u32, shared: &mut Option<L>) {
         let exitno = snap | flags;
+        if self.twin_abs != 0 {
+            // S1: a deferred stub's generic twin jumps to the trace's shared exit routine (not a jump out of compiled code: `r14` is saved there)
+            let ops = exit::generic_stub_ops(self.env.trace_id, exitno, self.twin_abs);
+            self.push(ops[0]);
+            self.push(ops[1]);
+            self.push(ops[2]);
+            self.push(KEEP_R14);
+            self.push(ops[3]);
+            return;
+        }
         let ops = exit::generic_stub_ops(self.env.trace_id, exitno, self.env.shared_exit);
         self.push(ops[0]);
         self.push(ops[1]);
@@ -8959,6 +9294,15 @@ impl Cx<'_> {
     /// The label of the shared frame-rebuild copy for `key` (the frames) with the segment's root code of `es`.
     fn mat_label(&mut self, key: Vec<MatKey>, es: &ExitSnap) -> L {
         let code = self.seg_code(es);
+        // S1: a deferred stub reuses the copy an earlier deferred stub of the trace placed (one hot copy per chain, as in the eager layout)
+        if let Some(&(_, _, addr)) = self
+            .dshared
+            .chains
+            .iter()
+            .find(|(k, c, _)| *k == key && *c == code)
+        {
+            return self.tramp(addr);
+        }
         if let Some(i) = (0..self.mat_shared.len())
             .find(|&i| self.mat_shared[i].0 == key && self.mat_codes[i] == code)
         {

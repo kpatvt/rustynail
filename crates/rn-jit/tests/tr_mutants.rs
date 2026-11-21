@@ -4170,6 +4170,30 @@ const TABLE: &[Row] = &[
         name: "aref_phi_cse",
         owner: "K7",
         dets: &[d("tr_core", "k7_aref_phi_programs")],
+    },    Row {
+        name: "lazystub_reloadk",
+        owner: "S1L",
+        dets: &[d("tr_core", "s1_lazystub_programs")],
+    },
+    Row {
+        name: "lazystub_resume_v8",
+        owner: "S1L",
+        dets: &[d("tr_core", "s1_lazystub_programs")],
+    },
+    Row {
+        name: "lazystub_resume_xmm",
+        owner: "S1L",
+        dets: &[d("tr_core", "s1_lazystub_programs")],
+    },
+    Row {
+        name: "lazystub_dbl_skip",
+        owner: "S1L",
+        dets: &[d("tr_core", "s1_lazystub_programs")],
+    },
+    Row {
+        name: "lazystub_site_rel_pos",
+        owner: "S1L",
+        dets: &[d("tr_core", "s1_lazystub_programs")],
     },
 ];
 

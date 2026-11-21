@@ -221,7 +221,7 @@ impl RaOpts {
 }
 
 /// The result of allocation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Allocation {
     /// Per IR instruction.
     pub ins: Vec<InsAlloc>,

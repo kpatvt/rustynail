@@ -459,6 +459,11 @@ fn child_main(spec: &str) {
 /// What the child's `[trace]` summary said.
 #[derive(Clone, Debug, Default)]
 struct TStats {
+    /// S1 (`lazystub`): bytes of trace code installed, deferred stubs assembled / patched in / failed.
+    code_bytes: u64,
+    dstubs: u64,
+    dstub_patched: u64,
+    dstub_failed: u64,
     /// S0: tables sunk by the compiles of the run.
     sunk: u64,
     /// J1-2: calls of the materialising helper by inline exit stubs.
@@ -646,6 +651,19 @@ impl TStats {
                 l.strip_prefix("ncallee: heads re-recorded without entry callee guards ")
             {
                 s.ncallee_heads = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("code: traces ") {
+                // `code: traces N B; lazystub: stubs built S (B B), patched P, failed F`
+                let nums: Vec<u64> = r
+                    .split(|c: char| !c.is_ascii_digit())
+                    .filter(|w| !w.is_empty())
+                    .filter_map(|w| w.parse().ok())
+                    .collect();
+                if let [c, n, _, p, f] = nums[..] {
+                    s.code_bytes = c;
+                    s.dstubs = n;
+                    s.dstub_patched = p;
+                    s.dstub_failed = f;
+                }
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.barrier_table = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -760,7 +778,7 @@ impl TStats {
 
     fn line(&self) -> String {
         format!(
-            "deep {}/{} recorded {} installed {} entered {} exits {} flushes {} rerec {} black {} ineff {} hot(type/other) {}/{} aborts {:?} side(rec/inst/fail) {}/{}/{} {:?} sunk {} stub-calls {} stub-frames {}",
+            "deep {}/{} recorded {} installed {} entered {} exits {} flushes {} rerec {} black {} ineff {} hot(type/other) {}/{} aborts {:?} side(rec/inst/fail) {}/{}/{} {:?} sunk {} stub-calls {} stub-frames {} code {} lazystub {}/{}/{}",
             self.deep_sites,
             self.deep_recs,
             self.recorded,
@@ -780,7 +798,11 @@ impl TStats {
             self.side_aborts,
             self.sunk,
             self.stub_calls,
-            self.stub_frames
+            self.stub_frames,
+            self.code_bytes,
+            self.dstubs,
+            self.dstub_patched,
+            self.dstub_failed
         )
     }
 }
@@ -11990,4 +12012,126 @@ fn k7_aref_phi_programs() {
             );
         }
     }
+}
+
+/// S1 (`lazystub`, docs/JIT_TRACE.md section 31): exit stubs assembled at the first exit (the handler assembles the stub, patches the branches to it and
+/// resumes in it with the registers of the exit). Twins: every job runs with `lazystub=1` and `lazystub=0` (every stub with the trace); both equal the
+/// interpreter, and since a deferred exit runs exactly the stub the eager assembly would have emitted, the twins take the same exits and install the same
+/// traces (exit counts, installs, side traces). Programs: `s1_lazy_exits` (first exits with live floats / integers, inlined frames, sunk tables, hot
+/// exits), frame materialising stubs (`h2_fmat`), sunk-frame stubs with side traces (`sinkf_side`, `j1_sinkf`), register-carrying exits
+/// (`r1_nbody_pairs`), frame-cell side traces (`s1_frame_sides`), `r14` allocated (`xregs=3`). Detector of `lazystub_resume_xmm`,
+/// `lazystub_resume_v8`, `lazystub_reloadk`, `lazystub_dbl_skip`, `lazystub_site_rel_pos`.
+#[test]
+fn s1_lazystub_programs() {
+    let progs: [(&str, &str); 8] = [
+        ("s1_lazy_exits", ""),
+        ("s1_lazy_exits", "xregs=3"),
+        ("h2_fmat", ""),
+        ("sinkf_side", ""),
+        ("j1_sinkf", ""),
+        ("r1_nbody_pairs", ""),
+        ("s1_frame_sides", ""),
+        ("p2_xregs", "xregs=3"),
+    ];
+    let mut jobs = Vec::new();
+    for (prog, extra) in progs {
+        for trace in ["always", "on2"] {
+            for lz in ["lazystub=1", "lazystub=0"] {
+                let lim = if extra.is_empty() {
+                    lz.to_string()
+                } else {
+                    format!("{lz},{extra}")
+                };
+                for (opts, budget) in [
+                    ("", 0),
+                    ("+verify", 0),
+                    ("+exitstorm=3 +verify", 0),
+                    ("+exitstorm=7 +verify +randra=5", 0),
+                    ("", 17),
+                ] {
+                    let mut j = Job::new(prog, trace).opts(opts).limits_s(&lim);
+                    if budget != 0 {
+                        j = j.budget(budget);
+                    }
+                    jobs.push(j);
+                }
+                jobs.push(
+                    Job::new(prog, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(&lim),
+                );
+                jobs.push(
+                    Job::new(prog, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(&lim),
+                );
+            }
+        }
+    }
+    let res = compare(jobs);
+    let key = |j: &Job| {
+        format!(
+            "{}|{}|{}|{:?}|{:?}|{}",
+            j.prog,
+            j.trace,
+            j.opts,
+            j.budget,
+            j.env,
+            j.limits.replace("lazystub=1", "").replace("lazystub=0", "")
+        )
+    };
+    let mut eager: BTreeMap<String, TStats> = BTreeMap::new();
+    for (j, o) in &res {
+        if j.limits.contains("lazystub=0") {
+            assert_eq!(o.stats.dstubs, 0, "{}: lazystub=0 deferred stubs", j.tag());
+            eager.insert(key(j), o.stats.clone());
+        }
+    }
+    let mut built = 0;
+    for (j, o) in &res {
+        if !j.limits.contains("lazystub=1") {
+            continue;
+        }
+        let s = &o.stats;
+        assert_eq!(
+            s.dstub_failed,
+            0,
+            "{}: deferred stubs not assembled: {}",
+            j.tag(),
+            s.line()
+        );
+        assert!(s.dstub_patched <= s.dstubs, "{}", j.tag());
+        built += s.dstubs;
+        let e = &eager[&key(j)];
+        // the twins behave alike: the same exits, the same traces
+        assert_eq!(
+            (s.exits, s.installed, s.side_installed, s.recorded),
+            (e.exits, e.installed, e.side_installed, e.recorded),
+            "{}: lazystub=1 and lazystub=0 differ\n  lazy  {}\n  eager {}",
+            j.tag(),
+            s.line(),
+            e.line()
+        );
+        if j.prog == "s1_lazy_exits"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+        {
+            assert!(
+                s.dstubs >= 1,
+                "{}: no deferred stub was assembled: {}",
+                j.tag(),
+                s.line()
+            );
+            assert!(
+                s.code_bytes < e.code_bytes,
+                "{}: trace code {} B lazy, {} B eager",
+                j.tag(),
+                s.code_bytes,
+                e.code_bytes
+            );
+        }
+    }
+    assert!(built > 0, "no deferred stub was assembled in any job");
 }

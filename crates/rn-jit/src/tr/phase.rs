@@ -3,7 +3,7 @@
 
 use std::cell::Cell;
 
-pub const NAMES: [&str; 12] = [
+pub const NAMES: [&str; 13] = [
     "rec_step",
     "lockstep",
     "pass_sink",
@@ -16,6 +16,7 @@ pub const NAMES: [&str; 12] = [
     "hash",
     "pipeline",
     "tier1",
+    "lazystub",
 ];
 pub const REC_STEP: usize = 0;
 pub const LOCKSTEP: usize = 1;
@@ -29,10 +30,12 @@ pub const INSTALL: usize = 8;
 pub const HASH: usize = 9;
 pub const PIPELINE: usize = 10;
 pub const TIER1: usize = 11;
+/// S1: assembling and placing the deferred exit stubs (`exit::defer_build`).
+pub const LAZYSTUB: usize = 12;
 
 thread_local! {
-    static ACC: [Cell<u64>; 12] = const { [const { Cell::new(0) }; 12] };
-    static CALLS: [Cell<u64>; 12] = const { [const { Cell::new(0) }; 12] };
+    static ACC: [Cell<u64>; 13] = const { [const { Cell::new(0) }; 13] };
+    static CALLS: [Cell<u64>; 13] = const { [const { Cell::new(0) }; 13] };
     static MAXPIPE: Cell<u64> = const { Cell::new(0) };
 }
 
