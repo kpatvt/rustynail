@@ -3338,3 +3338,20 @@ residue of +0.3 % instructions on lru_cache is in the compile pipeline and the G
 (245 Mcyc): classic_vector 2.29 -> 1.91 (5.5). The source-rewrite ceiling was 453 Mcyc after L2; P1 reaches 469 (the remaining difference: the
 first key still goes through a helper call and the replayed growth steps).
 
+### 32.6 Gates
+
+Light gate (at b2a3881, base 504b832, changed-file mutant plan of 96 mutants): fmt / mutant-map FAIL (a rustfmt line of `presize.rs` and the map's
+test lines after the last edit: fixed in 685d03e, both steps PASS), clippy 5.5 / 5.5-jit / 5.4, core-5.5, core-5.4, trace suites 5.5 and 5.4,
+vm_corpus, jit-diff 1-50: PASS; mutant group 92 of 96 caught, the four survivors `lazystub_*` because the baseline of their detector failed (see
+below). The five P1 mutants: caught (also in separate `gate-mutants.sh --only p1_,presize_no_free` runs).
+
+`gate-heavy.sh` (2026-11-21, at 685d03e, 4550 s): light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only);
+tests-5.4-oracle PASS; `oracle_options` PASS; jit-diff 1-200 (7 modes) PASS; mutant runner 751 ran, 750 caught, survivor `lazystub_dbl_skip`.
+
+**Pre-existing flake, not P1:** `tr_core::s1_lazystub_programs` is not deterministic in the oracle-feature build (`tr_mutants,t15_oracle`): the job
+`sinkf_side [always +exitstorm=7 +verify +randra=5]` sometimes gives the `lazystub=1` and `lazystub=0` twins different exit / side-trace counts
+(e.g. 19105 vs 19000 exits). Measured at the base 504b832 (its own tree and target): 3 failures in 8 identical runs; with this change 3 in 6
+(`presize=1`) and 1 in 6 (`presize=0`). `lazystub_dbl_skip` is detected only through that job's exit counts, so it survives whenever the mutated
+run happens to agree (it was caught in 1 of 2 manual runs). Owner: S1 (the twin comparison or the run-to-run determinism of storm exits with
+`+randra`).
+
