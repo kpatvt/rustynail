@@ -4162,6 +4162,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "f2_programs")],
     },
     Row {
+        name: "smallins_order_swap",
+        owner: "L2",
+        dets: &[d("tr_smallins", "smallins_pairs_order_matches_the_reference")],
+    },
+    Row {
         name: "aref_phi_cse",
         owner: "K7",
         dets: &[d("tr_core", "k7_aref_phi_programs")],

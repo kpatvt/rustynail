@@ -556,6 +556,98 @@ fn growth_fast_paths_match_generic() {
     }
 }
 
+/// L2: `insert_small` (the first two keys of a fresh table without the general rehash chain) against the general path: fresh tables (no
+/// array part, constructors with a one-node hash part, a key deleted again, integer and float keys in the one-node part) get 1 to 4
+/// insertions of keys from a small pool (so that two keys collide in a two-node part often); after every insertion the layout (sizes,
+/// node keys / links, traversal order, border) and the accounted bytes must equal those of the same table built with the switch off.
+fn smallins_lockstep(seed: u64, tables: usize) {
+    let mut h = Heap::new(11).unwrap();
+    let all = key_pool(&mut h);
+    let mut r = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
+    let strs: Vec<Value> = all
+        .iter()
+        .copied()
+        .filter(|v| v.as_string().is_some_and(|s| s.len() <= 40))
+        .collect();
+    let pool: Vec<Value> = (0..2 + r.below(6))
+        .map(|_| strs[r.below(strs.len() as u64) as usize])
+        .collect();
+    for tn in 0..tables {
+        let pair = [h.new_table().unwrap(), h.new_table().unwrap()];
+        // the start: empty, a one-node constructor part holding a string / integer / float key, or that key deleted again
+        let start = r.below(6);
+        let first = match start {
+            1 | 4 => Some(all[r.below(all.len() as u64) as usize]),
+            2 => Some(Value::int(r.below(40) as i64 - 5)),
+            3 => Some(pool[r.below(pool.len() as u64) as usize]),
+            _ => None,
+        };
+        for t in pair {
+            if let Some(k) = first {
+                t.resize(&mut h, 0, 1).unwrap();
+                t.set(&mut h, &k, &Value::int(7)).unwrap();
+                if start == 4 {
+                    t.set(&mut h, &k, &Value::NIL).unwrap();
+                }
+            }
+        }
+        for step in 0..1 + r.below(4) {
+            let key = match r.below(9) {
+                0 => all[r.below(all.len() as u64) as usize],
+                1 => Value::int(r.below(6) as i64),
+                // a string that was never a key (its hash is computed on first use, I-H)
+                2 => Value::string(
+                    h.new_str(format!("fresh{seed}_{tn}_{step}").as_bytes())
+                        .unwrap(),
+                ),
+                _ => pool[r.below(pool.len() as u64) as usize],
+            };
+            let val = if r.below(9) == 0 {
+                Value::NIL
+            } else {
+                Value::int(step as i64 + 1)
+            };
+            let mut res = [Ok(()), Ok(())];
+            let mut dbytes = [0usize; 2];
+            for (j, t) in pair.into_iter().enumerate() {
+                crate::table::NO_INSERT_SMALL.with(|c| c.set(j == 1));
+                let before = h.total_bytes();
+                res[j] = t.set(&mut h, &key, &val);
+                dbytes[j] = h.total_bytes().wrapping_sub(before);
+                // every key the traversal shows is found by a lookup, with its value (checked before the other table's insertion: an
+                // interned key is shared, the general path would compute a fresh string's hash for both)
+                let mut k = Value::NIL;
+                while let Some((nk, nv)) = t.next(&k).unwrap() {
+                    assert!(
+                        t.get(&nk).raw_equal(&nv),
+                        "seed {seed} table {tn} step {step}: lookup ({j})"
+                    );
+                    k = nk;
+                }
+            }
+            crate::table::NO_INSERT_SMALL.with(|c| c.set(false));
+            assert_eq!(res[0], res[1], "seed {seed} table {tn} step {step}");
+            assert_eq!(
+                dbytes[0], dbytes[1],
+                "seed {seed} table {tn} step {step}: accounted bytes"
+            );
+            assert_eq!(
+                fingerprint(pair[0], &h),
+                fingerprint(pair[1], &h),
+                "seed {seed} table {tn} step {step}: layout"
+            );
+        }
+    }
+}
+
+#[test]
+fn smallins_matches_generic() {
+    let (seeds, tables) = if cfg!(miri) { (3, 20) } else { (400, 200) };
+    for seed in 1..=seeds {
+        smallins_lockstep(seed, tables);
+    }
+}
+
 /// Appending 1.. n elements: the sizes the array part takes, the bytes accounted and the length hint are the reference's.
 #[test]
 fn append_growth_sizes_and_bytes() {

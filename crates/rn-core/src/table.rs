@@ -1745,6 +1745,16 @@ unsafe fn newkey(
     value: &Value,
 ) -> Result<(), TableError> {
     if !value.is_nil() {
+        // L2: the first two keys of a fresh object table
+        // SAFETY: valid table (a cheap shape pre-test before the out-of-line helper).
+        if key.tag() == ctb(LUA_VSHRSTR) && unsafe { (*t).lsizenode == 0 && (*t).asize == 0 } {
+            if let Some(k) = key.as_strref() {
+                // SAFETY: caller contract of `newkey` (valid table, `key` absent, `value` not nil).
+                if let Some(r) = unsafe { insert_small(heap, t, k, value) } {
+                    return r;
+                }
+            }
+        }
         // SAFETY: valid table.
         unsafe {
             if isdummy(t) || !insertkey(t, key, value) {
@@ -1756,6 +1766,121 @@ unsafe fn newkey(
         heap.barrier_back(t.cast(), value);
     }
     Ok(())
+}
+
+/// L2: the two growth steps of a fresh object table (`setmetatable({}, C)` followed by `self.x = ..`, `self.y = ..`) without the
+/// general `newkey` -> `rehash` -> `resize_hash` -> `newcheckedkey` chain: a table without an array part whose hash part is the
+/// dummy node (the first key: one node) or one node holding a live non-integer key other than `key` (the second key: two nodes).
+/// The result is exactly the general path's: the same node vector size (`rehash` counts the dummy as one deleted entry: `1 + 1 >> 2
+/// = 1`; two live entries: 2), the old key reinserted first, the new key inserted after it by the same `insertkey`, the old vector
+/// freed, the same accounting, then the two write barriers. `None`: not one of these shapes (the caller takes the general path);
+/// `Some(Err)`: the allocation failed (the table is intact, as `luaH_resize` guarantees).
+///
+/// # Safety
+/// `t` is a live table of `heap`; `key` a live interned short string absent from `t` (or present in node 0: then `None`); `value`
+/// is not nil.
+#[inline(never)]
+unsafe fn insert_small(
+    heap: &mut Heap,
+    t: *mut Table,
+    key: StrRef,
+    value: &Value,
+) -> Option<Result<(), TableError>> {
+    // SAFETY: caller contract; `setnodevector` writes `node` / `lsizenode` only after its allocation succeeded; the old one-node
+    // vector is read before and freed after.
+    unsafe {
+        if cfg!(rustynail_lua54) || !fast_growth() || (*t).asize != 0 || insert_small_off() {
+            return None;
+        }
+        let kv = Value::string(key);
+        if isdummy(t) {
+            if let Err(e) = setnodevector(heap, t, 1) {
+                return Some(Err(e));
+            }
+            // (through `insertkey`: its `mainposition` computes the string's hash on first use, I-H: a key whose hash was never computed
+            // is a miss for every lookup)
+            let done = insertkey(t, &kv, value);
+            debug_assert!(done);
+        } else if (*t).lsizenode == 0 {
+            let n0 = gnode(t, 0);
+            // a deleted entry (empty value) is reused in place by `insertkey`, an integer key sends `rehash` to the counting path, the
+            // key itself is no insertion
+            if nval_empty(n0)
+                || (*n0).key_tt == LUA_VNUMINT
+                || ((*n0).key_tt == ctb(LUA_VSHRSTR) && (*n0).key.addr() == key.as_ptr() as usize)
+            {
+                return None;
+            }
+            let (k1, v1) = (nkey(n0), nval(n0));
+            let oldnode = (*t).node;
+            if let Err(e) = setnodevector(heap, t, 2) {
+                return Some(Err(e));
+            }
+            // `resize_hash` reinserts the old entry, then `newcheckedkey` inserts the new one (the order decides who gets the free node on a collision)
+            let (a, b) = if mut_smallins(1) {
+                ((&kv, value), (&k1, &v1))
+            } else {
+                ((&k1, &v1), (&kv, value))
+            };
+            let done = insertkey(t, a.0, a.1);
+            debug_assert!(done);
+            heap.mem.free_counted(
+                oldnode.cast::<u8>().sub(prefix_bytes(0)),
+                sizehash_alloc(0),
+                sizehash_bytes(0),
+            );
+            let done = insertkey(t, b.0, b.1);
+            debug_assert!(done);
+            let _ = done;
+        } else {
+            return None;
+        }
+        heap.barrier_back(t.cast(), &kv);
+        heap.barrier_back(t.cast(), value);
+        Some(Ok(()))
+    }
+}
+
+/// Test-only mutants of [`insert_small`] (L2, feature `jit_trace_mut`): a bit mask, `1` `smallins_order_swap` (the second step inserts the
+/// new key before the old one). (An integer key let through in the one-node part is caught by the unit test `smallins_matches_generic`
+/// only: no Lua program puts the key 1 into a one-node hash part of a table without an array part, and for every other integer key the
+/// general path sizes the same two-node part, so it is not a registry mutant.)
+#[cfg(feature = "jit_trace_mut")]
+static MUT_SMALLINS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Select the [`insert_small`] mutants (feature `jit_trace_mut`); see [`MUT_SMALLINS`] for the bits.
+#[cfg(feature = "jit_trace_mut")]
+pub fn set_mut_smallins(mask: u8) {
+    MUT_SMALLINS.store(mask, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline(always)]
+fn mut_smallins(bit: u8) -> bool {
+    #[cfg(feature = "jit_trace_mut")]
+    return MUT_SMALLINS.load(std::sync::atomic::Ordering::Relaxed) & bit != 0;
+    #[cfg(not(feature = "jit_trace_mut"))]
+    {
+        let _ = bit;
+        false
+    }
+}
+
+// Test-only switch (unit tests of this module): the general path for every insertion, to compare layouts with [`insert_small`].
+#[cfg(test)]
+thread_local! {
+    pub(crate) static NO_INSERT_SMALL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[inline(always)]
+fn insert_small_off() -> bool {
+    #[cfg(test)]
+    {
+        NO_INSERT_SMALL.with(|c| c.get())
+    }
+    #[cfg(not(test))]
+    {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

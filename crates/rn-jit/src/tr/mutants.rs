@@ -902,6 +902,8 @@ pub const NAMES: &[&str] = &[
     "slotlive_hload_stale",
     // L1 (`bytext`): the inline `string.byte` reads long strings with external bytes through their pointer
     "bytext_inline_read",
+    // L2: the first two keys of a fresh object table without the general rehash chain (rn-core `insert_small`)
+    "smallins_order_swap",
     // K7 (an AREF is never a PHI)
     "aref_phi_cse",
 ];
@@ -942,6 +944,7 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_hooked_head_no_trap(active("hooked_head_no_trap"));
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
+    rn_core::table::set_mut_smallins(u8::from(active("smallins_order_swap")));
     rn_core::table::set_mut_shape(
         u8::from(active("shape_stamp_not_bumped_on_newkey"))
             | u8::from(active("shape_collide_move_no_clear")) << 1
@@ -978,7 +981,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 748);
+        assert_eq!(NAMES.len(), 749);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
