@@ -1,0 +1,16 @@
+bench-fast: matrix 55plain,55pgo,54plain,54pgo, cpus 4, out /home/themadmin/Projects/rustynail/.claude/worktrees/agent-a4f86f3c2d1f05d27/bench/results/session-i/fast_all.json
+bench-fast: idle check cpus 4:2.0% 12:0.0%
+  canary lj     corpus/class_middleclass   cached     319.5 Mcyc  now     323.0  drift +1.08%
+  canary lj     programs/nbody             cached     345.6 Mcyc  now     347.6  drift +0.58%
+  canary lj     awfy/richards              cached      34.7 Mcyc  now      35.5  drift +2.19%
+  canary ljoff  corpus/class_middleclass   cached    2199.2 Mcyc  now    2255.4  drift +2.55%
+  canary ljoff  programs/nbody             cached    3550.9 Mcyc  now    3563.9  drift +0.37%
+  canary ljoff  awfy/richards              cached     143.9 Mcyc  now     145.6  drift +1.14%
+  canary puc    corpus/class_middleclass   cached    3046.3 Mcyc  now    3025.2  drift -0.69%
+  canary puc    programs/nbody             cached    4246.2 Mcyc  now    4367.6  drift +2.86%
+  canary puc    awfy/richards              cached     197.7 Mcyc  now     200.1  drift +1.25%
+  canary puc54  corpus/class_middleclass   cached    3098.9 Mcyc  now    3264.6  drift +5.35%
+  canary puc54  programs/nbody             cached    4718.3 Mcyc  now    4892.6  drift +3.69%
+  canary puc54  awfy/richards              cached     199.3 Mcyc  now     212.4  drift +6.58%
+bench-fast: canary median |drift| 2.19%, worst 6.58%
+bench-fast: canary drift above tolerance (median 2.5% / worst 6%): the machine is not in the state of the cached run (FORCE_STALE=1 to continue)

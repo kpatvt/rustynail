@@ -1,0 +1,46 @@
+bench-fast: matrix 55plain,55pgo,54plain,54pgo, cpus 4, out /home/themadmin/Projects/rustynail/.claude/worktrees/agent-a4f86f3c2d1f05d27/bench/results/session-i/rerun2_15runs_cpu4.json
+bench-fast: idle check cpus 4:0.5% 12:0.0%
+  canary lj     corpus/class_middleclass   cached     319.5 Mcyc  now     321.1  drift +0.49%
+  canary lj     programs/nbody             cached     345.6 Mcyc  now     347.8  drift +0.65%
+  canary lj     awfy/richards              cached      34.7 Mcyc  now      34.9  drift +0.42%
+  canary ljoff  corpus/class_middleclass   cached    2199.2 Mcyc  now    2229.4  drift +1.37%
+  canary ljoff  programs/nbody             cached    3550.9 Mcyc  now    3542.0  drift -0.25%
+  canary ljoff  awfy/richards              cached     143.9 Mcyc  now     144.6  drift +0.51%
+  canary puc    corpus/class_middleclass   cached    3046.3 Mcyc  now    3017.5  drift -0.95%
+  canary puc    programs/nbody             cached    4246.2 Mcyc  now    4336.0  drift +2.12%
+  canary puc    awfy/richards              cached     197.7 Mcyc  now     198.7  drift +0.52%
+  canary puc54  corpus/class_middleclass   cached    3098.9 Mcyc  now    3271.3  drift +5.56%
+  canary puc54  programs/nbody             cached    4718.3 Mcyc  now    4751.5  drift +0.70%
+  canary puc54  awfy/richards              cached     199.3 Mcyc  now     213.0  drift +6.85%
+bench-fast: canary median |drift| 0.70%, worst 6.85%
+[    25s 1/26 cpu4] corpus/class_middleclass plain=480(15) pgo=472(15) p54=507(15) g54=498(15) [all_full,ins,noisy]
+[    58s 2/26 cpu4] corpus/lua_lexer plain=1238(15) pgo=1096(15) p54=1118(15) g54=981(15) [all_full,noisy]
+[   101s 3/26 cpu4] corpus/msgpack_pure plain=2017(15) pgo=1781(15) p54=2176(15) g54=1888(15) [all_full,ins,noisy]
+[   134s 4/26 cpu4] corpus2/dev/csv_report plain=1150(15) pgo=1025(15) p54=1187(15) g54=1074(15) [all_full,noisy]
+[   156s 5/26 cpu4] corpus2/dev/iter_pipeline plain=173(15) pgo=164(15) p54=184(15) g54=174(15) [all_full,noisy]
+[   191s 6/26 cpu4] corpus2/dev/lua_parser plain=1274(15) pgo=1108(15) p54=1531(15) g54=1327(15) [all_full,ins]
+[   228s 7/26 cpu4] corpus2/dev/oop_mixins plain=1426(15) pgo=1350(15) p54=1415(15) g54=1341(15) [all_full,ins,noisy]
+[   261s 8/26 cpu4] corpus2/heldout/bigint_rsa plain=1130(15) pgo=936(15) p54=1373(15) g54=1189(15) [all_full,ins,noisy]
+[   298s 9/26 cpu4] corpus2/heldout/prototype_objects plain=1455(15) pgo=1403(15) p54=1449(15) g54=1386(15) [all_full,ins,noisy]
+[   318s 10/26 cpu4] awfy/storage plain=101(15) pgo=78(15) p54=146(15) g54=114(15) [all_full,noisy]
+[   339s 11/26 cpu4] jit-trace/oop_override plain=107(15) pgo=107(15) p54=111(15) g54=110(15) [all_full]
+[   359s 12/26 cpu4] lib/fmt_d plain=93(15) pgo=88(15) p54=100(15) g54=95(15) [all_full]
+[   379s 13/26 cpu4] lib/fmt_g plain=73(15) pgo=62(15) p54=75(15) g54=64(15) [all_full,noisy]
+[   399s 14/26 cpu4] lib/fmt_mixed plain=59(15) pgo=49(15) p54=67(15) g54=56(15) [all_full,noisy]
+[   420s 15/26 cpu4] lib/fmt_q plain=146(15) pgo=121(15) p54=144(15) g54=119(15) [all_full]
+[   441s 16/26 cpu4] lib/it_pairs_hash plain=103(15) pgo=104(15) p54=112(15) g54=110(15) [all_full,noisy]
+[   463s 17/26 cpu4] lib/m_abs plain=241(15) pgo=240(15) p54=241(15) g54=244(15) [all_full,noisy]
+[   489s 18/26 cpu4] lib/os_clock plain=116(15) pgo=121(15) p54=119(15) g54=121(15) [all_full]
+[   510s 19/26 cpu4] lib/pcall_err plain=121(15) pgo=98(15) p54=129(15) g54=112(15) [all_full,noisy]
+[   530s 20/26 cpu4] lib/str_eq_long plain=36(15) pgo=35(15) p54=35(15) g54=36(15) [all_full]
+[   550s 21/26 cpu4] lib/str_method_len plain=45(15) pgo=45(15) p54=51(15) g54=50(15) [all_full,noisy]
+[   570s 22/26 cpu4] lib/tfront_1k plain=78(15) pgo=76(15) p54=80(15) g54=76(15) [all_full]
+[   592s 23/26 cpu4] lib/tinsert_front plain=225(15) pgo=178(15) p54=264(15) g54=211(15) [all_full,ins]
+[   612s 24/26 cpu4] lib/tostring_tbl plain=108(15) pgo=106(15) p54=110(15) g54=106(15) [all_full]
+[   634s 25/26 cpu4] lib/tremove_pop plain=241(15) pgo=172(15) p54=220(15) g54=206(15) [all_full,ins,noisy]
+[   657s 26/26 cpu4] lib/utf8_len plain=271(15) pgo=275(15) p54=274(15) g54=279(15) [all_full,noisy]
+bench-fast: 26 programs in 657s; quick-only 0, full-run flags {'quick_only': 0, 'ins': 8, 'noisy': 17, 'nobase': 0, 'all_full': 26, 'failed': 0}
+  geomean plain/prev_plain: cycles 0.9917  instructions 0.9933  (26 programs)
+  geomean pgo/prev_pgo: cycles 0.9896  instructions 0.9933  (26 programs)
+  geomean p54/prev_p54: cycles 0.9853  instructions 0.9910  (26 programs)
+  geomean g54/prev_g54: cycles 0.9926  instructions 0.9912  (26 programs)

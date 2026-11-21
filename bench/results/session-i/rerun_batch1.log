@@ -1,0 +1,77 @@
+bench-fast: matrix 55plain,55pgo,54plain,54pgo, cpus 4, out /home/themadmin/Projects/rustynail/.claude/worktrees/agent-a4f86f3c2d1f05d27/bench/results/session-i/rerun_15runs_cpu4.json
+bench-fast: idle check cpus 4:0.5% 12:1.0%
+  canary lj     corpus/class_middleclass   cached     319.5 Mcyc  now     315.2  drift -1.34%
+  canary lj     programs/nbody             cached     345.6 Mcyc  now     348.6  drift +0.87%
+  canary lj     awfy/richards              cached      34.7 Mcyc  now      35.6  drift +2.65%
+  canary ljoff  corpus/class_middleclass   cached    2199.2 Mcyc  now    2232.9  drift +1.53%
+  canary ljoff  programs/nbody             cached    3550.9 Mcyc  now    3614.3  drift +1.78%
+  canary ljoff  awfy/richards              cached     143.9 Mcyc  now     145.6  drift +1.18%
+  canary puc    corpus/class_middleclass   cached    3046.3 Mcyc  now    3047.9  drift +0.05%
+  canary puc    programs/nbody             cached    4246.2 Mcyc  now    4383.5  drift +3.23%
+  canary puc    awfy/richards              cached     197.7 Mcyc  now     200.4  drift +1.36%
+  canary puc54  corpus/class_middleclass   cached    3098.9 Mcyc  now    3260.7  drift +5.22%
+  canary puc54  programs/nbody             cached    4718.3 Mcyc  now    4799.5  drift +1.72%
+  canary puc54  awfy/richards              cached     199.3 Mcyc  now     216.7  drift +8.73%
+bench-fast: canary median |drift| 1.72%, worst 8.73%
+[    41s 1/57 cpu4] corpus/astar_jumper plain=1680(15) pgo=1608(15) p54=1877(15) g54=1793(15) [all_full,ins,noisy]
+[    69s 2/57 cpu4] corpus/classic_vector plain=644(15) pgo=574(15) p54=807(15) g54=673(15) [all_full,ins,noisy]
+[   107s 3/57 cpu4] corpus/csv_ini_yaml plain=1579(15) pgo=1371(15) p54=1864(15) g54=1638(15) [all_full]
+[   153s 4/57 cpu4] corpus/parser_combinator plain=2293(15) pgo=1857(15) p54=2492(15) g54=2071(15) [all_full,ins,noisy]
+[   178s 5/57 cpu4] corpus2/dev/diff_levenshtein plain=429(15) pgo=407(15) p54=463(15) g54=433(15) [all_full]
+[   209s 6/57 cpu4] corpus2/dev/regex_nfa plain=653(15) pgo=570(15) p54=1346(15) g54=1166(15) [all_full,ins,noisy]
+[   246s 7/57 cpu4] corpus2/heldout/dijkstra_routes plain=1449(15) pgo=1417(15) p54=1525(15) g54=1487(15) [all_full,ins]
+[   277s 8/57 cpu4] corpus2/heldout/forth_vm plain=811(15) pgo=807(15) p54=1063(15) g54=1157(15) [all_full,noisy]
+[   321s 9/57 cpu4] corpus2/heldout/log_analyzer plain=2152(15) pgo=1763(15) p54=2149(15) g54=1895(15) [all_full,noisy]
+[   350s 10/57 cpu4] corpus2/heldout/stream_closures plain=813(15) pgo=745(15) p54=871(15) g54=811(15) [all_full,ins]
+[   373s 11/57 cpu4] awfy/cd plain=263(15) pgo=244(15) p54=291(15) g54=271(15) [all_full,noisy]
+[   393s 12/57 cpu4] awfy/deltablue plain=111(15) pgo=103(15) p54=121(15) g54=114(15) [all_full]
+[   415s 13/57 cpu4] awfy/havlak plain=153(15) pgo=136(15) p54=176(15) g54=158(15) [all_full,noisy]
+[   435s 14/57 cpu4] awfy/list plain=97(15) pgo=94(15) p54=98(15) g54=97(15) [all_full,ins]
+[   455s 15/57 cpu4] awfy/richards plain=59(15) pgo=57(15) p54=60(15) g54=58(15) [all_full,ins]
+[   480s 16/57 cpu4] programs/closures plain=459(15) pgo=421(15) p54=514(15) g54=477(15) [all_full,noisy]
+[   518s 17/57 cpu4] programs/coroutines plain=1716(15) pgo=1321(15) p54=1799(15) g54=1400(15) [all_full,noisy]
+[   569s 18/57 cpu4] programs/gc_churn plain=2158(15) pgo=1846(15) p54=3316(15) g54=2806(15) [all_full,ins]
+[   608s 19/57 cpu4] programs/json plain=1810(15) pgo=1405(15) p54=1918(15) g54=1541(15) [all_full]
+[   635s 20/57 cpu4] programs/load_big plain=736(15) pgo=543(15) p54=637(15) g54=452(15) [all_full,ins]
+[   660s 21/57 cpu4] programs/matmul plain=421(15) pgo=430(15) p54=432(15) g54=433(15) [all_full]
+[   696s 22/57 cpu4] programs/pcall_error plain=1520(15) pgo=1213(15) p54=1480(15) g54=1245(15) [all_full,noisy]
+[   724s 23/57 cpu4] programs/sieve plain=577(15) pgo=576(15) p54=609(15) g54=671(15) [all_full]
+[   750s 24/57 cpu4] programs/table_hash plain=524(15) pgo=512(15) p54=526(15) g54=515(15) [all_full,noisy]
+[   772s 25/57 cpu4] lib/co_wrap plain=249(15) pgo=203(15) p54=240(15) g54=203(15) [all_full,ins,noisy]
+[   794s 26/57 cpu4] lib/co_yield plain=226(15) pgo=179(15) p54=225(15) g54=180(15) [all_full,noisy]
+[   815s 27/57 cpu4] lib/concat_op plain=139(15) pgo=128(15) p54=143(15) g54=134(15) [all_full]
+[   836s 28/57 cpu4] lib/concat_op_str plain=135(15) pgo=118(15) p54=239(15) g54=227(15) [all_full,ins,noisy]
+[   858s 29/57 cpu4] lib/error_tbl plain=261(15) pgo=206(15) p54=261(15) g54=218(15) [all_full]
+[   881s 30/57 cpu4] lib/find_cap plain=273(15) pgo=236(15) p54=277(15) g54=226(15) [all_full]
+[   903s 31/57 cpu4] lib/find_pat plain=272(15) pgo=237(15) p54=272(15) g54=234(15) [all_full,noisy]
+[   923s 32/57 cpu4] lib/fmt_f plain=62(15) pgo=57(15) p54=66(15) g54=59(15) [all_full,noisy]
+[   944s 33/57 cpu4] lib/gsub_fn plain=178(15) pgo=129(15) p54=178(15) g54=131(15) [all_full]
+[   967s 34/57 cpu4] lib/it_ipairs plain=236(15) pgo=232(15) p54=277(15) g54=259(15) [all_full,noisy]
+[   987s 35/57 cpu4] lib/it_next_empty plain=52(15) pgo=51(15) p54=52(15) g54=51(15) [all_full]
+[  1007s 36/57 cpu4] lib/it_pairs plain=88(15) pgo=87(15) p54=94(15) g54=92(15) [all_full,noisy]
+[  1027s 37/57 cpu4] lib/len_op plain=48(15) pgo=48(15) p54=58(15) g54=57(15) [all_full]
+[  1048s 38/57 cpu4] lib/load_small plain=228(15) pgo=156(15) p54=227(15) g54=167(15) [all_full]
+[  1071s 39/57 cpu4] lib/m_min plain=227(15) pgo=226(15) p54=249(15) g54=234(15) [all_full,noisy]
+[  1093s 40/57 cpu4] lib/m_tointeger plain=227(15) pgo=228(15) p54=224(15) g54=236(15) [all_full]
+[  1115s 41/57 cpu4] lib/m_ult plain=272(15) pgo=280(15) p54=276(15) g54=281(15) [all_full,noisy]
+[  1137s 42/57 cpu4] lib/sel_count plain=218(15) pgo=216(15) p54=216(15) g54=216(15) [all_full,noisy]
+[  1161s 43/57 cpu4] lib/sel_n plain=321(15) pgo=321(15) p54=320(15) g54=323(15) [all_full,noisy]
+[  1182s 44/57 cpu4] lib/sub plain=131(15) pgo=122(15) p54=130(15) g54=121(15) [all_full]
+[  1203s 45/57 cpu4] lib/tconcat_num plain=173(15) pgo=117(15) p54=183(15) g54=120(15) [all_full]
+[  1223s 46/57 cpu4] lib/tmove_1k plain=96(15) pgo=69(15) p54=107(15) g54=71(15) [all_full]
+[  1244s 47/57 cpu4] lib/tonumber_bad plain=144(15) pgo=119(15) p54=165(15) g54=143(15) [all_full,noisy]
+[  1265s 48/57 cpu4] lib/tonumber_int plain=153(15) pgo=139(15) p54=160(15) g54=142(15) [all_full]
+[  1287s 49/57 cpu4] lib/tonumber_num plain=217(15) pgo=214(15) p54=214(15) g54=214(15) [all_full,noisy]
+[  1308s 50/57 cpu4] lib/tostring_int plain=121(15) pgo=108(15) p54=137(15) g54=122(15) [all_full,noisy]
+[  1329s 51/57 cpu4] lib/tpack plain=147(15) pgo=114(15) p54=214(15) g54=165(15) [all_full,ins,noisy]
+[  1350s 52/57 cpu4] lib/tremove_front plain=149(15) pgo=132(15) p54=181(15) g54=166(15) [all_full,ins,noisy]
+[  1371s 53/57 cpu4] apps/expr_lang plain=140(15) pgo=128(15) p54=161(15) g54=146(15) [all_full,ins,noisy]
+[  1392s 54/57 cpu4] apps/markdown plain=118(15) pgo=103(15) p54=120(15) g54=105(15) [all_full]
+[  1412s 55/57 cpu4] apps/raytrace plain=115(15) pgo=107(15) p54=120(15) g54=112(15) [all_full,ins,noisy]
+[  1433s 56/57 cpu4] real/lua_interp plain=103(15) pgo=100(15) p54=110(15) g54=106(15) [all_full,noisy]
+[  1460s 57/57 cpu4] real/template_engine plain=727(15) pgo=594(15) p54=744(15) g54=617(15) [all_full]
+bench-fast: 57 programs in 1460s; quick-only 0, full-run flags {'quick_only': 0, 'ins': 16, 'noisy': 31, 'nobase': 0, 'all_full': 57, 'failed': 0}
+  geomean plain/prev_plain: cycles 0.9784  instructions 0.9812  (57 programs)
+  geomean pgo/prev_pgo: cycles 0.9867  instructions 0.9818  (57 programs)
+  geomean p54/prev_p54: cycles 0.9711  instructions 0.9727  (57 programs)
+  geomean g54/prev_g54: cycles 0.9826  instructions 0.9729  (57 programs)
