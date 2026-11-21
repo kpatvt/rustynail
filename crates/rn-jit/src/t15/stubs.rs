@@ -24,6 +24,7 @@ const TAG_FLT: i32 = rn_core::value::LUA_VNUMFLT as i32;
 /// have the tags tier 1's `Cx::ty` assumed at an exit target (`b` = the slot), or that `[r15]` is negative when a
 /// stub runs (`b = 0xFFFF`, the budget invariant of docs 16.1 item 7). Aborts the process with a message: it is a
 /// bug in the generator, not something to recover from.
+#[inline(never)]
 pub extern "C" fn jit_t15_verify_fail(_th: *mut u8, _ci: *mut u8, pc: u32, b: u32) -> u32 {
     if b == 0xFFFF {
         eprintln!("[t15] internal error: negative budget word when entering the stub of pc {pc}");

@@ -85,6 +85,9 @@ pub(in crate::t15) enum URes {
 ///
 /// # Safety
 /// Called only from compiled code with the running thread and its current Lua frame.
+// `inline(never)`: the address is baked into generated code and compared by the tests; without it rustc may mark the body
+// cross-crate-inlinable (docs/JIT_TRACE.md section 25) and a non-LTO multi-CGU build then holds several copies at different addresses.
+#[inline(never)]
 pub unsafe extern "C" fn jit_t15_math(th: *mut Thread, ci: *mut CallInfo, a: u32, _b: u32) -> u32 {
     // SAFETY: `th` is the live thread pinned in `r12`, `ci` its current frame (`r13`).
     let (mut st, ci) = unsafe { (jit_hooks::state_from_thread(th.cast()), Ci::from_raw(ci)) };

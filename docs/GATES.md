@@ -88,10 +88,7 @@ assertions switch on); `fast` is 0-2% faster than `debug` and 10 s faster to bui
 debug (`tr/mod.rs` `lockstep_on`; in release only as `limits.lockstep` says: never, always, or every K-th recording) together with the `fast_eval` cross-check (`tr/record.rs`),
 the landing-cache equality assertions (`rt.rs`), the poisoned-descriptor quarantine (`rt.rs`), the tier-1.5 budget invariant that
 `t15/stubs.rs` emits, `debug_assert!`s in 16 `rn-jit` files and every overflow check; and
-`t15_core_emu::intrinsic_calls_match_tier1_at_every_pc` FAILS without them (`in_sin_flt`: slot 11 of the region frame holds the callee,
-tier 1 the result; deterministic in the release profile with 16 or 1 codegen units, passes with `debug-assertions = true` at opt-level 3;
-the shipped binaries have no debug assertions, so this is either a test that depends on the emitted budget check or a latent difference
-of the shipped configuration: it needs an owner). The four injected mutants of the oracle sharding (`core/inline`, 36 jobs:
+`t15_core_emu::intrinsic_calls_match_tier1_at_every_pc` failed in `release` until docs/JIT_TRACE.md section 25 (the test compared the address of `jit_t15_math`, which a non-LTO multi-CGU build duplicated; fixed with `#[inline(never)]`, not a debug-assertion dependency). The four injected mutants of the oracle sharding (`core/inline`, 36 jobs:
 `snap_drop_last` 5 failing jobs, `refund_off_by_one` 25, `land_pre_mid_swap` 30, `budget_no_check` 23) give identical label sets
 (md5 of the sorted label list) in all three profiles, so those do not tell the profiles apart. Not measured: the 5.4 suites and the full
 mutant runner in `fast` / `release`. No step was switched; use `--release` for a quick look only, never for a merge.

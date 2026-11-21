@@ -2633,3 +2633,22 @@ The 5.5 spread of the new column is the path / allocation lottery (10180 with `R
 All other programs of the check set (richards 500, deltablue 400, towers 900, queens, permute, havlak, cd 20, awfy/nbody, awfy/json, bounce, mandelbrot, fib, fannkuch, spectral_norm, matmul, nbody, raytrace 40,
 binary_trees 17, lru_cache, game_loop, field_method, oop_methods, expr_lang, roguelike_turns, programs/json) are within 0.02 % instructions on both versions (raytrace 5.4: +0.02 %; every other row identical).
 Remaining in `list` after K6: `tail`'s root `TAILCALL` heads (pc 17, 22) still abort `TailCall` (section 20 measured that stitching them is worse); the entry trace and the pc 4 / 12 continuations now run.
+
+## 25. `t15_core_emu::intrinsic_calls_match_tier1_at_every_pc` in release test builds (2026-11-20, base fc520a0)
+
+Finding (docs/GATES.md "Debug or release"): the test failed in the `--release` gate profile (`CARGO_PROFILE_RELEASE_LTO=off`, 16 codegen units; `in_sin_flt`: slot 11 of the
+region frame holds the callee, tier 1 the result) and passed with debug assertions. It is neither of the two guesses: no budget check and no shipped-code difference.
+
+Root cause: the test's helper model (`Model::try_math`) recognises the libm helper by address, `f == rn_jit::t15::codegen::jit_t15_math as usize`, and answers it with the
+real result. In that build the binary holds TWO copies of `jit_t15_math` (`nm`: two symbols, 0xc4720 and 0x18d330): the one baked into the generated code by
+`calls.rs` (`Op::CallH { f: jit_t15_math ... }`) and the one the test crate takes the address of. The body has no calls once the MIR inliner has run, so rustc's automatic
+cross-crate-inline heuristic (opt-level >= 1 without debug assertions: the overflow panics of the debug build are calls, so it does not apply there) marks it
+cross-crate-inlinable, and without LTO / with several CGUs every user gets a local copy at its own address. The region's call then reached the model as an unknown helper
+(`call 1 Other -> 0`, nothing written to the result slot), and the frame differed at the next event. Reproduced only with `--release` + `lto=off` + `codegen-units=16`
+(plain `cargo test --release` with fat LTO / 1 CGU, and every debug-assertion build, pass). The shipped binary is fat LTO with one CGU: one copy; no behaviour of `rnlua` differs.
+
+Fix (test-visible only, no production behaviour change): `#[inline(never)]` on `jit_t15_math` and on `jit_t15_verify_fail` (the other helper compared by address in the tests),
+so the address is unique in every profile. The detector is the existing test itself, which fails before / passes after in the release gate profile and passes in debug (it
+cannot fail in the debug profile before the fix: that profile never duplicated the function). No test or mutant was added or moved (registry unchanged, 732).
+Note for later: any helper whose address a test compares must stay out of the cross-crate-inlinable set; the Lua C functions that the intrinsic table matches by address
+(`rn_std::lib_math::jit_builtins` vs `open`) live in one crate and are large, so they are unaffected.
