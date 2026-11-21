@@ -2822,3 +2822,12 @@ frame exits, and K3 does not touch them (the `retf` machinery owns that path).
   the detector above (checked one by one with `RUSTYNAIL_JIT_MUT`).
 * Oracle: every program of `PROGS` is an oracle job, so `k3_01_frame_loop_exits` is covered by `oracle_options` in every cell.
 * New limit `fretry` (default 1) parsed in `TrLimits::parse`.
+* Two existing tests pin `fretry=0` because they measure rules the retry would blur: `h1_frame_side_thresholds` (an unreachable `framemin` must record fewer side traces: with the retry the
+  second attempt ignores it) and `sinkroot_programs` (formation-sensitive count of blacklisted heads). `k3_frame_loop_programs` asserts the `fretry_always` difference in `always` only (5.4 `on2`
+  records the same number of side traces in both runs).
+
+### 27.7 Heavy gate (2026-11-21, commit ba6e311)
+
+`gate-heavy.sh`: light (5.5 and 5.4 trace suites, vm_corpus, clippy, mutant-map) PASS; mutants PASS (all caught, registry 743); tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only), tests-5.4-oracle
+PASS; jitdiff 1-200 in the seven modes PASS (0 diffs); `oracle_options` KNOWN: the only mismatching jobs are `core/t1i_inline [always +exitstorm=7 budget=3]` and `core/bb_tset [always +membudget budget=17]`, both listed in
+`scripts/gate-known.txt` (no new oracle failure; the new program `k3_01_frame_loop_exits` passes every cell).
