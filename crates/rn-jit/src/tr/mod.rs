@@ -568,15 +568,18 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     let promoted = pr.is_some_and(|pr| cache::fn_promoted(st, pr)) && !closure_self_ref(cl);
     // K6: remember that the prototype recurses through its own upvalue (the FnShort budget of its entry head)
     if let Some(pr) = pr {
-        if cfg.limits.fnself != 0 && closure_self_ref(cl) && !mutants::active("fnself_mark_skip") {
-            cache::mark_selfref(st, pr);
-        } else if cfg.limits.fnself != 0
-            && cfg.limits.fnrec != 0
-            && !mutants::active("fnrec_mark_skip")
-            && recursion_on_stack(st, ci, cfg.limits.fnrec)
-        {
-            // K2: method recursion (the callee is found through a table, not an upvalue): the same hint
-            cache::mark_selfref(st, pr);
+        if cfg.limits.fnself != 0 {
+            if closure_self_ref(cl) {
+                if !mutants::active("fnself_mark_skip") {
+                    cache::mark_selfref(st, pr);
+                }
+            } else if cfg.limits.fnrec != 0
+                && !mutants::active("fnrec_mark_skip")
+                && recursion_on_stack(st, ci, cfg.limits.fnrec)
+            {
+                // K2: method recursion (the callee is found through a table, not an upvalue): the same hint
+                cache::mark_selfref(st, pr);
+            }
         }
     }
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every

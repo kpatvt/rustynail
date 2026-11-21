@@ -19,9 +19,9 @@ end
 print(s, acc.x)
 "#;
 
-/// A loop the recorder refuses (`math.max` of an integer and a float): the abort site names the recorder's source line.
+/// A loop the recorder refuses (`math.max` of an integer beyond 2^53 and a float: no exact float conversion for the guard): the abort site names the recorder's source line.
 const NYI_PROG: &str =
-    "local max, s = math.max, 0\nfor i = 1, 200000 do s = s + max(0, i * 0.5 - 3) end\nprint(s)\n";
+    "local max, s = math.max, 0\nfor i = 1, 200000 do s = s + max(i + 9007199254740992, i * 0.5 - 3) end\nprint(s)\n";
 
 /// Runs [`PROG`] with a scrubbed JIT environment plus `env`; returns (stdout, stderr, child pid).
 fn run(env: &[(&str, &str)]) -> (String, String, u32) {

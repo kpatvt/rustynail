@@ -2619,7 +2619,7 @@ fn abort_matrix_calls() {
         ("Nyi (an intrinsic with a surplus argument)", "local sqrt = math.sqrt local function f(n) local s = 0.0 ARM() for i = 1, n do s = s + sqrt(i, 2) end return s end return f(5)", nyi(OpCode::Call)),
         ("Nyi (max with one argument)", "local max = math.max local function f(n) local s = 0 ARM() for i = 1, n do s = s + max(i) end return s end return f(5)", nyi(OpCode::Call)),
         ("Nyi (floor of a float that does not fit an integer)", "local floor = math.floor local function f(n) local s = 0.0 ARM() for i = 1, n do s = s + floor(1e300 + i) end return s end return f(5)", nyi(OpCode::Call)),
-        ("Nyi (min of an integer and a float)", "local min = math.min local function f(n) local s = 0.0 ARM() for i = 1, n do s = s + min(i, 2.5) end return s end return f(5)", nyi(OpCode::Call)),
+        ("Nyi (min of an integer beyond 2^53 and a float: K1 records the other mixed pairs)", "local min = math.min local function f(n) local s = 0.0 ARM() for i = 1, n do s = s + min(i + 9007199254740992, 2.5) end return s end return f(5)", nyi(OpCode::Call)),
         ("Coerce (sqrt of a string)", "local sqrt = math.sqrt local function f(n) local s = 0.0 ARM() for i = 1, n do s = s + sqrt('4') end return s end return f(5)", AbortReason::Coerce),
         ("Metamethod (sqrt of nil: an error is predicted)", "local sqrt = math.sqrt local function f(n, z) local s = 0.0 ARM() for i = 1, n do s = s + sqrt(z) end return s end return pcall(f, 5, nil)", AbortReason::Metamethod),
     ];
