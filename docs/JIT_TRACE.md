@@ -2731,3 +2731,12 @@ programs (the cliff of the study: `permute` without its `count` store, `self:tai
   the list-like program takes another formation with the rule (`on2`, 5.5), the non-recursive program the same number of `FnShort` samples. Detector of `fnrec_mark_skip`, `fnrec_proto_ignored`.
 * `tr_policy::k2_policy`: default, parse and cap of `fnrec`.
 * `tests/vm/k2_*` run in the plain vm corpus as well.
+
+### Heavy gate (2026-11-20)
+
+`gate-heavy.sh`: light, mutants (all 740 caught), tests-5.5-oracle (KNOWN `tr_identity_pre::fetch_plus_insns_identity` only), tests-5.4-oracle, jitdiff 1-200 (7 modes): PASS. `oracle_options` (3822 jobs): one new
+unknown failure, `core/t1i_inline [always +exitstorm=7 budget=3]` ("stay end" checkpoints at the tail of the run: innermost prototype differs; the instruction-count identity `tr_core::instruction_count_identity`
+holds). Not a K1 / K2 defect: with the mixed `min`/`max` path switched off the full program passes, but the job also fails (same signature) on the BASE commit d8ab9f3 for a reduced program (`t1i_inline` without its
+`run2("max"|"min"|..., f_max|f_min, ...)` lines, which contain no change K1 can see), and a family of other reductions (constant arguments, integer-only lists) flips between pass and fail: a formation lottery of the
+exit-storm job in the swap / hook tail of the program. K1 shifts the lottery; the job is listed as KNOWN in `scripts/gate-known.txt` (oracle class) with this note. Not investigated further (it needs the oracle's
+checkpoint model for tier-1 stays under `budget=3`).

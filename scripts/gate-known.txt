@@ -5,6 +5,9 @@
 # depend on the binary's load address / path (ASLR and path length reach the hash-order or allocation layout of the program).
 oracle tests/vm/table_insert_layout
 oracle core/bb_tset
+# core/t1i_inline [always +exitstorm=7 budget=3]: formation-dependent stay-position skew in the tail of the program (swap / hook sections). Not caused by K1/K2: a reduced
+# program (t1i_inline without its `run2` max/min lines) fails the same job on base d8ab9f3; the full program passed there only by the formation lottery (docs/JIT_TRACE.md section 26).
+oracle core/t1i_inline [always +exitstorm=7 budget=3]
 #
 # test: a failing test of a cargo test step ("<test binary>::<test name>"), known to fail on the base commit.
 # tr_identity_pre::fetch_plus_insns_identity: identity gaps on tests/vm/tables_15_alimit_big_moves (table layout depends on the
