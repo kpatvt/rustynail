@@ -3196,3 +3196,6 @@ the change was kept because it is behaviour-identical by construction (the twin 
 ### 31.4 Gates
 
 Light gate (with the changed-file mutant plan: 162 mutants incl. the five new ones): PASS (1047 s; `core-5.5` / `core-5.4` are the new rn-core steps).
+
+`gate-heavy.sh` (2026-11-21, at acaf7de, 4373 s): OK. light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only); tests-5.4-oracle PASS; `oracle_options` PASS;
+jit-diff 1-200 (7 modes) PASS; mutant runner PASS (746 ran, 746 caught, no survivors; registry 754). `scripts/gate-mutant-times.tsv` refreshed by that run.
