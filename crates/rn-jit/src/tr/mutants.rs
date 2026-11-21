@@ -881,6 +881,16 @@ pub const NAMES: &[&str] = &[
     "addframe_push_off",
     "stack_cmp_strict",
     "ci_next_wrong_word",
+    // K1: mixed integer / float `math.min` / `math.max` (the recorded compare decides the branch and the result type), `table.remove(t, pos)`
+    "k1_mix_take_a",
+    "k1_mix_le",
+    "k1_trm_len_guard_skip",
+    "k1_trm_pos_guard_skip",
+    "k1_trm_shift_off",
+    "k1_trm_last_keep",
+    // K2: method recursion marks the prototype `selfref` (the extended `FnShort` budget of its entry head)
+    "fnrec_mark_skip",
+    "fnrec_proto_ignored",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -955,7 +965,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 732);
+        assert_eq!(NAMES.len(), 740);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

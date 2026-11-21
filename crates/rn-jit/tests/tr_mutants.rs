@@ -4086,6 +4086,46 @@ const TABLE: &[Row] = &[
         owner: "H7",
         dets: &[d("tr_asm", "hand_entry_checks_tr6")],
     },
+    Row {
+        name: "k1_mix_take_a",
+        owner: "K1",
+        dets: &[d("tr_core", "k1_programs")],
+    },
+    Row {
+        name: "k1_mix_le",
+        owner: "K1",
+        dets: &[d("tr_core", "k1_programs")],
+    },
+    Row {
+        name: "k1_trm_len_guard_skip",
+        owner: "K1",
+        dets: &[d("tr_core", "k1_programs")],
+    },
+    Row {
+        name: "k1_trm_pos_guard_skip",
+        owner: "K1",
+        dets: &[d("tr_core", "k1_programs")],
+    },
+    Row {
+        name: "k1_trm_shift_off",
+        owner: "K1",
+        dets: &[d("tr_core", "k1_programs")],
+    },
+    Row {
+        name: "k1_trm_last_keep",
+        owner: "K1",
+        dets: &[d("tr_core", "k1_programs")],
+    },
+    Row {
+        name: "fnrec_mark_skip",
+        owner: "K2",
+        dets: &[d("tr_core", "k2_methrec_programs")],
+    },
+    Row {
+        name: "fnrec_proto_ignored",
+        owner: "K2",
+        dets: &[d("tr_core", "k2_methrec_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

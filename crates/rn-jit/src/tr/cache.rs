@@ -198,6 +198,8 @@ pub const FNPROMO_PROCESS: u32 = 6;
 pub const FNPROMOW_PROCESS: u32 = 3;
 /// K6 (`fnself`): process value of [`TrLimits::fnself`].
 pub const FNSELF_PROCESS: u32 = 16;
+/// K2 (`fnrec`): process value of [`TrLimits::fnrec`].
+pub const FNREC_PROCESS: u32 = 4;
 /// C36 (`second`): process value of [`TrLimits::second`] (K3a: also the struct default): the second chances of a head lost to a transient (bit 0 abort-count retry after `LeaveFrame`, bit 1 first identical re-record kept).
 pub const SECOND_PROCESS: u32 = 3;
 /// C39 (`innerretry`): process value of [`TrLimits::innerretry`] (K3a: also the struct default): retry rounds of a head blacklisted by `InnerLoop` aborts.
@@ -469,6 +471,10 @@ pub struct TrLimits {
     /// nothing about the recursion of such a function (most invocations of a tree recursion are leaves), so the head retries up to this many samples with a flat short wait before it
     /// is blacklisted. 0 = off (the budget of [`MAX_FN_SHORT`] and the doubling wait).
     pub fnself: u32,
+    /// K2: a function-entry recording started while the same prototype is already running among the `fnrec` nearest caller frames (direct recursion through a method, a
+    /// field or any other path than an upvalue: `self:permute(n1)`) marks the prototype `selfref` like [`TrLimits::fnself`] does for an upvalue: the `FnShort` leaf samples
+    /// of its entry head get the extended budget. 0 = off (only the upvalue rule of K6).
+    pub fnrec: u32,
     /// C39: retry rounds of a head blacklisted by two `InnerLoop` aborts in a row (a loop of an inlined callee the recording cannot unroll, or an inner loop of the root
     /// frame without a root trace). Each round waits `64 << (MAX_ABORTS + n)` back-edges (the loops of the callee may have got a trace, the guard of `loopany`
     /// may be satisfied, the callers of the loop may have another shape) and allows ONE attempt; an `InnerLoop` abort of that attempt ends the round. 0 = none
@@ -679,6 +685,7 @@ impl Default for TrLimits {
             fnpromo: FNPROMO_PROCESS,
             fnpromow: FNPROMOW_PROCESS,
             fnself: FNSELF_PROCESS,
+            fnrec: FNREC_PROCESS,
             innerretry: INNERRETRY_PROCESS,
             sidenest: SIDENEST_PROCESS,
             domtop: DOMTOP_PROCESS,
@@ -858,6 +865,7 @@ impl TrLimits {
                 "fnpromo" => l.fnpromo = v.min(64),
                 "fnpromow" => l.fnpromow = v.min(12),
                 "fnself" => l.fnself = v.min(200),
+                "fnrec" => l.fnrec = v.min(64),
                 "innerretry" => l.innerretry = v.min(16),
                 "sidenest" => l.sidenest = v.min(1),
                 "domtop" => l.domtop = v.min(100),

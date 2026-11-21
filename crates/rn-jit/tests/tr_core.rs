@@ -7650,6 +7650,106 @@ fn k6_selfrec_programs() {
     }
 }
 
+/// K2 (`fnrec`): a method-recursive function (`self:permute(n1)`, found through a table, not an upvalue) whose function-entry samples are mostly leaves keeps its
+/// entry head alive for `fnself` leaf samples (the prototype is recognised as recursive by an earlier activation of itself on the stack). Same output as the
+/// interpreter in every mode for the four `k2_*` programs (method recursion, subclasses, a replaced method, errors, coroutines, mutual and vararg recursion, a
+/// non-recursive leaf); `fnrec=0` is the old behaviour. The list-like program takes another path with the rule than without (detector of `fnrec_mark_skip`),
+/// and the program without recursion takes the same number of `FnShort` samples either way (detector of `fnrec_proto_ignored`: a function whose caller is
+/// another prototype is no recursion).
+#[test]
+fn k2_methrec_programs() {
+    let progs = [
+        "k2_01_method_recursion",
+        "k2_02_method_recursion_misc",
+        "k2_03_list_method",
+        "k2_04_nonrecursive_methods",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2", "on"] {
+            // (the last two: the start gate and `sidemin` of a process, where the entry samples of the policy happen as in `rnlua`)
+            for lim in [
+                "fnrec=0",
+                "fnrec=4",
+                "fnrec=0,wgate=30000,sidemin=4",
+                "fnrec=4,wgate=30000,sidemin=4",
+            ] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                if lim.contains("wgate") || p == "k2_04_nonrecursive_methods" {
+                    continue;
+                }
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+            }
+        }
+    }
+    let res = compare(jobs);
+    let find = |prog: &str, trace: &str, lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.clone())
+            .expect("job")
+    };
+    for trace in ["always", "on2", "on"] {
+        let (off, on) = (
+            find("k2_03_list_method", trace, "fnrec=0,wgate=30000,sidemin=4"),
+            find("k2_03_list_method", trace, "fnrec=4,wgate=30000,sidemin=4"),
+        );
+        eprintln!(
+            "k2 [{trace}] fnrec=0: {} | fnrec=4: {}",
+            off.line(),
+            on.line()
+        );
+        // (5.4: the first entry samples already see a non-leaf call: no difference to detect)
+        if trace == "on2" && !cfg!(rustynail_lua54) {
+            assert!(
+                (on.installed, on.entered, on.recorded)
+                    != (off.installed, off.entered, off.recorded),
+                "[{trace}] fnrec=4 changes the formation: {} vs {}",
+                on.line(),
+                off.line()
+            );
+        }
+        // no recursion: the callee of `caller` is not marked (the same leaf samples with and without the rule)
+        let (off, on) = (
+            find(
+                "k2_04_nonrecursive_methods",
+                trace,
+                "fnrec=0,wgate=30000,sidemin=4",
+            ),
+            find(
+                "k2_04_nonrecursive_methods",
+                trace,
+                "fnrec=4,wgate=30000,sidemin=4",
+            ),
+        );
+        let fs = |s: &TStats| s.aborts.get("FnShort").copied().unwrap_or(0);
+        eprintln!("k2 leaf [{trace}] FnShort {} -> {}", fs(&off), fs(&on));
+        assert_eq!(
+            fs(&off),
+            fs(&on),
+            "[{trace}] a non-recursive function is not marked"
+        );
+    }
+}
+
 /// BUNDLE-GM: the `gmatch` iterator step of a generic `for` recorded as a `Lib` helper call (limit `gmatch`; program `gm_loops`). Same output as the
 /// interpreter in every mode (lockstep, exit storms, budgets, GC stress 1 and 2, emulator, the stack-move stress); (K3b: `gmatch` is hard-wired on) traces are
 /// installed for the loops and (almost) no `CFunc` abort happens. Mutants `gm_kind_skip`, `gm_no_commit`, `gm_end_guard_skip`.
@@ -8157,6 +8257,57 @@ fn f1_programs() {
             && j.env.is_empty()
             && j.limits.is_empty()
         {
+            assert!(
+                o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
+                "{}: no trace ran: {}",
+                j.prog,
+                o.stats.line()
+            );
+            assert!(
+                !o.stats.aborts.contains_key("Diverge"),
+                "{}: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
+/// K1: mixed integer / float `math.min` / `math.max` (the recorded compare is the guard and the result takes the type of the winning branch;
+/// ties, NaN, signed zeros, integers beyond 2^53) and `table.remove(t, pos)` (unrolled shift, queue pops, bounds errors, late metatables) in every
+/// trace mode against the interpreter. Detector of the mutants `k1_mix_take_a`, `k1_mix_le`, `k1_trm_len_guard_skip`, `k1_trm_pos_guard_skip`,
+/// `k1_trm_shift_off`, `k1_trm_last_keep`.
+#[test]
+fn k1_programs() {
+    let mut jobs = Vec::new();
+    for p in ["k1_mixed_minmax", "k1_tremove"] {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p, trace).opts("+verify"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=7 +verify +randra=5"));
+            jobs.push(Job::new(p, trace).budget(17));
+            jobs.push(Job::new(p, trace).opts("-loop"));
+            jobs.push(Job::new(p, trace).opts("-fwd -cse -loop -sink"));
+            jobs.push(Job::new(p, trace).opts("+emurun +verify"));
+            jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
+            for gm in ["gen", "inc"] {
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_VERIFY", "1")
+                        .env("TR_CORE_GCMODE", gm),
+                );
+            }
+        }
+        jobs.push(Job::new(p, "t1"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
             assert!(
                 o.stats.installed >= 1 && (o.stats.entered >= 1 || o.stats.exits > 0),
                 "{}: no trace ran: {}",

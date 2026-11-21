@@ -512,6 +512,28 @@ fn lockstep_on(cfg: &cache::TrConfig) -> bool {
 
 /// BUNDLE-C: does the closure reach itself through one of its upvalues (`local function f ... f() ... end`)? Such a function recurses: `fnpromo` leaves it to the
 /// recursion machinery (a function root of `tail` in awfy/list costs 25% instructions).
+/// K2: is the prototype of the frame `ci` already running in one of the `depth` nearest caller frames? (Direct recursion that does not go through an upvalue:
+/// `self:permute(n - 1)`. C frames between the Lua frames are skipped, they count as frames.) A policy hint only.
+fn recursion_on_stack(st: &State, ci: rn_core::state::Ci, depth: u32) -> bool {
+    let Some(cl) = st.ci_lclosure(ci) else {
+        return false;
+    };
+    let me = &*cl.proto() as *const rn_core::func::Proto;
+    let mut cur = ci.previous();
+    for _ in 0..depth {
+        let Some(c) = cur else {
+            return false;
+        };
+        if let Some(other) = st.ci_lclosure(c) {
+            if std::ptr::eq(&*other.proto(), me) || mutants::active("fnrec_proto_ignored") {
+                return true;
+            }
+        }
+        cur = c.previous();
+    }
+    false
+}
+
 fn closure_self_ref(cl: rn_core::value::Gc<rn_core::func::LClosure>) -> bool {
     let me = &*cl.proto() as *const rn_core::func::Proto;
     (0..cl.nupvalues()).any(|i| {
@@ -547,6 +569,13 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     // K6: remember that the prototype recurses through its own upvalue (the FnShort budget of its entry head)
     if let Some(pr) = pr {
         if cfg.limits.fnself != 0 && closure_self_ref(cl) && !mutants::active("fnself_mark_skip") {
+            cache::mark_selfref(st, pr);
+        } else if cfg.limits.fnself != 0
+            && cfg.limits.fnrec != 0
+            && !mutants::active("fnrec_mark_skip")
+            && recursion_on_stack(st, ci, cfg.limits.fnrec)
+        {
+            // K2: method recursion (the callee is found through a table, not an upvalue): the same hint
             cache::mark_selfref(st, pr);
         }
     }

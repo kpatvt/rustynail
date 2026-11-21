@@ -7752,7 +7752,27 @@ impl Rec {
                 rest.extend(more.iter().copied());
                 for (nx, vnx) in rest {
                     if acc.1 != nx.1 {
-                        return Err(self.nyi()); // mixed integer / float: not recorded
+                        // K1: mixed integer / float. `math_max` keeps the *original* argument (`lua_pushvalue`) of the winning compare
+                        // (`lua_compare(LT)`, exact for any int/float pair): the recorded `compare` guard decides the direction and the
+                        // result takes the type of that branch (a lossy int conversion beyond +-2^53 is not recorded, in `compare`)
+                        let vacc = acc.2;
+                        let (p, q, vp, vq) = if kind == I::MIN {
+                            ((nx.0, nx.1), (acc.0, acc.1), &vnx, &vacc) // min: take b iff b < a
+                        } else {
+                            ((acc.0, acc.1), (nx.0, nx.1), &vacc, &vnx) // max: take b iff a < b
+                        };
+                        // (MUTANT `k1_mix_le`: `<=`, wrong on ties: `max(2, 2.0)` is the integer 2)
+                        let cmp = if mutants::active("k1_mix_le") {
+                            Cmp::Le
+                        } else {
+                            Cmp::Lt
+                        };
+                        let take_b =
+                            self.compare(cmp, p, q, vp, vq)? && !mutants::active("k1_mix_take_a");
+                        if take_b {
+                            acc = (nx.0, nx.1, vnx);
+                        }
+                        continue;
                     }
                     if acc.1 == Ty::Num {
                         // Lua: min = (b < a) ? b : a, max = (a < b) ? b : a; `Fmin` / `Fmax` return their *second* operand
@@ -10071,7 +10091,12 @@ impl Rec {
         self.lib_tail(idx, func_rel, top_rel, &[], false, wanted)
     }
 
-    /// `table.remove(t)`: the last element of a table without metatable, removed.
+    /// `table.remove(t [, pos])` of a table without metatable. `table.remove(t)` and `remove(t, #t)` pop the last element. K1: `remove(t, p)`
+    /// with `1 <= p < #t` and at most `MAX_REMOVE` elements to shift is unrolled as `tremove` runs it: `res = t[p]`, `t[q] = t[q + 1]` for
+    /// `q = p .. #t - 1`, then `t[#t] = nil`. `#t` and `p` are guarded to the values seen (the unrolled shape depends on them: `p` folds when
+    /// it is a constant), every source element is read (type guards) and every destination's bounds / metatable guard is emitted BEFORE the
+    /// first store (an exit between two stores would re-run the call over a half-shifted table: see `lib_tmove`). `p == #t + 1`, `p` out of
+    /// range (an error), an empty table and tables with a metatable (`__index` / `__newindex` / `__len`) stay unrecorded.
     fn lib_tremove(
         &mut self,
         vm: &Vm<'_>,
@@ -10081,8 +10106,32 @@ impl Rec {
         wanted: i32,
         addr: usize,
     ) -> R<usize> {
-        if nargs != 1 {
+        const MAX_REMOVE: i64 = 16;
+        if !(1..=2).contains(&nargs) {
             return Err(self.nyi());
+        }
+        // The two-argument form: a shape this does not record (a position that is not an integer, an error, `#t + 1`, a metatable, an empty or
+        // multi-border table, a shift of more than `MAX_REMOVE` elements) is a plain C call, as `table.move` is: it stitches (or aborts `CFunc`).
+        // The one-argument form keeps its old refusals.
+        let mut plan: Option<(i64, i64)> = None; // (position seen, border seen)
+        if nargs == 2 {
+            let shape = (|| {
+                let tbl = vm
+                    .slot(a + 1)
+                    .as_table()
+                    .filter(|t| t.metatable().is_none())?;
+                let p = vm.slot(a + 2).as_int()?;
+                let n = Self::lib_border_exact(tbl).filter(|&n| n >= 1)?;
+                (1..=n)
+                    .contains(&p)
+                    .then_some(())
+                    .filter(|()| p == n || n - p <= MAX_REMOVE)?;
+                Some((p, n))
+            })();
+            match shape {
+                Some(sh) => plan = Some(sh),
+                None => return self.lib_unrecorded(idx),
+            }
         }
         let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
         let t = self.rd(vm, a + 1)?;
@@ -10094,14 +10143,26 @@ impl Rec {
         if tbl.metatable().is_some() {
             return Err(AbortReason::MetaTable);
         }
-        let nobs = Self::lib_border(tbl);
+        let pos = if plan.is_some() {
+            Some(self.lib_int_arg(vm, a + 2)?.0)
+        } else {
+            None
+        };
+        let pobs = plan.map(|(p, _)| p);
+        let nobs = plan.map_or_else(|| Self::lib_border(tbl), |(_, n)| n);
         if nobs < 1 {
             return Err(self.nyi()); // t[0]
         }
-        // the popped element is copied into the model now: the lazy copy at the IR's first read would run after the VM has removed it
-        if nobs <= i64::from(tbl.array_size()) {
-            let h = self.handle(tbl);
-            self.fill_elem(h, (nobs - 1) as usize);
+        // shifting: `1 <= p < #t`; `p == #t` is the pop below
+        let shift = pobs.is_some_and(|p| p < nobs);
+        // the elements read or overwritten are copied into the model now: the lazy copy at the IR's first read would run after the VM has
+        // removed them
+        let lo = if shift { pobs.unwrap_or(nobs) } else { nobs };
+        for k in lo..=nobs {
+            if k <= i64::from(tbl.array_size()) {
+                let h = self.handle(tbl);
+                self.fill_elem(h, (k - 1) as usize);
+            }
         }
         if !mutants::active("tinsert_meta_skip") {
             self.meta_guard(t.0, tbl, rn_core::meta::Tm::Len)?;
@@ -10109,11 +10170,59 @@ impl Rec {
         self.first_store.get_or_insert(self.b.ir.ins.len());
         let n = self.b.emit_flags(TOp::Tlen, Ty::Int, 0, t.0, NOREF, 0)?;
         self.post_val = Some(Value::int(nobs));
-        // `res = t[n]`, then `t[n] = nil`
-        let res = self.array_get(vm, t, a + 1, n, nobs)?;
-        let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
-        self.array_set(vm, t, a + 1, n, nobs, (nil, Ty::Nil))?;
-        self.lib_tail(idx, func_rel, top_rel, &[res], true, wanted)
+        if !shift {
+            if let Some(p) = pos {
+                // `pos != size` is validated by the library: recorded as the equality (`p == #t`, the pop)
+                self.guard(TOp::Eq, Ty::I64, p, n, 0)?;
+            }
+            // `res = t[n]`, then `t[n] = nil`
+            let res = self.array_get(vm, t, a + 1, n, nobs)?;
+            let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
+            self.array_set(vm, t, a + 1, n, nobs, (nil, Ty::Nil))?;
+            return self.lib_tail(idx, func_rel, top_rel, &[res], true, wanted);
+        }
+        let (p, pr) = (pobs.unwrap_or(1), pos.ok_or(AbortReason::Diverge)?);
+        let kn = self.kint(nobs);
+        if !mutants::active("k1_trm_len_guard_skip") {
+            self.guard(TOp::Eq, Ty::I64, n, kn, 0)?;
+        }
+        let kp = self.kint(p);
+        if !mutants::active("k1_trm_pos_guard_skip") {
+            self.guard(TOp::Eq, Ty::I64, pr, kp, 0)?;
+        }
+        // every element `t[p .. n]`, read before the first store
+        let mut vals: Vec<(Ref, Ty)> = Vec::new();
+        for k in p..=nobs {
+            let key = self.kint(k);
+            let r = self.array_get(vm, t, a + 1, key, k)?;
+            let ety = ty_of_value(&tbl.get_int(k)).ok_or_else(|| self.nyi())?;
+            vals.push((r, ety));
+        }
+        // the guards of every destination `t[p .. n]`, then the stores back to back
+        let mut arefs: Vec<Ref> = Vec::new();
+        for k in p..=nobs {
+            let key = self.kint(k);
+            arefs.push(self.array_guards_raw(t.0, key, tbl, false, false)?);
+        }
+        let shift_by = if mutants::active("k1_trm_shift_off") {
+            2
+        } else {
+            1
+        };
+        let m = (nobs - p) as usize;
+        for j in 0..m {
+            let (v, ety) = vals[(j + shift_by).min(m)];
+            self.first_store.get_or_insert(self.b.ir.ins.len());
+            self.ins(TOp::Astore, Ty::I64, arefs[j], v)?;
+            if collectable(ety) {
+                self.ins(TOp::Tbar, Ty::I64, t.0, v)?;
+            }
+        }
+        if !mutants::active("k1_trm_last_keep") {
+            let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
+            self.ins(TOp::Astore, Ty::I64, arefs[m], nil)?;
+        }
+        self.lib_tail(idx, func_rel, top_rel, &[vals[0].0], true, wanted)
     }
 
     /// `tonumber(x)` / `math.tointeger(x)` of a number: the number itself (an integral float for `tointeger`).

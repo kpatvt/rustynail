@@ -8508,6 +8508,249 @@ print(flsp(200))
 "##,
     },
     Prog {
+        name: "k1_mixed_minmax",
+        small: true,
+        src: r##"
+-- K1: `math.min` / `math.max` of an integer and a float (and 2 / 3 arguments of mixed kinds): the result is the ORIGINAL argument of the
+-- winning compare (an integer stays an integer: `max(0, -1.5)` is the integer 0), ties return the first argument (`max(2, 2.0)` is 2,
+-- `max(2.0, 2)` is 2.0), NaN never wins a compare, -0.0 and 0 tie, and int / float compares are exact beyond 2^53. Every branch direction
+-- is exercised inside a hot loop (the recorded compare is a guard; the other direction exits and gets a side trace).
+local function show(x) return math.type(x) .. ":" .. tostring(x) end
+local function fmt(t) local r = {} for i = 1, #t do r[i] = show(t[i]) end return table.concat(r, ",") end
+local xs = { 0.5, -0.5, 2.0, 1.0, -0.0, 0.0, 0/0, 1/0, -1/0, 3.25, -7.75, 100.0 }
+local function clamp(n)
+  local out, a = {}, 0.0
+  for i = 1, n do
+    local x = xs[i % #xs + 1]
+    local m = math.max(0, x)
+    local c = math.min(1, x)
+    local m2 = math.max(x, 0)
+    local c2 = math.min(x, 1)
+    out[#out + 1] = m
+    out[#out + 1] = c
+    out[#out + 1] = m2
+    out[#out + 1] = c2
+    a = a + m + c + m2 + c2
+  end
+  return a, fmt(out)
+end
+print(clamp(60))
+local function ties(n)
+  local out = {}
+  for i = 1, n do
+    local k = i % 7
+    out[#out + 1] = math.max(k, k + 0.0)
+    out[#out + 1] = math.max(k + 0.0, k)
+    out[#out + 1] = math.min(k, k + 0.0)
+    out[#out + 1] = math.min(k + 0.0, k)
+  end
+  return fmt(out)
+end
+print(ties(40))
+local function zeros(n)
+  local out = {}
+  for i = 1, n do
+    local z, f = 0, (i % 2 == 0) and -0.0 or 0.0
+    out[#out + 1] = math.max(z, f)
+    out[#out + 1] = math.max(f, z)
+    out[#out + 1] = math.min(z, f)
+    out[#out + 1] = math.min(f, z)
+  end
+  return fmt(out)
+end
+print(zeros(20))
+local function nans(n)
+  local out, nan = {}, 0/0
+  for i = 1, n do
+    out[#out + 1] = math.max(i, nan)
+    out[#out + 1] = math.max(nan, i)
+    out[#out + 1] = math.min(i, nan)
+    out[#out + 1] = math.min(nan, i)
+    out[#out + 1] = math.max(i, 1, nan)
+    out[#out + 1] = math.min(nan, i, 2.5)
+  end
+  return fmt(out)
+end
+print(nans(20))
+-- exactness beyond 2^53: the float 2^53 against 2^53 + 1, maxinteger against 2^63, mininteger against -2^63 (not representable as a
+-- lossless conversion: the recorder must not widen the integer)
+local big = { math.maxinteger, math.mininteger, (1 << 53) + 1, (1 << 53), -(1 << 53) - 1, 1 << 62 }
+local fl = { 2.0^63, -2.0^63, 2.0^53, 2.0^53 + 2, -2.0^53, 2.0^62 }
+local function bigs(n)
+  local out = {}
+  for i = 1, n do
+    local a, b = big[i % #big + 1], fl[(i * 5) % #fl + 1]
+    out[#out + 1] = math.max(a, b)
+    out[#out + 1] = math.min(a, b)
+    out[#out + 1] = math.max(b, a)
+    out[#out + 1] = math.min(b, a)
+  end
+  return fmt(out)
+end
+print(bigs(36))
+local function three(n)
+  local out = {}
+  for i = 1, n do
+    local x = (i % 5) - 2
+    out[#out + 1] = math.max(x, 0.5, 1)
+    out[#out + 1] = math.min(x, 0.5, 1)
+    out[#out + 1] = math.max(1, x + 0.5, x)
+    out[#out + 1] = math.min(2.5, x, x + 0.25)
+  end
+  return fmt(out)
+end
+print(three(30))
+-- the result type changes with the data: integer after one compare, float after the other, then used in arithmetic (integer wrap-around)
+local function wrap(n)
+  local a, r = 0, 0
+  for i = 1, n do
+    local x = (i % 3 == 0) and -1.5 or (i + 0.25)
+    local m = math.max(math.maxinteger, x - i + 1)
+    a = a + m
+    r = r + math.max(0, x)
+  end
+  return a, r
+end
+print(wrap(50))
+-- an argument that stops being a number in the middle of the loop (error / string coercion are not recorded)
+local function late(n)
+  local s = 0
+  for i = 1, n do
+    local x = (i == 45) and "7" or i + 0.5
+    local ok, m = pcall(math.max, 0, x)
+    s = s + (ok and m or -1)
+  end
+  return s
+end
+print(late(60))
+"##,
+    },
+    Prog {
+        name: "k1_tremove",
+        small: true,
+        src: r##"
+-- K1: `table.remove(t, pos)`: queue pops from the front (`remove(t, 1)`), middle removals with the position taken from the loop, the pop
+-- forms (`remove(t)`, `remove(t, #t)`), `remove(t, #t + 1)`, positions out of bounds (errors), empty tables (`remove(t, 0)`), element
+-- kinds (integers, floats, strings, tables: write barrier), shifts longer than the unrolled limit, and a metatable (`__index`,
+-- `__newindex`, `__len`) installed in the middle of a hot loop.
+local function dump(t) local r = {} for i = 1, #t do r[i] = tostring(t[i]) end return "[" .. table.concat(r, ",") .. "]" .. #t end
+local function queue(n)
+  local todo, s, out = { 1, 2, 3 }, 0, {}
+  local k = 3
+  while #todo > 0 and k < n do
+    local c = table.remove(todo, 1)
+    s = s + c
+    if c % 3 ~= 0 then k = k + 1; todo[#todo + 1] = k; todo[#todo + 1] = k + 1; k = k + 1 end
+    out[#out + 1] = c
+  end
+  return s, #out, dump(todo)
+end
+print(queue(200))
+print(queue(60))
+local function middle(n)
+  local t, s = {}, 0
+  for i = 1, 12 do t[i] = i * 10 end
+  for i = 1, n do
+    local p = i % 5 + 2
+    local v = table.remove(t, p)
+    s = s + v
+    t[#t + 1] = v + 1
+    t[#t + 1] = v + 2
+    table.remove(t)
+  end
+  return s, dump(t)
+end
+print(middle(80))
+local function constpos(n)
+  local t, s = { 5, 6, 7, 8, 9 }, 0
+  for i = 1, n do
+    local v = table.remove(t, 2)
+    s = s + v
+    table.insert(t, v + 1)
+  end
+  return s, dump(t)
+end
+print(constpos(50))
+local function kinds(n)
+  local t, out = { "a", 1.5, 7, { 1 }, "b", 2.5, 3 }, {}
+  for i = 1, n do
+    local v = table.remove(t, 1 + i % 3)
+    out[#out + 1] = type(v) .. (type(v) == "table" and #v or tostring(v))
+    t[#t + 1] = (i % 2 == 0) and { i } or ((i % 3 == 0) and "s" .. i or i + 0.5)
+  end
+  return table.concat(out, ","), #t
+end
+print(kinds(60))
+local function pops(n)
+  local t, out = {}, {}
+  for i = 1, 20 do t[i] = i end
+  for i = 1, n do
+    local a = table.remove(t, #t)
+    local b = table.remove(t, #t + 1)
+    local c = table.remove(t)
+    out[#out + 1] = tostring(a) .. tostring(b) .. tostring(c)
+    t[#t + 1] = i; t[#t + 1] = i + 1; t[#t + 1] = i + 2
+  end
+  return table.concat(out, ","), dump(t)
+end
+print(pops(30))
+local function bounds(n)
+  local out = {}
+  for i = 1, n do
+    local t = { 1, 2, 3 }
+    local ok1, e1 = pcall(table.remove, t, 0)
+    local ok2, e2 = pcall(table.remove, t, 5)
+    local ok3, e3 = pcall(table.remove, t, -1)
+    local ok4, e4 = pcall(table.remove, {}, 0)
+    local ok5, e5 = pcall(table.remove, {}, 1)
+    local ok6, e6 = pcall(table.remove, {}, 2)
+    local ok7, e7 = pcall(table.remove, t, 2.0)
+    local ok8, e8 = pcall(table.remove, t, 1.5)
+    out[#out + 1] = tostring(ok1) .. tostring(ok2) .. tostring(ok3) .. tostring(ok4) .. tostring(e4) .. tostring(ok5) .. tostring(e5) .. tostring(ok6) .. tostring(ok7) .. tostring(e7) .. tostring(ok8) .. #t
+  end
+  return table.concat(out, ";")
+end
+print(bounds(10))
+local function longshift(n)
+  local t, s = {}, 0
+  for i = 1, 40 do t[i] = i end
+  for i = 1, n do
+    s = s + table.remove(t, 1)
+    t[#t + 1] = i
+  end
+  return s, #t, t[1], t[40]
+end
+print(longshift(60))
+local function sizes(n)
+  local s = 0
+  for i = 1, n do
+    local t = {}
+    for j = 1, i % 9 + 2 do t[j] = j * i end
+    s = s + table.remove(t, 2) + #t
+  end
+  return s
+end
+print(sizes(80))
+local function latemt(n, mut)
+  local t, s = {}, 0
+  for i = 1, 8 do t[i] = i end
+  for i = 1, n do
+    if i == 30 then mut(t) end
+    local v = table.remove(t, 2)
+    s = s + (v or 0)
+    t[#t + 1] = i
+  end
+  return s, dump(t)
+end
+print(pcall(latemt, 60, function() end))
+print(pcall(latemt, 60, function(t) setmetatable(t, { __index = function(_, k) return k * 100 end }) end))
+print(pcall(latemt, 60, function(t) setmetatable(t, { __newindex = function(t, k, v) rawset(t, k, v) end }) end))
+print(pcall(latemt, 60, function(t) setmetatable(t, { __len = function() return 3 end }) end))
+print(pcall(latemt, 60, function(t) t[#t + 4] = 99 end))
+print(pcall(latemt, 60, function(t) for k = 3, #t do t[k] = nil end end))
+"##,
+    },
+    Prog {
         name: "f1_next_hint",
         small: true,
         src: r##"
@@ -15765,5 +16008,25 @@ print(r[1], r[60], #full, #half, #hole)
         name: "k6_05_list_like",
         small: true,
         src: include_str!("../../../../tests/vm/k6_05_list_like.lua"),
+    },
+    Prog {
+        name: "k2_01_method_recursion",
+        small: true,
+        src: include_str!("../../../../tests/vm/k2_01_method_recursion.lua"),
+    },
+    Prog {
+        name: "k2_02_method_recursion_misc",
+        small: true,
+        src: include_str!("../../../../tests/vm/k2_02_method_recursion_misc.lua"),
+    },
+    Prog {
+        name: "k2_03_list_method",
+        small: true,
+        src: include_str!("../../../../tests/vm/k2_03_list_method.lua"),
+    },
+    Prog {
+        name: "k2_04_nonrecursive_methods",
+        small: false,
+        src: include_str!("../../../../tests/vm/k2_04_nonrecursive_methods.lua"),
     },
 ];

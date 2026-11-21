@@ -2652,3 +2652,82 @@ so the address is unique in every profile. The detector is the existing test its
 cannot fail in the debug profile before the fix: that profile never duplicated the function). No test or mutant was added or moved (registry unchanged, 732).
 Note for later: any helper whose address a test compares must stay out of the cross-crate-inlinable set; the Lua C functions that the intrinsic table matches by address
 (`rn_std::lib_math::jit_builtins` vs `open`) live in one crate and are large, so they are unaffected.
+
+## 26. K1 / K2: mixed `math.min` / `math.max`, `table.remove(t, pos)`, method recursion in the `FnShort` rule (2026-11-20, base d8ab9f3)
+
+Handles K1 and K2 of docs/STUDY_COVERAGE.md. Registry 732 -> 740 (six K1 mutants, two K2 mutants).
+
+### K1a. `math.min` / `math.max` of an integer and a float
+
+`lib_intrinsic` (the `min`/`max` arm, `record.rs`) refused any pair of different types (`Nyi(Call)`, which killed the side recording of the whole lights loop of raytrace).
+The mixed pair now runs through `Rec::compare` (the compare of the `LT` bytecode): `max` takes `b` iff `a < b`, `min` iff `b < a`, exactly the library's
+`lua_compare(LT)` loop, and the result is the ORIGINAL argument of the winning side (`lua_pushvalue`), so its type is the type of the branch the recording took
+(`max(0, -1.5)` is the integer 0, `max(0, 2.5)` the float 2.5, `max(2, 2.0)` the integer 2: ties keep the first). The direction is a guard (`compare` emits the integer
+bound guards of the conversion, which fold for constants, and an `FCMP` guard with the observed outcome and NaN as "false"); the other direction is a side exit that gets
+its own trace. An integer outside +-2^53 stays unrecorded (`compare`'s `Nyi`: no float conversion is exact, so no guard can express the compare). 3-argument and later
+arguments fold pairwise as before; same-type pairs keep their old code (`Fmin`/`Fmax`, integer `LT`/`GE` guard): the instruction counts of every program without a mixed pair
+are unchanged (below). Mutants: `k1_mix_take_a` (the guard is recorded, the result is always the accumulator), `k1_mix_le` (`<=`: `max(2, 2.0)` returns the float).
+
+### K1b. `table.remove(t, pos)`
+
+`lib_tremove` handled `remove(t)` only. The two-argument form for a table without metatable, an integer `pos` and `1 <= pos <= #t` (`#t` the only border,
+`lib_border_exact`):
+
+* `pos == #t` is the pop (as `tremove` itself: `pos != size` is not validated): guard `pos == TLEN`, then the old `res = t[n]; t[n] = nil`;
+* `pos < #t` with at most 16 elements to shift (`MAX_REMOVE`): `#t` and `pos` guarded to the values seen (`pos` folds when it is a constant: `remove(todo, 1)`), the
+  elements `t[pos .. n]` read first (`ALOAD` type guards), the bounds / metatable guard of every destination `array_guards_raw` BEFORE the first store (an exit between two
+  stores would make the interpreter re-run the call over a half-shifted table: the `table.move` rule of section "table.move over one table"), then
+  `t[q] = t[q + 1]` for `q = pos .. n-1` (with the write barrier for collectable values) and `t[n] = nil`; the result is the element read at `pos`;
+* everything else (a position that is not an integer or nil, out of range = an error, `pos == #t + 1`, an empty table, a metatable, several borders, a longer shift) is
+  now a plain C call as for `table.move` (`lib_unrecorded`: stitch, or `CFunc` in a root); it was `Nyi(Call)` before. `remove(t)` is unchanged.
+
+The model elements `t[pos .. n]` are copied into the lockstep model at record time (the lazy copy would read after the VM removed them). Mutants:
+`k1_trm_len_guard_skip`, `k1_trm_pos_guard_skip`, `k1_trm_shift_off` (shifts from `q + 2`), `k1_trm_last_keep` (the last slot is not cleared).
+
+**deltablue is not helped.** The study expected deltablue -1..2 % from `makePlan`. With the shift recorded (checked with `MAX_REMOVE` 1000: `todo` is longer than 16 in the
+benchmark) the head `makePlan` pc 11 moves from `Nyi(Call)` to `InnerLoop@L303:5` (the loop of `addConstraintsConsumingTo`, class C3), so it stays blacklisted; with the limit 16 the abort is
+`CFunc` (the stitched call at the head) instead of `Nyi(Call)`. Instruction counts and cycles of deltablue are unchanged. The recorded form pays for itself only where the
+shifted tables are short and the region has no inner loop (none in the benchmark set).
+
+### K2. Method recursion marks the prototype `selfref`
+
+K6's `selfref` (extended `FnShort` budget of the entry head: up to `fnself` = 16 leaf samples with a short flat wait instead of 4) was set only for a closure that reaches itself through an upvalue
+(`local function f .. f() ..`). `permute`'s `self:permute(n1)` and `awfy/list`-style `self:tail(..)` recurse through a table, so their entry heads died after 4-6
+leaf samples (`permute_nc`: `FnShort:6` at `L14:23 Return0`, head `Black`). New knob `fnrec` (default 4 = [`FNREC_PROCESS`], `RUSTYNAIL_JIT_TRACE_LIMITS=fnrec=N`, 0 = old): `driver_start`
+marks the prototype `selfref` also when an ACTIVATION OF THE SAME PROTOTYPE is among the `fnrec` nearest caller frames (`recursion_on_stack`: walks `Ci::previous`, a C frame
+counts as a frame; a function called from another prototype, richards' tail-called task bodies, deltablue's methods, never match). It is the same policy hint as K6's flag (a wrong one costs
+cheap leaf-sample recordings, not correctness); no recorder, assembler or runtime path changes. The rule is narrower than `fnmin=0` (which lets every short recording install) and
+leaves `fnmin` alone. Mutants: `fnrec_mark_skip` (never marks), `fnrec_proto_ignored` (marks whenever any Lua frame is below).
+
+### Measured (release `rnlua`, `perf stat` instructions:u / cycles:u, CPU 4, `RUSTYNAIL_SEED=0`; instructions of one run, cycles min of 5 (5.4: 3); binaries copied to one path; the three columns share the same environment length (`RUSTYNAIL_JIT_TRACE_LIMITS=fnrec=0|4`; the base binary ignores the key))
+
+| program (args) | base d8ab9f3 instr M / cyc M | K1+K2, `fnrec=0` | K1+K2, `fnrec=4` | effect |
+|---|---|---|---|---|
+| apps/raytrace 40 | 5328 / 1312 | 4630 / 1185 | 4630 / 1170 | **instr -13.1 %, cycles -9.7 % (K1a)**; the `Nyi(Call)@record.rs:7755` aborts of `trace` pc 17/50/53/56 and pc 84 are gone |
+| awfy/permute without the `count` store (`permute_nc 3000`) | 20258 / 3318 | 20258 / 3293 | **6775 / 1129** | **instr -66.6 %, cycles -66 % (2.9x, K2)**; head `L14 pc 0` `Black` -> `Traced` |
+| list with `self:tail` (method form of awfy/list, 4000 iterations) | 7417 / 1523 | (same as base) | 5867 / 1228 | instr -21 %, cycles -19 % (K2) |
+| awfy/permute 3000 | 7036 / 1174 | 7036 / 1182 | 7036 / 1174 | 0 (identical instructions) |
+| awfy/deltablue 400 | 4526 / 1244 | 4526 / 1240 | 4526 / 1211 | 0 (instructions identical; cycle spread is noise) |
+| awfy/richards 500 | 2830 / 798 | 2830 / 795 | 2830 / 794 | 0 |
+| awfy/cd 20 | 10819 / 2926 | 10819 / 2928 | 10819 / 2913 | 0 |
+| awfy/list 7000 | 10180 / 1996 | 10180 / 2006 | 10180 / 2006 | 0 |
+| awfy/havlak 20 | 1425 / 459 | 1424 / 425 | 1425 / 424 | 0 (instructions) |
+| programs/nbody 1000000 | 2019 / 345 | 2019 / 345 | 2019 / 344 | 0 |
+| programs/fib 32 | 703 / 114 | 703 / 113 | 703 / 114 | 0 |
+| programs/binary_trees 14 | 1563 / 311 | 1563 / 304 | 1563 / 306 | 0 |
+
+5.4 (same method, 3 cycle reps): raytrace 5553 / 1407 -> 4541 / 1225 (-18 % instr, -13 % cycles); permute_nc 20752 / 3395 -> 6974 / 1191 (-66 % / -65 %); deltablue, richards, cd, list,
+havlak, nbody, fib, binary_trees identical instructions (havlak cycles 612 -> 694 in the first pass is noise: five-rep rerun 541 / 537 with the rule against 540 / 539 without it).
+No awfy program changes with `fnrec`: their recursive functions are upvalue recursions (list `tail`, cd `put`), already covered by K6; the rule is a protection for method-recursive
+programs (the cliff of the study: `permute` without its `count` store, `self:tail`). K2 cost: nothing measurable (a short walk of the call-info list at recording start only).
+
+### Tests
+
+* `tr_core::k1_programs` (programs `k1_mixed_minmax`, `k1_tremove`: every trace mode, `+verify`, exit storms, budgets, `-loop`, `-fwd -cse -loop -sink`, emulator, GC stress 1/2 in both
+  collector modes, tier 1): ties, NaN, signed zeros, 2^53 and beyond, three arguments, results used in integer arithmetic; queue pops, middle removals, constant and loop
+  positions, long shifts, bounds errors, a float position, element kinds with barriers, a metatable installed mid-loop. Detector of the six K1 mutants.
+* `tr_core::k2_methrec_programs` (`tests/vm/k2_01..04`: method recursion with leaf-heavy trees, subclass overrides, a replaced method, errors, coroutines, mutual / vararg / field recursion,
+  a list-like tail-calling method, non-recursive leaf methods; every mode with `fnrec=0` and `fnrec=4`, plus the process start gate `wgate=30000,sidemin=4`): same output as the interpreter;
+  the list-like program takes another formation with the rule (`on2`, 5.5), the non-recursive program the same number of `FnShort` samples. Detector of `fnrec_mark_skip`, `fnrec_proto_ignored`.
+* `tr_policy::k2_policy`: default, parse and cap of `fnrec`.
+* `tests/vm/k2_*` run in the plain vm corpus as well.

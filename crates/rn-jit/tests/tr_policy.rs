@@ -1825,6 +1825,26 @@ fn k6_policy() {
     }
 }
 
+/// K2: the `fnrec` knob (frames scanned for an earlier activation of the same prototype; 0 = only the upvalue rule of K6): shipped default 4 in a process and in the
+/// tests, parsed and capped like the other knobs. (The rule itself is a `driver_start` hint that needs a live stack: `tr_core::k2_methrec_programs`.)
+#[test]
+fn k2_policy() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, FNREC_PROCESS};
+    assert_eq!(FNREC_PROCESS, 4);
+    assert_eq!(TrConfig::for_mode(TrMode::On).limits.fnrec, FNREC_PROCESS);
+    for (env, want) in [
+        (None, 4),
+        (Some("fnself=0"), 4),
+        (Some("fnrec=0"), 0),
+        (Some("fnrec=2"), 2),
+        (Some("fnrec=9999"), 64),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.fnrec, want, "limits env {env:?}");
+    }
+}
+
 /// BUNDLE-F: `stitch0` and `fibdiet` are 0 in the struct default (tests) and the `*_PROCESS` constants in a process; a named value wins and the two are
 /// independent of each other.
 #[test]
