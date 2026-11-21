@@ -4141,6 +4141,21 @@ const TABLE: &[Row] = &[
         owner: "K2",
         dets: &[d("tr_core", "k2_methrec_programs")],
     },
+    Row {
+        name: "slotlive_nil_between",
+        owner: "K5",
+        dets: &[d("tr_core", "k5_slotlive_programs")],
+    },
+    Row {
+        name: "slotlive_index_off",
+        owner: "K5",
+        dets: &[d("tr_core", "k5_slotlive_programs")],
+    },
+    Row {
+        name: "slotlive_hload_stale",
+        owner: "K5",
+        dets: &[d("tr_core", "k5_slotlive_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

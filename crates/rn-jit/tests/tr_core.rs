@@ -11860,3 +11860,82 @@ fn n3b_relink_stub_programs() {
         }
     }
 }
+
+/// K5 (`slotlive`): a store into a slot that the trace already proved non-nil (a typed load of the same slot, or a store of a non-nil value) needs no
+/// `__newindex` guard and no old-value check. Same output as the interpreter in every mode for the programs that try to break the fact (a nil written in
+/// between through another reference that is another table when the trace is recorded, through a variable key or index, a table loaded again after a store
+/// changed the field it comes from, another index of the same array, a metatable installed in the loop), with the rule on and off; and the traces of the
+/// effect program have fewer metatable / flag loads with it. Detector of `slotlive_nil_between`, `slotlive_index_off` and `slotlive_hload_stale`.
+#[test]
+fn k5_slotlive_programs() {
+    let progs = [
+        "k5_01_slotlive_hash",
+        "k5_02_slotlive_array",
+        "k5_03_slotlive_effect",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["slotlive=1", "slotlive=0"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=7 +verify +randra=5")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).opts("-loop").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("-fwd -cse -loop -sink")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", "2")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+            }
+        }
+    }
+    compare(jobs);
+    // the effect: the metatable / flag loads of the traces of the effect program
+    let count = |lim: &str| -> usize {
+        let d = m_scratch(&format!("k5_{}", lim.replace('=', "")));
+        let mut j = Job::new("k5_03_slotlive_effect", "always")
+            .env("TR_CORE_DUMPDIR", d.to_str().unwrap())
+            .env("TR_CORE_SEED", "0");
+        j.limits = lim.to_string();
+        let res = run_all(vec![j]);
+        assert!(res[0].1.ok, "{lim}: child failed");
+        let mut n = 0;
+        for e in std::fs::read_dir(&d).expect("dump dir").flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !(name.starts_with("trace-") && name.ends_with(".txt")) {
+                continue;
+            }
+            let text = std::fs::read_to_string(e.path()).expect("dump");
+            for l in text.lines().take_while(|l| !l.starts_with("S0 ")) {
+                let w: Vec<&str> = l.split_whitespace().collect();
+                // `FLOAD <ty> %t <field>`: field 2 = metatable, 3 = flags
+                if let Some(k) = w.iter().position(|x| *x == "FLOAD") {
+                    if matches!(w.last(), Some(&"2") | Some(&"3")) && w.len() > k + 3 {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&d);
+        n
+    };
+    let (on, off) = (count("slotlive=1"), count("slotlive=0"));
+    eprintln!("k5 metatable / flag loads: slotlive=1 {on}, slotlive=0 {off}");
+    assert!(on < off, "slotlive removes guards: {on} vs {off}");
+}

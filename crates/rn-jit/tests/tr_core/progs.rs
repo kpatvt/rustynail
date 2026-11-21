@@ -16034,4 +16034,19 @@ print(r[1], r[60], #full, #half, #hole)
         small: false,
         src: include_str!("../../../../tests/vm/k3_01_frame_loop_exits.lua"),
     },
+    Prog {
+        name: "k5_01_slotlive_hash",
+        small: true,
+        src: include_str!("../../../../tests/vm/k5_01_slotlive_hash.lua"),
+    },
+    Prog {
+        name: "k5_02_slotlive_array",
+        small: true,
+        src: include_str!("../../../../tests/vm/k5_02_slotlive_array.lua"),
+    },
+    Prog {
+        name: "k5_03_slotlive_effect",
+        small: true,
+        src: include_str!("../../../../tests/vm/k5_03_slotlive_effect.lua"),
+    },
 ];

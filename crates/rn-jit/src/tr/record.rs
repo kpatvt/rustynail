@@ -35,6 +35,7 @@
 use super::interp::{self, Model, Val};
 use super::ir::*;
 use super::mutants;
+use super::opt_mem;
 use super::snap::{self, SlotMap, SnapMeta};
 use crate::fx::{HashMap, HashSet};
 use crate::lower::calls::CallEnv;
@@ -269,6 +270,8 @@ pub struct RecCfg {
     pub nil_store: bool,
     /// F5: an `HSTORE` into a node with a non-nil recorded value takes the `__newindex` guard of the table instead of the old-value check (`TrLimits::hstoreguard`).
     pub hstore_mt: bool,
+    /// K5: a store over a slot the recording already proved non-nil takes no `__newindex` guard (`TrLimits::slotlive`).
+    pub slot_live: bool,
     /// R2: a native self-call of the root prototype was recorded before (`recany` gates native returns on it).
     pub rec_seen: bool,
     /// J2-2: most IR instructions of this recording (0 = the general limit): a deep recording's bound.
@@ -516,6 +519,7 @@ impl Default for RecCfg {
             cnum: false,
             nil_store: false,
             hstore_mt: false,
+            slot_live: false,
             rec_seen: false,
             max_ins: 0,
             pack: false,
@@ -1326,6 +1330,79 @@ fn zeroed_vals(n: usize) -> Vec<Val> {
 
 /// 5.4: arrays up to this size record an append (`t[#t + 1] = v`) as the generic insertion, see [`Rec::array_set`].
 const APPEND_TSET_ASIZE: u32 = 16;
+/// K5: how many instructions back [`Rec::slot_live`] looks for the access that proves a slot non-nil.
+const SLOT_LIVE_SCAN: usize = 400;
+
+/// K5: the location [`Rec::slot_live`] asks about.
+#[derive(Clone, Copy)]
+enum SlotKey {
+    /// An `HREFK` ref.
+    Hash(Ref),
+    /// An array element: table ref, and the 0-based index in `opt_mem::canon` form (`base + off`).
+    Arr { tab: Ref, base: Ref, off: i64 },
+}
+
+/// K5: may [`Rec::slot_live`] look past an instruction of this op? Pure ops, guards, loads and reference computations cannot write a slot; the
+/// stores are judged one by one by the caller; everything else (calls, insertions, allocations, `LIB`, `TSET`, ...) is unknown.
+fn slot_neutral(op: TOp) -> bool {
+    matches!(
+        op,
+        TOp::Ustore
+            | TOp::Tbar
+            | TOp::Atouch
+            | TOp::Poll
+            | TOp::Budget
+            | TOp::Hload
+            | TOp::Aload
+            | TOp::Uload
+            | TOp::Fload
+            | TOp::Aref
+            | TOp::Uref
+            | TOp::Hrefk
+            | TOp::Hrefv
+            | TOp::Hmiss
+            | TOp::Hshape
+            | TOp::Kint
+            | TOp::Knum
+            | TOp::Kpri
+            | TOp::Kptr
+            | TOp::Sload
+            | TOp::Add
+            | TOp::Sub
+            | TOp::Mul
+            | TOp::Neg
+            | TOp::Band
+            | TOp::Bor
+            | TOp::Bxor
+            | TOp::Bnot
+            | TOp::Shl
+            | TOp::Shr
+            | TOp::Idiv
+            | TOp::Mod
+            | TOp::Fadd
+            | TOp::Fsub
+            | TOp::Fmul
+            | TOp::Fdiv
+            | TOp::Fneg
+            | TOp::Fabs
+            | TOp::Fsqrt
+            | TOp::Ffloor
+            | TOp::Fmin
+            | TOp::Fmax
+            | TOp::ConvNumInt
+            | TOp::F2iExact
+            | TOp::Eq
+            | TOp::Ne
+            | TOp::Lt
+            | TOp::Le
+            | TOp::Gt
+            | TOp::Ge
+            | TOp::Ult
+            | TOp::Uge
+            | TOp::Fcmp
+            | TOp::Eqref
+    )
+}
 
 impl Rec {
     #[allow(clippy::too_many_arguments)]
@@ -4299,8 +4376,18 @@ impl Rec {
             return self.int_insert(tbl, t, key, val);
         }
         let has_mt = tbl.metatable().is_some();
-        let aref = self.array_guards_raw(t.0, key, tbl, false, has_mt)?;
-        if has_mt {
+        // K5: the slot was proven non-nil earlier on the trace (typed `ALOAD`, or a store of a non-nil value): a plain overwrite, whatever the
+        // metatable: no `__newindex` guard (tables without metatable: `FLOAD metatable == 0`) and no old-value guard
+        let live = ev.is_some() && {
+            let (kb, ko) = opt_mem::canon(&self.b.ir, key);
+            self.slot_live(SlotKey::Arr {
+                tab: t.0,
+                base: kb,
+                off: ko.wrapping_sub(1),
+            })
+        };
+        let aref = self.array_guards_raw(t.0, key, tbl, false, has_mt || live)?;
+        if has_mt && !live {
             // BUNDLE-S S2: a store over an element that is not nil is raw whatever the metatable (`__newindex` only applies to an absent key: an
             // `ALOAD` type guard of the old value); a store into a nil slot needs the TR14 guard of `__newindex`
             match ev {
@@ -4841,6 +4928,10 @@ impl Rec {
             // frame, not modelled)
             self.stale_above_frame();
             self.ins(TOp::Hstore, Ty::I64, hr, val.0)?;
+        } else if self.slot_live(SlotKey::Hash(hr)) {
+            // K5: the slot was proven non-nil earlier on the trace (a typed `HLOAD`, or a store of a non-nil value): a plain overwrite
+            self.first_store.get_or_insert(self.b.ir.ins.len());
+            self.ins(TOp::Hstore, Ty::I64, hr, val.0)?;
         } else if self.hstore_mt_ok(tbl) && self.nil_store_ok(tbl, key.1, val.1) {
             // F5: the old-value check of the store is replaced by the `__newindex` guard of the table: a node that `HREFK` found (live key)
             // takes a plain store whatever its old value, as long as the table has no `__newindex` (the same argument as the R2 nil store;
@@ -4881,6 +4972,146 @@ impl Rec {
             self.hs_guarded.push(t);
         }
         self.meta_guard(t, tbl, rn_core::meta::Tm::NewIndex)
+    }
+
+    /// K5: do the refs `x` and `y` denote the same value at run time? The same ref, or the same computation of the same operands: a header `FLOAD` of
+    /// one table, an `HREFK` (same node vector, key and index; the recording emits one per access, each with the snapshot of its own instruction,
+    /// the optimiser merges them later), two typed `HLOAD`s of one slot with no store in between that may write it (a recorded `self.v` is loaded
+    /// again by every `self.v[i]`). `depth` bounds the recursion.
+    fn same_val(&self, x: Ref, y: Ref, depth: u32) -> bool {
+        if x == y {
+            return true;
+        }
+        let ir = &self.b.ir;
+        if depth == 0 || !TraceIr::is_ins(x) || !TraceIr::is_ins(y) {
+            return false;
+        }
+        let (x, y) = (x.min(y), x.max(y));
+        let (ix, iy) = (*ir.at(x), *ir.at(y));
+        if ix.op != iy.op {
+            return false;
+        }
+        match ix.op {
+            TOp::Fload => ix.b == iy.b && self.same_val(ix.a, iy.a, depth - 1),
+            TOp::Hrefk => {
+                ix.b == iy.b
+                    && aux_bits(ix.aux) == aux_bits(iy.aux)
+                    && self.same_val(ix.a, iy.a, depth - 1)
+            }
+            TOp::Hload => {
+                if ix.t != iy.t
+                    || ix.flags & iy.flags & F_GUARD == 0
+                    || !self.same_val(ix.a, iy.a, depth - 1)
+                {
+                    return false;
+                }
+                let probe = opt_mem::MemOp {
+                    class: opt_mem::Class::Hash,
+                    store: false,
+                    a: ix.a,
+                    b: NOREF,
+                    val: NOREF,
+                };
+                (usize::from(x - REF_BIAS) + 1..usize::from(y - REF_BIAS)).all(|k| {
+                    mutants::active("slotlive_hload_stale") || {
+                        let i = &ir.ins[k];
+                        match i.op {
+                            TOp::Hstore => opt_mem::locate(ir, i)
+                                .is_some_and(|o| self.hash_no_alias(&o, &probe)),
+                            TOp::Astore => true,
+                            op => slot_neutral(op),
+                        }
+                    }
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// K5: is the store `o` provably not to the hash slot `probe`? ([`opt_mem::alias`] on the refs as they are, and: two `HREFK`s of different
+    /// keys never alias, whatever the tables.)
+    fn hash_no_alias(&self, o: &opt_mem::MemOp, probe: &opt_mem::MemOp) -> bool {
+        opt_mem::alias(&self.b.ir, o, probe) == opt_mem::Alias::No
+    }
+
+    /// K5 (`slotlive`): does the recording so far prove that the slot `slot` holds a non-nil value *now*? Then a store into it is a plain overwrite
+    /// of a live value, whatever the table's metatable (`__newindex` only applies to an absent key / a nil old value; the interpreter's fast path
+    /// stores the same way), so neither the `__newindex` guard nor an old-value check is needed.
+    ///
+    /// The nearest earlier access of the *same location* decides: a typed (guard) `HLOAD` / `ALOAD` of a non-nil type, or a store of a value of a
+    /// non-nil type. Between it and now only ops that cannot write a nil into the slot may lie: pure ops and guards, loads, `TBAR`, stores of
+    /// non-nil values, and stores of nil / unknown values only into a location that provably does not alias (another constant key, another array
+    /// index, the other memory class). Anything else (a call, `NEWREF`, `TSET`, `LIB`, an allocation, ...) ends the search with "unknown".
+    /// MUTANT `slotlive_nil_between`: a store that may write a nil is ignored.
+    fn slot_live(&self, slot: SlotKey) -> bool {
+        if !self.cfg.slot_live {
+            return false;
+        }
+        let ir = &self.b.ir;
+        if let SlotKey::Hash(loc) = slot {
+            if !TraceIr::is_ins(loc) || ir.at(loc).op != TOp::Hrefk {
+                return false;
+            }
+        }
+        // the location of an `HLOAD` / `HSTORE` / `ALOAD` / `ASTORE`: `Some(true)` the slot itself, `Some(false)` provably another slot,
+        // `None` unknown (may alias)
+        let rel = |i: &Ins| -> Option<bool> {
+            let o = opt_mem::locate(ir, i)?;
+            match slot {
+                SlotKey::Hash(loc) => {
+                    if o.class != opt_mem::Class::Hash {
+                        return Some(false);
+                    }
+                    if self.same_val(o.a, loc, 4) {
+                        return Some(true);
+                    }
+                    let probe = opt_mem::MemOp {
+                        class: opt_mem::Class::Hash,
+                        store: false,
+                        a: loc,
+                        b: NOREF,
+                        val: NOREF,
+                    };
+                    (opt_mem::alias(ir, &o, &probe) == opt_mem::Alias::No).then_some(false)
+                }
+                SlotKey::Arr { tab, base, off } => {
+                    if o.class != opt_mem::Class::Array {
+                        return Some(false);
+                    }
+                    let (b2, o2) = opt_mem::canon(ir, o.b);
+                    if b2 == base
+                        && (o2 == off || mutants::active("slotlive_index_off"))
+                        && self.same_val(o.a, tab, 4)
+                    {
+                        return Some(true);
+                    }
+                    // provably another index (the rule of `opt_mem::alias`, whatever the tables)
+                    ((b2 == base || (b2 == NOREF && base == NOREF)) && o2 != off).then_some(false)
+                }
+            }
+        };
+        let n = ir.ins.len();
+        for k in (n.saturating_sub(SLOT_LIVE_SCAN)..n).rev() {
+            let i = &ir.ins[k];
+            let ok = match i.op {
+                TOp::Hload | TOp::Aload => match rel(i) {
+                    Some(true) => {
+                        return i.t != Ty::Nil && i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0
+                    }
+                    _ => true,
+                },
+                TOp::Hstore | TOp::Astore => match rel(i) {
+                    Some(true) => return ir.ty_of(i.b) != Ty::Nil,
+                    Some(false) => true,
+                    None => ir.ty_of(i.b) != Ty::Nil || mutants::active("slotlive_nil_between"),
+                },
+                op => slot_neutral(op),
+            };
+            if !ok {
+                return false;
+            }
+        }
+        false
     }
 
     /// R2: may a store into an existing hash node that holds nil be recorded (`nilstore`)? The key must not be a metamethod name

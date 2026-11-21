@@ -896,6 +896,10 @@ pub const NAMES: &[&str] = &[
     // K2: method recursion marks the prototype `selfref` (the extended `FnShort` budget of its entry head)
     "fnrec_mark_skip",
     "fnrec_proto_ignored",
+    // K5 (`slotlive`): a store over a slot that the trace already proved non-nil takes no `__newindex` / old-value guard
+    "slotlive_nil_between",
+    "slotlive_index_off",
+    "slotlive_hload_stale",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -970,7 +974,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 743);
+        assert_eq!(NAMES.len(), 746);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

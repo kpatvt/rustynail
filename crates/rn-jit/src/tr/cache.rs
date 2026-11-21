@@ -59,6 +59,8 @@ pub const SIDEMIN_PROCESS: u32 = 4;
 pub const SNAPPRUNE_PROCESS: u32 = 1;
 /// F5: the process default of [`TrLimits::hstoreguard`] (also the struct default).
 pub const HSTOREGUARD_PROCESS: u32 = 1;
+/// K5: the process default of [`TrLimits::slotlive`] (also the struct default).
+pub const SLOTLIVE_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -610,6 +612,10 @@ pub struct TrLimits {
     /// (`FLOAD metatable == 0`, or the metatable's flag cache says no `__newindex`; CSE'd by the header-fact rules) instead of the per-store
     /// exit on a nil old value: 0 = the old-value check, 1 = the metatable guard (default [`HSTOREGUARD_PROCESS`]).
     pub hstoreguard: u32,
+    /// K5 (`slotlive`): a store into a table slot that the trace already proved to hold a non-nil value (an earlier typed `HLOAD` / `ALOAD` of the same
+    /// slot, or an earlier store of a non-nil value, with no store of a nil that may alias in between) needs neither the `__newindex` guard of the
+    /// table nor an old-value check: 0 = off, 1 = on (default [`SLOTLIVE_PROCESS`]).
+    pub slotlive: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -733,6 +739,7 @@ impl Default for TrLimits {
             rearm: REARM_PROCESS,
             snapprune: SNAPPRUNE_PROCESS,
             hstoreguard: HSTOREGUARD_PROCESS,
+            slotlive: SLOTLIVE_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -914,6 +921,7 @@ impl TrLimits {
                 "rearm" => l.rearm = v.min(64),
                 "snapprune" => l.snapprune = v.min(2),
                 "hstoreguard" => l.hstoreguard = v.min(1),
+                "slotlive" => l.slotlive = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),

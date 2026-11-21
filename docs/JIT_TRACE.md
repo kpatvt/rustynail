@@ -2831,3 +2831,69 @@ frame exits, and K3 does not touch them (the `retf` machinery owns that path).
 `gate-heavy.sh`: light (5.5 and 5.4 trace suites, vm_corpus, clippy, mutant-map) PASS; mutants PASS (all caught, registry 743); tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only), tests-5.4-oracle
 PASS; jitdiff 1-200 in the seven modes PASS (0 diffs); `oracle_options` KNOWN: the only mismatching jobs are `core/t1i_inline [always +exitstorm=7 budget=3]` and `core/bb_tset [always +membudget budget=17]`, both listed in
 `scripts/gate-known.txt` (no new oracle failure; the new program `k3_01_frame_loop_exits` passes every cell).
+
+## 28. K5: store-over-live-slot guard elision (`slotlive`; 2026-11-21, base daf82ae)
+
+**What the study assumed and what the IR shows.** The handle K5 expected the 12-op method-lookup chain and `self.v` to be redone for every swap
+*inside one trace*. They are not: the permute traces are cut at every call (function-entry root, loop continuation, the continuation after the first
+self-call), each holds ONE swap and ONE `self:permute` lookup, and inside a trace the optimiser already shares everything (`HREFK` / `FLOAD node` of
+the second method name reuse the first chain, `self.v` is loaded once, `asize` / array base once). The chain is repeated *across* traces (each trace
+entry re-validates `self` -> metatable -> `__index` -> method), which needs facts that survive a trace transition (a version stamp on metatables or a
+carried-in-registers guard set): not an IR dedupe, not built. Measured on the traces of `permute 3000` (`RUSTYNAIL_JIT_DUMP` + `perf record -e cycles:u`
+with the IP histogram mapped on the dumped code): 6.1 IPC (7036 M instr / 1160 M cycles), so instructions are nearly free; the samples sit on the
+dependent loads of the frame protocol (`[ci]` reloads after the frame stores: 15 % of the cycles in the entry sequences) and on the chain loads (about
+8 %). Cutting instructions therefore moves permute's cycles by a fraction of its instruction share: `-16..23 %` is not reachable by deduping.
+
+**What shipped (`TrLimits::slotlive`, default 1, `slotlive=0` = before).** A store into a table slot that the recording already proved non-nil needs
+neither the `__newindex` guard (hash: `FLOAD metatable` + flag-cache bit, F5; array: `FLOAD metatable == 0` or the old-value `ALOAD` guard) nor an
+old-value check: `__newindex` applies only to an absent key / nil old value, and the interpreter's fast path stores the same way. `Rec::slot_live`
+(`record.rs`) decides, at recording time, from the IR built so far: the nearest earlier access of the *same location* must be a typed (`F_GUARD`,
+bit 0) `HLOAD` / `ALOAD` of a non-nil type or a store of a non-nil value; between it and the store only pure ops, guards, loads, `TBAR`, `USTORE`,
+`ATOUCH`, `POLL` / `BUDGET` and stores may lie, and a store of nil (or of a value of unknown type) only when it provably cannot alias (another constant
+key, another constant / `x + c` array index, the other memory class: `opt_mem::alias`). Anything else (calls, `NEWREF`, `TSET`, `LIB`, allocation, ...)
+ends the search with "unknown" (guards kept). Locations are compared by value, not by ref, because the recording emits one `HREFK` per access (each with
+its own snapshot; merged by the optimiser later) and one `HLOAD` per `self.v` (merged by forwarding later): `same_val` treats two `HREFK`s of the same
+node vector / key / index, header `FLOAD`s of equal tables, and two typed `HLOAD`s of one slot with no may-alias store between them as equal. Hash facts
+are only for `HREFK` (constant keys), never `HREFV`. The elided guard is never CSE-shared away from another store: every store that is not itself live
+still emits its own guard, so the removal cannot weaken a later store.
+
+Soundness argument: straight-line trace; the typed load guard (or the non-nil store) establishes "slot non-nil" at a point P; every instruction between P
+and the store is classified (cannot write nil / provably another slot / unknown -> not live); exits leave the trace before the store, and loop peeling
+re-emits the same pre-roll order, where a body load folds into the pre-roll load or store only under the optimiser's own no-may-alias-store rule, which
+is stricter than the one here. The fact is per run-time table, not per recorded table: a store through a *different* table ref that aliases at run time
+is a may-alias store of nil (kept by the rule above); tests below pin that.
+
+**Measured (same binary, `slotlive=0` against `=1`, equal path, `RUSTYNAIL_SEED=0`, taskset CPU 4; instructions deterministic, cycles min of 5).**
+
+| program | instr M 0 -> 1 | d instr | cycles M 0 -> 1 | d cycles |
+|---|---|---:|---|---:|
+| permute 3000 | 7036.2 -> 6863.3 | -2.46 % | 1175.9 -> 1165.9 | -0.85 % |
+| fannkuch | 4980.8 -> 4863.2 | -2.36 % | 1062.7 -> 1058.7 (min of 9) | -0.4 % |
+| richards | 181.8 -> 180.1 | -0.94 % | 59.4 -> 58.9 | -0.9 % |
+| towers | 187.3 -> 185.6 | -0.93 % | 52.2 -> 48.5 | -7.0 % (layout; instr -0.9 %) |
+| bounce | 309.3 -> 308.8 | -0.18 % | 60.6 -> 60.0 | -1.0 % |
+| json | 465.0 -> 463.5 | -0.33 % | 141.7 -> 140.7 | -0.7 % |
+| game_loop | 150.4 -> 149.8 | -0.44 % | 33.8 -> 33.5 | -0.9 % |
+| oop_methods | 851.8 -> 851.1 | -0.08 % | 142.7 -> 139.8 | -2.0 % |
+| deltablue, cd, havlak, list, raytrace (apps and `raytrace 40`), expr_lang, events, lru_cache, markdown, classic_vector, roguelike_turns, nbody, fib, binary_trees, queens, sieve, heapsort, matmul, storage, lua_interp | within +-0.1 % (one json-sized exception above) | ~0 | all within +-0.7 % except noise (events 160.7 -> 161.6 at 9 runs) | ~0 |
+
+nbody, fib, binary_trees instruction counts are identical (to the 0.01 %); richards moves -0.94 % as listed. So the shipped part is a **sound but
+small** gain (instructions -2.5 % on permute / fannkuch, <= 1 % elsewhere; cycles within noise except permute -0.9 %, fannkuch -0.4 %, richards -0.9 %),
+not the study's -16..23 %. The OOP programs (deltablue, cd, game_loop, roguelike_turns, classic_vector) have their field updates behind other
+accesses (a table loaded through a field, a call in between): no change.
+
+**Measured and not built.** (a) `__index == metatable` identity guard (the class idiom `P.__index = P`): replaces the `FLOAD lsizenode` / `FLOAD node`
+/ shape checks of P by one compare, about 2 of ~36 instructions per chain at 6 IPC: < 0.5 % cycles, plus a new guard kind in the exit / loop machinery;
+not worth it. (b) Method-lookup facts across trace transitions (the real 13 %): needs metatable version stamps or a guard set carried by `regcarry`
+cells; every variant must be re-validated at every call (finalizers, `debug.setmetatable`, hooks); left as a K8-class item. (c) Removing the bound
+`ULT` of a second index: different indices need their own check.
+
+**Tests and mutants (746 now, 743 before; frozen count in `mutants.rs`).** Programs `tests/vm/k5_01_slotlive_hash.lua`, `k5_02_slotlive_array.lua`,
+`k5_03_slotlive_effect.lua` (class field updates, the permute swap with and without a metatable on the array, nil written through a reference that is
+another table at record time and the same table every fifth iteration, through a variable key / index, a table re-loaded after a store changed the
+field it comes from, another index of the same array, a metatable installed in the loop); `tr_core::k5_slotlive_programs` runs them in the usual
+mode matrix with `slotlive=1` and `0` and asserts that the effect program has fewer metatable / flag `FLOAD`s with the rule. Mutants:
+`slotlive_nil_between` (a may-alias nil store ignored), `slotlive_index_off` (array offset ignored), `slotlive_hload_stale` (two `HLOAD`s equal across a
+store); all three are caught by `k5_slotlive_programs`. A fourth candidate (barrier ops treated as neutral) was dropped: no recordable op that is a
+barrier writes a nil into a slot the recording then still sees as non-nil (`table.remove` refuses tables with a metatable, a store after a nil written
+by a library call sees `ev == nil`), so it is an equivalent mutant.
