@@ -4157,6 +4157,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "k5_slotlive_programs")],
     },
     Row {
+        name: "bytext_inline_read",
+        owner: "L1",
+        dets: &[d("tr_core", "f2_programs")],
+    },
+    Row {
         name: "aref_phi_cse",
         owner: "K7",
         dets: &[d("tr_core", "k7_aref_phi_programs")],

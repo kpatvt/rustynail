@@ -2166,6 +2166,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         fpool: crate::rt::fpool_ptr(st) as u64,
         fpool_off: crate::rt::fpool_off(),
         f2_byte: true,
+        // SAFETY: as above.
+        f2_byte_ext: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.bytext != 0 },
         ccalls_inline: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccalls != 0 },
         // SAFETY: as above.
         f2ifl: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.f2ifl != 0 },

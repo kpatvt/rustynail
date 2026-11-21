@@ -61,6 +61,8 @@ pub const SNAPPRUNE_PROCESS: u32 = 1;
 pub const HSTOREGUARD_PROCESS: u32 = 1;
 /// K5: the process default of [`TrLimits::slotlive`] (also the struct default).
 pub const SLOTLIVE_PROCESS: u32 = 1;
+/// L1: the process default of [`TrLimits::bytext`] (also the struct default).
+pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -616,6 +618,10 @@ pub struct TrLimits {
     /// slot, or an earlier store of a non-nil value, with no store of a nil that may alias in between) needs neither the `__newindex` guard of the
     /// table nor an old-value check: 0 = off, 1 = on (default [`SLOTLIVE_PROCESS`]).
     pub slotlive: u32,
+    /// L1 (`bytext`): the inline `string.byte(s, i)` of a trace also reads long strings with external bytes (`LSTRFIX` / `LSTRMEM`: a long
+    /// `table.concat` / `string.rep` / `string.pack` result adopted without a copy in 5.5) and library-buffer strings (`shrlen == -4`) instead of
+    /// calling the helper for them: 0 = only regular long strings inline, 1 = all long kinds (default [`BYTEXT_PROCESS`]).
+    pub bytext: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -740,6 +746,7 @@ impl Default for TrLimits {
             snapprune: SNAPPRUNE_PROCESS,
             hstoreguard: HSTOREGUARD_PROCESS,
             slotlive: SLOTLIVE_PROCESS,
+            bytext: BYTEXT_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -922,6 +929,7 @@ impl TrLimits {
                 "snapprune" => l.snapprune = v.min(2),
                 "hstoreguard" => l.hstoreguard = v.min(1),
                 "slotlive" => l.slotlive = v.min(1),
+                "bytext" => l.bytext = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),

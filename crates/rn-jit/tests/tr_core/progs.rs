@@ -8910,6 +8910,61 @@ print(vsum, vn)
 "##,
     },
     Prog {
+        name: "l1_byte_ext",
+        small: true,
+        src: r##"
+-- L1 (`bytext`): the inline string.byte of long strings of every kind: external bytes (a long table.concat result, adopted without a copy in
+-- 5.5), library-buffer strings (a long string.rep result), regular long strings (`..`), short strings; one call site that sees several
+-- kinds; positions at the ends, past the end, zero, negative, constant and variable indices; the strings die and are re-made (GC stress).
+local N = 120
+local function mk(k, r)
+  local parts = {}
+  for i = 1, 300 do parts[i] = string.char(48 + (i * 7 + k + r) % 75) end
+  local ext = table.concat(parts) .. ""          -- (the `..` copy makes a regular long string of the same bytes)
+  local ext2 = table.concat(parts, "", 1, 300)   -- external in 5.5
+  local buf = string.rep(string.char(65 + k % 26, 97 + r % 26), 600)   -- library buffer in 5.5
+  return { ext2, buf, ext, "short" .. k, ext2:sub(1, 41) }
+end
+local sum, miss = 0, 0
+for r = 1, N do
+  local S = mk(r % 5, r)
+  for k = 1, #S do
+    local s = S[k]
+    local n = #s
+    for i = 1, 24 do
+      local p = (i * 53 + r) % (n + 3)          -- 0 .. n + 2: zero and past the end included
+      local b = string.byte(s, p)
+      if b then sum = sum + b * i else miss = miss + 1 end
+      local c = s:byte(n - i + 1)               -- the last bytes
+      if c then sum = sum + c else miss = miss + 2 end
+      local d = string.byte(s, 1)               -- constant index
+      sum = sum + (d or 0)
+      local e = string.byte(s, 300)             -- constant index at / past the end of the shorter kinds
+      if e then sum = sum + e else miss = miss + 3 end
+      local f = s:byte(-i)                      -- negative: the helper
+      sum = sum + (f or 0)
+    end
+  end
+end
+print(sum, miss)
+-- one site, kinds alternating every iteration (the guard on the kind decides per call)
+local big = {}
+for i = 1, 2000 do big[i] = string.char(97 + i % 26) end
+local E = table.concat(big)
+local B = string.rep("xyz", 700)
+local R = E .. "!"
+local K = { E, B, R, E, R, B, "abc" }
+local h = 0
+for r = 1, 3000 do
+  local s = K[r % #K + 1]
+  local i = r % 2100 + 1
+  local b = string.byte(s, i)
+  h = (h * 31 + (b or 7)) % 1000003
+end
+print(h)
+"##,
+    },
+    Prog {
         name: "c2_tier1",
         small: true,
         src: r##"

@@ -206,6 +206,8 @@ pub struct AsmEnv {
     pub divmagic: bool,
     /// F2: `string.byte(s, i)` with `1 <= i <= #s` is inline loads (the helper call is the slow path) (`f2byte`).
     pub f2_byte: bool,
+    /// L1 (`bytext`): the inline `string.byte` also reads long strings with external bytes (`LSTRFIX` / `LSTRMEM`) through their pointer.
+    pub f2_byte_ext: bool,
     /// BUNDLE-D (`ccalls`): the C-stack check of `LIB CCALLS` is inline (the helper is the slow path).
     pub ccalls_inline: bool,
     /// BUNDLE-P P2 (`f2ifl`): `F2I_EXACT` of an `FFLOOR` result is `cvttsd2si; cmp r, 1; jo` ([`Op::F2IFloor`]).
@@ -344,6 +346,7 @@ impl Default for AsmEnv {
             hk_fuse: false,
             hk_key64: false,
             f2_byte: false,
+            f2_byte_ext: false,
             ccalls_inline: false,
             f2ifl: false,
             fibdiet: 0,
@@ -7664,48 +7667,96 @@ impl Cx<'_> {
         let slow = self.label();
         let done = self.label();
         let data = rn_core::jit_layout::string::CONTENTS as i32;
+        // the constant index form needs `1 <= k` and an offset that fits a displacement
+        if let Loc::Const(r) = ops[1] {
+            let k = self.kbits_of(r) as i64;
+            if k < 1 || k > i64::from(i32::MAX) / 2 {
+                return None;
+            }
+        }
+        // `ext`: long strings with external bytes (`shrlen` -2 `LSTRFIX`, -3 `LSTRMEM`: a big `table.concat` / `string.rep` result
+        // handed over without a copy) keep a pointer to their bytes at the contents offset; the regular (-1) and library-buffer (-4)
+        // long strings keep the bytes there. Short strings are always inline.
+        let ext = if long && self.env.f2_byte_ext {
+            Some(self.label())
+        } else {
+            None
+        };
         if long {
-            // inline long strings only (`shrlen == -1`); an external buffer takes the helper
             self.ld(7, W::B1, rm(s, rn_core::jit_layout::string::SHRLEN as i32));
-            self.br(Cc::Ne, 7, Src::Imm(0xFF), slow);
+            if let Some(ext) = ext {
+                let inl = self.label();
+                self.br(Cc::Eq, 7, Src::Imm(0xFF), inl);
+                self.br(Cc::Eq, 7, Src::Imm(0xFC), inl);
+                self.br(Cc::Eq, 7, Src::Imm(0xFE), ext);
+                self.br(Cc::Ne, 7, Src::Imm(0xFD), slow);
+                self.push(Op::Jmp(ext));
+                self.push(Op::Bind(inl));
+            } else {
+                // inline long strings only (`shrlen == -1`); an external buffer takes the helper
+                self.br(Cc::Ne, 7, Src::Imm(0xFF), slow);
+            }
             self.ld(7, W::B8, rm(s, rn_core::jit_layout::string::LNGLEN as i32));
         } else {
             self.ld(7, W::B1, rm(s, rn_core::jit_layout::string::SHRLEN as i32));
         }
-        match ops[1] {
-            Loc::G(i) => {
-                self.br(Cc::Lt, i, Src::Imm(1), slow);
-                if !mutants::active("byte_inline_len_skip") {
-                    self.br(Cc::Lt, 7, Src::V(i), slow);
+        // the bound checks against the length in V7, then the load from `base + i - 1` (`base` = the object for inline bytes, the
+        // pointer at the contents offset for external ones: then the displacement is relative to the bytes, not to the header)
+        let emit = |me: &mut Self, external: bool| {
+            match ops[1] {
+                Loc::G(i) => {
+                    me.br(Cc::Lt, i, Src::Imm(1), slow);
+                    if !mutants::active("byte_inline_len_skip") {
+                        me.br(Cc::Lt, 7, Src::V(i), slow);
+                    }
+                    let base = if external {
+                        me.ld(7, W::B8, rm(s, data));
+                        0
+                    } else {
+                        me.push(Op::MovR(7, s));
+                        data
+                    };
+                    me.push(Op::Add(7, Src::V(i)));
+                    let off = if mutants::active("byte_inline_off_by_one") {
+                        base
+                    } else {
+                        base - 1
+                    };
+                    me.ld(d, W::B1, rm(7, off));
                 }
-                self.push(Op::MovR(7, i));
-                self.push(Op::Add(7, Src::V(s)));
-                let off = if mutants::active("byte_inline_off_by_one") {
-                    data
-                } else {
-                    data - 1
-                };
-                self.ld(d, W::B1, rm(7, off));
+                Loc::Const(r) => {
+                    let k = me.kbits_of(r) as i32;
+                    if !mutants::active("byte_inline_len_skip") {
+                        me.br(Cc::Lt, 7, Src::Imm(k), slow);
+                    }
+                    let (reg, base) = if external {
+                        me.ld(7, W::B8, rm(s, data));
+                        (7, 0)
+                    } else {
+                        (s, data)
+                    };
+                    let off = if mutants::active("byte_inline_off_by_one") {
+                        base + k
+                    } else {
+                        base + k - 1
+                    };
+                    me.ld(d, W::B1, rm(reg, off));
+                }
+                _ => unreachable!(),
             }
-            Loc::Const(r) => {
-                let k = self.kbits_of(r) as i64;
-                if k < 1 || k > i64::from(i32::MAX) / 2 {
-                    return None;
-                }
-                if !mutants::active("byte_inline_len_skip") {
-                    self.br(Cc::Lt, 7, Src::Imm(k as i32), slow);
-                }
-                let off = if mutants::active("byte_inline_off_by_one") {
-                    data + k as i32
-                } else {
-                    data + k as i32 - 1
-                };
-                self.ld(d, W::B1, rm(s, off));
-            }
-            _ => return None,
+            me.push(Op::Add(d, Src::Imm(1)));
+            me.push(Op::Jmp(done));
+        };
+        if !matches!(ops[1], Loc::G(_) | Loc::Const(_)) {
+            return None;
         }
-        self.push(Op::Add(d, Src::Imm(1)));
-        self.push(Op::Jmp(done));
+        emit(self, false);
+        if let Some(ext) = ext {
+            self.push(Op::Bind(ext));
+            self.ld(7, W::B8, rm(s, rn_core::jit_layout::string::LNGLEN as i32));
+            // MUTANT `bytext_inline_read`: the bytes of an external string are read behind the header (where its pointer is)
+            emit(self, !mutants::active("bytext_inline_read"));
+        }
         self.push(Op::Bind(slow));
         Some(done)
     }

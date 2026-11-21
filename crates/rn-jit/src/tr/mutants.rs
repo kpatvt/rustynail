@@ -900,6 +900,8 @@ pub const NAMES: &[&str] = &[
     "slotlive_nil_between",
     "slotlive_index_off",
     "slotlive_hload_stale",
+    // L1 (`bytext`): the inline `string.byte` reads long strings with external bytes through their pointer
+    "bytext_inline_read",
     // K7 (an AREF is never a PHI)
     "aref_phi_cse",
 ];
@@ -976,7 +978,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 747);
+        assert_eq!(NAMES.len(), 748);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

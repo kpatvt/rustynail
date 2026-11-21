@@ -4043,12 +4043,12 @@ fn p2_xregs_programs() {
 /// F2: library calls recorded as trace constructs (string comparisons, getmetatable, rawget / rawset, assert, string.byte, integer math.random)
 /// in the trace modes with lockstep, exit storms, budgets, GC stress and the stack-move stress (K3b: the `f2*` knobs are hard-wired on; the jobs run the shipped configuration).
 /// Mutants `strcmp_lt_as_le`, `strcmp_guard_skip`, `getmt_null_skip`, `getmt_protected_skip`, `assert_extra_dropped`, `rawset_tbar_skip`,
-/// `rawset_result_nil`.
+/// `rawset_result_nil`; L1 (`l1_byte_ext`: long strings with external bytes and library-buffer strings): `bytext_inline_read`.
 #[test]
 fn f2_programs() {
     const ON: &str = "";
     let mut jobs = Vec::new();
-    for (prog, trace) in ["f2_lib", "f2_byte"]
+    for (prog, trace) in ["f2_lib", "f2_byte", "l1_byte_ext"]
         .into_iter()
         .flat_map(|p| ["always", "on2", "on"].map(move |t| (p, t)))
     {
