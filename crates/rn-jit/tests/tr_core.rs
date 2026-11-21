@@ -10296,6 +10296,8 @@ fn m_lockstep_identity() {
     let mut progs: Vec<&'static Prog> = selected(std::env::var_os("TR_CORE_ALL").is_none());
     // (a program that was measured nondeterministic run to run, independent of the lockstep: its trace set depends on timing)
     progs.retain(|p| p.name != "j2_gate_sides");
+    // (pointer-keyed hash nodes sit at heap-address-dependent places: the trace set differs from run to run, docs/JIT_TRACE.md section 29)
+    progs.retain(|p| p.name != "bb_tset_tkey");
     let mut jobs = Vec::new();
     let mut dirs = Vec::new();
     for p in &progs {
