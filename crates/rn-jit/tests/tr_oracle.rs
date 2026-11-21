@@ -105,6 +105,11 @@ const MEM_HEAVY: [&str; 4] = [
     "gen:4",
 ];
 
+/// Programs that traverse tables with pointer keys (tables, functions as keys): the node of such a key sits at a place that depends on the address of the
+/// object, which is different in the oracle's two runs, so `pairs` / `next` visit the keys in another order and a live local (`k`, a string made from it)
+/// differs at the same clock. Not a trace-compiler difference (the same job passes or fails with traces off alike); docs/JIT_TRACE.md section 29.
+const ADDR_ORDER: [&str; 1] = ["tests/vm/table_insert_layout"];
+
 fn core_src(name: &str) -> &'static str {
     progs::PROGS
         .iter()
@@ -1038,13 +1043,17 @@ fn run_cells(title: &str, cells: &[Cell], core_only: bool, gen: u32) {
                 && *n != "be_queens"
                 && *n != "h1_towers_piles"
                 && *n != "h1_hash_int_many"
+                // pointer-keyed hash nodes sit at heap-address-dependent places (the two runs of a job lay the heap out differently)
+                && *n != "bb_tset_tkey"
         })
         .collect();
     let mut items = corpus(&names, gen);
     if core_only {
         items.retain(|i| i.name.starts_with("core/"));
     }
-    items.retain(|i| !MEM_HEAVY.contains(&i.name.as_str()));
+    items.retain(|i| {
+        !MEM_HEAVY.contains(&i.name.as_str()) && !ADDR_ORDER.contains(&i.name.as_str())
+    });
     let mut jobs = Vec::new();
     for it in &items {
         for c in cells {

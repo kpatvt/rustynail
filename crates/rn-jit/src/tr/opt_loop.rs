@@ -899,6 +899,38 @@ impl<'a> Em<'a> {
                         .emit_flags(i.op, i.t, i.flags & F_GUARD, a, bb, i.aux)?,
                 }
             }
+            TOp::Aref if self.body && self.loop_ref != NOREF => {
+                // K7: an address (base, index) is not a value: the machine code reads it only through the memory ops that
+                // use it (an `AREF` that is not fused into them is `Unsupported` in the assembler), so it can never be a
+                // PHI. A body `AREF` that CSE would merge with a pre-roll `AREF` whose own body copy is another instruction
+                // (the next iteration's `h[i]` is the previous iteration's `h[l]`: sift-down with `s = l`) is emitted
+                // again; its operands become PHIs (integers) as usual.
+                let a = self.operand(i.a);
+                let u = self.operand(i.b);
+                let aux = if self.aidx && self.aref_loaded[n] && !TraceIr::is_const(u) {
+                    self.aidx_aux(u, n)?
+                } else {
+                    i.aux
+                };
+                let probe = Ins {
+                    op: TOp::Aref,
+                    t: i.t,
+                    flags: 0,
+                    a,
+                    b: u,
+                    prev: NOREF,
+                    aux,
+                };
+                let stale = self.b.find(&probe).filter(|&r| {
+                    TraceIr::is_ins(r)
+                        && r < self.loop_ref
+                        && self.creator.get(&r).is_some_and(|&c| self.sub[c] != r)
+                });
+                match stale {
+                    Some(_) if !mutants::active("aref_phi_cse") => self.b.emit_raw(probe)?,
+                    _ => self.b.emit_flags(TOp::Aref, i.t, 0, a, u, aux)?,
+                }
+            }
             TOp::Aref
                 if self.aidx
                     && self.peeling

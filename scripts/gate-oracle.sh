@@ -1,7 +1,7 @@
 #!/bin/bash
 # The tr_oracle tests (oracle_options by default, about 35 minutes with the test's own 3 workers) on many workers, and optionally
 # sharded into several processes, under one memory cap and CPU set; the failures of all shards are aggregated and the known
-# path/ASLR-dependent ones (scripts/gate-known.txt: core/bb_tset, tests/vm/table_insert_layout) are reported separately as KNOWN.
+# listed ones (scripts/gate-known.txt, class oracle; none at present) are reported separately as KNOWN.
 # A drop-in for `cargo test -p rn-jit --features tr_mutants,t15_oracle --test tr_oracle -- oracle_options`: the whole job set runs.
 #
 #   scripts/gate-oracle.sh [--tests oracle_options,oracle_exits,oracle_trace_modes] [--shards N] [--workers W] [--version 5.4]

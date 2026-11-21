@@ -109,8 +109,8 @@ problem, or stream problems), not done. Left off by default: it removes the "als
 
 ### Known failures (scripts/gate-known.txt)
 
-A step whose failures all match the list is `KNOWN`, anything else `FAIL`. Classes: `oracle` (job labels of `tr_oracle`:
-`tests/vm/table_insert_layout`, `core/bb_tset`: the program output depends on the load address / path, they pass or fail from run to run),
+A step whose failures all match the list is `KNOWN`, anything else `FAIL`. Classes: `oracle` (job labels of `tr_oracle`; none now: the three
+address-dependent jobs were made deterministic or left out of the oracle, JIT_TRACE.md section 29),
 `test` (`tr_identity_pre::fetch_plus_insns_identity`, identity gaps on `tests/vm/tables_15_alimit_big_moves`: same cause), `mutant`
 (documented survivors; none now). A failing shard without the oracle's own failure report, a crash, a build error or a failing test that is
 not listed is always `FAIL`. The `inconclusive` jobs of the oracle tests (leash timeouts of four programs, docs/JIT_TESTING.md) are not

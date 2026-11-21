@@ -4229,7 +4229,13 @@ fn bb_cmpmm_programs() {
 #[test]
 fn bb_tset_programs() {
     let mut jobs = Vec::new();
-    for p in ["ba_nilset", "r2_nilstore", "bb_tset", "g1_tget"] {
+    for p in [
+        "ba_nilset",
+        "r2_nilstore",
+        "bb_tset",
+        "bb_tset_tkey",
+        "g1_tget",
+    ] {
         for trace in ["always", "on2", "on"] {
             for (opts, budget) in [
                 ("", 0),
@@ -4254,7 +4260,13 @@ fn bb_tset_programs() {
     for j in jobs.iter_mut() {
         j.limits = "tset=15".into();
     }
-    for p in ["ba_nilset", "r2_nilstore", "bb_tset", "g1_tget"] {
+    for p in [
+        "ba_nilset",
+        "r2_nilstore",
+        "bb_tset",
+        "bb_tset_tkey",
+        "g1_tget",
+    ] {
         let mut off = Job::new(p, "always").opts("+verify");
         off.limits = "tset=0".into();
         jobs.push(off);
@@ -11938,4 +11950,42 @@ fn k5_slotlive_programs() {
     let (on, off) = (count("slotlive=1"), count("slotlive=0"));
     eprintln!("k5 metatable / flag loads: slotlive=1 {on}, slotlive=0 {off}");
     assert!(on < off, "slotlive removes guards: {on} vs {off}");
+}
+
+/// K7: the loop optimiser never makes a PHI of an `AREF` (an address is a base and an index, not a value; the assembler refuses an unfused `AREF`).
+/// The heap sift-down with `s = l` (the next iteration's `h[i]` is the previous iteration's `h[l]`) used to abort `Compile(asm-unsupported)` in
+/// `always`; with the body `AREF` re-emitted it compiles. Same output as the interpreter in every mode, and no `Compile(asm-` abort in `always`.
+/// Detector of `aref_phi_cse`.
+#[test]
+fn k7_aref_phi_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        jobs.push(Job::new("k7_01_aref_phi", trace));
+        jobs.push(Job::new("k7_01_aref_phi", trace).opts("+verify"));
+        jobs.push(Job::new("k7_01_aref_phi", trace).opts("+exitstorm=3 +verify"));
+        jobs.push(Job::new("k7_01_aref_phi", trace).opts("+exitstorm=7 +verify +randra=5"));
+        jobs.push(Job::new("k7_01_aref_phi", trace).opts("-loop"));
+        jobs.push(Job::new("k7_01_aref_phi", trace).budget(17));
+        jobs.push(Job::new("k7_01_aref_phi", trace).env("RUSTYNAIL_GC_STRESS", "2"));
+        jobs.push(Job::new("k7_01_aref_phi", trace).opts("+emurun +verify"));
+        jobs.push(Job::new("k7_01_aref_phi", trace).limits_s("aidx=0"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
+            let bad: Vec<_> = o
+                .stats
+                .aborts
+                .keys()
+                .filter(|k| k.starts_with("Compile(asm"))
+                .collect();
+            assert!(
+                bad.is_empty(),
+                "{}: asm refusals {:?}: {}",
+                j.prog,
+                bad,
+                o.stats.line()
+            );
+        }
+    }
 }

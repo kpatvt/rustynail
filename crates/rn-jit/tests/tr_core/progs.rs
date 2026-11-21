@@ -10147,7 +10147,7 @@ names[42] = 7                                  -- integer key (array part / hash
 names[43] = 2.0                                -- float key with an integer value
 names[44] = 1.5
 names[45] = true
-names[46] = names                              -- table key
+names[46] = 99999                              -- (the table key is in bb_tset_tkey: a pointer-hashed key puts its node at an address-dependent place; docs/JIT_TRACE.md section 29)
 local c = {}
 for round = 1, 30 do
   for i = 1, #names do bump(c, names[i]) end
@@ -10209,6 +10209,30 @@ for i = 1, 12 do put(o, i * 1000, i * 2) end
 for i = 1, 8 do put(o, -i * 77, i) end
 for i = 1, 8, 3 do put(o, -i * 77, i + 100) end
 print("order", keys(o, true))
+"##,
+    },
+    Prog {
+        name: "bb_tset_tkey",
+        small: true,
+        src: r##"
+-- BUNDLE-B item 2, the table-key part of bb_tset: a table as the key of the dynamic SETTABLE site (the key hashes by address: the node's place in the hash
+-- part depends on the heap, so this program is left out of the oracle, whose two runs lay the heap out differently; docs/JIT_TRACE.md section 29).
+local function put(t, k, v) t[k] = v end
+local function bump(t, k) t[k] = (t[k] or 0) + 1 end
+local names = {}
+for i = 1, 12 do names[i] = "key" .. i end
+names[13] = names                              -- table key
+names[14] = {}
+names[15] = print                              -- function key
+local c = {}
+for round = 1, 30 do
+  for i = 1, #names do bump(c, names[i]) end
+  if round % 7 == 0 then for i = 1, 12, 3 do put(c, names[i], nil) end end
+end
+local tot, n = 0, 0
+for i = 1, #names do tot = tot + (c[names[i]] or 0) end
+for _ in pairs(c) do n = n + 1 end
+print("tkeys", tot, n, c[names], c[names[14]], c[print])
 "##,
     },
     Prog {
@@ -11516,7 +11540,10 @@ swap_loop("swap_type_nil", b_type, function() type = nil end, function() type = 
 swap_loop("swap_type_fn", b_type, function() type = function(x) return "T" end end, function() type = otype end)
 swap_loop("swap_type_c", b_type, function() type = math.random end, function() type = otype end)
 swap_loop("swap_type_cl", b_type, function() type = coroutine.wrap(function(...) while true do coroutine.yield("co") end end) end, function() type = otype end)
-swap_loop("swap_type_print", b_type, function() type = tostring end, function() type = otype end)
+-- (`tostring` as `type` turns `type({})` into "table: 0x..." and the result is a live local of `fmt`: an address in a string is different in every run, so the oracle
+-- (docs/JIT_TRACE.md section 29) would compare unequal live strings; this variant leaves the table out)
+local function b_type_na(i) local r = type(i) return r, type(i + 0.5), type("s") end
+swap_loop("swap_type_print", b_type_na, function() type = tostring end, function() type = otype end)
 swap_loop("swap_floor", b_floor, function() math.floor = function(x) return -7 end end, function() math.floor = ofloor end)
 swap_loop("swap_floor_ceil", b_floor, function() math.floor = math.ceil end, function() math.floor = ofloor end)
 swap_loop("swap_floor_nil", b_floor, function() math.floor = nil end, function() math.floor = ofloor end)
@@ -16048,5 +16075,10 @@ print(r[1], r[60], #full, #half, #hole)
         name: "k5_03_slotlive_effect",
         small: true,
         src: include_str!("../../../../tests/vm/k5_03_slotlive_effect.lua"),
+    },
+    Prog {
+        name: "k7_01_aref_phi",
+        small: true,
+        src: include_str!("../../../../tests/vm/k7_01_aref_phi.lua"),
     },
 ];

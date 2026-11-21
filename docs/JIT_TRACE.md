@@ -2897,3 +2897,76 @@ mode matrix with `slotlive=1` and `0` and asserts that the effect program has fe
 store); all three are caught by `k5_slotlive_programs`. A fourth candidate (barrier ops treated as neutral) was dropped: no recordable op that is a
 barrier writes a nil into a slot the recording then still sees as non-nil (`table.remove` refuses tables with a metatable, a store after a nil written
 by a library call sees `ev == nil`), so it is an equivalent mutant.
+
+## 29. K7: an `AREF` is never a PHI (dijkstra_routes 5.5 regression); the three address-dependent oracle jobs (2026-11-21, base d2c0958)
+
+### 29.1 `corpus2/heldout/dijkstra_routes` on 5.5 (+13.8 % cycles, +29 % instructions in session-i against session-h)
+
+**Bisect by knob** (release binary of 22670a1, `RUSTYNAIL_JIT_TRACE_LIMITS`, equal path, instructions M): default 4767; `fnrec=0` 4768; `fretry=0` 4768; `slotlive=0` **3727**; all three off 3727.
+So K5 (`slotlive`) is the switch, but it is not slotlive's elision that costs: the head table (`RUSTYNAIL_JIT_VERBOSE=1`) shows the sift-down loop of `heap_pop` (`L30 pc 13`, 4.2 M
+entries) installed with `slotlive=0` and **blacklisted** with `slotlive=1`, `aborts {Compile(asm-unsupported):2}`. `VERBOSE=2` gives the reason: `asm: Unsupported("an AREF that is not fused into its memory users")`
+(the dump of the failing IR is now printed after `[trace] FAILIR` at `VERBOSE=2`).
+
+**Cause.** The loop is `i = s = l` on the recorded path, so the body's `h[i]` is the address the pre-roll computed for `h[l]` (`AREF %11 %9`). The body copy emitted the same `AREF` with the
+substituted index operand, CSE found the pre-roll `AREF`, and because the body copy of the pre-roll `AREF` is another instruction (the next iteration's `h[l]`) the loop pass made a
+`PHI p64 %12 %57` of the address. An array address is a base and an index (values and tags live in two arrays, the asm fuses it into the `ALOAD` / `ASTORE` that use it); an `AREF` that is a
+`PHI` operand is unfused and the assembler refuses it. This is an older latent bug, not caused by `slotlive`: the same program with `slotlive=0` also has one `asm-unsupported` abort at that head
+(`rec 2 ... aborts {Compile(asm-unsupported):1}`); the second recording took the `s = r` path (no address reuse) and installed. With `slotlive=1` both recordings took the left path, i.e. the
+rule only moved the recording order. (The other `slotlive=1` difference is that there is no old-value `ALOAD` guard in front of the stores; it does not change the CSE of the addresses.)
+
+**Fix (`opt_loop.rs`, `Em::emit` arm for `TOp::Aref` in the body copy).** The body `AREF` is looked up as before (`Builder::find`); if the hit is a pre-roll instruction whose own body copy is
+another instruction (`creator[r]` with `sub[creator] != r`) the `AREF` is emitted again (`emit_raw`); its operands are PHIs of integers as usual (`ADD`, supported). Invariant addresses (the body copy
+of the pre-roll `AREF` is itself) still merge. Mutant `aref_phi_cse` (the old behaviour). Test `tr_core::k7_aref_phi_programs` (program `tests/vm/k7_01_aref_phi.lua`: heap sift-down with the left child
+always smaller, right-child and mixed variants, in every mode of the usual matrix, `aidx=0`; asserts no `Compile(asm-` abort in plain `always`).
+
+**Measured** (release `rnlua`, `perf stat` instructions:u / cycles:u, CPU 4, `RUSTYNAIL_SEED=0`, binaries at paths of equal length, instructions of one run, cycles min of 5; base d2c0958 against base + K7):
+
+| program | base instr M / cyc M | K7 instr M / cyc M | effect |
+|---|---|---|---|
+| corpus2/heldout/dijkstra_routes | 4767 / 1465 | **3070 / 1193** | instr -35.6 %, cycles -18.6 % (session-h was about 3700 / 1290: now -17 % instr) |
+| awfy/list | 396 / 92 | 396 / 92 | 0 |
+| awfy/deltablue | 335 / 108 | 335 / 108 | 0 |
+| awfy/cd | 805 / 259 | 805 / 258 | 0 |
+| awfy/richards | 180 / 58 | 180 / 59 | 0 |
+| awfy/permute | 235 / 43 | 235 / 43 | 0 |
+| awfy/nbody | 553 / 91 | 553 / 92 | 0 |
+| apps/raytrace | 356 / 113 | 356 / 113 | 0 |
+| apps/raytrace 40 | 4631 / 1207 | 4631 / 1186 | instr 0, cycles noise |
+| lib/tremove_front | 862 / 147 | 862 / 145 | 0 |
+| programs/fib | 7780 / 1236 | 7780 / 1242 | 0 |
+| programs/binary_trees | 7269 / 1469 | 7269 / 1483 | 0 (cycles +1 %, noise) |
+| corpus/astar_jumper (5.5) | 5416 / 1642 | 5415 / 1665 | 0 (instruction count is noisy) |
+
+(Instruction counts identical to the unit: the change only acts when a pre-roll `AREF` would have become a `PHI`, which never compiled.)
+
+**`corpus/astar_jumper` on 5.4: not the same cause.** No `asm-unsupported` abort in its run. `RUSTYNAIL_JIT_TRACE_LIMITS` on the session-i 5.4 binary (instructions M, three runs of the default are
+5739-5742): `slotlive=0` 5742, `fnrec=0` 5738, `fretry=0` **5339** (cycles 1765 against 1860-1880, -5.5 %). With `fretry=1` the function-entry root `L158 pc 0` (527 k entries, `LeaveFrame:41` side aborts at
+`L158:15 Return0`) and two continuation roots at `L22` form and the root at `L52 pc 0` does not; with `fretry=0` the formation is the one of session-h. So K3b's retry (`fretry`) changes which family forms in this
+program (+7 % instructions); it is a formation shift, not an abort bug, and is not fixed here (the K3 gains on `list` need the retry).
+
+### 29.2 The oracle jobs listed KNOWN (`core/t1i_inline [always +exitstorm=7 budget=3]`, `core/bb_tset [... budget=17]`, `tests/vm/table_insert_layout`)
+
+All three are the same inherent nondeterminism: the oracle compares the digest of live locals at equal clocks between the traced run and a JIT-off run of the same program in one process, and **the two
+runs lay out the heap differently**, so anything that depends on an object's address differs. Not a model error of the oracle's stay checkpoints and not a JIT discrepancy.
+
+* **t1i_inline** (deterministic failure in the cell, 3 of 3 runs; periodic mismatches every 1240 instructions, `stay end ... pc 3 (trace run) vs 34`): `TR_ORACLE_DEBUG=1 TR_ORACLE_RANGE` shows both runs at
+  `(proto 0xd9d2, pc 3)` at the same clock 619793, i.e. the stay position is right; the digest differs in a live **string** slot (`fmt`'s `v`). The first reported reason is that of the first candidate
+  fetch in the +-16 window (`pc 3 vs 34`), which hides the real reason (the `fail` of a checkpoint keeps only the first candidate's). The string is `"table: 0x..."`: the section
+  `swap_loop("swap_type_print", b_type, ... type = tostring ...)` makes `type({})` return the address text of a table. The sampling of checkpoints (first 3000, then every 16th) decides per cell whether a
+  checkpoint falls on such a frame, which is why only `+exitstorm=7 budget=3` failed and the full program "passed by the formation lottery" on other bases. Fix: the variant body no longer has `type({})`
+  (`b_type_na` in `tests/tr_core/progs.rs`); the job passes 3 of 3, `oracle_exits` and `oracle_trace_modes` of the program pass too.
+* **core/bb_tset** (a different cell failed in each of 3 runs: `-fold -cse`, `+randra=3`, `+membudget`; `stay end (Stay): pc 11 vs 7`, nested): the program stores through a table used as a key
+  (`names[46] = names`); a pointer-keyed node sits at an address-dependent place of the hash part, so collisions and the insert path (and with them the tier-1 stay ends) differ between the two runs,
+  and `keys()` builds strings of the key's `tostring`. Fix: the table key moved to a new program `bb_tset_tkey` (run by `tr_core::bb_tset_programs` in every mode, output compared with the interpreter,
+  which is order independent), and `bb_tset_tkey` is left out of the oracle (`run_cells` filter). `bb_tset` itself passes 6 of 6 runs.
+* **tests/vm/table_insert_layout** (about 1 run in 3): `live stack slot 17 ... tag 0x44 (string) vs 0x45 (table)`: `pairs` over tables with table keys visits the keys in an address-dependent order, so the
+  loop's `k` is a table in one run and a string in the other at the same clock. The program is the layout-exactness check against the reference Lua (its output is already order independent); it cannot be made
+  order independent in the oracle without dropping its table keys, so it is excluded from the oracle (`ADDR_ORDER` in `tr_oracle.rs`) and stays in `vm_corpus`. (Making the printed order sorted did not help: the live
+  locals still differ.)
+
+`scripts/gate-known.txt` has no `oracle` entries any more.
+
+### 29.3 Tests, mutants
+
+* Programs `tests/vm/k7_01_aref_phi.lua` (`tr_core::k7_aref_phi_programs`), `bb_tset_tkey` (in `bb_tset_programs`). Mutant `aref_phi_cse` (caught by `k7_aref_phi_programs`): registry 746 -> **747**
+  (`mutants.rs`, `tests/tr_mutants.rs` row, `scripts/gate-mutant-map.tsv` regenerated).

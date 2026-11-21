@@ -2188,6 +2188,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     };
     let t_asm = phase::now();
     let mut a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env).map_err(|e| {
+        if act.verbose >= 2 {
+            eprintln!("[trace] FAILIR\n{}\n{}", print::dump(ir), ra::dump(ir, &al));
+        }
         abort_err(
             match e {
                 asm::AsmError::Unsupported(_) => "asm-unsupported",

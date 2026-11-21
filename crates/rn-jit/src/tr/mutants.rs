@@ -900,6 +900,8 @@ pub const NAMES: &[&str] = &[
     "slotlive_nil_between",
     "slotlive_index_off",
     "slotlive_hload_stale",
+    // K7 (an AREF is never a PHI)
+    "aref_phi_cse",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -974,7 +976,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 746);
+        assert_eq!(NAMES.len(), 747);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
