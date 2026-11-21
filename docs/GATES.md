@@ -9,7 +9,7 @@ CPUs 0-1). A step waits while the load average is above 24 (`GATE_LOAD_MAX`).
 
 | Script | When | What | Wall time |
 |---|---|---|---|
-| `scripts/gate-light.sh [pattern]` | every commit | fmt, mutant-map check, clippy (5.5, 5.5 rn-jit with the test features, 5.4), rn-jit `--features trace` suite on 5.5 and 5.4, `vm_corpus` + rn-cli tests, jit-diff 1-50 (3 modes), mutant groups chosen from the changed files (or matching `pattern`) | 5.4 min without mutants (324 s: suites 137 s + 132 s, vm_corpus 45 s) + the mutant group: 30-60 s for a small change (a `shape.rs` touch: 15 mutants, 32 s), 629 s for the K5 change set (142 mutants, one of them leash-bound at 600 s); the plan prints its estimate |
+| `scripts/gate-light.sh [pattern]` | every commit | fmt, mutant-map check, clippy (5.5, 5.5 rn-jit with the test features, 5.4), rn-core tests (5.5, 5.4), rn-jit `--features trace` suite on 5.5 and 5.4, `vm_corpus` + rn-cli tests, jit-diff 1-50 (3 modes), mutant groups chosen from the changed files (or matching `pattern`) | 5.4 min without mutants (324 s: suites 137 s + 132 s, vm_corpus 45 s) + the mutant group: 30-60 s for a small change (a `shape.rs` touch: 15 mutants, 32 s), 629 s for the K5 change set (142 mutants, one of them leash-bound at 600 s); the plan prints its estimate |
 | `scripts/gate-heavy.sh` | before merge / push | light + oracle-feature suite 5.5 and 5.4 + `oracle_options` + jit-diff 1-200 (7 modes) + all 723 mutants | 66 min (3964 s) |
 
 ```
@@ -31,7 +31,9 @@ tests: 4 in the trace suite, 3 in the oracle suite), `GATE_BIN_PAR` / `GATE_THRE
 ### What is where
 
 - Light (per commit): `cargo fmt --check`; clippy 5.5 (workspace, all targets) and 5.5 `rn-jit --features tr_mutants,t15_oracle` (compiles the
-  gated tests), clippy 5.4; the rn-jit suite with `--features trace` (the shipped code) on 5.5 and 5.4 (`--no-fail-fast`); `vm_corpus` and the
+  gated tests), clippy 5.4; the rn-core tests on 5.5 and 5.4 (steps `core-5.5`, `core-5.4`: `cargo test -p rn-core` with the default
+  features and again with `--features jit_trace`, the hooked interpreter that rnlua ships and the `jit`-gated tests; 117 + 3 tests (119 + 3 with jit_trace) on 5.5,
+  88 + 3 on 5.4; 3 s each when warm, debug profile like the rn-jit suite, test failures classified against gate-known.txt); the rn-jit suite with `--features trace` (the shipped code) on 5.5 and 5.4 (`--no-fail-fast`); `vm_corpus` and the
   rn-cli tests (`cargo test --release -p rustynail -p rn-cli`, against the reference build); `jit-diff` seeds 1-50, modes `off tr trdef`; and,
   the mutant groups chosen from the changed files (next section) or, with a pattern argument, the groups whose name contains it
   (`gate-light.sh cofuse_,amt_`: `TR_MUT_ONLY`).

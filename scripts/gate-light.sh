@@ -1,5 +1,5 @@
 #!/bin/bash
-# Per-commit gate (docs/GATES.md): fmt, clippy (5.5, 5.4), the rn-jit trace suite (`--features trace`) on 5.5 and 5.4 (the
+# Per-commit gate (docs/GATES.md): fmt, clippy (5.5, 5.4), the rn-core tests (5.5, 5.4; default and jit_trace features), the rn-jit trace suite (`--features trace`) on 5.5 and 5.4 (the
 # oracle-feature suite, tr_oracle, tr_identity and the mutant runners are in scripts/gate-heavy.sh), vm_corpus, jit-diff seeds
 # 1..50, and the mutant groups selected by the pattern argument. Wall time is printed per step.
 #
@@ -65,6 +65,8 @@ gate_step clippy-5.5-jit 1800 - - cargo clippy -p rn-jit --all-targets --feature
 if [ "$NO54" = 0 ]; then
   gate_step clippy-5.4 1800 - - "${V54ENV[@]}" cargo clippy --workspace --all-targets -- -D warnings
 fi
+gate_core_tests 5.5
+[ "$NO54" = 0 ] && gate_core_tests 5.4
 gate_jit_suite 5.5 trace
 [ "$NO54" = 0 ] && gate_jit_suite 5.4 trace
 gate_vm_corpus

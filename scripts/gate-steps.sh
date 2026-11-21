@@ -33,6 +33,16 @@ gate_jit_suite() {
     "$GATE_ROOT/scripts/gate-runbins.sh" "$GATE_DIR/$n.list" "${GATE_BIN_PAR:-$par}" "$GATE_DIR/$n.bins" "${GATE_THREADS:-4}" "${skips[@]}"
 }
 
+# gate_core_tests <5.5|5.4>: the rn-core unit and integration tests, twice: the default features (the interpreter-only build) and
+# `--features jit_trace` (the hooked interpreter that rnlua ships, plus the tests gated on `jit`). Same target directory and
+# profile as the rn-jit suite of that version (GATE_PROFILE), so nothing is built twice. About 6 s warm per version.
+gate_core_tests() {
+  local v=$1
+  gate_test_env "$v"
+  GATE_VERSION=$v GATE_TESTS=1 gate_step "core-$v" 1200 - "${GATE_CPUS:--}" env "${GATE_TENV[@]}" bash -c \
+    'cargo test -p rn-core "$@" --no-fail-fast && cargo test -p rn-core "$@" --features jit_trace --no-fail-fast' _ "${GATE_REL[@]}"
+}
+
 # vm_corpus + the rn-cli tests against the reference build (release). `ref/` is not tracked: a worktree gets a symlink to the
 # main checkout's.
 gate_vm_corpus() {
