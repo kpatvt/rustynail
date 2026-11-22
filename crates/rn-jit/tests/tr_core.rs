@@ -481,6 +481,9 @@ struct TStats {
     idfold_banned: u64,
     /// E4 (docs/JIT_TRACE.md section 35): candidate prototypes with loops decided lazy-aware (`lazyloop: lazy-aware N`).
     lazyloop_on: u64,
+    /// E5: `midfold: traces T refused R banned B`.
+    midfold_traces: u64,
+    midfold_refused: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -700,6 +703,16 @@ impl TStats {
                     s.idfold_traces = t;
                     s.idfold_ustore = us;
                     s.idfold_banned = b;
+                }
+            } else if let Some(r) = l.strip_prefix("midfold: traces ") {
+                let nums: Vec<u64> = r
+                    .split(|c: char| !c.is_ascii_digit())
+                    .filter(|w| !w.is_empty())
+                    .filter_map(|w| w.parse().ok())
+                    .collect();
+                if let [t, rf, _] = nums[..] {
+                    s.midfold_traces = t;
+                    s.midfold_refused = rf;
                 }
             } else if let Some(r) = l.strip_prefix("lazyloop: lazy-aware ") {
                 s.lazyloop_on = r.trim().parse().unwrap_or(0);
@@ -12622,6 +12635,92 @@ fn e4_lazyloop_programs() {
                 "{}: lazy-aware candidates {}",
                 j.tag(),
                 o.stats.lazyloop_on
+            );
+        }
+    }
+}
+
+/// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): method recursion. `e5_01` (permute / towers shapes, inheritance, instances that override the
+/// method, a subclass through the same sites, the class method rebound by a leaf, `setmetatable` / `__index` replaced, another receiver passed to
+/// the running closure, another closure of the prototype called on the receiver, register 0 reassigned, an `__index` function) and `e5_02`
+/// (overflow depth and message, errors and method tracebacks, pcall at every level, yields, hooks installed from inside, getinfo, setlocal of
+/// a suspended receiver), plus `e1_04` (towers) and `e4_01` x `midfold` 0 / 1, `+verify`; for `midfold=1`: exit storm, budgets 3 / 17 / 200,
+/// GC stress 1 / 2 in both collector modes, stack-move stress. Asserts folded traces and the family rule firing in `e5_01` with the knob on,
+/// none with it off.
+#[test]
+fn e5_midfold_programs() {
+    let progs = [
+        "e5_01_method_identity",
+        "e5_02_method_errors",
+        "e1_04_unroll_method_only",
+        "e4_01_lazy_loop_shapes",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("errors");
+        for trace in ["always", "on2"] {
+            for lim in ["midfold=0", "midfold=1"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "midfold=1";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            for b in [3, 17, 200] {
+                if heavy && b != 17 {
+                    continue;
+                }
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                // (`e5_01` under full collections in `always` mode meets a defect of the lazy chain that predates E4 / E5 (it reproduces
+                // with `lazyloop=0,midfold=0,recunroll=0,idfold=0` and needs `lazyci` + `recany`): docs/JIT_TRACE.md section 35.8)
+                if (heavy || (p == "e5_01_method_identity" && trace == "always")) && gc == "1" {
+                    continue;
+                }
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            // (the overflow cases of `e5_02` take minutes under stack-move stress)
+            if !heavy {
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(lim),
+                );
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits == "midfold=0" {
+            assert_eq!(
+                o.stats.midfold_traces,
+                0,
+                "{}: folded with midfold=0",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none();
+        if j.prog == "e5_01_method_identity" && plain && j.limits == "midfold=1" {
+            assert!(
+                o.stats.midfold_traces >= 4,
+                "{}: folded traces {}",
+                j.tag(),
+                o.stats.midfold_traces
+            );
+            assert!(
+                o.stats.midfold_refused >= 1,
+                "{}: the family rule never fired",
+                j.tag()
             );
         }
     }

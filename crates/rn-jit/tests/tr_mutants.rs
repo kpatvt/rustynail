@@ -4303,6 +4303,45 @@ const TABLE: &[Row] = &[
         name: "lazyloop_root_not_set",
         owner: "E4",
         dets: &[d("tr_core", "e4_lazyloop_programs")],
+    },    Row {
+        name: "midfold_outer_unchecked",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_rootret_inner",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_store_family",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_recv_any",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_push_proto",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_reg0_any",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_check_true",
+        owner: "E5",
+        dets: &[d("tr_core", "e5_midfold_programs")],
+    },
+    Row {
+        name: "midfold_first_keep",
+        owner: "E5",
+        dets: &[dl("tr_policy", "e5_policy")],
     },
 ];
 

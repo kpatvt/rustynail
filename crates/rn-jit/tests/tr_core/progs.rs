@@ -16276,6 +16276,17 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e4_04_lazy_loop_retf.lua"),
     },
+    // E5 (docs/JIT_TRACE.md section 35.4): region-scoped method identity
+    Prog {
+        name: "e5_01_method_identity",
+        small: true,
+        src: include_str!("../../../../tests/vm/e5_01_method_identity.lua"),
+    },
+    Prog {
+        name: "e5_02_method_errors",
+        small: true,
+        src: include_str!("../../../../tests/vm/e5_02_method_errors.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

@@ -831,6 +831,9 @@ pub struct TraceIr {
     /// E2 (`idfold`): a `GETUPVAL` of the family's self upvalue was folded to the running closure: the trace relies on the region invariant
     /// (docs/JIT_TRACE.md section 34.3).
     pub idfold: bool,
+    /// E5 (`midfold`): a method `SELF` of the family's key on register 0 was folded to the running closure: the trace relies on the region
+    /// invariant of section 35.4.
+    pub midfold: bool,
     /// BUNDLE-L B: the pre-roll holds the hoisted bounds guards of a counted loop (`opt_loop::Em::plan_bhoist`): a persistent failure of them
     /// re-records the head without the hoist (`HeadData::nohoist`).
     pub hoisted: bool,
@@ -946,6 +949,7 @@ impl TraceIr {
         self.rec_call = None;
         self.rec_ret = None;
         self.idfold = false;
+        self.midfold = false;
     }
 
     /// Is `r` an instruction ref?

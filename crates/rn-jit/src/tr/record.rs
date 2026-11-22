@@ -288,6 +288,12 @@ pub struct RecCfg {
     /// inlined frame of the unroll chain is guarded by identity with the closure of the frame that calls (so every frame of a region runs the
     /// closure its checked entry verified).
     pub idfold_ident: bool,
+    /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the constant index of the root prototype's method key whose `SELF` on register 0 of the
+    /// root frame folds to the running closure (`None`: no folding).
+    pub midfold: Option<u32>,
+    /// E5: the family's method invariant is in force: every native push passes its frame's own register 0 (unchanged) and is guarded by
+    /// identity with the running closure; pushes from inlined frames are not made.
+    pub midfold_ident: bool,
     /// J2-2: most IR instructions of this recording (0 = the general limit): a deep recording's bound.
     pub max_ins: usize,
     /// P-E2: record `table.pack(...)` of a fixed argument count (see `Rec::pack_call`).
@@ -543,6 +549,8 @@ impl Default for RecCfg {
             rec_unroll: 1,
             idfold: None,
             idfold_ident: false,
+            midfold: None,
+            midfold_ident: false,
             max_ins: 0,
             pack: false,
             gfor: false,
@@ -1358,6 +1366,8 @@ struct Rec {
     unr_started: bool,
     /// E2: a `GETUPVAL` was folded to the running closure (the trace relies on the region invariant: `TraceIr::idfold`).
     idfolded: bool,
+    /// E5: a method `SELF` was folded to the running closure (`TraceIr::midfold`).
+    midfolded: bool,
 }
 
 type R<T> = Result<T, AbortReason>;
@@ -1626,6 +1636,7 @@ impl Rec {
             tail_args: None,
             unr_started: false,
             idfolded: false,
+            midfolded: false,
             segs: Vec::new(),
             retf_below: Default::default(),
             retf_funcs: Default::default(),
@@ -2439,6 +2450,7 @@ impl Rec {
         LA_LAST.with(|l| *l.borrow_mut() = self.la_seen.borrow().clone());
         ir.fn_root = self.cfg.fn_root && self.cfg.side.is_none() && ir.rec_call.is_none();
         ir.idfold = self.idfolded;
+        ir.midfold = self.midfolded;
         Recorded {
             writeback: match self.rec_ret {
                 Some((rr, r)) if rr.n == 1 => vec![SnapEntry {
@@ -5597,6 +5609,77 @@ impl Rec {
         Ok(UvAcc::Cell(u))
     }
 
+    /// E5: the entry value of the root frame's register 0 (its `SLOAD`; the recorder reads the slot through `rd`, which emits the same load the
+    /// first time). A register 0 that the trace overwrote reads as another ref.
+    fn slot0_entry(&mut self) -> R<Ref> {
+        let base = self.frames[0].base_off;
+        let v = self.sm.cur[base];
+        if v != NOREF && TraceIr::is_ins(v) {
+            let ins = self.b.ir.at(v);
+            if ins.op == TOp::Sload && usize::from(ins.a) == base {
+                return Ok(v);
+            }
+        }
+        Ok(NOREF)
+    }
+
+    /// E5 (`midfold`, section 35.4): may frame `d` push the callee at `a` natively under the method invariant? Only from the root frame of the
+    /// recording, with the callee's register 0 (the first argument) being this frame's own register 0, unchanged: every frame of a region then
+    /// has the receiver its checked entry verified.
+    fn midfold_recv_ok(&mut self, vm: &Vm<'_>, a: usize, d: usize, nargs: usize) -> R<bool> {
+        if mutants::active("midfold_recv_any") {
+            return Ok(true);
+        }
+        let _ = vm;
+        if d > 0 || nargs == 0 {
+            return Ok(false);
+        }
+        // (the slot map only, no `rd`: reading a slot here would emit loads and mark it read at the `CALL`, which changes the snapshots of a call
+        // that is then inlined instead of pushed)
+        let base = self.frames[0].base_off;
+        let (s0, recv) = match (self.sm.cur.get(base), self.sm.cur.get(base + a + 1)) {
+            (Some(&s0), Some(&r)) => (s0, r),
+            _ => return Ok(false),
+        };
+        Ok(s0 != NOREF && recv == s0 && s0 == self.slot0_entry()?)
+    }
+
+    /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): `SELF A 0 K` of the family's method key in the root frame, whose record-time result is the
+    /// running closure: records as the closure's ref (no lookup chain), `R[A+1]` = register 0. Sound because the region's checked entries
+    /// verified `lookup(R[0], K) == closure` for every frame of a region, register 0 of the prototype is never written nor captured (the
+    /// decision), every push passes its own register 0, and the family admits no store that could change a lookup of `K`.
+    fn midfold_self(&mut self, vm: &Vm<'_>, a: usize, b: usize, i: Instruction) -> R<bool> {
+        let Some(kidx) = self.cfg.midfold else {
+            return Ok(false);
+        };
+        if b != 0 || self.cur_depth != 0 || (cfg!(rustynail_lua54) && i.k() == 0) {
+            return Ok(false);
+        }
+        if i.c() as usize != kidx as usize || a + 1 >= self.frames[0].nslots {
+            return Ok(false);
+        }
+        let Some(key) = vm.k.get(kidx as usize).and_then(|v| v.as_strref()) else {
+            return Ok(false);
+        };
+        let fv = vm.st.get(StkId(vm.base - 1));
+        if !fv
+            .as_lclosure()
+            .is_some_and(|c| c.as_ptr() == vm.cl.as_ptr())
+            || !method_lookup_is(vm.st, vm.slot(0), key, &fv)
+        {
+            return Ok(false);
+        }
+        let t = self.rd(vm, 0)?;
+        if t.1 != Ty::Tab || t.0 != self.slot0_entry()? {
+            return Ok(false);
+        }
+        let f = self.func_ref_load()?;
+        self.def(a + 1, t.0);
+        self.def(a, f);
+        self.midfolded = true;
+        Ok(true)
+    }
+
     /// The ref of the root frame's closure (`SLOAD` of the function slot, emitted once).
     fn func_ref_load(&mut self) -> R<Ref> {
         if self.func_ref == NOREF {
@@ -6032,6 +6115,9 @@ impl Rec {
                 Ok(next)
             }
             O::SelfOp => {
+                if self.midfold_self(vm, a, b, i)? {
+                    return Ok(next);
+                }
                 let t = self.rd(vm, b)?;
                 let c = i.c() as usize;
                 // 5.5: the key is `K[C]`; 5.4: `RK(C)`, a register when `k` is clear
@@ -6605,7 +6691,9 @@ impl Rec {
         // (the callee is the running closure: equality with it implies the proto, and costs one compare; E1: the closure of frame `d`)
         let running = if d > 0 {
             self.frames[d].cref
-        } else if self.cfg.idfold_ident && !mutants::active("idfold_push_proto") {
+        } else if (self.cfg.idfold_ident && !mutants::active("idfold_push_proto"))
+            || (self.cfg.midfold_ident && !mutants::active("midfold_push_proto"))
+        {
             // (E2: the push is guarded by identity with the running closure, never by the prototype alone)
             self.func_ref_load()?
         } else {
@@ -6834,6 +6922,18 @@ impl Rec {
             // E2: inside a region every frame runs the closure the checked entry verified: a native push (or an inlined frame of the chain)
             // of another closure of the prototype is not made
             && (!self.cfg.idfold_ident || cl.as_ptr() as usize == self.frames[d].closure);
+        // E5: inside a method region every frame runs the checked closure on its own (unchanged) register 0: a push (from the root frame) of
+        // another closure or of another receiver is not made; the recording ends at the call with an exit (tier 1 makes the call, its frame starts a region through a
+        // checked entry). (Inlining such a self-call instead met a defect of the inlined-recursion path under lazy regions that predates E5,
+        // docs/JIT_TRACE.md section 35.8.)
+        if push_ok
+            && d == 0
+            && self.cfg.midfold_ident
+            && !(cl.as_ptr() as usize == self.frames[0].closure
+                && self.midfold_recv_ok(vm, a, 0, nargs)?)
+        {
+            return self.end_exit();
+        }
         // E1 (`recunroll`, docs/JIT_TRACE.md section 34.1): the unroll chain. In a function-entry recording (not a side, not a continuation)
         // whose frames are all activations of the root prototype, each entered by a self-call that satisfied the conditions of a native push,
         // a self-call that satisfies them too is inlined while the chain is shorter than `k - 1` frames; at depth `k - 1` it is the native push.
@@ -11683,6 +11783,29 @@ thread_local! {
 /// `loopany` guard: the sites (callee prototype address, loop head pc) the last closed recording unrolled.
 pub fn last_la_sites() -> Vec<(usize, usize)> {
     LA_LAST.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// E5 (`midfold`): does the lookup of the short string `key` on `recv` (raw gets, `__index` links of tables only, at most
+/// `cache::MIDFOLD_DEPTH` tables) give `want`? The record-time twin of `cache::jit_tr_midfold_check`.
+pub fn method_lookup_is(st: &State, recv: Value, key: StrRef, want: &Value) -> bool {
+    let idx = st.g().heap.tm_name(rn_core::meta::Tm::Index);
+    let Some(mut t) = recv.as_table() else {
+        return false;
+    };
+    for _ in 0..super::cache::MIDFOLD_DEPTH {
+        let v = t.get_short_str(key);
+        if !v.is_nil() {
+            return v.raw_equal(want);
+        }
+        let Some(m) = t.metatable() else {
+            return false;
+        };
+        match m.get_short_str(idx).as_table() {
+            Some(n) => t = n,
+            None => return false,
+        }
+    }
+    false
 }
 
 /// `loopany` guard: the site is never unrolled again (its unrolled traces exit too often).

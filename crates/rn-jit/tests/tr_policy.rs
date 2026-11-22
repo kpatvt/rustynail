@@ -2200,3 +2200,37 @@ fn e4_policy() {
         "a loop-free prototype is not affected"
     );
 }
+
+/// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the knob (struct default = shipped, parsing).
+#[test]
+fn e5_policy() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, MIDFOLD_PROCESS};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.midfold, MIDFOLD_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (Some("midfold=0"), 0),
+        (Some("midfold=7"), 1),
+        (None, MIDFOLD_PROCESS),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.midfold, want, "limits env {env:?}");
+    }
+    // the first-trace rule: a first root trace without a fold turns folding off (detector of `midfold_first_keep`); a folded one, or a later
+    // trace, keeps it
+    use rn_jit::tr::cache::TrProto;
+    let mk = || TrProto::new(10, &[0, 7], 256, true, 77, 1);
+    let tp = mk();
+    tp.mark_midfold(3);
+    assert!(tp.midfold_first(false, true), "first trace without a fold");
+    assert!(!tp.midfold_on());
+    let tp = mk();
+    tp.mark_midfold(3);
+    assert!(!tp.midfold_first(true, true), "first trace folded");
+    assert!(tp.midfold_on());
+    assert!(!tp.midfold_first(false, false), "a later trace");
+    assert!(tp.midfold_on());
+}

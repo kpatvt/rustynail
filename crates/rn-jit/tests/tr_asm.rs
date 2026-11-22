@@ -714,6 +714,8 @@ fn base_env(w: &mut World) -> AsmEnv {
         lazy_cs: None,
         lazy_nparams: 0,
         idfold_uv: None,
+        midfold_kidx: None,
+        midfold_fn: 0,
         frame_link_snap: u32::MAX,
         setmt_inline: true,
         tnext_inline: false,
@@ -3192,6 +3194,8 @@ mod e2e {
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
+            midfold_kidx: None,
+            midfold_fn: 0,
             frame_link_snap: u32::MAX,
             setmt_inline: true,
             tnext_inline: false,
@@ -3253,6 +3257,7 @@ mod e2e {
                 weight: 0,
                 unrolled: false,
                 idfold: false,
+                midfold: false,
             },
         )
         .map_err(|e| format!("install: {e:?}"))?;

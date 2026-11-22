@@ -102,6 +102,8 @@ pub enum UnrollDemote {
 pub const IDFOLD_PROCESS: u32 = 1;
 /// E4: the process default of [`TrLimits::lazyloop`] (also the struct default).
 pub const LAZYLOOP_PROCESS: u32 = 1;
+/// E5: the process default of [`TrLimits::midfold`] (also the struct default).
+pub const MIDFOLD_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
@@ -691,6 +693,12 @@ pub struct TrLimits {
     /// pushed frames are lazy, its loop traces belong to the region family): 0 = off (loops exclude a prototype, the code of before), 1 = on
     /// (default [`LAZYLOOP_PROCESS`]; E1 does not unroll such a prototype), 2 = on and E1 may unroll it.
     pub lazyloop: u32,
+    /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): region-scoped method identity. In a lazy-aware family whose function is a method
+    /// recursion (`self:m(..)` on its own register 0, which no instruction writes and no closure captures), `SELF` of that key on register 0 records
+    /// as the running closure (no lookup chain); the region's checked entries verify `lookup(R[0], key) == closure`, every native push passes its
+    /// own `R[0]` and the family admits no store that could change a lookup of the key (`__index`, the key, `setmetatable`). 0 = off, 1 = on
+    /// (default [`MIDFOLD_PROCESS`]).
+    pub midfold: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -823,6 +831,7 @@ impl Default for TrLimits {
             unrollcode: UNROLLCODE_PROCESS,
             idfold: IDFOLD_PROCESS,
             lazyloop: LAZYLOOP_PROCESS,
+            midfold: MIDFOLD_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -1013,6 +1022,7 @@ impl TrLimits {
                 "unrollcode" => l.unrollcode = v,
                 "idfold" => l.idfold = v.min(1),
                 "lazyloop" => l.lazyloop = v.min(2),
+                "midfold" => l.midfold = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
@@ -1599,6 +1609,16 @@ pub struct TrProto {
     idfold_st: Cell<u8>,
     /// E4 (`lazyloop`, section 35): the prototype has a backward jump (a loop); E1 unrolls it only with `lazyloop=2`.
     pub loops: Cell<bool>,
+    /// E5 (`midfold`, section 35.4): 0 = undecided, 1 = folding on (key `midfold_kidx`), 2 = off for good.
+    midfold_st: Cell<u8>,
+    /// E5: the constant index of the method key, the key's address and the `__index` name's address (the family rule compares store keys with
+    /// both).
+    midfold_kidx: Cell<u32>,
+    midfold_key: Cell<u64>,
+    midfold_idx: Cell<u64>,
+    /// E5: installed traces of this prototype that folded a `SELF` (`Trace::midfold`): while any lives, every trace of the family keeps the
+    /// checked entries, its pushes pass their own receiver and the family rule holds.
+    midfold_live: Cell<u32>,
     /// E4: the lazy decision of a prototype with loops: [`LAZY_STATIC`] (not a candidate: `lazy` was fixed with the dispatch table), [`LAZY_CAND`]
     /// (undecided), [`LAZY_ON`] (decided lazy-aware), [`LAZY_OFF`] (decided eager for good).
     pub lazy_st: Cell<u8>,
@@ -1678,6 +1698,11 @@ impl TrProto {
             idfold_st: Cell::new(0),
             loops: Cell::new(false),
             lazy_st: Cell::new(LAZY_STATIC),
+            midfold_st: Cell::new(0),
+            midfold_kidx: Cell::new(0),
+            midfold_key: Cell::new(0),
+            midfold_idx: Cell::new(0),
+            midfold_live: Cell::new(0),
             idfold_uv: Cell::new(0),
             idfold_live: Cell::new(0),
             landing: RefCell::new(None),
@@ -2178,6 +2203,30 @@ impl TrProto {
         self.lazy.get()
     }
 
+    /// E5 (section 35.4): the compile of a root trace that folded a method lookup (`folded`) or not, `untraced`: no trace of the prototype is
+    /// installed. A first trace without a fold turns folding off for good (nothing relies on it yet). True: turned off now.
+    pub fn midfold_first(&self, folded: bool, untraced: bool) -> bool {
+        if self.midfold_st.get() != 1 || folded || self.midfold_live.get() > 0 || !untraced {
+            return false;
+        }
+        if mutants::active("midfold_first_keep") {
+            return false;
+        }
+        self.midfold_st.set(2);
+        true
+    }
+
+    /// E5: marks method folding on with key constant `kidx` (what `midfold_decide` does; public for the policy tests).
+    pub fn mark_midfold(&self, kidx: u32) {
+        self.midfold_kidx.set(kidx);
+        self.midfold_st.set(1);
+    }
+
+    /// E5: is method folding on for the prototype?
+    pub fn midfold_on(&self) -> bool {
+        self.midfold_st.get() == 1
+    }
+
     /// E4: marks the prototype a lazy candidate with loops (what the dispatch table does with `lazyloop`; public for the policy tests).
     pub fn mark_lazy_cand(&self) {
         self.loops.set(true);
@@ -2561,6 +2610,10 @@ pub struct TrStats {
     pub idfold_traces: u64,
     pub idfold_ustore: u64,
     pub idfold_banned: u64,
+    /// E5: installed traces that folded a method `SELF`; recordings refused by the family rule; prototypes banned.
+    pub midfold_traces: u64,
+    pub midfold_refused: u64,
+    pub midfold_banned: u64,
     /// E4: candidate prototypes with loops that were decided lazy-aware.
     pub lazyloop_on: u64,
     /// R1: rearm ticks armed by a hand-off to the interpreter.
@@ -2700,6 +2753,8 @@ struct Trace {
     unroll_doom: bool,
     /// E2: the trace folded a `GETUPVAL` of its family's self upvalue (counted in `TrProto::idfold_live`).
     idfold: bool,
+    /// E5: the trace folded a method `SELF` of its family (counted in `TrProto::midfold_live`).
+    midfold: bool,
 }
 
 // (a slot of the trace table: boxing `Trace` would cost an indirection in the exit handler's lookups for nothing)
@@ -3781,6 +3836,8 @@ pub struct TraceInstall {
     pub unrolled: bool,
     /// E2: the trace folded a `GETUPVAL` of the family's self upvalue (`TraceIr::idfold`).
     pub idfold: bool,
+    /// E5: the trace folded a method `SELF` of the family.
+    pub midfold: bool,
 }
 
 /// Why [`install`] did not install.
@@ -4105,7 +4162,14 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         weight: ti.weight,
         unroll_doom: false,
         idfold: ti.idfold,
+        midfold: ti.midfold,
     });
+    if ti.midfold {
+        if let Some(tp) = tr_of(d, root) {
+            tp.midfold_live.set(tp.midfold_live.get() + 1);
+        }
+        d.tr.stats.midfold_traces += 1;
+    }
     if ti.idfold {
         if let Some(tp) = tr_of(d, root) {
             tp.idfold_live.set(tp.idfold_live.get() + 1);
@@ -4275,6 +4339,11 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
     }
     d.tr.stats.exits += trace_exits(&t);
     exit_dump(&t, "flushed");
+    if t.midfold {
+        if let Some(tp) = tr_of(d, t.root) {
+            tp.midfold_live.set(tp.midfold_live.get().saturating_sub(1));
+        }
+    }
     if t.idfold {
         if let Some(tp) = tr_of(d, t.root) {
             tp.idfold_live.set(tp.idfold_live.get().saturating_sub(1));
@@ -5747,6 +5816,173 @@ pub fn proto_lazy_cand(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
     tr_of(d, pr.0).is_some_and(|tp| tp.lazy_st.get() == LAZY_CAND)
 }
+
+/// E5 (`midfold`, section 35.4): the decision, once per prototype, at its first recording (any head) while it is lazy-aware or a lazy candidate
+/// with loops and has no trace yet. `key`: (constant index, key address, `__index` name address) of the method key (`SELF A 0 K` of the
+/// prototype whose lookup on the running frame's register 0 is the running closure, register 0 never written nor captured: see `driver_start`).
+/// Otherwise off for good.
+pub fn midfold_decide(st: &mut State, pr: ProtoRef, key: Option<(u32, u64, u64)>) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.midfold == 0 {
+        return;
+    }
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if tp.midfold_st.get() != 0 {
+        return;
+    }
+    let untraced = !d
+        .tr
+        .slots
+        .iter()
+        .any(|sl| matches!(&sl.body, Body::Trace(t) if t.root == pr.0));
+    let lazyish = tp.lazy.get() || tp.lazy_st.get() == LAZY_CAND;
+    vlog(d, || {
+        format!(
+            "--- midfold: proto:{} key {key:x?} lazy {lazyish} untraced {untraced}",
+            tp.line
+        )
+    });
+    match key {
+        Some((c, k, i)) if lazyish && untraced => {
+            tp.midfold_kidx.set(c);
+            tp.midfold_key.set(k);
+            tp.midfold_idx.set(i);
+            tp.midfold_st.set(1);
+        }
+        _ => tp.midfold_st.set(2),
+    }
+}
+
+/// E5: what a recording / compile of `pr` gets: the key to fold (`Some` while folding is on), and the key the region's checks verify (`Some`
+/// while folding is on or a folded trace of the prototype is installed). Both only for a prototype that is lazy-aware or still a candidate.
+pub fn midfold_cfg(st: &mut State, pr: ProtoRef) -> (Option<u32>, Option<u32>) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.midfold == 0 {
+        return (None, None);
+    }
+    tr_of(d, pr.0).map_or((None, None), |tp| {
+        if !(tp.lazy.get() || tp.lazy_st.get() == LAZY_CAND) {
+            return (None, None);
+        }
+        let k = tp.midfold_kidx.get();
+        let on = tp.midfold_st.get() == 1;
+        let ident = on || tp.midfold_live.get() > 0;
+        (on.then_some(k), ident.then_some(k))
+    })
+}
+
+/// E5 (section 35.4): the compile of a root trace of `pr` that folded (`folded`) or not. When it is the first trace of the prototype and did
+/// not fold, folding goes off for good (no trace relies on it yet): a family whose first trace has no method lookup to fold (`awfy/towers`: its
+/// leaf path) would pay the checked entries' lookup at every region start for nothing.
+pub fn midfold_first(st: &mut State, pr: ProtoRef, folded: bool) {
+    let d = d_of(st);
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    let untraced = !d
+        .tr
+        .slots
+        .iter()
+        .any(|sl| matches!(&sl.body, Body::Trace(t) if t.root == pr.0));
+    if tp.midfold_first(folded, untraced) {
+        vlog(d, || {
+            format!(
+                "--- midfold: proto:{} first trace without a fold: off",
+                tp.line
+            )
+        });
+    }
+}
+
+/// E5: the key and the `__index` name the family rule compares with (0, 0 when the prototype has no method key).
+pub fn midfold_keys(st: &mut State, pr: ProtoRef) -> (u64, u64) {
+    let d = d_of(st);
+    tr_of(d, pr.0).map_or((0, 0), |tp| (tp.midfold_key.get(), tp.midfold_idx.get()))
+}
+
+/// E5: the family rule caught a trace that may change a lookup of the key (or folding met an eager family): the recording is refused, folding
+/// goes off for good and every family that holds a folded trace is doomed (flushed at its next hot exit through the handler, as in E1 / E2).
+pub fn midfold_ban(st: &mut State, pr: ProtoRef) {
+    let d = d_of(st);
+    d.tr.stats.midfold_refused += 1;
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if tp.midfold_st.get() == 1 {
+        d.tr.stats.midfold_banned += 1;
+    }
+    tp.midfold_st.set(2);
+    let fams: Vec<TrId> =
+        d.tr.slots
+            .iter()
+            .filter_map(|sl| match &sl.body {
+                Body::Trace(t) if t.root == pr.0 && t.midfold => Some(t.family),
+                _ => None,
+            })
+            .collect();
+    for f in fams {
+        if let Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) = d.tr.slot_mut(f)
+        {
+            t.unroll_doom = true;
+        }
+    }
+}
+
+/// E5 (`midfold`, section 35.4): the region check of a method family, called at its checked entries (`jit_tr_midfold_check(thread, ci, kidx,
+/// 0)`, class N: reads only). 1 when `ci`'s register 0 is a table whose lookup of the constant `kidx` of `ci`'s prototype (a short string)
+/// through raw gets and table `__index` links (no function, at most [`MIDFOLD_DEPTH`] tables) gives `ci`'s closure; 0 otherwise (the entry is
+/// not taken: tier 1 runs the frame).
+/// # Safety
+/// `th` is the running thread and `ci` one of its Lua frames.
+pub unsafe extern "C" fn jit_tr_midfold_check(
+    th: *mut rn_core::state::Thread,
+    ci: *mut rn_core::state::CallInfo,
+    kidx: u32,
+    _b: u32,
+) -> u32 {
+    if mutants::active("midfold_check_true") {
+        return 1;
+    }
+    // SAFETY: contract.
+    let st = unsafe { jit_hooks::state_from_thread(th.cast()) };
+    // SAFETY: `ci` is a live Lua frame (contract).
+    let func = unsafe { (*ci).func };
+    let fv = st.get(func);
+    let Some(cl) = fv.as_lclosure() else {
+        return 0;
+    };
+    let p = cl.proto();
+    let Some(key) = p.k().get(kidx as usize).and_then(|v| v.as_strref()) else {
+        return 0;
+    };
+    let recv = st.get(rn_core::state::StkId(func.0 + 1));
+    let idx = st.g().heap.tm_name(rn_core::meta::Tm::Index);
+    let Some(mut t) = recv.as_table() else {
+        return 0;
+    };
+    for _ in 0..MIDFOLD_DEPTH {
+        let v = t.get_short_str(key);
+        if !v.is_nil() {
+            return u32::from(v.raw_equal(&fv));
+        }
+        let Some(m) = t.metatable() else {
+            return 0;
+        };
+        match m.get_short_str(idx).as_table() {
+            Some(n) => t = n,
+            None => return 0,
+        }
+    }
+    0
+}
+
+/// E5: the longest `__index` chain of tables [`jit_tr_midfold_check`] follows.
+pub const MIDFOLD_DEPTH: usize = 8;
 
 /// E4 (section 35.1): may a `RETF` recording pop into a frame of `p` (a prototype with loops; the loop-free superset is `maybe_lazy_proto`'s)? A
 /// lazy-aware prototype refuses (its frames can be lazy); an undecided candidate is decided eager for good now, so it never becomes lazy-aware

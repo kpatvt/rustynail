@@ -101,6 +101,12 @@ pub struct ExitArea {
     pub shape_nofill: u64,
     /// S4: zero ids filled by the exit handler so far (statistics of the budget).
     pub shape_fills: u64,
+    /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the receiver (table address) and the closure (address) of the region whose method check
+    /// passed last: every frame of a method region shares the receiver of its root (pushes pass their own register 0) and runs the checked closure,
+    /// so a root return into a caller with the same receiver and closure needs no lookup. Written by every passing check; meaningful only inside a
+    /// region whose start (a checked outer entry) wrote them.
+    pub mf_recv: u64,
+    pub mf_cl: u64,
 }
 
 /// Byte offsets inside [`ExitArea`] (frozen; asm, exit handler and tests use these, never `offset_of` directly).
@@ -127,6 +133,9 @@ pub mod exit_area {
     pub const LAZY_ROOT: usize = offset_of!(ExitArea, lazy_root);
     /// `shape_nofill: u64` (S4).
     pub const SHAPE_NOFILL: usize = offset_of!(ExitArea, shape_nofill);
+    /// `mf_recv: u64`, `mf_cl: u64` (E5).
+    pub const MF_RECV: usize = offset_of!(ExitArea, mf_recv);
+    pub const MF_CL: usize = offset_of!(ExitArea, mf_cl);
     /// Size of the area.
     pub const SIZE: usize = std::mem::size_of::<ExitArea>();
 }
@@ -143,6 +152,8 @@ impl Default for ExitArea {
             lazy_root: 0,
             shape_nofill: 0,
             shape_fills: 0,
+            mf_recv: 0,
+            mf_cl: 0,
         }
     }
 }
@@ -536,6 +547,86 @@ fn recursion_on_stack(st: &State, ci: rn_core::state::Ci, depth: u32) -> bool {
     false
 }
 
+/// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the method key of a recursion through `self:m(..)`: a `SELF A 0 K` of the prototype (K a short
+/// string constant) whose lookup on the running frame's register 0 gives the running closure. Only for a prototype whose register 0 no instruction
+/// writes and no closure it makes captures (the receiver of every frame is then the one its call passed). `(constant index, key address,
+/// address of the `__index` name)`.
+fn midfold_key(
+    st: &State,
+    ci: Ci,
+    cl: rn_core::value::Gc<rn_core::func::LClosure>,
+) -> Option<(u32, u64, u64)> {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::{OpCode, OP_PROPS};
+    let p = cl.proto();
+    let code = p.code();
+    let writes0 = code.iter().any(|&w| {
+        let i = Instruction(w);
+        i.opcode()
+            .is_some_and(|op| OP_PROPS[op as usize].a && i.a() == 0)
+    });
+    let captured0 = p
+        .protos()
+        .iter()
+        .any(|c| c.upvalue_descs().iter().any(|u| u.instack && u.idx == 0));
+    if (writes0 || captured0) && !mutants::active("midfold_reg0_any") {
+        return None;
+    }
+    let func = ci.r().func;
+    let fv = st.get(func);
+    let recv = st.get(rn_core::state::StkId(func.0 + 1));
+    let idx = st.g().heap.tm_name(rn_core::meta::Tm::Index);
+    for &w in code {
+        let i = Instruction(w);
+        if i.opcode() != Some(OpCode::SelfOp) || i.b() != 0 || (cfg!(rustynail_lua54) && i.k() == 0)
+        {
+            continue;
+        }
+        let c = i.c();
+        let Some(kv) = p.k().get(c as usize) else {
+            continue;
+        };
+        if record::ty_of_value(kv) != Some(ir::Ty::ShrStr) {
+            continue;
+        }
+        let Some(key) = kv.as_strref() else {
+            continue;
+        };
+        if record::method_lookup_is(st, recv, key, &fv) {
+            return Some((c, key.as_ptr() as u64, idx.as_ptr() as u64));
+        }
+    }
+    None
+}
+
+/// E5: the family rule of a method family (section 35.4): every hash store goes through an `HREFK` of a constant key that is neither the method
+/// key nor `__index`, through an insertion (`NEWREF`) of such a key, or through an `HREFV` of a key that is not a string; no `setmetatable`. Array stores and integer-key sets cannot write a short-string key.
+fn midfold_stores_ok(ir: &ir::TraceIr, key: u64, idx: u64) -> bool {
+    let kptr = |r: ir::Ref| -> Option<u64> {
+        if r != ir::NOREF && r < ir::REF_BIAS {
+            if let ir::KVal::Ptr(p, _) = ir.kval(r) {
+                return Some(p);
+            }
+        }
+        None
+    };
+    ir.ins.iter().all(|i| match i.op {
+        ir::TOp::Hstore => {
+            ir::TraceIr::is_ins(i.a) && {
+                let h = ir.at(i.a);
+                // (through an insertion: its key is checked at the `NEWREF`; a dynamic key that is not a string cannot be either name)
+                h.op == ir::TOp::Newref
+                    || (h.op == ir::TOp::Hrefk && kptr(h.b).is_some_and(|p| p != key && p != idx))
+                    || (h.op == ir::TOp::Hrefv
+                        && !matches!(ir.ty_of(h.b), ir::Ty::ShrStr | ir::Ty::LngStr))
+            }
+        }
+        ir::TOp::Newref => kptr(i.b).is_some_and(|p| p != key && p != idx),
+        ir::TOp::Lib => i.aux & 0xFF != ir::lib::SETMT,
+        _ => true,
+    })
+}
+
 fn closure_self_ref(cl: rn_core::value::Gc<rn_core::func::LClosure>) -> bool {
     let me = &*cl.proto() as *const rn_core::func::Proto;
     (0..cl.nupvalues()).any(|i| {
@@ -606,6 +697,14 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         }
     }
     let (idf_fold, idf_ident) = pr.map_or((None, None), |pr| cache::idfold_cfg(st, pr));
+    // E5 (`midfold`): the per-prototype decision at its first recording (a method recursion on its own register 0)
+    if let Some(pr) = pr {
+        if cfg.limits.midfold != 0 {
+            let key = midfold_key(st, ci, cl);
+            cache::midfold_decide(st, pr, key);
+        }
+    }
+    let (mf_fold, mf_ident) = pr.map_or((None, None), |pr| cache::midfold_cfg(st, pr));
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
     // function with calls would get continuation traces whose return guard fails when no recursion is involved)
     let cok = cfg.limits.contok >= 1 && record::cont_ok(root);
@@ -682,6 +781,9 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         // E2: folding and the region invariant of the family (lazy-aware prototypes only: `idfold_decide`)
         idfold: idf_fold,
         idfold_ident: idf_ident.is_some(),
+        // E5: folding and the method invariant of the family (`midfold_decide`)
+        midfold: mf_fold,
+        midfold_ident: mf_ident.is_some(),
         fn_min: if pr.is_some_and(|pr| cache::fn_cent(st, pr))
             && !mutants::active("centry_fnmin_kept")
         {
@@ -824,6 +926,7 @@ pub fn driver_start_side(
     let hs: record::HeadQuery = Rc::new(move |st, pc| cache::head_traced(st, pr, pc));
     let fn_side = cache::head_is_fn(st, pr, 0);
     let (idf_fold, idf_ident) = cache::idfold_cfg(st, pr);
+    let (mf_fold, mf_ident) = cache::midfold_cfg(st, pr);
     let deep =
         cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
     let rc = RecCfg {
@@ -933,6 +1036,8 @@ pub fn driver_start_side(
         rec_seen: cache::proto_recursive(st, pr),
         idfold: idf_fold,
         idfold_ident: idf_ident.is_some(),
+        midfold: mf_fold,
+        midfold_ident: mf_ident.is_some(),
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)
         } else {
@@ -1864,6 +1969,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     if !act.side {
         let on = cache::lazy_loop_rule(pc, ir.rec_call.is_some(), !ir.segs.is_empty());
         cache::lazy_loop_decide(st, rpr, pc, on);
+        // E5: a first root trace without a folded method lookup turns folding off
+        cache::midfold_first(st, rpr, ir.midfold);
     }
     // TR8: every exit continues through its cell, which starts at the tier-1 landing address. A prelude (F2a) is
     // reached from the head's dispatch cell: when its entry checks fail it continues in the root trace's entry, which
@@ -2046,6 +2153,31 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             "an upvalue store in a family under the region invariant",
         ));
     }
+    // E5 (`midfold`, docs/JIT_TRACE.md section 35.4): a folded trace needs the region's checked entries, which only a lazy-aware family has (a
+    // candidate with loops that was decided eager at this compile: refused, folding off for good); the family rule: while the family is under
+    // the method invariant, no trace of it may store with the key or `__index` (or a key not known) into any table, or set a metatable
+    if ir.midfold && !lazy {
+        cache::midfold_ban(st, rpr);
+        return Err(abort_err(
+            "midfold_eager",
+            "a folded method lookup in a family that is not lazy-aware",
+        ));
+    }
+    let mf_env = if lazy {
+        cache::midfold_cfg(st, rpr).1
+    } else {
+        None
+    };
+    if mf_env.is_some() && !crate::tr::mutants::active("midfold_store_family") {
+        let (k, ix) = cache::midfold_keys(st, rpr);
+        if !midfold_stores_ok(&ir, k, ix) {
+            cache::midfold_ban(st, rpr);
+            return Err(abort_err(
+                "midfold_store",
+                "a store that may change the method lookup in a family under the method invariant",
+            ));
+        }
+    }
     // BUNDLE-K L1: the `callstatus` every lazy frame of this prototype gets when all of its `CALL`s want the same number of results
     let lazy_cs = if lazy {
         let mut cs: Option<u32> = None;
@@ -2194,6 +2326,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         idfold_uv: idf_env,
+        midfold_kidx: mf_env,
+        midfold_fn: cache::jit_tr_midfold_check as *const () as usize as u64,
         root_maxstack: u16::from(rootp.maxstacksize),
         // S1: a frameful side trace has no entry checks. CP2: neither has a frameless one whose needs the parent's checks cover (it is entered
         // by an exit of the parent, in the very frame the parent's checks promised room for); a prelude is entered through the head's cell
@@ -2414,6 +2548,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             weight: ir.ins.len() as u32,
             unrolled: ir.rec_call.is_some_and(|rc| rc.ninl != 0),
             idfold: ir.idfold,
+            midfold: ir.midfold,
         },
     )
     .map_err(|e| PipeErr {
@@ -3046,7 +3181,10 @@ mod tests {
         // (BUNDLE-K L1: `lazy_root` right behind `args`; asm reads it only through `exit_area::LAZY_ROOT`)
         assert_eq!(exit_area::LAZY_ROOT, exit_area::ARGS + 32);
         assert_eq!(exit_area::SHAPE_NOFILL, exit_area::LAZY_ROOT + 8);
-        assert_eq!(exit_area::SIZE, exit_area::LAZY_ROOT + 24);
+        // (E5: the verified method pair behind `shape_fills`)
+        assert_eq!(exit_area::MF_RECV, exit_area::LAZY_ROOT + 24);
+        assert_eq!(exit_area::MF_CL, exit_area::LAZY_ROOT + 32);
+        assert_eq!(exit_area::SIZE, exit_area::LAZY_ROOT + 40);
     }
 
     #[test]

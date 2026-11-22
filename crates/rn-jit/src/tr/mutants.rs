@@ -938,6 +938,15 @@ pub const NAMES: &[&str] = &[
     "lazyloop_retf_ok",
     "lazyloop_decide_any",
     "lazyloop_root_not_set",
+    // E5 (`midfold`): region-scoped method identity (docs/JIT_TRACE.md section 35)
+    "midfold_outer_unchecked",
+    "midfold_rootret_inner",
+    "midfold_store_family",
+    "midfold_recv_any",
+    "midfold_push_proto",
+    "midfold_reg0_any",
+    "midfold_check_true",
+    "midfold_first_keep",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1014,7 +1023,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 776);
+        assert_eq!(NAMES.len(), 784);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -235,6 +235,12 @@ pub struct AsmEnv {
     /// `upvalue n of the running closure == the running closure` (and TR15: its value is not in the root frame) with the room checks, and a return
     /// of the region root continues through the plain dispatch cell (an outer entry) instead of the inner entry.
     pub idfold_uv: Option<u8>,
+    /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the constant index of the family's method key whose lookup the region's checked entries
+    /// verify (`None`: no method check): the outer entry calls `midfold_fn(thread, ci, kidx)` with the room checks, a return of the region root
+    /// calls it for the caller in line (failing: the plain dispatch cell).
+    pub midfold_kidx: Option<u32>,
+    /// E5: `cache::jit_tr_midfold_check`.
+    pub midfold_fn: u64,
     pub lazy_nparams: u16,
     /// HDRSUB: `LIB sub` calls the lean entry [`jit_tr_lib_sub`] (`libsub`).
     pub lean_sub: bool,
@@ -368,6 +374,8 @@ impl Default for AsmEnv {
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
+            midfold_kidx: None,
+            midfold_fn: 0,
             lean_sub: false,
             libcall: 0,
             sink_stub: false,
@@ -4178,11 +4186,15 @@ impl Cx<'_> {
             if !mutants::active("lazy_ret_root_stale") {
                 self.st(W::B8, Self::lroot_m(), Src::V(1));
             }
-            if let Some(un) = self
+            let un = self
                 .env
                 .idfold_uv
-                .filter(|_| !mutants::active("idfold_rootret_inner"))
-            {
+                .filter(|_| !mutants::active("idfold_rootret_inner"));
+            let mk = self
+                .env
+                .midfold_kidx
+                .filter(|_| !mutants::active("midfold_rootret_inner"));
+            if un.is_some() || mk.is_some() {
                 // E2: the region root returns into its caller, which was suspended while code outside the region ran (it may run another closure
                 // of the prototype, whose self upvalue may have changed, and the root's result is stored into one of its registers): the caller,
                 // the new root, gets the region check of the outer entry in line; when it holds, the return continues at the inner entry as before,
@@ -4208,7 +4220,24 @@ impl Cx<'_> {
                     }
                     self.push(Op::AddFrame(-(i32::from(a) + 1) * 16));
                     let outer = self.label();
-                    self.idfold_check(un, outer);
+                    if let Some(un) = un {
+                        self.idfold_check(un, outer);
+                    }
+                    if let Some(k) = mk {
+                        // E5: the caller's receiver gets the method check (the helper clobbers the budget register: reloaded from the word
+                        // stored above, the inner entry charges it in the register)
+                        self.midfold_check_ret(k, outer);
+                        if let Some(r) = self.env.budget_reg {
+                            self.ld(
+                                r,
+                                W::B4,
+                                M {
+                                    base: Base::Cnt,
+                                    off: 0,
+                                },
+                            );
+                        }
+                    }
                     self.lazy_rec_jump(cell, false);
                     self.bind(outer);
                     let plain = cell - head_off::REC as u64 + head_off::CELL as u64;
@@ -4519,6 +4548,12 @@ impl Cx<'_> {
                 self.idfold_check(n, fail);
             }
         }
+        if let Some(k) = self.env.midfold_kidx.filter(|_| region_start) {
+            if !mutants::active("midfold_outer_unchecked") {
+                // (every register is free here: the budget word is loaded below)
+                self.midfold_check(k, fail);
+            }
+        }
         if let Some(l) = self.e2n.take() {
             // G1: the entry past the room checks (taken by a link whose chain proves the room)
             self.bind(l);
@@ -4577,6 +4612,63 @@ impl Cx<'_> {
     /// value address `v`: `v` is not inside the root frame (TR15: `v - base` unsigned `>= maxstacksize * 16`), and `*v` is `C` (Lua closure tag
     /// and pointer). A failure takes `fail`, the TR6 path: the trace is not entered, tier 1 runs the frame. `V0..V2`, `V7` are scratch (nothing
     /// is live before the budget load).
+    /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the method check of a checked entry for the frame `r13`: `midfold_fn(thread, ci, kidx)`
+    /// (clobbers every caller-saved register), failing to `fail`.
+    fn midfold_check(&mut self, kidx: u32, fail: L) {
+        self.push(Op::CallH {
+            f: self.env.midfold_fn,
+            a: kidx,
+            b: 0,
+        });
+        self.br(Cc::Eq, 0, Src::Imm(0), fail);
+        // the verified pair (the receiver in register 0, the closure in the function slot) for the root returns of the region
+        self.ld(1, W::B8, fm(0, 8));
+        self.st(W::B8, area_m(exit_area::MF_RECV), Src::V(1));
+        self.ld(1, W::B8, fm(FUNC_SLOT, 8));
+        self.st(W::B8, area_m(exit_area::MF_CL), Src::V(1));
+    }
+
+    /// E5: the root-return form of the method check for the caller (the frame at `rbx`, `r13`): a table receiver and a Lua closure equal to the
+    /// region's verified pair (`ExitArea::mf_recv` / `mf_cl`: the region root shared both) pass without a lookup; otherwise the full check.
+    fn midfold_check_ret(&mut self, kidx: u32, fail: L) {
+        let slow = self.label();
+        let done = self.label();
+        {
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B1,
+                m: fm(0, 0),
+                imm: i32::from(tag_of(Ty::Tab).expect("table tag") as i8),
+                to: slow,
+            });
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B1,
+                m: fm(FUNC_SLOT, 0),
+                imm: i32::from(tag_of(Ty::Lcf).expect("closure tag") as i8),
+                to: slow,
+            });
+        }
+        self.ld(0, W::B8, fm(0, 8));
+        self.push(Op::BrMR {
+            cc: Cc::Ne,
+            m: area_m(exit_area::MF_RECV),
+            src: 0,
+            to: slow,
+        });
+        self.ld(0, W::B8, fm(FUNC_SLOT, 8));
+        self.push(Op::BrMR {
+            cc: Cc::Ne,
+            m: area_m(exit_area::MF_CL),
+            src: 0,
+            to: slow,
+        });
+        self.push(Op::Jmp(done));
+        self.bind(slow);
+        self.midfold_check(kidx, fail);
+        self.bind(done);
+    }
+
     fn idfold_check(&mut self, n: u8, fail: L) {
         self.ld(0, W::B8, fm(FUNC_SLOT, 8));
         self.ld(1, W::B8, rm(0, lclosure::UPVALS as i32 + 8 * i32::from(n)));
