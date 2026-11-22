@@ -3187,7 +3187,8 @@ the change was kept because it is behaviour-identical by construction (the twin 
   on (it is the default of the test limits too), so every trace test exercises it; the emulator modes run with it off.
 * Mutants (registry 749 -> **754**), all caught by `s1_lazystub_programs`: `lazystub_resume_xmm` (the resume path does not reload the XMM registers),
   `lazystub_resume_v8` (nor `V8`), `lazystub_reloadk` (a `ReloadK` in front of the jumps that must keep `r14`), `lazystub_dbl_skip` (the
-  double-counting snapshot of a deferred `mat_stub` is not told to the installer: the twins' exit counts differ), `lazystub_site_rel_pos` (the patched
+  double-counting snapshot of a deferred `mat_stub` is not told to the installer; *corrected in section 33*: it changes only the P3 chain re-order, and
+  its only detection here was the seed flake, now `s1_dbl_chain`), `lazystub_site_rel_pos` (the patched
   rel32 is relative to the field, not the end of the instruction). Perf-only variants (no patch, an indirect jump to the shared blocks, a copy of the
   rebuild chain per stub) are not registry mutants: they keep behaviour.
 * Bug found by the gate and fixed before the commit: under `+emurun` the program is replaced after assembly, so the embedded shared routine's label
@@ -3354,4 +3355,68 @@ tests-5.4-oracle PASS; `oracle_options` PASS; jit-diff 1-200 (7 modes) PASS; mut
 (`presize=1`) and 1 in 6 (`presize=0`). `lazystub_dbl_skip` is detected only through that job's exit counts, so it survives whenever the mutated
 run happens to agree (it was caught in 1 of 2 manual runs). Owner: S1 (the twin comparison or the run-to-run determinism of storm exits with
 `+randra`).
+
+*Amended (section 33):* not a lazystub bug and not `+randra`: the test did not pin the string-hash seed, so each child process (both twins) ran
+with its own random seed, and that job's exit count is a function of the seed (19000 or 19105 exits); `lazystub=0` alone differs from itself
+across runs as often. The `lazystub_dbl_skip` "catches" were that flake: the mutant does not change this job at any seed. Fixed in the harness;
+the mutant now has a deterministic detector (`s1_dbl_chain`).
+
+## 33. The `s1_lazystub_programs` flake: an unpinned string-hash seed, not lazystub (2026-11-21, base a536f04)
+
+Section 32.6 recorded that the job `sinkf_side [always +exitstorm=7 +verify +randra=5]` of `tr_core::s1_lazystub_programs` (oracle-feature build)
+sometimes gave the `lazystub=1` and `lazystub=0` twins different counts (19105 vs 19000 exits), and that `lazystub_dbl_skip` was detected only
+through it. Classification: **(c) a test-harness artifact**, with an input dependence of type (b) behind it. No production change.
+
+### 33.1 Evidence (the debug test binary of `cargo test -p rn-jit --features tr_mutants,t15_oracle --test tr_core`, the job run directly as a child)
+
+* **The eager twin is nondeterministic on its own.** 40 runs of the job with `lazystub=0`: 32 x 19000 exits / 43 failed side traces, 8 x 19105 /
+  40; with `lazystub=1`: 37 x 19000, 3 x 19105 (the same two outcomes, no third one). So the twins disagree whenever their two processes land on
+  different outcomes; nothing lazystub-specific.
+* **The outcome is a function of the string-hash seed.** `tr_core::one_state` uses `TR_CORE_SEED` when set and otherwise
+  `rn_std::new_state_with_libs` = `auxlib::make_seed()` (time and a stack address: a different seed per process). With `TR_CORE_SEED=0` 40 of 40
+  lazy runs give 19000. Seeds 1..30, two runs of each twin per seed: every seed is stable and the twins are equal at every seed; seeds 13, 14, 29,
+  30 give 19105, the other 26 give 19000. With the mutant `lazystub_dbl_skip` the job gives the same exits as without it at seeds 0, 1, 13, 14, 29
+  (it does not affect this job at all).
+* **Mechanism.** Seed 1 against seed 13 (eager): `fused HREFK+HLOAD tag checks` 516 vs 524, `barrier helper calls: table` 2 vs 1, sunk tables 75
+  vs 78, trace code 606502 vs 621601 B, hot exits 117 vs 114. The node positions of the string keys (`fx`, `fy`, `x`, `y`, `__index`, ...) follow
+  the seed, so the compiled guards differ (a key off its main position, a collision chain); `+exitstorm=7` fails every 7th guard execution of a
+  trace, so a different guard count moves the storm phase and with it which exits are taken and which side traces fail to record. Seeds 1 / 13
+  with `+verify` alone: identical counts (3905 exits, 17 side traces); `+exitstorm=7` without `+randra`: 25527 exits both, but 83 vs 82 side
+  traces (also a twin mismatch); `+randra=5` is deterministic per compile and only changes which counters move. The other jobs of the test happen
+  not to be seed-sensitive in their compared counters.
+* **Cross-test leak.** `h2_newkey_programs`, `h5_sink_next_programs` and `p1_presize_programs` pinned the seed with
+  `std::env::set_var("TR_CORE_SEED", "0")`, which is process-global: the children of any test of the same binary started after it (on parallel test
+  threads) inherited seed 0. Whether `s1_lazystub_programs` ran with random or fixed seeds therefore depended on scheduling, which is why the rates
+  in 32.6 varied (3 in 6 with P1, 1 in 6 without) and why runs of the single test fail more often than the full binary.
+* **`lazystub_dbl_skip`** (`defer_stub` does not push the snapshot of a deferred frame-cell `mat_stub` into `Asm::dbl`): `Trace::dbl` is read only by
+  the P3 chain re-order (`norm_count`, the `chain_off` re-base in `chain_check`, `trace_exits` for the re-based part; the re-based part times two is
+  the same total, so `exits` itself is unchanged). None of the eight programs of the test re-orders a chain (`chainre` needs `chainn`, 65536 by
+  default, and a chain of three callee side traces), so the mutant was invisible and was "caught" exactly when the flake fired: at the base, 4 of
+  12 mutant runs failed, all on the `sinkf_side` twin assertion; 2 of 12 unmutated runs failed the same way.
+
+### 33.2 Fix (tests only)
+
+* `Job::seed(n)`: the child gets `TR_CORE_SEED=n` (set by `run_job`, no `set_var`); `compare_try` keeps one interpreter baseline per (program,
+  seed). The three tests above pin seed 0 per job instead of `set_var`.
+* `s1_lazystub_programs` pins seed 0 for every job, runs the storm job of `sinkf_side` additionally at seed 13 (the 19105 formation stays covered,
+  deterministically), and compares the chain re-orders of the twins too (`chain_flushes`).
+* New program `s1_dbl_chain` (`tests/tr_core/progs.rs`): the dispatch of `p3_chain` (12 callees whose hot set changes mid-run) with a sunk
+  metatabled temporary live across the megamorphic call inside the inlined `execute`, so the callee-guard exits of the chain of side traces are
+  deferred frame-cell `mat_stub`s; limits `chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64`, in the full mode matrix of the test. Twins
+  (`always`, plain): 320603 exits, 1 re-order, 27 side traces. With the mutant (`lazystub=1` only; `lazystub=0` is unchanged): 241939 exits,
+  5 re-orders, 51 side traces (the doubled counts cross `chainn` early). The same at 8 random seeds and in `on2` (320604 / 241940). The test asserts
+  that the plain job re-orders at least one chain over built deferred stubs with frame stubs, so the detector cannot become vacuous unnoticed.
+
+### 33.3 Pass rates (debug oracle-feature binary; each run = one invocation of the single test)
+
+| | base a536f04 | this change |
+|---|---|---|
+| `s1_lazystub_programs` | 10 / 12 | 12 / 12 |
+| `p1_presize_programs` | 12 / 12 | 12 / 12 |
+| `s1_lazystub_programs` with `lazystub_dbl_skip` (caught) | 4 / 12 (flake only) | **12 / 12** (`s1_dbl_chain [always]` twins differ) |
+| other `lazystub_*` mutants (resume_xmm, resume_v8, reloadk, site_rel_pos) | | 3 / 3 each (13-128 failing jobs each) |
+| P1 mutants (image_check_skip, window_any, memo_any, memo_dunder, presize_no_free) | | 3 / 3 each (12-14 failing jobs each) |
+
+`h2_newkey_programs` and `h5_sink_next_programs` (now seed per job) pass. Registry unchanged: **759** mutants (`scripts/gate-mutant-map.tsv`
+regenerated for the moved test lines).
 

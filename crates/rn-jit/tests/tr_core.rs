@@ -80,6 +80,9 @@ struct Job {
     /// Environment of the child: `RUSTYNAIL_GC_STRESS`, `RUSTYNAIL_GC_VERIFY`, `RUSTYNAIL_JIT_STRESS`.
     env: Vec<(String, String)>,
     ident: bool,
+    /// `TR_CORE_SEED` of the child (the string-hash seed; `None`: inherited from the test process, random per process when unset). Pinned per job, never with
+    /// `std::env::set_var` (that leaked the seed into the children of the tests that run at the same time in this process: docs/JIT_TRACE.md section 33).
+    seed: Option<u32>,
 }
 
 impl Job {
@@ -106,6 +109,10 @@ impl Job {
         self.env.push((k.into(), v.into()));
         self
     }
+    fn seed(mut self, s: u32) -> Job {
+        self.seed = Some(s);
+        self
+    }
     fn spec(&self) -> String {
         format!(
             "{}|{}|{}|{}|{}|{}|{}",
@@ -120,7 +127,7 @@ impl Job {
     }
     fn tag(&self) -> String {
         format!(
-            "{} [{} {} budget={} {:?}{}]",
+            "{} [{} {} budget={} {:?}{}{}]",
             self.prog,
             self.trace,
             self.opts,
@@ -130,7 +137,8 @@ impl Job {
                 ""
             } else {
                 " limits"
-            }
+            },
+            self.seed.map_or(String::new(), |s| format!(" seed={s}"))
         )
     }
 }
@@ -411,6 +419,7 @@ fn child_main(spec: &str) {
         code_cap: f[5].parse().ok(),
         ident: f[6] == "1",
         env: Vec::new(),
+        seed: None,
     };
     let cfg = Config::for_mode(if job.trace == "on" {
         Mode::On
@@ -837,6 +846,9 @@ fn run_job(job: &Job) -> Out {
     for (k, v) in &job.env {
         cmd.env(k, v);
     }
+    if let Some(s) = job.seed {
+        cmd.env("TR_CORE_SEED", s.to_string());
+    }
     // `TR_CORE_MEM_MB=n`: caps the address space of the job's process (RLIMIT_AS; a mutated pipeline can allocate
     // without bound, which got the mutant runners OOM-killed); 0 or unset: no cap
     // (default for the jobs of a mutant run: 2048)
@@ -999,14 +1011,24 @@ fn verbose() -> bool {
 
 /// Runs `jobs` and compares each result with the interpreter baseline of its program; `Err` lists the divergences.
 fn compare_try(jobs: Vec<Job>) -> Result<Vec<(Job, Out)>, String> {
+    // (one interpreter baseline per program and pinned seed: the output of a program that prints in `pairs` order follows the seed)
     let mut base = BTreeMap::new();
-    let progs: Vec<String> = {
-        let mut v: Vec<String> = jobs.iter().map(|j| j.prog.clone()).collect();
+    let progs: Vec<(String, Option<u32>)> = {
+        let mut v: Vec<(String, Option<u32>)> =
+            jobs.iter().map(|j| (j.prog.clone(), j.seed)).collect();
         v.sort();
         v.dedup();
         v
     };
-    for (j, o) in run_all(progs.iter().map(|p| Job::new(p, "off")).collect()) {
+    for (j, o) in run_all(
+        progs
+            .iter()
+            .map(|(p, s)| Job {
+                seed: *s,
+                ..Job::new(p, "off")
+            })
+            .collect(),
+    ) {
         assert!(
             o.ok,
             "baseline {} failed:\n{}\n{}",
@@ -1018,7 +1040,7 @@ fn compare_try(jobs: Vec<Job>) -> Result<Vec<(Job, Out)>, String> {
             j.prog,
             o.result
         );
-        base.insert(j.prog.clone(), o.result);
+        base.insert((j.prog.clone(), j.seed), o.result);
     }
     let res = run_all(jobs);
     let mut bad = Vec::new();
@@ -1037,11 +1059,11 @@ fn compare_try(jobs: Vec<Job>) -> Result<Vec<(Job, Out)>, String> {
                 o.result,
                 tail(&o.stderr)
             ));
-        } else if o.result != base[&j.prog] {
+        } else if o.result != base[&(j.prog.clone(), j.seed)] {
             bad.push(format!(
                 "{}: output differs\n--- interpreter\n{}\n--- run\n{}\n{}",
                 j.tag(),
-                base[&j.prog],
+                base[&(j.prog.clone(), j.seed)],
                 o.result,
                 tail(&o.stderr)
             ));
@@ -4462,8 +4484,7 @@ fn h2_setmt_programs() {
 /// `newkey_nonempty_skip`, `newkey_mt_skip`, `newkey_flags_skip`, `newkey_layout_skip`, `newkey_mainpos_off`, `newkey_dummy_skip`.
 #[test]
 fn h2_newkey_programs() {
-    // (the program prints keys in `pairs` order, which follows the string-hash seed: random per process unless pinned; the children inherit it)
-    std::env::set_var("TR_CORE_SEED", "0");
+    // (the program prints keys in `pairs` order, which follows the string-hash seed: random per process unless pinned; every job pins it below)
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
         for (opts, budget) in [
@@ -4503,7 +4524,8 @@ fn h2_newkey_programs() {
             jobs.push(j);
         }
     }
-    let res = compare(jobs);
+    // (the seed pinned per job: `set_var` leaked it into the children of the tests running at the same time)
+    let res = compare(jobs.into_iter().map(|j| j.seed(0)).collect());
     assert!(!res.is_empty());
 }
 
@@ -4605,7 +4627,6 @@ fn k4_innerside_programs() {
 /// (the other checks of the fast path are defences against states the recorder never produces).
 #[test]
 fn h5_sink_next_programs() {
-    std::env::set_var("TR_CORE_SEED", "0");
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
         jobs.push(Job::new("h5_sink_next", trace).opts("+verify"));
@@ -4625,7 +4646,8 @@ fn h5_sink_next_programs() {
     }
     jobs.push(Job::new("h5_sink_next", "always").opts("-loop -fwd"));
     jobs.push(Job::new("h5_sink_next", "always").opts("-sink"));
-    let res = compare(jobs);
+    // (the seed pinned per job: `set_var` leaked it into the children of the tests running at the same time)
+    let res = compare(jobs.into_iter().map(|j| j.seed(0)).collect());
     let sunk = res
         .iter()
         .filter(|(j, _)| j.trace == "always" && j.opts == "+verify")
@@ -12023,11 +12045,14 @@ fn k7_aref_phi_programs() {
 /// interpreter, and since a deferred exit runs exactly the stub the eager assembly would have emitted, the twins take the same exits and install the same
 /// traces (exit counts, installs, side traces). Programs: `s1_lazy_exits` (first exits with live floats / integers, inlined frames, sunk tables, hot
 /// exits), frame materialising stubs (`h2_fmat`), sunk-frame stubs with side traces (`sinkf_side`, `j1_sinkf`), register-carrying exits
-/// (`r1_nbody_pairs`), frame-cell side traces (`s1_frame_sides`), `r14` allocated (`xregs=3`). Detector of `lazystub_resume_xmm`,
-/// `lazystub_resume_v8`, `lazystub_reloadk`, `lazystub_dbl_skip`, `lazystub_site_rel_pos`.
+/// (`r1_nbody_pairs`), frame-cell side traces (`s1_frame_sides`), `r14` allocated (`xregs=3`), chain re-orders over frame-cell `mat_stub` exits
+/// (`s1_dbl_chain`, P3 `chainre`: the double-counting snapshots must be told to the installer by the deferred stubs too). Every job pins the
+/// string-hash seed (section 33: the exits of `sinkf_side` under `+exitstorm=7` follow the seed, and the twins ran with two random seeds); the
+/// storm job of `sinkf_side` also runs at seed 13, whose formation takes 105 more exits. Detector of `lazystub_resume_xmm`, `lazystub_resume_v8`,
+/// `lazystub_reloadk`, `lazystub_dbl_skip` (through `s1_dbl_chain`: 1 vs 5 re-orders), `lazystub_site_rel_pos`.
 #[test]
 fn s1_lazystub_programs() {
-    let progs: [(&str, &str); 8] = [
+    let progs: [(&str, &str); 9] = [
         ("s1_lazy_exits", ""),
         ("s1_lazy_exits", "xregs=3"),
         ("h2_fmat", ""),
@@ -12036,6 +12061,10 @@ fn s1_lazystub_programs() {
         ("r1_nbody_pairs", ""),
         ("s1_frame_sides", ""),
         ("p2_xregs", "xregs=3"),
+        (
+            "s1_dbl_chain",
+            "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64",
+        ),
     ];
     let mut jobs = Vec::new();
     for (prog, extra) in progs {
@@ -12069,18 +12098,31 @@ fn s1_lazystub_programs() {
                         .env("RUSTYNAIL_JIT_STRESS", "stackmove")
                         .limits_s(&lim),
                 );
+                if prog == "sinkf_side" {
+                    jobs.push(
+                        Job::new(prog, trace)
+                            .opts("+exitstorm=7 +verify +randra=5")
+                            .limits_s(&lim)
+                            .seed(13),
+                    );
+                }
             }
         }
     }
+    let jobs = jobs
+        .into_iter()
+        .map(|j| if j.seed.is_none() { j.seed(0) } else { j })
+        .collect();
     let res = compare(jobs);
     let key = |j: &Job| {
         format!(
-            "{}|{}|{}|{:?}|{:?}|{}",
+            "{}|{}|{}|{:?}|{:?}|{:?}|{}",
             j.prog,
             j.trace,
             j.opts,
             j.budget,
             j.env,
+            j.seed,
             j.limits.replace("lazystub=1", "").replace("lazystub=0", "")
         )
     };
@@ -12107,10 +12149,22 @@ fn s1_lazystub_programs() {
         assert!(s.dstub_patched <= s.dstubs, "{}", j.tag());
         built += s.dstubs;
         let e = &eager[&key(j)];
-        // the twins behave alike: the same exits, the same traces
+        // the twins behave alike: the same exits, the same traces, the same chain re-orders
         assert_eq!(
-            (s.exits, s.installed, s.side_installed, s.recorded),
-            (e.exits, e.installed, e.side_installed, e.recorded),
+            (
+                s.exits,
+                s.installed,
+                s.side_installed,
+                s.recorded,
+                s.chain_flushes
+            ),
+            (
+                e.exits,
+                e.installed,
+                e.side_installed,
+                e.recorded,
+                e.chain_flushes
+            ),
             "{}: lazystub=1 and lazystub=0 differ\n  lazy  {}\n  eager {}",
             j.tag(),
             s.line(),
@@ -12136,6 +12190,15 @@ fn s1_lazystub_programs() {
                 e.code_bytes
             );
         }
+        if j.prog == "s1_dbl_chain" && j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() {
+            // (the detector of `lazystub_dbl_skip` needs deferred frame-cell stubs on a re-ordered chain)
+            assert!(
+                s.chain_flushes >= 1 && s.dstubs >= 1 && s.stub_frames >= 1,
+                "{}: no chain re-order over deferred frame stubs: {}",
+                j.tag(),
+                s.line()
+            );
+        }
     }
     assert!(built > 0, "no deferred stub was assembled in any job");
 }
@@ -12151,7 +12214,6 @@ fn s1_lazystub_programs() {
 /// (the accounted bytes drift: the heap's leak check at the end).
 #[test]
 fn p1_presize_programs() {
-    std::env::set_var("TR_CORE_SEED", "0");
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
         for lim in ["presize=1", "presize=0"] {
@@ -12190,7 +12252,8 @@ fn p1_presize_programs() {
         }
         jobs.push(Job::new("p1_presize", trace).opts("+emurun"));
     }
-    let res = compare(jobs);
+    // (the seed pinned per job: `set_var` leaked it into the children of the tests running at the same time)
+    let res = compare(jobs.into_iter().map(|j| j.seed(0)).collect());
     for (j, o) in &res {
         if j.limits.contains("presize=0") {
             assert_eq!(o.stats.presized, 0, "{}: presize=0 presized", j.tag());

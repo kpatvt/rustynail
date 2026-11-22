@@ -8951,6 +8951,58 @@ print(string.format("%.6f", facc), acc, cnt)
 "##,
     },
     Prog {
+        name: "s1_dbl_chain",
+        small: true,
+        src: r##"
+-- S1 (`lazystub`) x P3 (`chainre`), docs/JIT_TRACE.md section 33: the dispatch of `p3_chain` (12 callees, warm-up in order, then 9..12 hot, then
+-- 1..4 hot) with a sunk metatabled temporary live across the megamorphic call inside the inlined `execute`: the callee-guard exits of the chain
+-- of side traces are frame-cell `mat_stub` exits, whose counters count twice per exit (`Trace::dbl`). The chain re-order normalises those counts;
+-- a deferred stub must register its snapshot as double-counting like the eager one, or the re-orders (and with them exits and side traces) change.
+local V = {}; V.__index = V
+local function vec(x, y) local o = setmetatable({}, V); o.x = x; o.y = y; return o end
+local acc, steps = 0, 0
+local words = {}
+for i = 1, 12 do
+  local f = load(("return function(v) return v.x * %d + v.y end"):format(i * 3 % 7 + i))()
+  words[i] = { fn = f, id = i }
+end
+local function execute(word, k)
+  steps = steps + 1
+  local v = vec(k % 7, word.id)
+  acc = (acc + word.fn(v)) % 1000003
+end
+local seed = 12345
+local function rnd()
+  seed = (seed * 16807) % 2147483647
+  return seed // 16
+end
+local function run(phase, n)
+  local prog = {}
+  for i = 1, 1024 do
+    local r = rnd()
+    local w
+    if phase == 0 then
+      w = words[(i - 1) % 12 + 1]
+    elseif r % 1000 < 3 then
+      w = words[(r // 1000) % 8 + (phase == 1 and 1 or 5)]
+    elseif phase == 1 then
+      w = words[9 + (r // 7) % 4]
+    else
+      w = words[1 + (r // 7) % 4]
+    end
+    prog[i] = w
+  end
+  for rep = 1, n do
+    for i = 1, 1024 do execute(prog[i], i) end
+  end
+end
+run(0, 1)
+run(1, 40)
+run(2, 40)
+print(acc, steps)
+"##,
+    },
+    Prog {
         name: "l1_byte_ext",
         small: true,
         src: r##"
