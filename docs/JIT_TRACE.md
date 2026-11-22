@@ -3868,7 +3868,8 @@ and 5.4. **Not run** (by instruction): the heavy gate, the oracle-feature suites
   variant flushing at its first side trace) at the end of a side trace's pipeline ran `awfy/cd 20` in `on` / `always`, seeds 0-3,
   `unrollk=1` / `recunroll` 0 / 1 / 2, and the 213 `tests/vm` programs in `on` / `always`: no difference, no crash. The deferred doom stays (E5's
   ban uses it too); the hazard remains documented, root cause unknown.
-* **A pre-existing defect of the lazy chain, found by the new programs (not fixed).** With every new knob off (`lazyloop=0,midfold=0,recunroll=0,
+* **A pre-existing defect of the lazy chain, found by the new programs** (**fixed since, root cause and fix in 36.1**; the text below is the
+  report as it stood). With every new knob off (`lazyloop=0,midfold=0,recunroll=0,
   idfold=0`) a debug build fails `debug_assert!(ci.kcache == ...)` in `run_mode`: the interpreter returns into frames whose `callstatus` and
   `kcache` are 0 (fresh `CallInfo` nodes of lazy frames never completed). Reproductions: (1) the two method recursions of `e5_01` cases (3)
   and (9) together under `RUSTYNAIL_GC_STRESS=1` or `2`, `RUSTYNAIL_JIT_TRACE=always` (`lazyci=0` or `recany=0` make it pass; the GC-stress check
@@ -3878,7 +3879,7 @@ and 5.4. **Not run** (by instruction): the heavy gate, the oracle-feature suites
   prototype" assertion does not fire, so it is not a walk over frames of another prototype. E5 avoids (2) by ending the recording at a refused
   push; the `e5_01` twin skips GC stress 1 in `always` mode for (1). Release builds do not check `kcache`; a frame whose `kcache` is 0 and whose
   function reads a constant would crash.
-* **Two E5 mutants survive.** `midfold_reg0_any` (the decision ignores writes of register 0): the record-time rules (`slot0_entry`, the push
+* **Two E5 mutants survive**. `midfold_reg0_any` (the decision ignores writes of register 0): the record-time rules (`slot0_entry`, the push
   receiver rule) already keep a trace from folding or pushing after its own write of register 0, and outer entries check the current register
   0; only a side trace that starts after such a write could fold on the new receiver, and `e5_01` case (11) did not produce one.
   `midfold_rootret_inner` (no check at root returns): needs a native root return into a caller suspended across foreign code with a receiver
@@ -3888,3 +3889,57 @@ and 5.4. **Not run** (by instruction): the heavy gate, the oracle-feature suites
   trace compiles first and is lazy-aware), E5's first-trace rule likewise. Policy only: both orders are sound.
 * E5's checked entries call a Rust helper at every outer entry (a family with frequent outer entries pays ~80 instructions each); root returns
   usually take the in-line cache.
+
+## 36. The lazy-chain defect of 35.8 (2026-11-22, base 7b121ea)
+
+### 36.1 The lazy-chain defect (35.8): root cause and fix
+
+**Root cause.** A side trace of a lazy-aware family that is entered by an exit of its parent runs *inside the parent's region*: the frames
+the region pushed natively above `lazy_root` are still lazy (only `func` and the caller's `savedpc` written). A frameless side trace keeps
+its own TR6 room checks when the frames it inlines need more stack or more spare `CallInfo` nodes than its parent's entry checks promised
+(`no_room_checks` is false when `ir.extent > max_extent` or `ir.depth > max_ci`, CP2). A failing check took the trace's common `entry_fail`
+path: the entry-failure bookkeeping (nothing for a side trace: `head == 0`) and `jmp pcl[H]`, the tier-1 label of the side's start pc,
+**without completing the lazy chain**. Tier 1 then ran in a lazy frame, made calls on top of it and returned into the frames below it: the
+interpreter's `debug_assert!(ci.kcache == ...)` in `run_mode` saw `kcache == 0` / `callstatus == 0`.
+
+Every other way from a lazy region to tier 1 already completed the chain: exits (the handler's `lazy_leave`, the in-line leave of the
+inline stubs and of `mat_stub`), links (`emit_link`: the leave block), the native push's `rec_fail`, the null `rec` cell of
+`lazy_rec_jump`. The side trace's entry failure was the one path that did not. Found with temporary probes (a chain walk at every handler
+entry and exit, at every interpreter entry of compiled code, and a `CallH` probe in every leave block and stub tail): the last transfer
+before the first incomplete frame was always the entry of side trace `e5_01`'s case (9) inlines (`W2:hop` twice, `depth = 2`), and its
+disassembly shows the TR6b check (`ci.next.next == 0`) failing straight to the tier-1 label.
+
+**Why only under GC stress, and only some programs.** (1) The TR6b check fails when the `CallInfo` list has fewer spare nodes than the side
+trace's inlined frames need, which happens after `shrink_ci` (every collection frees half of the unused nodes); GC stress collects at
+every safepoint. (2) A lazy frame is incomplete only *visibly* when its `CallInfo` node is fresh: a reused node keeps the `kcache` /
+`callstatus` of the last complete frame it held, which for a recursion family is usually the same prototype with the same call site, so
+the stale values happen to be right. After `shrink_ci` the nodes are freshly allocated (zeroed) and the missing completion shows. In a
+release build (no `kcache` assertion) a frame on a reused node of *another* prototype would run with that prototype's constants. (3) The
+second trigger of 35.8 (a refused push inlined instead, count budget 17, `e5_01` case (7)) is the same path: with E5's sidestep bypassed
+(scratch build) it reproduces before the fix and passes after it.
+
+**Fix** (`asm.rs`, `stubs_and_tail`): for a lazy-aware trace entered inside a region (`Cx::lazy_region_side`: a side trace that is not a
+prelude and not a link root; those two are outer entries, reached from a dispatch cell with every frame complete, and store `lazy_root`
+themselves), the entry failure continues through the leave block: `V6 = pcl[H]`, `exit::lazy_leave` (in line when the trace knows the
+family's constants, else the helper), then `jmp V6`. `lazy_root` is valid there: the parent's region root (entered through an inline stub's
+cell) or the running frame (entered after the handler's `lazy_leave`, the leave's fast path). Registers are dead at an entry failure (no
+carry for lazy families), the budget word is the stub's. Mutant `lazy_sidefail_no_leave` (the old path).
+
+**The E5 sidestep** (35.4: a refused push ends the recording with an exit instead of inlining the call) is no longer needed for soundness;
+it stays (the instruction to keep it unless measurements say otherwise; it is also the cheaper formation for those calls: no inlined
+recursion levels that can only exit).
+
+**Detector.** `tests/vm/e6_00_lazy_side_entry.lua` (cases (3) and (9) of `e5_01` together, the same with collections and a deeper inlined
+callee, a function recursion whose rare path calls a helper recursion, a tree whose leaves call a method on a peer) and
+`tr_core::lz_side_entry_programs`: `e6_00` and `e5_01` x `always` / `on2` x {shipped knobs, every E-knob off, `lazypoison=1`,
+`lazypoison=1,midfold=2`} x GC stress 1 / 2 in both collector modes, plus `+verify` and budget 17. Without the fix `e6_00` fails in
+`always` mode under GC stress 1 and 2 (generational mode, debug `rnlua`: the `kcache` assertion), deterministically (`always` mode,
+pinned seed); it passes in every job with it, on 5.5 and 5.4. The `e5_midfold_programs` twin runs its GC-stress-1 `always` job for
+`e5_01` again (it skipped it because of this defect).
+
+**New test knob `lazypoison`** (default 0, never a process default): a lazy push (and E1's chain frames) also stores `kcache = 0` and
+`callstatus = 0` into the frame it pushes. Every completion writes both, so with the knob an uncompleted lazy frame is visible in a reused
+`CallInfo` node too (point (2) above no longer hides a missing completion). The 224 programs of `tests/vm` and `tests/lazyci` in `always` /
+`on` with `lazypoison=1` (debug `rnlua`, against the interpreter): no difference.
+
+Mutants: registry 784 -> 785 (`lazy_sidefail_no_leave`, caught by `lz_side_entry_programs` on 5.5 and 5.4).

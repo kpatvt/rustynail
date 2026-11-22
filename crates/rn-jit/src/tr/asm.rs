@@ -227,6 +227,8 @@ pub struct AsmEnv {
     pub prelude: bool,
     /// BUNDLE-K L1: `exit::jit_tr_lazy_leave` (or a test double).
     pub lazy_leave_fn: u64,
+    /// Test knob `lazypoison` (docs/JIT_TRACE.md section 36.1): every lazy push also clears `kcache` and `callstatus` of the frame it pushes.
+    pub lazy_poison: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
     pub lazy_cs: Option<u32>,
     /// BUNDLE-K L1: `numparams` of the root prototype (the end of the arguments of a frame just pushed natively).
@@ -371,6 +373,7 @@ impl Default for AsmEnv {
             link_mat: false,
             prelude: false,
             lazy_leave_fn: 0,
+            lazy_poison: false,
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
@@ -3989,6 +3992,7 @@ impl Cx<'_> {
             self.ld(2, W::B8, ciw(ci::FUNC));
             self.push(Op::Add(2, Src::Imm(i32::from(ia) + 1)));
             self.st(W::B8, rm(1, ci::FUNC as i32), Src::V(2));
+            self.lazy_poison_frame();
             self.push(Op::Mov(3, iafter));
             self.st(W::B8, ciw(ci::SAVEDPC), Src::V(3));
             self.push(Op::SetCi(1));
@@ -4004,6 +4008,7 @@ impl Cx<'_> {
         self.ld(2, W::B8, ciw(ci::FUNC));
         self.push(Op::Add(2, Src::Imm(i32::from(rc.a) + 1))); // callee function index
         self.st(W::B8, rm(1, ci::FUNC as i32), Src::V(2));
+        self.lazy_poison_frame();
         let after = if mutants::active("rec_push_savedpc_off") {
             rc.after + 4
         } else {
@@ -4037,6 +4042,16 @@ impl Cx<'_> {
         }
         self.push(Op::Jmp(loop_l));
         Ok(())
+    }
+
+    /// Test knob `lazypoison`: the frame a lazy push just wrote `func` into (`V1`) is marked incomplete (`kcache = 0`, `callstatus = 0`): every
+    /// completion (`exit::lazy_leave`, the in-line leave sequence) writes both, so a frame that is never completed stays visibly incomplete even in a
+    /// reused `CallInfo` node.
+    fn lazy_poison_frame(&mut self) {
+        if self.env.lazy_poison {
+            self.st(W::B8, rm(1, ci::KCACHE as i32), Src::Imm(0));
+            self.st(W::B4, rm(1, ci::CALLSTATUS as i32), Src::Imm(0));
+        }
     }
 
     /// BUNDLE-K L1: the jump of a native push / return through the `rec` cell at `rec_cell` (a `HeadData::rec`): the inner entry of a
@@ -4533,6 +4548,12 @@ impl Cx<'_> {
         }
         self.bind(done);
         self.root_ci_cold.push((slow, done, fail));
+    }
+
+    /// A lazy-aware trace entered inside a running region: a side trace entered by an exit of its parent (not a prelude, not a link root: those
+    /// are outer entries, reached from a dispatch cell with every frame complete, and they store `lazy_root` themselves).
+    fn lazy_region_side(&self) -> bool {
+        self.env.lazy && self.env.side.is_some() && !self.env.prelude && self.env.head == 0
     }
 
     fn entry_checks(&mut self, fail: L) -> Result<(), AsmError> {
@@ -8678,8 +8699,15 @@ impl Cx<'_> {
         // TR6 failures: entry-failure bookkeeping, then tier 1 at pcl[H]
         self.bind(entry_fail);
         self.entry_failure_ops(false, true);
-        self.push(Op::Mov(7, self.env.pcl_h));
-        self.push(Op::JmpR(7));
+        if self.lazy_region_side() && !mutants::active("lazy_sidefail_no_leave") {
+            // docs/JIT_TRACE.md 36.1 (the lazy-chain defect of 35.8): a side trace entered by an exit of its parent runs inside the parent's region,
+            // with the lazy frames above `lazy_root` still incomplete; tier 1 may only run once they are completed (a failing room check of a side
+            // trace whose inlined frames need more than its parent's checks promised used to land in tier 1 with them incomplete)
+            self.lazy_leave_then(self.env.pcl_h, false);
+        } else {
+            self.push(Op::Mov(7, self.env.pcl_h));
+            self.push(Op::JmpR(7));
+        }
         if let Some(l) = rec_fail {
             // P-M3: the room checks of a natively pushed frame failed: tier 1 continues at the pre-count label of the head
             // in the new frame (a legal fresh frame); the budget register holds tier 1's state at that label

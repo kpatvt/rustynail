@@ -10581,6 +10581,9 @@ fn adhoc_file() {
         let (k, v) = kv.split_once('=').expect("TR_ADHOC_ENV: K=V,K=V");
         j = j.env(k, v);
     }
+    if let Ok(b) = std::env::var("TR_ADHOC_BUDGET") {
+        j = j.budget(b.parse().expect("TR_ADHOC_BUDGET: an integer"));
+    }
     compare(vec![j]);
 }
 
@@ -12640,6 +12643,42 @@ fn e4_lazyloop_programs() {
     }
 }
 
+/// docs/JIT_TRACE.md section 36.1 (the lazy-chain defect of 35.8): a side trace of a lazy-aware family entered by an exit of its parent inside the
+/// parent's region checks the room of the frames it inlines beyond its parent's promise; a failing check must complete the lazy frames before tier 1
+/// runs (it landed in tier 1 with them incomplete: the interpreter returned into frames whose `callstatus` / `kcache` were 0, the `kcache`
+/// assertion of `run_mode` in these debug builds). Collections make the spare-node check fail: GC stress 1 / 2 in both collector modes, `always` and
+/// `on2`, the shipped knobs, every E-knob off (the defect predates E1-E5) and `lazypoison=1` (lazy pushes clear `kcache` / `callstatus`, so an
+/// uncompleted frame is visible in a reused `CallInfo` node too), plus `e5_01` (where the defect was found), `+verify`, budget 17. The detector of
+/// mutant `lazy_sidefail_no_leave` (the leave skipped).
+#[test]
+fn lz_side_entry_programs() {
+    let mut jobs = Vec::new();
+    for p in ["e6_00_lazy_side_entry", "e5_01_method_identity"] {
+        for trace in ["always", "on2"] {
+            for lim in [
+                "",
+                "lazyloop=0,midfold=0,recunroll=0,idfold=0",
+                "lazypoison=1",
+                "lazypoison=1,midfold=2",
+            ] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                    let mut j = Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .limits_s(lim);
+                    if mode == "inc" {
+                        j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                    }
+                    jobs.push(j);
+                }
+            }
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s("lazypoison=1"));
+            jobs.push(Job::new(p, trace).budget(17).limits_s("lazypoison=1"));
+        }
+    }
+    compare(jobs);
+}
+
 /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): method recursion. `e5_01` (permute / towers shapes, inheritance, instances that override the
 /// method, a subclass through the same sites, the class method rebound by a leaf, `setmetatable` / `__index` replaced, another receiver passed to
 /// the running closure, another closure of the prototype called on the receiver, register 0 reassigned, an `__index` function) and `e5_02`
@@ -12676,9 +12715,9 @@ fn e5_midfold_programs() {
                 jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
             }
             for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
-                // (`e5_01` under full collections in `always` mode meets a defect of the lazy chain that predates E4 / E5 (it reproduces
-                // with `lazyloop=0,midfold=0,recunroll=0,idfold=0` and needs `lazyci` + `recany`): docs/JIT_TRACE.md section 35.8)
-                if (heavy || (p == "e5_01_method_identity" && trace == "always")) && gc == "1" {
+                // (`e5_01` under full collections in `always` mode met the lazy-chain defect of docs/JIT_TRACE.md section 35.8, fixed in 36.1:
+                // the job runs again)
+                if heavy && gc == "1" {
                     continue;
                 }
                 let mut j = Job::new(p, trace)

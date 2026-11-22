@@ -16287,6 +16287,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e5_02_method_errors.lua"),
     },
+    // docs/JIT_TRACE.md section 36.1: the side-trace entry failure inside a lazy region (the lazy-chain defect of 35.8)
+    Prog {
+        name: "e6_00_lazy_side_entry",
+        small: true,
+        src: include_str!("../../../../tests/vm/e6_00_lazy_side_entry.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

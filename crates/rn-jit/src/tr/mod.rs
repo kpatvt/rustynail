@@ -2323,6 +2323,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         link_mat: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retf } & 2 != 0,
         prelude: act.prelude,
         lazy_leave_fn: exit::jit_tr_lazy_leave as *const () as usize as u64,
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        lazy_poison: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.lazypoison } != 0,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         idfold_uv: idf_env,

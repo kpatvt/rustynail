@@ -723,6 +723,11 @@ pub struct TrLimits {
     pub carrymin: u32,
     /// R1 (`carrylive`): 1 = carry only values the trace keeps live anyway (default), 0 = every unmodified leading `SLOAD` (the tests).
     pub carrylive: u32,
+    /// Test knob (`lazypoison`, docs/JIT_TRACE.md section 36.1, default 0): a lazy push also stores `kcache = 0` and `callstatus = 0` into the frame it
+    /// pushes, so that a lazy frame is visibly incomplete until the chain is completed, whatever an earlier frame left in the reused `CallInfo` node
+    /// (the interpreter's `kcache` assertion then catches a frame that is never completed, in debug builds, with or without fresh nodes). Never set
+    /// by a process default.
+    pub lazypoison: u32,
 }
 
 impl Default for TrLimits {
@@ -840,6 +845,7 @@ impl Default for TrLimits {
             carrymin: CARRY_MIN_SLOTS as u32,
             carrylive: 1,
             regcarry: REGCARRY_PROCESS,
+            lazypoison: 0,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1031,6 +1037,7 @@ impl TrLimits {
                 "carrymin" => l.carrymin = v,
                 "carrylive" => l.carrylive = v.min(1),
                 "regcarry" => l.regcarry = v.min(3),
+                "lazypoison" => l.lazypoison = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }

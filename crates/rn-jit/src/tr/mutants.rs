@@ -947,6 +947,8 @@ pub const NAMES: &[&str] = &[
     "midfold_reg0_any",
     "midfold_check_true",
     "midfold_first_keep",
+    // docs/JIT_TRACE.md section 36.1: the entry failure of a side trace inside a lazy region
+    "lazy_sidefail_no_leave",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1023,7 +1025,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 784);
+        assert_eq!(NAMES.len(), 785);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

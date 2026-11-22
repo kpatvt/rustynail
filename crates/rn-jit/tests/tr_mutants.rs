@@ -4343,6 +4343,11 @@ const TABLE: &[Row] = &[
         owner: "E5",
         dets: &[dl("tr_policy", "e5_policy")],
     },
+    Row {
+        name: "lazy_sidefail_no_leave",
+        owner: "E6",
+        dets: &[d("tr_core", "lz_side_entry_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
