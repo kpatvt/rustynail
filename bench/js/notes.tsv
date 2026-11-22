@@ -14,3 +14,6 @@ richards	method calls (polymorphic task run), field access, linked packets	permu
 spectral_norm	float arithmetic with function calls in nested loops	table_hash	hash table of 200k string keys with string concatenation for each key; sparse integer keys
 knucleotide	1-8 char substring creation + hash counting of 5M keys (string interning/hash)	sieve	boolean array fill and strided writes
 pcall_error	exception throw/catch (pcall vs try/catch): V8 exceptions are costly, Lua error is a longjmp-like unwind	
+classic_vector	allocation (immutable 2D vector per operation) + method calls on a class hierarchy + float math
+lua_lexer	per-character string dispatch (charCodeAt/indexOf), small string creation, sticky-regex number scan, array-of-pieces join
+dijkstra_routes	hand-written binary heap of small [dist,node] arrays, array-of-objects adjacency walks, BFS/DFS, shift/unshift on short arrays

@@ -80,11 +80,16 @@ Empty node script: 47 Mcycles, 0.027 s (included in every node number below; the
 - `programs/gc_churn` (weak tables, `collectgarbage`), `programs/string_ops`, `programs/json` (`string.format`/`gsub`/`%q`
   heavy), `programs/load_big` (uses `load`), `programs/loops_arith` (integer-width arithmetic): skipped as Lua specific.
 - AWFY `sieve`, `queens`, `mandelbrot`, `nbody`: numeric duplicates of programs already ported from `bench/programs`.
-- `apps/markdown`, `bench/corpus*` (middleclass, penlight, serpent, luaunit, ...): library code that leans on Lua string
+- `apps/markdown`, most of `bench/corpus*` (middleclass, penlight, serpent, luaunit, ...): library code that leans on Lua string
   patterns, metatables and `load`; no faithful JS counterpart.
 
 ## Caveats
 
+- `corpus/classic_vector`, `corpus/lua_lexer` and `corpus2/heldout/dijkstra_routes` are ported too (they were listed as not
+  portable before): the vector operators are plain methods (no metamethods) and `is()` is `instanceof`; the lexer uses
+  `charCodeAt`/`indexOf` and sticky regexes where Lua uses `string.byte`/`find` with patterns, and implements `%q` by hand
+  (value returned in a field instead of a second return value); `dijkstra_routes` keeps 1-based node numbers and the
+  hand-written heap. LuaJIT runs all three with identical output. `dijkstra_routes` scales as N^2, so `-s 20` means N=400.
 - `lru_cache` has no `__index/__newindex/__call` in JS: the three entry points are plain methods (`get`, `put`, `call`); the
   closure/map/linked-list structure is unchanged. `coroutines`-style code is not included (see above).
 - `pcall_error` throws strings that start with the same `pcall_error.lua:3: ` prefix Lua's `error` adds (the Lua program

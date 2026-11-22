@@ -57,12 +57,18 @@ table_array:programs/table_array.lua
 table_hash:programs/table_hash.lua
 fasta:programs/fasta.lua
 knucleotide:programs/knucleotide.lua
+classic_vector:corpus/classic_vector.lua
+lua_lexer:corpus/lua_lexer.lua
+dijkstra_routes:corpus2/heldout/dijkstra_routes.lua
 "
 
 # -s K: run K times the default workload (argument N*K to Lua, JS and LuaJIT alike) for the programs whose default
 # run is so short that node startup/warm-up dominates; only the programs listed here take part in a scaled run.
+# (dijkstra_routes: the argument N sets both the graph size and the number of queries, so its cost grows with N^2;
+# 20 * SCALE keeps -s 20 at N=400, i.e. about 4x the default run instead of 400x.)
 declare -A DEFN=([bounce]=350 [list]=350 [permute]=100 [storage]=45 [towers]=45 [richards]=25 [deltablue]=20 [cd]=1
-  [havlak]=6 [json]=35 [events]=85000 [raytrace]=2 [lru_cache]=90000 [expr_lang]=6)
+  [havlak]=6 [json]=35 [events]=85000 [raytrace]=2 [lru_cache]=90000 [expr_lang]=6
+  [classic_vector]=1000 [lua_lexer]=50 [dijkstra_routes]=20)
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
