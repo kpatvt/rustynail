@@ -25,7 +25,7 @@ use rn_core::ver::active::OpCode;
 use std::rc::Rc;
 
 /// Per-slot state of the recorder (root frame).
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct SlotMap {
     /// The slot's current ref; [`NOREF`] = never touched on the path (the stack holds the value).
     pub cur: Vec<Ref>,
@@ -33,10 +33,37 @@ pub struct SlotMap {
     pub sload: Vec<Ref>,
     /// The type at the first read of the slot (the type its `SLOAD` checks).
     pub entry_ty: Vec<Option<Ty>>,
-    /// Was the slot written by an instruction of the path?
+    /// Was the slot written by an instruction of the path? (Set through [`SlotMap::def`] / [`SlotMap::set_written`], which keep `wmask` in step.)
     pub written: Vec<bool>,
+    /// T2 (docs/JIT_TRACE.md section 39.3): `written` as a bit set (bit `s % 64` of word `s / 64`), so that [`SlotMap::entries`] visits the written
+    /// slots only (it ran over every slot of the frame for every snapshot: 2.7 % of `apps/raytrace`'s instructions).
+    pub wmask: Vec<u64>,
     /// Path step of the last instruction that read the slot (`-1`: never); only the `snap_prune_dead` mutant uses it.
     pub last_read: Vec<i32>,
+}
+
+// T2 (docs/JIT_TRACE.md section 39.3): `clone_from` reuses the vectors (the derived one is `*self = source.clone()`: six allocations and six frees
+// for the recorder's per-step copy of the map, `Rec::st_sm`).
+impl Clone for SlotMap {
+    fn clone(&self) -> SlotMap {
+        SlotMap {
+            cur: self.cur.clone(),
+            sload: self.sload.clone(),
+            entry_ty: self.entry_ty.clone(),
+            written: self.written.clone(),
+            wmask: self.wmask.clone(),
+            last_read: self.last_read.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, src: &SlotMap) {
+        self.cur.clone_from(&src.cur);
+        self.sload.clone_from(&src.sload);
+        self.entry_ty.clone_from(&src.entry_ty);
+        self.written.clone_from(&src.written);
+        self.wmask.clone_from(&src.wmask);
+        self.last_read.clone_from(&src.last_read);
+    }
 }
 
 impl SlotMap {
@@ -47,6 +74,7 @@ impl SlotMap {
             sload: vec![NOREF; n],
             entry_ty: vec![None; n],
             written: vec![false; n],
+            wmask: vec![0; n.div_ceil(64)],
             last_read: vec![-1; n],
         }
     }
@@ -63,6 +91,7 @@ impl SlotMap {
             self.sload.resize(n, NOREF);
             self.entry_ty.resize(n, None);
             self.written.resize(n, false);
+            self.wmask.resize(n.div_ceil(64), 0);
             self.last_read.resize(n, -1);
         }
     }
@@ -82,19 +111,41 @@ impl SlotMap {
     /// An instruction of the path defined `slot` as `r`.
     pub fn def(&mut self, slot: usize, r: Ref) {
         self.cur[slot] = r;
-        self.written[slot] = true;
+        self.set_written(slot, true);
+    }
+
+    /// Sets the `written` flag of `slot` (and its bit in `wmask`).
+    pub fn set_written(&mut self, slot: usize, w: bool) {
+        self.written[slot] = w;
+        let (i, b) = (slot / 64, 1u64 << (slot % 64));
+        if w {
+            self.wmask[i] |= b;
+        } else {
+            self.wmask[i] &= !b;
+        }
     }
 
     /// The slots a snapshot must restore: written on the path and not holding their stack value already. In slot order.
+    /// (T2: the set bits of `wmask` in ascending order are exactly the slots with `written`, so the result is the one of the scan over all slots.)
     pub fn entries(&self) -> Vec<SnapEntry> {
-        (0..self.cur.len())
-            .filter(|&s| self.written[s] && self.cur[s] != NOREF && self.cur[s] != self.sload[s])
-            .map(|s| SnapEntry {
-                slot: s as u16,
-                r: self.cur[s],
-                flags: 0,
-            })
-            .collect()
+        // (sized once: the written slots bound the result; growing it one entry at a time was the larger cost of this function)
+        let n: u32 = self.wmask.iter().map(|w| w.count_ones()).sum();
+        let mut out = Vec::with_capacity(n as usize + 8);
+        for (i, &w) in self.wmask.iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let s = i * 64 + w.trailing_zeros() as usize;
+                w &= w - 1;
+                if self.cur[s] != NOREF && self.cur[s] != self.sload[s] {
+                    out.push(SnapEntry {
+                        slot: s as u16,
+                        r: self.cur[s],
+                        flags: 0,
+                    });
+                }
+            }
+        }
+        out
     }
 
     /// The first slot (lowest number) whose type at the end of the iteration differs from the type its first read
@@ -405,5 +456,47 @@ mod tests {
         assert_eq!(sm.unstable(&ir), None);
         sm.def(0, kf);
         assert_eq!(sm.unstable(&ir), Some((0, Ty::Int, Ty::Num)));
+    }
+
+    /// T2 (docs/JIT_TRACE.md section 39.3): `entries` over the `wmask` bit set equals the scan over every slot it replaced, through definitions,
+    /// redefinitions to the slot's own `SLOAD`, cleared flags, growth across word boundaries and `clone_from` into maps of other sizes.
+    #[test]
+    fn entries_by_mask_equal_the_full_scan() {
+        let scan = |sm: &SlotMap| -> Vec<SnapEntry> {
+            (0..sm.cur.len())
+                .filter(|&s| sm.written[s] && sm.cur[s] != NOREF && sm.cur[s] != sm.sload[s])
+                .map(|s| SnapEntry {
+                    slot: s as u16,
+                    r: sm.cur[s],
+                    flags: 0,
+                })
+                .collect()
+        };
+        let mut sm = SlotMap::new(3);
+        let mut other = SlotMap::new(200);
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        for step in 0..4000u32 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let n = sm.len();
+            let slot = (x % (n as u64 + 3)) as usize;
+            match (x >> 20) % 7 {
+                0 => sm.grow(n + 1 + (x >> 30) as usize % 70),
+                1 if slot < n => sm.loaded(slot, REF_BIAS + slot as Ref, Ty::Int),
+                2 if slot < n => sm.def(slot, REF_BIAS + slot as Ref), // its own SLOAD's ref
+                3 if slot < n => sm.set_written(slot, false),
+                _ if slot < n => sm.def(slot, 1 + (x >> 40) as Ref % 50),
+                _ => {}
+            }
+            assert_eq!(sm.entries(), scan(&sm), "step {step}");
+            if step % 97 == 0 {
+                other.clone_from(&sm);
+                assert_eq!(other.entries(), scan(&sm));
+                assert_eq!(other.wmask, sm.wmask);
+                assert_eq!(other.cur, sm.cur);
+            }
+        }
+        assert!(sm.len() > 128, "the map grew across several mask words");
     }
 }

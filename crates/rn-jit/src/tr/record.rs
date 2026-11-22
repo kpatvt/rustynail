@@ -7543,7 +7543,7 @@ impl Rec {
             nsm.cur[s + sh] = old.cur[s];
             nsm.sload[s + sh] = old.sload[s];
             nsm.entry_ty[s + sh] = old.entry_ty[s];
-            nsm.written[s + sh] = old.written[s];
+            nsm.set_written(s + sh, old.written[s]);
             nsm.last_read[s + sh] = old.last_read[s];
         }
         self.sm = nsm;
@@ -7686,7 +7686,7 @@ impl Rec {
             // mutant: the popped frame's registers are forgotten (the snapshots after the return omit them)
             for s in fb..fb + nslots {
                 self.sm.cur[s] = NOREF;
-                self.sm.written[s] = false;
+                self.sm.set_written(s, false);
             }
         }
         let first = vals.first().copied();

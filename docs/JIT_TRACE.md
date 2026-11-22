@@ -4493,3 +4493,319 @@ others abort first). (2) Probes cost recordings: a deep site with very long iter
 of them once. (3) The formation of programs with deep sites stays sensitive to the binary path and environment (38.5); the probes make
 `rec_loop` itself insensitive to the phase, not the rest of such programs. (4) Tests that pin formations of deep-site programs may need
 `deepprobe=0` (as `pm4_recursion_entry_counters` did); the full mutant runner has not run with the new default.
+
+## 39. T1 / T3 / T2 of docs/STUDY_TIER1_RESIDUE.md: RETF for function-entry families by selector, side traces beyond `maxside` by evidence, cheaper compile (2026-11-22, base 23d1692)
+
+Three handles of the tier-1 residue study, built in its recommended order, each measured before the next. Measurement method for every table of this
+section unless it says otherwise: release `rn-cli` (5.5), `RUSTYNAIL_SEED=0`, one binary per handle with the new knob(s) off as the reference column
+(every earlier stage on), binaries copied to equal-length paths, the knob strings padded to equal length (`RUSTYNAIL_JIT_TRACE_LIMITS` + a pad
+variable), instructions of one run (deterministic; parallel runs on CPUs 2-15 except 4), cycles min of 5 interleaved runs pinned to CPU 4 with no gate
+or other build running. "Suite" = the 223 programs of the bench sets (`corpus`, `corpus2/dev`, `corpus2/heldout`, `awfy`, `programs`, `jit-trace`,
+`lib`, `apps`, `real`), which contain the 44-program sanity set (awfy, `bench/programs`, apps) and the jit-trace set.
+
+### 39.1 T1 (`retfsel`): RETF for function-entry families where the caller's loop is traced and no recursion is popped
+
+**The bisection the study left open.** A scratch build (reverted) took a per-family list (`RN_SCRATCH_RETF=<line>@<head pc>:...`) and set `retf` bit 2
+only for side recordings of those families; each program's families with RETF-capable side recordings were enabled one at a time against all and
+none (instructions, `retf=3` reference):
+
+| program | all (`retf=7`) | families that move it (alone) |
+|---|---:|---|
+| corpus/lua_lexer | -17.1 % | `Lexer:next` L80 loop families pc 1 (-14.0 %) and pc 99 (-3.1 %); together -16.8 % |
+| awfy/queens | -16.5 % | L16 `tryIt`'s loop family pc 4: -16.1 % (pops into `tryIt` itself: recursion) |
+| corpus2/dev/expr_compiler | -9.5 % | L174 `run`'s loop family pc 7: -9.1 % (pops into the main chunk's loop, which has no root trace: `InnerLoop`) |
+| corpus2/heldout/roguelike_turns | +112 % | L65 `line_clear`'s loop family pc 26: +100.5 %; L120 pc 7 +1.0 %, L194 pc 15 +0.8 % |
+| awfy/list | +55 % | L31 `tail`, continuation family pc 2: +55.1 % (recursion) |
+| real/lua_interp | +35 % | L102 `eval`, function-entry family: +34.9 % (recursion) |
+| corpus2/dev/regex_nfa | +20 % | L144 `match`'s loop family pc 72: +19.8 % (pops into the main loop, no root trace) |
+| awfy/deltablue | +2.9 % | L303 pc 6 +3.0 %, L198 fn +1.2 %; L216 pc 5 -1.7 % |
+| corpus2/heldout/sudoku_solver | +16.5 % | L51 `eliminate`'s loop family pc 59 (+15.3 %: mutual recursion through `assign`) |
+
+So the paying families are mostly **loop** families of prototypes that also have a function-entry head (`head_is_fn(pr, 0)` makes every side
+recording of the prototype `fn_root`, and `fn_root` sides pop only with bit 2), which is why the study's "loop-root families only" scratch should have
+kept lua_lexer; its zero there was most likely a defect of that scratch (not re-examined). But the losers are loop families too, so "loop root" is not the
+selector either. The loss mechanisms, read from verbose logs and profiles:
+
+* **Recursion** (list, lua_interp, sudoku_solver, part of deltablue): the side trace pops into a frame of the same recursion and inlines the next
+  level; the work that the recursion's own traces did (entries of `eval`'s family 836 k -> 477 k) moves into chains of side traces that exit to
+  tier 1. queens is the counter-example (its recursion pays).
+* **Untraced caller loop** (regex_nfa, deltablue 303): the continuation in the caller reaches a callee loop without a root trace and the RETF
+  recording aborts `InnerLoop` (8 of 8 in regex_nfa); the exits get `noretf` and are re-recorded, and the program forms differently (the tier-1 share of
+  `match` 5.5 -> 10.8 %).
+* **A formation lottery in an unrelated loop** (roguelike_turns): one RETF side trace (`line_clear` -> `compute_fov` -> frame link back into
+  `line_clear`'s loop) changes when `run_level`'s monster loop (L234 pc 96) is recorded; with it the recording starts at the first iteration of an
+  `ipairs` loop whose `who` slot is nil there and a table afterwards, aborts `Unstable` four times (in-place restarts are 0 in the pipeline) and the
+  head is blacklisted: tier 1 15.9 -> 69.8 %. The same build with TR24c in-place restarts on (`restarts = 1`, scratch) is +2.2 % instead of +100 %
+  (and moves raytrace by -3.9 % on its own); not part of this handle (a global formation change), recorded as a lead.
+
+**Selector as built.** Knob `retfsel` (`RUSTYNAIL_JIT_TRACE_LIMITS`, 0 / 1, **default 1**, struct default = shipped). With `retf` bit 2 off (the
+shipped `retf=3`), a side recording of a function-entry family (`RecCfg::fn_root`) may execute `RETF` at its root `RETURN` exactly when
+`cache::retf_sel_rule(caller_loop, recursive)` holds:
+
+* `caller_loop`: the head of the innermost loop of the caller `C` that contains `C`'s `CALL` (`cache::enclosing_loop_head`: the largest target `h` of
+  a backward `JMP` / `FORLOOP` / `TFORLOOP` at `j` with `h <= call_pc < j`), asked through the existing `retf_head` query (`head_traced`): it must have
+  an installed root trace (`Some(true)`). A head without one, a call outside every loop, or a pc that is not a head refuse.
+* `recursive`: the popped prototype is among the `RETFSEL_DEPTH` (16) frames from `C` down (`C` itself included). Any such frame refuses.
+
+The question is asked in `Rec::on_step` (where the state is at hand) at a `RETURN*` of the root frame before the first pop, and `Rec::ret` reads the
+answer (`retf_sel_ok`); a refusal keeps the old behaviour (`fn_end`: the side trace ends before the `RETURN`), it never aborts or waits. Both
+conditions were measured against alternatives (scratch, suite instructions): the caller-loop rule alone keeps lua_lexer -7.6 / queens -16.1 and
+removes list, lua_interp, regex_nfa, deltablue, but leaves sudoku_solver +11.3 %, lua_parser +3.4 %, cd +1.2 %; refusing self-pops only (caller =
+popped prototype) loses queens and leaves sudoku; the frame walk catches the mutual recursion. **Waiting** for an untraced caller head instead of
+refusing (the exit `SideUntraced`-waits until the head is traced, always or once per exit, or only for heads without aborts) recovers lua_lexer's other
+half (-16.5 %) and scheme_interp -5.6 %, but costs json_rxi +15.4 %, csv_report +7.9 %, dijkstra_routes +3.4 %: a deferred side trace there
+changes the formation of the whole program. Not built.
+
+Why lua_lexer keeps only half of `retf=7`: 36 of its RETF recordings pass (caller loop L0 pc 127 traced), 9 are refused because the main loop's
+trace is not installed yet or was flushed (`Dep`) at that moment, 6 are pops of the `skip_long_bracket` / `read_string` families into `Lexer:next` at call sites outside its
+loops.
+
+**Soundness.** The selector only restricts where an existing mechanism is used: every RETF it allows is one `retf` bit 2 (`retf=7`, covered by
+`nr_matrix` / `nr_n3_programs` in all modes) allows, through the same `Rec::retf` with every condition of N2c / N3a unchanged, including I9 (no pop
+into a maybe-lazy caller: `retf_nolazy`), the lazy-root and `no_retf` exclusions (`retf_head` is `None` there, so the selector answers no), the
+caller being a Lua frame suspended at an `OP_CALL`, the `RETURN` operands, upvalue aliasing (`RetfAlias`). The answer depends on the head state at
+recording time only; a trace recorded under it stays correct if the caller's root trace is flushed later (the RETF trace's link goes through the
+head's cell, which then leads to tier 1, as for every side trace that links). Snapshots, hooks (a hook aborts the recording), errors after the pop,
+coroutines and GC see the same RETF traces as under `retf=7`. Lua 5.4: RETF is inert there by design (C63), so `retfsel` changes nothing on 5.4.
+
+**Measured** (instructions; cycles min of 5, CPU 4; reference = same binary `retfsel=0`):
+
+| program | instr M off / on | instr | cycles M off / on | cycles |
+|---|---|---:|---|---:|
+| awfy/cd | 773.9 / 774.0 | +0.02 % | 262.3 / 262.4 | +0.01 % |
+| apps/raytrace | 364.8 / 364.9 | +0.02 % | 114.8 / 113.4 | -1.21 % |
+| corpus/lua_lexer | 4415.5 / 4078.9 | -7.62 % | 1095.0 / 1022.1 | -6.66 % |
+| awfy/richards | 177.1 / 177.2 | +0.01 % | 59.4 / 59.9 | +0.86 % |
+| awfy/deltablue | 324.3 / 324.4 | +0.03 % | 108.5 / 109.1 | +0.55 % |
+| awfy/havlak | 512.0 / 512.8 | +0.15 % | 157.3 / 153.1 | -2.67 % |
+| awfy/list | 397.2 / 397.2 | +0.01 % | 94.6 / 94.4 | -0.30 % |
+| awfy/queens | 511.8 / 511.8 | +0.00 % | 96.2 / 97.0 | +0.77 % |
+| awfy/permute | 195.3 / 195.3 | +0.00 % | 36.0 / 36.2 | +0.51 % |
+| awfy/towers | 175.3 / 175.3 | +0.01 % | 47.0 / 46.8 | -0.50 % |
+| programs/fib | 3928.0 / 3928.0 | +0.00 % | 637.5 / 635.1 | -0.38 % |
+| programs/binary_trees | 5635.3 / 5635.3 | +0.00 % | 1247.0 / 1251.4 | +0.36 % |
+| corpus/classic_vector | 2053.9 / 2053.9 | +0.00 % | 474.7 / 472.3 | -0.50 % |
+| corpus2/dev/oop_mixins | 5548.5 / 5548.6 | +0.00 % | 1492.5 / 1511.9 | +1.30 % |
+| corpus2/heldout/roguelike_turns | 2776.6 / 2799.4 | +0.82 % | 811.0 / 823.7 | +1.56 % |
+| corpus2/dev/regex_nfa | 3609.2 / 3609.4 | +0.00 % | 691.8 / 691.6 | -0.03 % |
+| real/lua_interp | 561.9 / 561.9 | +0.00 % | 106.0 / 105.7 | -0.23 % |
+| corpus2/heldout/scheme_interp | 5882.3 / 5882.4 | +0.00 % | 1441.5 / 1448.8 | +0.50 % |
+| corpus2/dev/expr_compiler | 5691.5 / 5691.7 | +0.00 % | 1323.0 / 1330.7 | +0.58 % |
+| corpus/astar_jumper | 4821.1 / 4988.5 | +3.47 % | 1674.8 / 1699.7 | +1.48 % (not deterministic, see below) |
+| corpus2/heldout/dijkstra_routes | 3057.1 / 3021.8 | -1.15 % | 1192.1 / 1183.1 | -0.76 % |
+| awfy/json | 455.2 / 452.0 | -0.71 % | 140.2 / 141.0 | +0.51 % |
+| corpus2/heldout/prototype_objects | 3621.4 / 3643.6 | +0.61 % | 1685.8 / 1676.2 | -0.57 % |
+| corpus2/dev/lua_parser | 5083.2 / 5097.0 | +0.27 % | 1313.8 / 1329.8 | +1.22 % |
+
+Suite (223 programs, instructions): geomean 0.9993; better than -0.2 %: lua_lexer -7.62, dijkstra_routes -1.15, json (awfy) -0.70; worse than +0.2 %:
+roguelike_turns +0.82 (the formation lottery above, smaller), prototype_objects +0.61 (cycles -0.6 %), lua_parser +0.27; `corpus/astar_jumper` is not
+deterministic in either configuration (four modes 4.80 / 4.98 / 5.38 / 5.55 G instructions from run to run, ASLR; 72 runs each: mean 5207 M off,
+5136 M on, low mode 29 / 72 against 39 / 72): no change attributable. Nothing else moves by more than 0.2 %. Lua 5.4: inert (see above).
+
+**Tests and mutants.** `tests/vm/t1_01_retfsel.lua` (lexer shape: a scanner with two loops returning tokens to a hot caller loop; the caller loop inside
+a repeatedly called function with table stores and floats in the continuation; an error raised in the caller after the pop under `pcall` with the
+message checked; a coroutine driver that yields every 500 tokens; collections in the continuation) and `tests/vm/t1_02_retfsel_recursion.lua` (a
+backtracking search whose loop recurses, a mutual recursion through two functions, both called through a wrapper that has no loop), both in
+`vm_corpus` (same output as the reference 5.5 and 5.4). `tr_core::t1_retfsel_programs`: both x `always` / `on2` x `retfsel` 0 / 1, `+verify`; for the
+shipped value exit storm, emulator, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress; every job against the
+interpreter; on 5.5 `t1_01` installs more RETF traces with the selector than without it (`always`), `t1_02` the same number (the selector pops nothing
+inside the recursions; bit 0 RETF of loop families exists in both); on 5.4 none anywhere. `tr_policy::t1_retfsel_policy`: the knob (default, parse,
+cap), the rule's truth table, and `enclosing_loop_head` on compiled bytecode (nested numeric, generic and `while` loops, calls outside every loop).
+Mutants (registry 796 -> 800): `retfsel_never` (caught by both tests), `retfsel_untraced_ok` (policy), `retfsel_recursion_ok` (both),
+`retfsel_outer_loop` (policy: the outermost loop chosen); `gate-mutants.sh --only retfsel_`: 4 ran, 4 caught.
+
+### 39.2 T3 (`heatside`): side traces beyond `maxside` for exits that keep coming back
+
+**Starting point.** A family holds at most `maxside` (16) side traces; past that, an exit that gets hot is blacklisted at its first report
+(`MaxSide`), except dispatch-guard exits inside at least two inlined frames, which BUNDLE-O's `polyside` defers and then admits up to `maxside +
+polyside`. The study's ceiling `maxside=64` (same binary, instructions): oop_mixins -30.8, vending_fsm -5.9, heapsort -4.8, regex_nfa -4.2,
+lua_lexer -4.8, richards (250) -7.7; but cd +5.1, expr_compiler +17.5, lru_cache +5.0, particles_physics +3.5, raytrace +0.6.
+
+**Rule as built.** Knobs `heatside` (extra side traces per family, **default 48**, 0 = off, at most 256), `heatwait` (reports before a grant,
+**16**, 1..255), `heatbudget` (grants per state, **64**), `heatdepth` (**8**); struct defaults = shipped. In `side_attempt`, after the `polyside`
+branch, an exit of a full family that would be blacklisted `MaxSide` is instead **deferred** (`side_failed(.., fault false, "HeatWait")`: the exit
+stays `Free`, its counter restarts, so it reports again after `hot_exit` more exits) while `cache::heat_side_rule` holds: the family holds fewer than
+`maxside + heatside`, the state has granted fewer than `heatbudget`, and the exit's trace lies at most `heatdepth` side links below its family root
+(`side_depth`). Once the exit has been reported `heatwait` times since its family filled up (its own counter `hdefer`; about `heatwait x hot_exit`
+= 256 more exits in the default mode, deterministic), it gets its side recording like any free exit (`heat_waited`), counted in `heat_granted`
+(`[trace] heatside: granted N`). When the rule no longer holds the exit is blacklisted `MaxSide` as before. Everything after the grant is the
+ordinary side-trace path; the rule only decides whether an exit of a full family is recorded.
+
+Two refinements came from measurements of the first form (cap and wait only):
+
+* **Depth limit.** expr_compiler stayed at +18 %: its grants formed one chain, each new side trace hanging off the previous one at the same exit
+  (exit 4, pc 0, depths 16 -> 63). The deepest grant of every paying program is at depth 6 or less (oop_mixins 6, regex_nfa 5, lua_lexer 5,
+  vending_fsm 4, heapsort 3, richards 2); `heatdepth` 8 stops the chain (expr_compiler -0.6 %). Depth 2 / 4 / 6 / 8 measured: 4..8 equal except
+  real_dis_mips (5.5) -3.7 % from depth 6 on.
+* **The `loopany` guard counts a deferred exit once.** 5.4 `dijkstra_routes` was +6.6 %: every report of a deferred exit inside inlined frames passed
+  through the `loopany` guard's attempt counter (`la_sides`), which tripped at 49 "attempts" and flushed the family, and the re-formed tree lost
+  `L89`'s loop trace (`Ineffective`). A report of an exit with `hdefer > 0` is not counted again (`heat_redeferred`): +0.15 %.
+
+Rejected variants (measured): "a granted side trace's own exits get no grant" (one level per exit tree): roguelike unchanged, oop_mixins -20.5
+instead of -28.8; `heatwait` 4 / 32 / 64 / 128: oop_mixins -29.5 / -27.3 / -24.9 / -19.6, vending_fsm -6.2 / -4.9 / -4.8 / +2.7, richards default
+size -0.0 / +1.1 / +1.7 / +3.7, particles_physics +3.3 at 4 and 64 (a lottery: -0.05 at 16 and 32): 16 kept.
+
+**Soundness.** A grant is an ordinary side recording of an exit that a non-full family would have recorded at its first report; the deferral only
+changes *when* and *whether* that happens (the exit state is `Free` instead of `Black`, its counter restarts as after any non-fault refusal such
+as `Busy` or `PolyWait`). No new code shape, no new exit or link kind: invariants I1-I10, snapshots, the side-trace protocol and its tests apply
+unchanged. Bounded cost: per family at most `heatside` extra traces, per state at most `heatbudget` extra recordings, per deferred exit at most
+`heatwait` extra handler reports. The deferred exit's counter restart reaches the ineffective-trace rule (Q2) as the restarts of `PolyWait` do;
+the `loopany` guard is protected explicitly (above). Lua 5.4: the rule is version-independent and active there too.
+
+**Measured.** Instructions, 5.5, same binary `heatside=0` against `heatside=48` (the other heat knobs at their defaults):
+
+| program | instr M off / on | instr | cycles M off / on | cycles |
+|---|---|---:|---|---:|
+| awfy/cd | 774.0 / 774.1 | +0.01 % | 261.3 / 261.1 | -0.08 % |
+| apps/raytrace | 365.0 / 365.0 | +0.01 % | 113.8 / 115.8 | +1.73 % (15 runs: 113.5 / 113.2, -0.2 %) |
+| corpus/lua_lexer | 4078.9 / 3951.7 | -3.12 % | 1019.8 / 984.2 | -3.49 % |
+| awfy/richards | 177.2 / 177.8 | +0.34 % | 59.6 / 61.5 | +3.20 % (15 runs: 60.3 / 63.2, +4.7 %) |
+| awfy/deltablue | 324.4 / 324.4 | +0.00 % | 107.5 / 106.8 | -0.63 % |
+| awfy/havlak | 512.9 / 513.0 | +0.03 % | 157.1 / 164.5 | +4.72 % (10 runs: 153.1 / 150.8, -1.5 %) |
+| awfy/list | 397.3 / 397.3 | -0.00 % | 94.4 / 94.3 | -0.13 % |
+| awfy/queens | 511.8 / 511.8 | +0.00 % | 96.1 / 95.4 | -0.71 % |
+| awfy/permute | 195.4 / 195.4 | -0.00 % | 36.3 / 36.4 | +0.08 % |
+| awfy/towers | 175.3 / 175.3 | -0.00 % | 47.8 / 47.9 | +0.25 % |
+| programs/fib | 3928.0 / 3928.0 | -0.00 % | 638.2 / 631.2 | -1.10 % |
+| programs/binary_trees | 5635.3 / 5635.3 | -0.00 % | 1242.2 / 1243.6 | +0.11 % |
+| corpus/classic_vector | 2054.0 / 2054.0 | -0.00 % | 477.6 / 479.5 | +0.40 % |
+| corpus2/dev/oop_mixins | 5549.0 / 3949.0 | -28.83 % | 1487.0 / 1161.5 | -21.89 % |
+| corpus2/heldout/roguelike_turns | 2799.4 / 2836.6 | +1.33 % | 826.4 / 847.4 | +2.54 % (10 runs: +3.6 %; lottery, see text) |
+| corpus2/dev/regex_nfa | 3609.4 / 3455.4 | -4.27 % | 663.6 / 659.6 | -0.59 % |
+| real/lua_interp | 561.9 / 561.9 | -0.00 % | 105.5 / 106.2 | +0.60 % |
+| corpus2/heldout/scheme_interp | 5882.5 / 5882.5 | -0.00 % | 1443.1 / 1454.1 | +0.76 % |
+| corpus2/dev/expr_compiler | 5691.8 / 5657.1 | -0.61 % | 1308.2 / 1314.7 | +0.50 % |
+| corpus/astar_jumper | 4838.5 / 4811.3 | -0.56 % | 1706.2 / 1786.5 | +4.71 % (not deterministic) |
+| corpus2/heldout/vending_fsm | 3742.6 / 3524.2 | -5.83 % | 1033.2 / 987.0 | -4.47 % |
+| programs/heapsort | 2913.9 / 2779.0 | -4.63 % | 1114.3 / 1105.5 | -0.79 % |
+| corpus2/dev/real_dis_arm | 7424.8 / 7466.2 | +0.56 % | 2476.1 / 2506.1 | +1.21 % |
+| corpus2/heldout/real_dis_mips | 7264.6 / 7273.9 | +0.13 % | 2219.0 / 2211.4 | -0.34 % |
+| corpus/containers_lru_heap | 5503.3 / 5466.8 | -0.66 % | 1313.6 / 1318.9 | +0.40 % |
+| corpus2/dev/memo_cache | 4961.6 / 4940.4 | -0.43 % | 1699.2 / 1730.8 | +1.86 % |
+| corpus/testrunner_luaunit | 5304.6 / 5304.6 | -0.00 % | 1459.4 / 1463.3 | +0.27 % |
+| corpus2/heldout/dijkstra_routes | 3021.8 / 3011.3 | -0.35 % | 1178.4 / 1188.9 | +0.88 % |
+
+Suite (223 programs, 5.5): geomean 0.9972; better than -0.2 %: oop_mixins -28.83, vending_fsm -5.83, heapsort -4.63, regex_nfa -4.27, lua_lexer
+-3.12, containers_lru_heap -0.67, expr_compiler -0.61, memo_cache -0.43, dijkstra_routes -0.35, testrunner_luaunit -0.30 (astar_jumper -10.7: not
+deterministic, see 39.1); worse than +0.2 %: roguelike_turns +1.33, real_dis_arm +0.57, richards +0.34. Lua 5.4 (128 programs of the same sets
+without `lib`): geomean 0.9964; vending_fsm -11.2, oop_mixins -27.7, forth_vm -3.7, expr_compiler -1.4; real_dis_mips +2.09, real_dis_arm +0.80,
+queens +0.70, roguelike_turns +0.97, richards +0.39.
+
+The programs above +1 % are formation lotteries, measured across hot thresholds (`RUSTYNAIL_JIT_TRACE_HOT` 248..264, step 2, nine runs each, same
+binary): roguelike_turns (5.5) off 2797..6033 M, mean 3217, on 2784..5767, mean 3193 (-0.8 %; the shipped threshold 256 is the off column's
+luckiest phase); real_dis_mips (5.4) off 7338..7628, mean 7487, on 7437..7689, mean 7533 (+0.6 %; again 256 is off's best phase). richards is
+threshold-sensitive in both columns (off 176..201, on 177..248 M at single thresholds).
+
+**Cycles** (min of 5, CPU 4; richards / raytrace / havlak / roguelike re-run with 10-15 runs because the first round moved by up to 9 % at equal
+instructions): oop_mixins -21.9 %, vending_fsm -4.5 %, lua_lexer -3.5 %, heapsort -0.8 %, regex_nfa -0.6 %; **richards (default size) +4.7 %** at
++0.34 % instructions (15 runs: 60.3 against 63.2 Mcyc): the 13 granted side traces of its scheduler family do not reduce its exits (278 k in both)
+and add branch mispredictions (0.33 M -> 0.41 M) and L1i misses (0.80 M -> 0.85-1.00 M) in a 60 Mcyc program; at `richards 250` the same rule is
+-7.4 % instructions, -7.3 % cycles (1422 -> 1317 M, 456 -> 423 Mcyc): the study's large-size target. roguelike_turns +2.5..3.6 % (the formation
+lottery above). Everything else within noise at equal instructions.
+
+**Tests and mutants.** `tests/vm/t3_01_heatside.lua` (a 40-way branch chain in one hot loop; a chain whose late branches stop being taken; an error
+raised inside a late branch under `pcall`, a collection in another; same output as the reference 5.5 and 5.4). `tr_core::t3_heatside_programs`:
+`always` / `on2` x `heatside` 0 / 48, `+verify`; exit storm, emulator, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move
+stress for the shipped value; every job against the interpreter; in `always` mode the shipped rule grants (>= 8), `heatside=0` grants nothing,
+`heatbudget=3` exactly 3, and `heatside=4`, `heatwait=255`, `heatdepth=0` each fewer than the shipped values. `tr_policy::t3_heatside_policy`: knob
+defaults / parse / caps, the rule at each boundary, `heat_waited`, `heat_redeferred`. Mutants (800 -> **806**): `heatside_never`,
+`heatside_cap_ignored`, `heatside_budget_ignored`, `heatwait_ignored`, `heatdepth_ignored` (each caught by both tests), `heatdefer_counts_la`
+(policy test); `gate-mutants.sh --only heatside_,heatwait_,heatdepth_,heatdefer_`: 6 ran, 6 caught.
+
+### 39.3 T2: cheaper compile at small sizes (no change to the emitted code)
+
+**Profile.** Instruction samples (`perf record -e instructions:u -c 100000`, 4-6 runs merged per program, flat) of the T3 binary at the bench default
+size, then a scratch build with frame pointers (`RUSTFLAGS=-C force-frame-pointers=yes`, its own target directory, removed) for call graphs
+(`perf record --call-graph fp --user-callchains`; plain `-g` is refused at `perf_event_paranoid` 2). `[trace] phases` of raytrace: `rec_step` 19.7
+Mtsc for 12.5 k recorded bytecodes (about 1.6 k tsc each) against `pipeline` 19.8 Mtsc for 45 compiles: the **recorder** costs as much as the whole
+back end, and inside it (inclusive, fp profile, raytrace): `on_step` 18.3 % of all instructions, of which `SlotMap::entries` 3.7 % (3.1 % of it
+`Vec::push` regrowth), `SlotMap::clone_from` 2.3 % (malloc / free), table-key recording (`hash_get_chain`) 4.6 %, IR emission and folding; the back end
+(`pipeline_inner` 17.5 %): register allocation 3.7, exit building 3.1, assembler 2.8, sinking 2.3, loop optimisation 1.8; tier-1 compiles
+(`rt::compile`) 4.1 % (7.1 % on deltablue), whose x86 encoder (`Assembler::rm_op`) is 1.8-2.9 % self.
+
+**Fixes (all four keep the emitted code identical):**
+
+1. **`SlotMap::clone_from` without allocation.** The recorder copies its slot map before every step (`Rec::st_sm`, the restart state of an
+   inlined metamethod); `#[derive(Clone)]` gives `clone_from = *self = source.clone()`, i.e. six allocations and six frees per recorded bytecode.
+   A hand-written `Clone` copies field by field into the existing vectors.
+2. **`SlotMap::entries` over a bit set of the written slots** (`wmask`, kept in step with `written` by `def` / `set_written`; the two places in
+   `record.rs` that wrote `written` directly use `set_written`), with the result vector sized once by the popcount. It scanned every slot of the
+   frame for every snapshot and grew its result one entry at a time. The order (ascending slot) and the filter are unchanged.
+3. **`entry_checks` without the quadratic membership test** (`moved.contains(i)` for every instruction of the trace: now a mask).
+4. **The registered-descriptor set `JitData::live` on FxHash** (looked up by every head query of the recorder; never iterated, so no order can
+   change).
+
+Not done (measured, larger and riskier): the tier-1 encoder, the recorder's table-key path, the back-end passes; a lazy copy instead of the per-step
+slot-map copy (an undo log) was not attempted.
+
+**Identical code.** `RUSTYNAIL_JIT_DUMP` of both binaries (the IR and register-allocation text of every installed trace with addresses normalised,
+the machine-code size of every trace and of every tier-1 prototype) and the `[trace]` statistics lines (timing lines excluded), compared
+program by program (`ident.py` in the builder's scratch): **81 of 83 identical** (14 awfy, 25 `bench/programs`, 5 apps, 29 jit-trace, 10 programs of
+the key set); the two others are the run-to-run non-deterministic `oop_mixins` (its `entered` / `exits` counters differ between two runs of the
+same binary; its traces are identical) and `astar_jumper` (formation differs between runs of one binary). Unit test
+`snap::tests::entries_by_mask_equal_the_full_scan` (4000 random definitions, redefinitions, cleared flags, growth across mask words and `clone_from`
+into a map of another size, against the old scan).
+
+**Instructions saved** (default size, same environment; suite of 223: geomean 0.9983, no program above +0.06 % except the non-deterministic
+`real_dis_x86`, 5010-5105 M from run to run in either binary):
+
+| program | instr M before / after | instr | cycles M before / after | cycles |
+|---|---|---:|---|---:|
+| apps/raytrace | 365.0 / 346.8 | -4.99 % | 111.7 / 106.9 | -4.30 % |
+| awfy/cd | 774.1 / 763.2 | -1.42 % | 256.3 / 252.7 | -1.41 % |
+| awfy/deltablue | 324.4 / 318.6 | -1.79 % | 106.7 / 105.0 | -1.52 % |
+| awfy/richards | 177.8 / 176.4 | -0.79 % | 60.9 / 60.5 | -0.77 % |
+| awfy/towers | 175.3 / 173.6 | -0.96 % | 46.8 / 45.9 | -1.88 % |
+| awfy/havlak | 512.9 / 508.3 | -0.89 % | 147.7 / 145.1 | -1.72 % |
+| awfy/list | 397.3 / 395.2 | -0.52 % | 93.2 / 92.2 | -1.08 % |
+| corpus/classic_vector | 2054.0 / 2038.7 | -0.74 % | 476.6 / 466.8 | -2.04 % |
+| apps/expr_lang | 573.9 / 569.3 | -0.80 % | 146.1 / 146.4 | +0.20 % |
+| apps/lru_cache | 322.8 / 318.8 | -1.23 % | 141.7 / 139.7 | -1.42 % |
+| awfy/json | 452.0 / 448.7 | -0.74 % | 139.0 / 138.2 | -0.60 % |
+| jit-trace/rec_loop | 444.4 / 442.0 | -0.56 % | 80.7 / 80.0 | -0.84 % |
+| corpus2/heldout/stream_closures | 2856.2 / 2830.5 | -0.90 % | 767.5 / 747.6 | -2.60 % |
+| corpus2/dev/particles_physics | 1375.3 / 1366.9 | -0.61 % | 401.0 / 397.9 | -0.77 % |
+| awfy/permute | 195.4 / 195.2 | -0.08 % | 35.7 / 35.7 | -0.16 % |
+
+Lua 5.4 (the same commits' 5.4 builds, instructions): raytrace -4.38 %, deltablue -1.72, cd -1.21, lru_cache -1.06, towers -0.94, richards -0.80,
+havlak -0.59, classic_vector -0.56.
+
+Against the compile share of the study (compile + libc at the default size: raytrace 36.7 %, cd 26.5, deltablue 24.9, richards 22.7, towers 15.5),
+these fixes remove about 14 % of raytrace's compile cost and 4-7 % of the others'. The study's "halve the compile" estimate needs the recorder's
+per-bytecode path and the back end, not allocation and scan fixes.
+
+### 39.4 Decisions, gates, what ran and what did not, risks
+
+| handle | knob (default) | decision | the data it rests on |
+|---|---|---|---|
+| T1 | `retfsel` (1) | shipped | lua_lexer -7.6 % instructions / -6.7 % cycles, dijkstra_routes -1.2 / -0.7, json -0.7; worst roguelike_turns +0.8 / +1.6 (formation); suite 0.9993; 5.4 inert |
+| T3 | `heatside` 48, `heatwait` 16, `heatbudget` 64, `heatdepth` 8 | shipped | oop_mixins -28.8 / -21.9, vending_fsm -5.8 / -4.5, heapsort -4.6, regex_nfa -4.3, lua_lexer -3.1 / -3.5, richards 250 -7.4 / -7.3; richards default +0.3 / +4.7 (branch misses of 13 extra side traces); suite 0.9972 (5.4: 0.9964) |
+| T2 | none (always on) | shipped | identical traces (81 / 83, the rest non-deterministic in either binary); raytrace -5.0 / -4.3, deltablue -1.8 / -1.5, cd -1.4 / -1.4, towers -1.0 / -1.9, suite 0.9983 |
+
+**Gates** (`scripts/gate-light.sh --base HEAD`, default `GATE_CPUS`, one gate at a time, never during a timing run):
+
+* T1 commit: all steps PASS (fmt, mutant map, clippy 5.5 / 5.5-jit / 5.4, core 5.5 / 5.4, trace suites 5.5 158 s / 5.4 148 s, `vm_corpus`,
+  jit-diff 1-50, mutant group 76 ran / 76 caught).
+* T3 commit: the first run failed `tr_core::side_traces_install_and_run` on 5.5 and 5.4 (its `maxside=1` bound now sees the `heatside` grants)
+  and therefore the mutant `side_maxside_ignored` (its detector); the test pins `maxside=1,heatside=0` for the hard cap and bounds
+  `maxside=1,heatside=2` by 3; the second run: all steps PASS, mutant group 81 ran / 81 caught.
+* T2 commit: all steps PASS except `mutant-map` (the injection-site lines moved); the map was regenerated and `fmt` + `mutant-map` re-run PASS;
+  mutant group 76 ran / 76 caught. The documentation was added to the T2 commit after its gate (text only).
+* Mutant groups per handle: `gate-mutants.sh --only retfsel_` 4 / 4, `--only heatside_,heatwait_,heatdepth_,heatdefer_` 6 / 6,
+  `--only side_maxside_ignored` 1 / 1. Registry 796 -> **806**.
+
+**Not run** (by instruction): `scripts/gate-heavy.sh`, the oracle-feature suites (`tr_identity`, `instruction_count_identity`, `t15_oracle`,
+`oracle_options`), jit-diff 1-200 in seven modes, the full mutant runner (806), any full benchmark. The 5.4 suite of programs was measured for
+instructions only (no 5.4 cycles).
+
+**Risks.** (1) T1 and T3 change the formation of the trace tree; formation-fragile programs (roguelike_turns, real_dis_mips, richards at some
+hot thresholds, astar_jumper, which is non-deterministic) move by a few percent either way, and the per-threshold means say the shipped defaults
+land on lottery outcomes, not systematic losses, but a session benchmark may show such programs moving. (2) T3's richards default-size cycle cost
+(+4.7 %) is real: extra side traces that the program's length does not repay; the large size gains -7.3 %. A tighter wait was measured and is
+worse for both richards and the winners. (3) T3 interacts with every rule that counts exit reports (the `loopany` guard is handled, Q2's
+counters see the same restarts as with `polyside`); a rule added later that counts side attempts must know that a deferred exit reports again.
+(4) T1 relies on the caller's head state at recording time; a caller trace flushed later leaves the RETF side trace linking through the head's
+cell into tier 1 (correct, slower). (5) T2's `wmask` must stay in step with `written`: every write goes through `def` / `set_written` now; a
+future direct write to `written` would make `entries` miss a slot (the unit test compares with the full scan, the oracle suites would see it).
+(6) In-place `Unstable` restarts (TR24c, `restarts = 1`) cure roguelike's first-iteration lottery and gave raytrace -3.9 % in a scratch build;
+recorded here as a lead, not built.

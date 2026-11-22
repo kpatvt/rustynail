@@ -14,7 +14,6 @@ use rn_core::func::Proto;
 use rn_core::jit_helpers;
 use rn_core::jit_hooks::{self, HotCall, JitExit, VTable};
 use rn_core::state::{Ci, State, StkId};
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -396,7 +395,8 @@ pub(crate) struct JitData {
     pub(crate) arena: CodeArena,
     thunk: Option<(ThunkEx, CodeBlock)>,
     /// Addresses of the live descriptors (`Box::into_raw` pointers); the remaining ones are freed at close.
-    pub(crate) live: HashSet<usize>,
+    /// (T2: FxHash; looked up by every head query of the recorder, never iterated, so the order of the hasher cannot matter)
+    pub(crate) live: crate::fx::HashSet<usize>,
     /// Debug builds: descriptors of collected prototypes, kept (poisoned) so a stale use is caught by an
     /// assertion instead of being a use-after-free. Freed when the state closes.
     quarantine: Vec<*mut JitProto>,
@@ -529,7 +529,7 @@ impl JitData {
             heuristic: mode == Mode::On,
             arena,
             thunk: None,
-            live: HashSet::new(),
+            live: crate::fx::HashSet::default(),
             quarantine: Vec::new(),
             env: None,
             t1i_hints: Default::default(),

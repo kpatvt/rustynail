@@ -1401,7 +1401,12 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
     // new order: the prefix, the checks, everything else
     let mut order: Vec<usize> = (0..p).collect();
     order.extend(moved.iter().copied());
-    order.extend((p..ir.ins.len()).filter(|i| !moved.contains(i)));
+    // (T2: a mask, not `moved.contains` per instruction: that was quadratic in long recordings)
+    let mut is_moved = vec![false; ir.ins.len()];
+    for &i in &moved {
+        is_moved[i] = true;
+    }
+    order.extend((p..ir.ins.len()).filter(|&i| !is_moved[i]));
     if order.iter().copied().eq(0..ir.ins.len()) {
         return Ok(());
     }
