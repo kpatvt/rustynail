@@ -229,6 +229,11 @@ pub struct AsmEnv {
     pub lazy_leave_fn: u64,
     /// Test knob `lazypoison` (docs/JIT_TRACE.md section 36.1): every lazy push also clears `kcache` and `callstatus` of the frame it pushes.
     pub lazy_poison: bool,
+    /// E6 (`dlink` bit 0, docs/JIT_TRACE.md section 36.3): mark the exits a side trace may take a direct link to (`Asm::dl_ok`).
+    pub dlink_snaps: bool,
+    /// E6 (`dlink` bit 1): a native push / return of a lazy-aware family keeps the budget in its register when it jumps through a `rec` cell (an inner
+    /// entry continues with the register); the word is stored on the null-cell path, the only one that leaves.
+    pub rec_vb_keep: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
     pub lazy_cs: Option<u32>,
     /// BUNDLE-K L1: `numparams` of the root prototype (the end of the arguments of a frame just pushed natively).
@@ -374,6 +379,8 @@ impl Default for AsmEnv {
             prelude: false,
             lazy_leave_fn: 0,
             lazy_poison: false,
+            dlink_snaps: false,
+            rec_vb_keep: false,
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
@@ -448,6 +455,11 @@ pub struct Asm {
     pub hk_split: u32,
     /// P3: snapshots whose exit counter counts twice per exit (the `mat_stub` of a frameful exit with a frame cell: see there).
     pub dbl: Vec<u32>,
+    /// E6 (`dlink`): the deferred snapshots a side trace may take a direct link to (`exit::DeferInfo::dl_ok`).
+    pub dl_ok: Vec<u32>,
+    /// E6 (`dlink`): the link entry of a side trace assembled with a [`DlinkIn`]: the parent's exit map stored, the exit's refund added to the budget
+    /// register, then the code behind the plain entry's budget load. `None`: no link entry.
+    pub entry_dl: Option<L>,
     /// P-M3: the inner entry of a native-recursion root (room checks only; the entry bookkeeping and the budget load are
     /// skipped: a native return / self-call has stored the budget word and keeps the budget register), `None` if the trace
     /// has none.
@@ -2391,6 +2403,8 @@ struct Cx<'a> {
     hk_fused_n: u32,
     hk_split_n: u32,
     dbl: Vec<u32>,
+    /// E6: `Asm::dl_ok`.
+    dl_ok: Vec<u32>,
     /// S1: the deferred snapshots and the labels of their patchable `nop`s (`Asm::defer_g`).
     defer_g: Vec<(u32, L)>,
     /// S1: the label of the embedded shared exit routine (`Asm::shared_label`).
@@ -2449,6 +2463,7 @@ impl<'a> Cx<'a> {
             hk_fused_n: 0,
             hk_split_n: 0,
             dbl: Vec::new(),
+            dl_ok: Vec::new(),
             defer_g: Vec::new(),
             shared_l: None,
             twin_abs: 0,
@@ -2949,12 +2964,33 @@ pub const HEAD_OFFSET: u8 = 48;
 /// Assembles `ir`. `al` is the allocation (`ra::allocate(ir, end_uses)`; `end_uses` = the refs of `writeback` in
 /// order for the rolled layout, empty for the peeled one), `snaps` the resolved exits (`exit::build_exits`) and
 /// `writeback` the slots the rolled iteration writes back (`Recorded::writeback`; ignored for the peeled layout).
+/// E6 (`dlink`, docs/JIT_TRACE.md section 36.3): what a side trace's link entry does before it joins the plain entry behind its budget load: the parent
+/// exit's slot stores (the ops of its inline stub, with the parent's registers, which hold the exit map when the parent's guard branches here) and the
+/// exit's refund, added to the budget register (the stub would have stored `vb + refund` into the word, which the plain entry loads).
+#[derive(Clone, Debug, Default)]
+pub struct DlinkIn {
+    pub ops: Vec<Op>,
+    pub refund: i32,
+}
+
 pub fn assemble(
     ir: &TraceIr,
     al: &Allocation,
     snaps: &[ExitSnap],
     writeback: &[SnapEntry],
     env: &AsmEnv,
+) -> Result<Asm, AsmError> {
+    assemble_dl(ir, al, snaps, writeback, env, None)
+}
+
+/// [`assemble`] with the link entry of a side trace (E6, `dl`: `Some` only for a side trace without room checks whose budget is in `ra::BUDGET_GPR`).
+pub fn assemble_dl(
+    ir: &TraceIr,
+    al: &Allocation,
+    snaps: &[ExitSnap],
+    writeback: &[SnapEntry],
+    env: &AsmEnv,
+    dl: Option<&DlinkIn>,
 ) -> Result<Asm, AsmError> {
     if al.ins.len() != ir.ins.len() || snaps.len() != ir.snaps.len() {
         return incons("allocation / exits do not match the IR");
@@ -3017,6 +3053,20 @@ pub fn assemble(
         cx.st(W::B8, m, Src::V(7));
     }
     cx.entry_checks(entry_fail)?;
+    // E6 (`dlink`): the link entry joins here, behind the budget load (it adds the refund to the register instead of the word store / reload)
+    let dl = dl.filter(|_| {
+        env.side.is_some()
+            && env.no_room_checks
+            && env.budget_reg == Some(super::ra::BUDGET_GPR)
+            && ir.carry_in.is_empty()
+            && ir.carry_store.is_empty()
+            && !env.prelude
+    });
+    let dl_after = dl.map(|_| {
+        let l = cx.label();
+        cx.bind(l);
+        l
+    });
     let rec_fail = cx.label();
     let inner = (rolled
         && env.side.is_none()
@@ -3331,6 +3381,29 @@ pub fn assemble(
             carry_budget = ir.ins[1].a;
         }
     }
+    // E6 (`dlink`): the link entry (the parent's guards branch here directly once the side trace is installed: `cache::dlink_attach`)
+    let entry_dl = match (dl, dl_after) {
+        (Some(dl), Some(after)) => {
+            let l = cx.label();
+            cx.bind(l);
+            if !mutants::active("dlink_store_skip") {
+                for op in &dl.ops {
+                    cx.push(*op);
+                }
+            }
+            let refund = if mutants::active("dlink_refund_off") {
+                dl.refund + 1
+            } else {
+                dl.refund
+            };
+            if refund != 0 {
+                cx.push(Op::Add(super::ra::BUDGET_GPR, Src::Imm(refund)));
+            }
+            cx.push(Op::Jmp(after));
+            Some(l)
+        }
+        _ => None,
+    };
     cx.stubs_and_tail(
         entry_fail,
         (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(rec_fail),
@@ -3362,6 +3435,7 @@ pub fn assemble(
     let hk_fused = cx.hk_fused_n;
     let hk_split = cx.hk_split_n;
     let dbl = std::mem::take(&mut cx.dbl);
+    let dl_ok = std::mem::take(&mut cx.dl_ok);
     Ok(Asm {
         prog: cx.p,
         entry,
@@ -3370,6 +3444,8 @@ pub fn assemble(
         hk_fused,
         hk_split,
         dbl,
+        dl_ok,
+        entry_dl,
         inner,
         entry2,
         e2_req,
@@ -4021,7 +4097,7 @@ impl Cx<'_> {
             (i32::from(rc.a) + 1) * 16 - 16 * i32::from(mutants::active("addframe_push_off"));
         self.push(Op::AddFrame(bump));
         if self.env.rec_link_cell != 0 {
-            if let Some(r) = self.env.budget_reg {
+            if let (Some(r), false) = (self.env.budget_reg, self.rec_vb_kept()) {
                 self.st(
                     W::B4,
                     M {
@@ -4042,6 +4118,11 @@ impl Cx<'_> {
         }
         self.push(Op::Jmp(loop_l));
         Ok(())
+    }
+
+    /// E6 (`dlink` bit 1): the native transfers of this lazy-aware trace keep the budget in its register up to the `rec` cell jump.
+    fn rec_vb_kept(&self) -> bool {
+        self.env.rec_vb_keep && self.env.lazy && self.env.budget_reg.is_some()
     }
 
     /// Test knob `lazypoison`: the frame a lazy push just wrote `func` into (`V1`) is marked incomplete (`kcache = 0`, `callstatus = 0`): every
@@ -4065,6 +4146,20 @@ impl Cx<'_> {
         }
         self.push(Op::JmpR(7));
         self.bind(fb);
+        // E6 (`dlink` bit 1): the inner entry continues with the budget register; this path leaves (the leave block, then a dispatch cell), so the word is
+        // stored here
+        if self.rec_vb_kept() && !mutants::active("dlink_vb_fb_nostore") {
+            if let Some(r) = self.env.budget_reg {
+                self.st(
+                    W::B4,
+                    M {
+                        base: Base::Cnt,
+                        off: 0,
+                    },
+                    Src::V(r),
+                );
+            }
+        }
         let plain = rec_cell - head_off::REC as u64 + head_off::CELL as u64;
         self.push(Op::Mov(7, plain));
         self.ld(6, W::B8, rm(7, 0));
@@ -4266,7 +4361,7 @@ impl Cx<'_> {
             self.bind(lz);
         }
         self.push(Op::SetCi(1));
-        if let Some(r) = self.env.budget_reg {
+        if let (Some(r), false) = (self.env.budget_reg, lazy && self.rec_vb_kept()) {
             self.st(
                 W::B4,
                 M {
@@ -8910,6 +9005,26 @@ impl Cx<'_> {
             let plan = self.stub_plan(snap, entry, &es);
             // S1 (`lazystub`): a stub with an inline part is assembled when its exit is first taken (entry checks keep theirs: they use the extension slots)
             if self.env.defer && !entry && !matches!(plan, StubPlan::Generic) {
+                // E6 (`dlink`): an exit whose stub is an inline stub continuing through its cell (frameless, or a frame cell), counted only to find the hot
+                // count (no pre-roll or chain rule), may be linked directly to a side trace attached to it (`cache::dlink_attach`)
+                if self.env.dlink_snaps
+                    && self.env.lazy
+                    && self.env.exit_cells != 0
+                    && self.env.counters != 0
+                    && matches!(plan, StubPlan::Inline { frame_cell, .. } if frame_cell == !es.frames.is_empty())
+                    && !self.pre_snaps.get(snap as usize).copied().unwrap_or(false)
+                    && !self
+                        .chain_snaps
+                        .get(snap as usize)
+                        .copied()
+                        .unwrap_or(false)
+                    && (es.frames.is_empty() || es.frame_side_ok())
+                    && es.sunk.is_empty()
+                    && es.top.is_none()
+                    && es.seg_pops == 0
+                {
+                    self.dl_ok.push(snap);
+                }
                 self.defer_stub(snap, plan, label, &mut shared);
                 continue;
             }

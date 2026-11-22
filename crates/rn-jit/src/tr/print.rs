@@ -240,6 +240,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     if s.lazyloop_on > 0 {
         let _ = writeln!(o, "[trace] lazyloop: lazy-aware {}", s.lazyloop_on);
     }
+    if s.dlink_attached + s.dlink_unlinked > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] dlink: attached {} unlinked {}",
+            s.dlink_attached, s.dlink_unlinked
+        );
+    }
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,

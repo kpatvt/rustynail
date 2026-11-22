@@ -4348,6 +4348,26 @@ const TABLE: &[Row] = &[
         owner: "E6",
         dets: &[d("tr_core", "lz_side_entry_programs")],
     },
+    Row {
+        name: "dlink_refund_off",
+        owner: "E6",
+        dets: &[d("tr_core", "e6_dlink_programs")],
+    },
+    Row {
+        name: "dlink_store_skip",
+        owner: "E6",
+        dets: &[d("tr_core", "e6_dlink_programs")],
+    },
+    Row {
+        name: "dlink_unlink_skip",
+        owner: "E6",
+        dets: &[d("tr_core", "e6_dlink_programs")],
+    },
+    Row {
+        name: "dlink_vb_fb_nostore",
+        owner: "E6",
+        dets: &[d("tr_core", "e6_dlink_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

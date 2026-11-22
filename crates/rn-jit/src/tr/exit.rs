@@ -287,6 +287,9 @@ pub struct DeferInfo {
     pub failed: Vec<Cell<bool>>,
     /// The blocks the deferred stubs share (frame rebuilds, lazy leave blocks), placed with the first stub that needed each.
     pub shared: RefCell<super::asm::DeferShared>,
+    /// E6 (`dlink`): per snapshot: a side trace attached to this exit may take a direct link (`cache::dlink_attach`): a frameless inline stub of a lazy-aware
+    /// trace that continues through its cell, without pre-roll or chain counting, sunk tables, frames or `top`.
+    pub dl_ok: Vec<bool>,
 }
 
 impl ExitSnap {

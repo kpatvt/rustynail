@@ -102,6 +102,8 @@ pub enum UnrollDemote {
 pub const IDFOLD_PROCESS: u32 = 1;
 /// E4: the process default of [`TrLimits::lazyloop`] (also the struct default).
 pub const LAZYLOOP_PROCESS: u32 = 1;
+/// E6: the process default of [`TrLimits::dlink`] (also the struct default).
+pub const DLINK_PROCESS: u32 = 3;
 /// E5: the process default of [`TrLimits::midfold`] (also the struct default).
 pub const MIDFOLD_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
@@ -728,6 +730,12 @@ pub struct TrLimits {
     /// (the interpreter's `kcache` assertion then catches a frame that is never completed, in debug builds, with or without fresh nodes). Never set
     /// by a process default.
     pub lazypoison: u32,
+    /// E6 (`dlink`, docs/JIT_TRACE.md section 36.3): direct transfers in lazy-aware recursion families. Bit 0: a guard whose exit has a side trace
+    /// attached jumps straight to the side trace's link entry (its branches and the exit's patchable `nop` are re-pointed at the install of the side trace and
+    /// back at its flush): the entry stores the exit map, adds the exit's refund to the budget register and continues behind the side trace's budget load (no exit
+    /// counter, no budget store / reload, no cell). Bit 1: a native push / return keeps the budget in its register when it jumps to an inner entry (the word is
+    /// stored only on the paths that leave). 0 = off, 3 = both (default [`DLINK_PROCESS`]).
+    pub dlink: u32,
 }
 
 impl Default for TrLimits {
@@ -846,6 +854,7 @@ impl Default for TrLimits {
             carrylive: 1,
             regcarry: REGCARRY_PROCESS,
             lazypoison: 0,
+            dlink: DLINK_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1038,6 +1047,7 @@ impl TrLimits {
                 "carrylive" => l.carrylive = v.min(1),
                 "regcarry" => l.regcarry = v.min(3),
                 "lazypoison" => l.lazypoison = v.min(1),
+                "dlink" => l.dlink = v.min(3),
                 _ => bad.push(w.to_string()),
             }
         }
@@ -2623,6 +2633,9 @@ pub struct TrStats {
     pub midfold_banned: u64,
     /// E4: candidate prototypes with loops that were decided lazy-aware.
     pub lazyloop_on: u64,
+    /// E6 (`dlink`): direct exit links patched in at a side trace's install / patched back at its flush.
+    pub dlink_attached: u64,
+    pub dlink_unlinked: u64,
     /// R1: rearm ticks armed by a hand-off to the interpreter.
     pub rearm_arms: u64,
     /// R1: rearm ticks that entered a traced head.
@@ -2762,6 +2775,9 @@ struct Trace {
     idfold: bool,
     /// E5: the trace folded a method `SELF` of its family (counted in `TrProto::midfold_live`).
     midfold: bool,
+    /// E6 (`dlink`): a side trace whose parent's exit branches were re-pointed at its link entry: the patched addresses with their bytes before the patch
+    /// (written back when this side trace is flushed while its parent lives).
+    dl_saved: Vec<(usize, Vec<u8>)>,
 }
 
 // (a slot of the trace table: boxing `Trace` would cost an indirection in the exit handler's lookups for nothing)
@@ -3845,6 +3861,8 @@ pub struct TraceInstall {
     pub idfold: bool,
     /// E5: the trace folded a method `SELF` of the family.
     pub midfold: bool,
+    /// E6 (`dlink`): offset of the link entry of a side trace (see `asm::Asm::entry_dl`), 0 if none.
+    pub dl_off: usize,
 }
 
 /// Why [`install`] did not install.
@@ -3968,6 +3986,108 @@ fn trace_meta_bytes(exits: usize, deps: usize) -> usize {
 
 /// Installs the compiled trace of recording `id`: places the code (charged, refunded on flush), turns the slot into a
 /// trace, marks the head `Traced` and points `cell[H]` at the entry (or the `+tracemove` stub).
+/// E6 (`dlink`, docs/JIT_TRACE.md section 36.3): re-points the branches of trace `parent` to exit `k` at `target` (the link entry of the side trace being
+/// installed): the patchable `nop` of the exit's deferred stub becomes `jmp target`, every `jmp` / `jcc rel32` of the parent that branches to the `nop` or to
+/// the stub assembled behind it branches to `target`. Only an exit the parent's assembly marked as linkable (`DeferInfo::dl_ok`: a frameless inline stub that
+/// continues through its cell, no frames, sunk tables, `top`, pre-roll or chain counting, not an entry check) whose stub could be deferred. Returns the
+/// patched addresses with their previous bytes (empty: nothing patched).
+fn dlink_attach(d: &mut JitData, parent: TrId, k: usize, target: usize) -> Vec<(usize, Vec<u8>)> {
+    let mut plan: Vec<(usize, Vec<u8>)> = Vec::new();
+    {
+        let Some(Slot {
+            body: Body::Trace(p),
+            ..
+        }) = d.tr.slot(parent)
+        else {
+            return Vec::new();
+        };
+        let Some(df) = p.xmeta.as_ref().and_then(|m| m.defer.as_deref()) else {
+            return Vec::new();
+        };
+        let at = df.patch_at.get(k).copied().unwrap_or(0);
+        if at == 0
+            || !df.dl_ok.get(k).copied().unwrap_or(false)
+            || df.failed.get(k).is_none_or(|f| f.get())
+        {
+            return Vec::new();
+        }
+        let rel = |end: usize| i32::try_from((target as i64).wrapping_sub(end as i64)).ok();
+        let Some(r) = rel(at + super::asm::DEFER_PATCH_LEN) else {
+            return Vec::new();
+        };
+        let mut j = vec![0xE9u8, 0, 0, 0, 0];
+        j[1..].copy_from_slice(&r.to_le_bytes());
+        plan.push((at, j));
+        for &(pos, end) in df.sites.get(k).map_or(&[][..], |v| v.as_slice()) {
+            let Some(r) = rel(end) else {
+                return Vec::new();
+            };
+            plan.push((pos, r.to_le_bytes().to_vec()));
+        }
+    }
+    // SAFETY: every address is inside the parent's live block (its `DeferInfo`); the code there is readable (RX).
+    let saved: Vec<(usize, Vec<u8>)> = plan
+        .iter()
+        .map(|(a, b)| {
+            (
+                *a,
+                unsafe { std::slice::from_raw_parts(*a as *const u8, b.len()) }.to_vec(),
+            )
+        })
+        .collect();
+    let patches: Vec<(usize, &[u8])> = plan.iter().map(|(a, b)| (*a, b.as_slice())).collect();
+    // SAFETY: as above; the install runs from the recorder (no trace code is running: a trace never calls Lua code, TR1).
+    if unsafe { d.arena.patch(&patches) }.is_err() {
+        return Vec::new();
+    }
+    saved
+}
+
+/// E6 (`dlink`): the parent's exit a side trace `id` (a recording) would be attached to, when that exit can take a direct link: its snapshot (the link entry
+/// stores its map), else `None` (prelude, frameful exit, an exit its parent's assembly did not mark linkable, a parent without the budget in `BUDGET_GPR`).
+pub fn dlink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
+    let d = d_of(st);
+    if d.tr.cfg.limits.dlink & 1 == 0 {
+        return None;
+    }
+    let sl = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) => r.side?,
+        _ => return None,
+    };
+    if sl.prelude {
+        return None;
+    }
+    let Some(Slot {
+        body: Body::Trace(p),
+        ..
+    }) = d.tr.slot(sl.parent)
+    else {
+        return None;
+    };
+    let m = p.xmeta.as_ref()?;
+    let df = m.defer.as_deref()?;
+    let k = sl.exit as usize;
+    if !m.lazy
+        || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR)
+        || !df.dl_ok.get(k).copied().unwrap_or(false)
+        || df.patch_at.get(k).copied().unwrap_or(0) == 0
+    {
+        return None;
+    }
+    let es = m.snaps.get(k)?;
+    if !(es.frames.is_empty() || es.frame_side_ok())
+        || !es.sunk.is_empty()
+        || es.top.is_some()
+        || !es.usable
+        || es.seg_pops != 0
+    {
+        return None;
+    }
+    Some(es.clone())
+}
+
 pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, InstallError> {
     let d = d_of(st);
     let (root, head, dep_freed, ndeps, no, nexits, side) = match d.tr.slot(id) {
@@ -4170,6 +4290,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         unroll_doom: false,
         idfold: ti.idfold,
         midfold: ti.midfold,
+        dl_saved: Vec::new(),
     });
     if ti.midfold {
         if let Some(tp) = tr_of(d, root) {
@@ -4218,6 +4339,20 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
                             x.set(hot1 | (x.get() & EXIT_BLACK_BIT));
                         }
                     }
+                }
+            }
+        }
+        // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): the parent's branches to the exit (and its patchable `nop`) go to the link entry of the new side trace
+        if !sl.prelude && ti.dl_off != 0 && d.tr.cfg.limits.dlink & 1 != 0 {
+            let saved = dlink_attach(d, sl.parent, sl.exit as usize, block_addr + ti.dl_off);
+            if !saved.is_empty() {
+                d.tr.stats.dlink_attached += 1;
+                if let Some(Slot {
+                    body: Body::Trace(t),
+                    ..
+                }) = d.tr.slot_mut(id)
+                {
+                    t.dl_saved = saved;
                 }
             }
         }
@@ -4479,6 +4614,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
         }
     }
     if let Some(sl) = t.side {
+        let mut dl_unlink = false;
         // F2a: a side trace goes away alone (a dependency freed): its parent's exit lands in tier 1 again, at once
         // (TR8: the cell is the only link, nothing else refers to the block). When the parent is flushed first (the
         // family goes with its root) its slot is stale and there is nothing to restore.
@@ -4511,6 +4647,24 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
             if let Some(o) = p.chain_off.get_mut(k) {
                 *o = 0;
             }
+            // E6 (`dlink`): the parent lives (this block): its branches go back to the exit's stub below
+            dl_unlink = !t.dl_saved.is_empty();
+        }
+        // E6 (`dlink`): the parent's branches go back to the exit's stub before this trace's block can be released; the cell went back to its landing
+        // above, so the stub continues in tier 1
+        if dl_unlink && !mutants::active("dlink_unlink_skip") {
+            let patches: Vec<(usize, &[u8])> =
+                t.dl_saved.iter().map(|(a, b)| (*a, b.as_slice())).collect();
+            // SAFETY: the addresses are branch fields / the patchable `nop` of the live parent's block (`dlink_attach` read them there); no code of the
+            // parent runs while the flush does (a flush inside an exit handler returns into the shared exit routine, which is not patched).
+            if unsafe { d.arena.patch(&patches) }.is_err() {
+                // (fail stop: the parent's branches would lead into a block that is about to be freed)
+                panic!(
+                    "internal error: dlink: the branches of trace slot {} to exit {} could not be patched back",
+                    sl.parent.slot, sl.exit
+                );
+            }
+            d.tr.stats.dlink_unlinked += 1;
         }
         if let Some(Slot {
             body: Body::Trace(f),

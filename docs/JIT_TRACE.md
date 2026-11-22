@@ -3969,3 +3969,147 @@ Both are observable; the programs that catch them needed a formation the earlier
 
 Both rules were right; the mutants model real failures and stay. `gate-mutants.sh --only
 midfold_,lazy_sidefail`: 9 ran, 9 caught on 5.5 and on 5.4.
+
+### 36.3 E6 as built: direct exit-to-side links (`dlink` bit 0)
+
+Knob `dlink` (`RUSTYNAIL_JIT_TRACE_LIMITS`): bit 0 = exit links, bit 1 = the budget register across native transfers (36.4); 0 = off,
+**3 = both, default** (`DLINK_PROCESS`).
+
+**What a linked exit cost.** The stub of an exit of a lazy-aware family with a side trace attached (an inline stub, assembled at the first exit
+since S1) ran per exit: the exit counter (`mov r7, &ctr; cmp [r7], hot-1; je divert; add [r7], 1`), the slot stores of the exit map, the budget
+(`mov r7, vb; add r7, refund; mov [cnt], r7`), the cell (`mov r7, &cell; mov r7, [r7]`; a frameless exit of a lazy family also `mov r6, land;
+cmp r7, r6; je leave`), `jmp r7`; the side trace then reloaded the budget word (`mov vb, [cnt]`). A frame-cell exit (an exit inside inlined
+frames: the leaves of an unrolled E1 trace) ran the same through `mat_stub`'s attached path (`cmp cell, 0`, the counter `+2`).
+
+**The link.** A side trace attached to such an exit is assembled with a *link entry* (`asm::assemble_dl`, `DlinkIn`): the parent exit's slot
+stores (the slot part of the parent's inline stub, `exit::inline_stub_ops_slots` over the parent's `ExitSnap`: the parent's registers hold the
+exit map when its guard branches there), `add vb, refund` (the budget stays in `ra::BUDGET_GPR`), `jmp` behind the plain entry's budget load.
+At the install of the side trace (`cache::install` -> `dlink_attach`) every branch of the parent to that exit is re-pointed at the link entry:
+the exit's patchable `nop` (S1: the stub label; `jmp stub` once the stub is assembled) becomes `jmp link`, and every `jmp` / `jcc rel32` of the
+parent that branches to the `nop` or to the assembled stub (`DeferInfo::sites`, the list S1 patches) branches to the link. The bytes before
+the patch are kept with the side trace (`Trace::dl_saved`) and written back when the side trace is flushed while its parent lives
+(`flush_now`), before its block can be released. Per linked exit: the stores, one `add`, one `jmp` (the guard's branch lands in the side
+trace's block directly).
+
+**Which exits** (`DeferInfo::dl_ok`, decided by the parent's assembly; checked again by `cache::dlink_source` at the side trace's compile):
+the parent is lazy-aware (`ExitMeta::lazy`) and keeps the budget in `BUDGET_GPR`; the exit's stub is deferred (S1, `lazystub=1`, the default:
+without it nothing links) and is an inline stub that continues through its cell (frameless, or a frame-cell exit with plain frames); it is
+counted only to find its hot count (not a pre-roll site, not a chain site, not an entry check); no sunk tables, no `top`, no `RETF` segment
+pops. The side trace has no room checks of its own (CP2 for frameless side traces, S1 for frameful ones: R2's own room checks of a frameful side
+trace come behind the budget load and fail through its start snapshot, whose stub stores the register), no carried loads (R1 is off for lazy
+families), is not a prelude; nothing under `+emurun` / `+emuverify`. Not for families that are not lazy-aware (queens, richards and the other
+loop programs: their exits keep the stubs; R1 covers non-lazy side traces with carried values).
+
+### 36.4 E6 as built: the budget register across native transfers (`dlink` bit 1)
+
+A native push (`rec_call_tail_lazy`, through the entry head's `rec` cell) and a native return (`rec_ret_tail`, through the continuation head's
+`rec` cell) stored the budget register into the word before `lazy_rec_jump`. The inner entry they jump to never reloads it (it joins behind the
+plain entry's budget load and continues with the register, P-M3), so the store served only the null-cell path, which leaves (the leave block,
+then the head's dispatch cell, tier 1 or an outer entry: both read the word). With bit 1 the store moved onto that path (`lazy_rec_jump`, behind
+its `cmp cell, 0`); the root return with an E2 / E5 check keeps its own store (the check's helper clobbers the register, the code reloads it
+from the word); `rec_fail` (an inner entry's room check failing) stores it as before.
+
+### 36.5 Soundness
+
+* **Same state, same destination.** A linked exit continues exactly where the stub would have continued: the cell of an exit with a side trace
+  attached holds that side trace's entry (TR8: install sets it; it changes only by a flush of the side trace, which unlinks first, below). On
+  entry to the side trace's code behind its budget load, the stack holds the exit map (the link entry made the stub's slot stores, from the same
+  registers, with the same tag elision) and the budget register holds `vb + refund`, the value the plain entry would have loaded from the word the
+  stub stored. Everything behind that point is the side trace's unchanged code. The side trace's plain entry before its budget load does nothing
+  else for an in-region side trace without room checks (no bookkeeping, no `lazy_root` store: 36.1's `lazy_region_side`).
+* **What the link skips.** (1) The exit counter: it finds the hot count, at which the side trace was attached; afterwards the stub's equality test
+  never fires again (pre-roll and chain sites, whose counters drive later policy, are not linked). A linked exit is not counted, like R1's carry
+  path: the flush statistics and `exits` show only the other exits. (2) The budget word store and reload: the word is not read between the stub
+  and the side trace's load (no helper, no exit in between); every later reader (an exit stub, a link, a leave, the handler) gets the register
+  stored as before. (3) The cell load / compare: the cell's value is known (above).
+* **TR5 (exact charge / refund).** On the link path `vb' = vb + refund - n_side` after the side trace's first `BUDGET`; on the stub path the word
+  is `vb + refund` and the side trace charges `n_side` from it: equal. A budget exit of that `BUDGET` restores `vb' + n_side = vb + refund`, as on
+  the stub path. Count hooks see the same counts (`e6_01` case (6)); with the oracle feature `e6_dlink_programs` checks the instruction-count
+  identity at budgets none / 3 / 17 (mutant `dlink_refund_off`: the refund off by one).
+* **Patching lifetime.** The patched bytes are 5-byte `jmp`s over the `nop` and 4-byte `rel32` fields of the parent's branches, all inside the
+  parent's block (one chunk: `CodeArena::patch` flips the pages RW and back, never RWX). The patch is made at the install (from the recorder: no
+  trace code is running, a trace never calls Lua, TR1) and undone at the side trace's flush while the parent's slot is live (a flush inside an exit
+  handler of the parent returns into its shared exit routine, which is not patched; flushes inside the side trace's own handler are deferred, TR18).
+  When the parent goes first (its family is flushed; its kids follow in `flush_tree`), its slot is stale and nothing is written: its block is
+  never entered again. The unpatch happens before `retire` can free the side trace's block, so no branch of a live trace points into freed code;
+  a failing unpatch is a fail stop (the block would otherwise be freed under the branches). S1's own patch of the exit (`defer_build`) cannot run
+  while the exit is linked: it is reached only through the generic stub, which a linked exit does not reach; after an unlink the saved bytes put
+  the exit back exactly as S1 left it (`jmp stub`, the branches to the stub) or as assembled (`nop`, the branches to it). Mutant `dlink_unlink_skip`:
+  `e6_01` case (4) (a side trace that inlines a `load`ed function is flushed with its prototype, `Dep`, while the parent lives, and the next round's
+  side trace is attached to the same exit) runs into the freed block.
+* **Flush ordering, carry maps.** The cell goes back to its landing before the unpatch, so between the two the exit still went to the side trace's
+  block, which is not yet released. The link entry carries no values in registers beyond what the stub would have stored (no carried loads),
+  so R1's carry-map invariants are untouched; the side trace's SLOADs and their guards run as on the plain entry.
+* **Count hooks and polls.** A linked exit is a jump between two traces of a region: no Lua bytecode of a new frame starts without a poll that the
+  stub path would have run (the stub has no poll); asynchronous hooks are delivered at the same polls.
+* **The budget register across native transfers (bit 1).** The inner entry reached through a `rec` cell continues with the register (it has
+  never reloaded the word); the only path that leaves stores it first (mutant `dlink_vb_fb_nostore`: the null-cell path without the store, caught
+  by `e6_dlink_programs`). An inner entry's failing room check stores it (`rec_fail`, unchanged).
+* **Lazy region.** A linked exit continues the region like the cell jump it replaces (36.1: the side trace's own entry failure leaves); the
+  frames above `lazy_root` stay lazy until an exit or leave completes them (`lazypoison` jobs of `e6_dlink_programs`).
+
+### 36.6 Measured (release `rn-cli`, one binary; `dlink=0` against `dlink=3`, every earlier stage on; `RUSTYNAIL_SEED=0`, `taskset -c 4`; instructions of the first run, cycles min of 5 (5.5 key set) / 3 (sanity set, 5.4))
+
+| program (5.5) | `dlink=0` instr M / cyc M | `dlink=3` | delta instr / cyc |
+|---|---|---|---|
+| fib 32 | 390.2 / 62.5 | 357.7 / 58.9 | **-8.33 % / -5.8 %** |
+| binary_trees 15 | 2397.6 / 478.3 | 2345.8 / 476.5 | -2.16 % / -0.4 % |
+| sumrec | 659.8 / 111.5 | 649.6 / 108.7 | -1.55 % / -2.5 % |
+| permute 300 | 594.5 / 101.2 | 572.3 / 98.9 | -3.73 % / -2.3 % |
+| towers 100 | 353.4 / 83.2 | 343.5 / 82.9 | -2.80 % / -0.4 % |
+| list 300 | 343.1 / 82.3 | 343.1 / 82.1 | 0 / -0.2 % |
+| queens | 511.6 / 95.1 | 511.6 / 95.7 | 0 / +0.6 % |
+| pqueens | 5391.4 / 1841.9 | 5391.4 / 1849.6 | 0 / +0.4 % |
+| richards | 176.9 / 59.4 | 177.0 / 59.6 | +0.06 % / +0.3 % |
+| deltablue | 324.2 / 107.1 | 324.2 / 107.6 | 0 / +0.5 % |
+| havlak | 512.4 / 148.7 | 511.9 / 148.6 | -0.10 % / -0.1 % |
+| cd 20 | 10736.6 / 2904.3 | 10732.4 / 2920.4 | -0.04 % / +0.6 % |
+| raytrace | 365.0 / 111.9 | 365.0 / 112.2 | 0 / +0.3 % |
+| raytrace 40 | 4608.9 / 1156.8 | 4609.0 / 1179.0 | 0 / +1.9 % (interleaved re-run: 1158.1 / 1168.5 against 1153.9 / 1167.8) |
+
+Per bit (fib 32, 5.5): bit 0 alone 363.8 M / 59.5 Mcyc (-6.8 % / -4.5 %), bit 1 alone 384.1 M / 62.2 Mcyc (-1.6 % / -0.2 %), both 357.7 M /
+59.2 Mcyc. sumrec gains mostly from bit 1 (651.0 M / 107.6 Mcyc alone): its leaves return through the region root (no side trace on the hot path).
+
+**Lua 5.4** (min of 3): fib -8.33 % / -6.0 %, binary_trees -1.92 % / -0.6 %, sumrec -1.55 % / -9.2 % (min-of-3 spread), permute -3.59 % /
+-1.8 %, towers -2.76 % / -3.3 %; list, queens, pqueens, richards, deltablue, havlak, cd, raytrace (40) within 0.03 % instructions and +1.0 % /
+-1.8 % cycles.
+
+**Sanity set** (44 programs, min of 3): `awfy/permute` -3.65 % / -2.2 %, `awfy/towers` -2.34 % / -1.1 %, `programs/binary_trees` -2.09 % / 0.0 %,
+`programs/fib` -8.40 % / -6.1 %; every other program within 0.12 % instructions (`awfy/havlak` -0.12 %, `awfy/cd` -0.04 %, `awfy/richards` +0.06 %).
+Cycle differences above +1 % occur only at equal instruction counts: `programs/varargs` +3.8 %, `programs/string_ops` +3.2 %,
+`programs/coroutines` +2.6 %, `awfy/list` +1.5 % in the batch; re-measured interleaved (min of 5, two rounds, ref / dlink): varargs 1206.9 / 1209.6
+against 1205.3 / 1212.3, coroutines 1761.4 / 1751.5 against 1774.5 / 1752.1, string_ops 1123.7 / 1155.0 against 1143.0 / 1183.5 (the same
+configuration spreads by 3 % between rounds), list 92.8 / 92.6 against 93.6 / 93.6 (+0.9 %). No program above +1 % instructions; no cycle
+difference above +2 % that survives an interleaved re-run except `string_ops`, whose two configurations overlap within its own spread
+(instructions equal to 0.1 M: no linked exit runs in it).
+
+Against the design's estimates (DESIGN_CALL_PROTOCOL 4.6, 7): fib -5.5 % instructions estimated, -8.3 % measured (both bits; -5.8 % cycles);
+binary_trees 2-4 % estimated, -2.2 % instructions / -0.4 % cycles; permute -2 % estimated, -3.7 % / -2.3 %; queens 2-7 % estimated, **0**: queens is
+not a lazy-aware family (its first trace is the column loop, 35.1), so its exits keep their stubs. E6 as built does not reach non-lazy families.
+
+### 36.7 Tests, mutants
+
+New program `tests/vm/e6_01_dlink.lua` (also in `vm_corpus`): fib with a live value at the leaf guard, a tree whose leaves take four paths (float,
+string, table values live), method recursion with a loop, a leaf side trace that inlines a `load`ed function collected between rounds (flushed alone
+with its prototype and re-attached: unlinks), the region left by a C call in a leaf, a count hook installed from inside after the links formed,
+errors from depth. `tr_core::e6_dlink_programs`: `e6_01`, `e1_01`, `e4_01`, `e5_01`, `e6_00`, `deep_recursion` x `always` / `on2` x `dlink` 0 / 1 /
+2 / 3, `+verify`; for `dlink=3`: exit storm, `lazypoison=1`, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress;
+with the oracle feature the identity at budgets none / 3 / 17; asserts direct links (and unlinks in `e6_01`) with bit 0 and none without.
+`tests/vm` + `tests/lazyci` (226 programs) in `always` / `on` and in `always` with GC stress 2, debug `rnlua`, default knobs, against the
+interpreter: no difference. Mutants (registry 785 -> **789**): `dlink_refund_off`, `dlink_store_skip`, `dlink_unlink_skip`, `dlink_vb_fb_nostore`,
+all caught by `e6_dlink_programs` (5.5 and 5.4).
+
+### 36.8 Gates, what ran and what did not, risks
+
+Ran: light gate per commit (results in each commit message; the E6 commit: fmt, mutant map, clippy x3, core x2, `vm_corpus`, jit-diff 1-50 PASS, mutant group 169 ran, 169 caught; the trace suites 5.5 / 5.4 failed on `s1_lazystub_programs` only (its `lazystub=1` / `lazystub=0` twins compare exit counts, and linked exits exist only with deferred stubs and are not counted: the twins run with `dlink=2`; re-run PASS)); `gate-mutants.sh --only dlink_,lazy_sidefail,lazy_rec,lazy_stub,lazy_mat` (10 / 10),
+`--only dlink_ --version 5.4`, `--only midfold_,lazy_sidefail` on 5.5 and 5.4 (9 / 9 each); `tr_core::{e6_dlink_programs, lz_side_entry_programs,
+e5_midfold_programs, e4_lazyloop_programs, e1_unroll_programs, e2_idfold_programs, bk_lazy_*}` on 5.4; the differential runs above. **Not run**
+(by instruction): the heavy gate, the oracle-feature suites (`tr_identity`, `instruction_count_identity`, `oracle_options`; the identity jobs of
+`e6_dlink_programs` ran only inside the mutant runner's oracle build), jit-diff 1-200 in seven modes, the full mutant runner.
+
+Risks. (1) Code patching from the installer and the flush (S1 patched only from the exit handler of the trace that owns the bytes): the argument
+is TR1 (no trace code runs while the recorder or a flush runs) plus TR18 for flushes inside handlers; a future path that installs or flushes while
+trace code of the parent is mid-flight would break it. (2) Linked exits are not counted: a policy that one day reads the counters of exits with
+side traces attached would see fewer exits (R1's carry path has the same property). (3) `lazystub=0` disables the links (no patch sites).
+(4) The gain is limited to lazy-aware families; the queens-type exits stay on stubs. (5) The two survivors of 35.8 are caught (36.2); the formation
+dependence of their programs is real: case (14) catches `midfold_rootret_inner` only in `on2`.

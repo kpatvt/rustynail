@@ -2325,6 +2325,12 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         lazy_leave_fn: exit::jit_tr_lazy_leave as *const () as usize as u64,
         // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
         lazy_poison: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.lazypoison } != 0,
+        // SAFETY: as above.
+        dlink_snaps: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.dlink } & 1 != 0
+            && !emurun
+            && !emuverify,
+        // SAFETY: as above.
+        rec_vb_keep: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.dlink } & 2 != 0,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         idfold_uv: idf_env,
@@ -2405,23 +2411,40 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         defer: defer_on,
     };
     let t_asm = phase::now();
-    let mut a = asm::assemble(ir, &al, &snaps, &rec.writeback, &env).map_err(|e| {
-        if act.verbose >= 2 {
-            eprintln!("[trace] FAILIR\n{}\n{}", print::dump(ir), ra::dump(ir, &al));
-        }
-        abort_err(
-            match e {
-                asm::AsmError::Unsupported(_) => "asm-unsupported",
-                asm::AsmError::Inconsistent(_) => "asm-inconsistent",
-                asm::AsmError::Spill => "asm-spill",
-            },
-            format!("asm: {e:?}"),
-        )
-    })?;
+    // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): a side trace attached to an exit that can take a direct link gets a link entry: the parent's exit map
+    // stores (the slot part of the parent's inline stub) and the exit's refund
+    let dlink_in = if act.side && !act.prelude && side.is_some() && !emurun && !emuverify {
+        cache::dlink_source(st, act.id).map(|es| {
+            let full =
+                exit::inline_stub_ops_slots(&es, &es.slots, ra::Loc::G(ra::BUDGET_GPR), None);
+            let tail = exit::inline_stub_ops_slots(&es, &[], ra::Loc::G(ra::BUDGET_GPR), None);
+            asm::DlinkIn {
+                ops: full[..full.len() - tail.len()].to_vec(),
+                refund: es.refund,
+            }
+        })
+    } else {
+        None
+    };
+    let mut a = asm::assemble_dl(ir, &al, &snaps, &rec.writeback, &env, dlink_in.as_ref())
+        .map_err(|e| {
+            if act.verbose >= 2 {
+                eprintln!("[trace] FAILIR\n{}\n{}", print::dump(ir), ra::dump(ir, &al));
+            }
+            abort_err(
+                match e {
+                    asm::AsmError::Unsupported(_) => "asm-unsupported",
+                    asm::AsmError::Inconsistent(_) => "asm-inconsistent",
+                    asm::AsmError::Spill => "asm-spill",
+                },
+                format!("asm: {e:?}"),
+            )
+        })?;
     phase::add(phase::ASM, t_asm);
     let hk_fused = a.hk_fused;
     let hk_split = a.hk_split;
     let dbl = a.dbl.clone();
+    let dl_ok = a.dl_ok.clone();
     let emu_prog = (emurun || emuverify).then(|| a.prog.clone());
     let mut entry = a.entry;
     if emurun {
@@ -2545,6 +2568,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                     .unwrap_or(0)
             },
             rec_ret: ir.rec_ret.is_some(),
+            dl_off: if emurun || emuverify {
+                0
+            } else {
+                a.entry_dl
+                    .and_then(|l| em.label_off[l as usize])
+                    .unwrap_or(0)
+            },
             text,
             hash,
             weight: ir.ins.len() as u32,
@@ -2593,6 +2623,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                 built: (0..n).map(|_| std::cell::Cell::new(0)).collect(),
                 failed: (0..n).map(|_| std::cell::Cell::new(false)).collect(),
                 shared: Default::default(),
+                dl_ok: {
+                    let mut v = vec![false; n];
+                    for &k in &dl_ok {
+                        if let Some(x) = v.get_mut(k as usize) {
+                            *x = true;
+                        }
+                    }
+                    v
+                },
             }))
         }
         _ => None,

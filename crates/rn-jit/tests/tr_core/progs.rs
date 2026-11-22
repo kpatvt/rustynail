@@ -16293,6 +16293,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e6_00_lazy_side_entry.lua"),
     },
+    // E6 (docs/JIT_TRACE.md section 36.3): direct exit-to-side links
+    Prog {
+        name: "e6_01_dlink",
+        small: true,
+        src: include_str!("../../../../tests/vm/e6_01_dlink.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

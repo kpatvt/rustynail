@@ -484,6 +484,9 @@ struct TStats {
     /// E5: `midfold: traces T refused R banned B`.
     midfold_traces: u64,
     midfold_refused: u64,
+    /// E6: `dlink: attached A unlinked U`.
+    dlink_attached: u64,
+    dlink_unlinked: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -714,6 +717,10 @@ impl TStats {
                     s.midfold_traces = t;
                     s.midfold_refused = rf;
                 }
+            } else if let Some(r) = l.strip_prefix("dlink: attached ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                s.dlink_attached = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.dlink_unlinked = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("lazyloop: lazy-aware ") {
                 s.lazyloop_on = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
@@ -12121,7 +12128,8 @@ fn s1_lazystub_programs() {
     let mut jobs = Vec::new();
     for (prog, extra) in progs {
         for trace in ["always", "on2"] {
-            for lz in ["lazystub=1", "lazystub=0"] {
+            // (E6 `dlink` bit 0 links exits only with deferred stubs and a linked exit is not counted: both twins run without it)
+            for lz in ["lazystub=1,dlink=2", "lazystub=0,dlink=2"] {
                 let lim = if extra.is_empty() {
                     lz.to_string()
                 } else {
@@ -12638,6 +12646,102 @@ fn e4_lazyloop_programs() {
                 "{}: lazy-aware candidates {}",
                 j.tag(),
                 o.stats.lazyloop_on
+            );
+        }
+    }
+}
+
+/// E6 (`dlink`, docs/JIT_TRACE.md section 36.3): direct exit-to-side links in lazy-aware recursion families and the budget register across native
+/// transfers. `e6_01` (fib with a live value at the leaf guard, a tree whose leaves take four paths, method recursion with a loop, a side trace that inlines
+/// a `load`ed function collected between rounds (the side trace is flushed alone and re-attached: the unlink), the region left by a C call in a leaf, a
+/// count hook installed from inside, errors from depth), the recursion programs of E1 / E4 / E5 x `dlink` 0 / 1 / 2 / 3, `+verify`; for `dlink=3`:
+/// exit storm, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress, `lazypoison=1`; with the oracle feature the
+/// instruction-count identity (TR5: the folded refund) at budgets none / 3 / 17. Asserts direct links with the knob on (and unlinks in `e6_01`) and
+/// none with it off.
+#[test]
+fn e6_dlink_programs() {
+    let progs = [
+        "e6_01_dlink",
+        "e1_01_unroll_shapes",
+        "e4_01_lazy_loop_shapes",
+        "e5_01_method_identity",
+        "e6_00_lazy_side_entry",
+        "deep_recursion",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("deep");
+        for trace in ["always", "on2"] {
+            for lim in ["dlink=0", "dlink=1", "dlink=2", "dlink=3"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "dlink=3";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).limits_s("dlink=3,lazypoison=1"));
+            for b in [3, 17, 200] {
+                if heavy && b != 17 {
+                    continue;
+                }
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                if heavy && gc == "1" {
+                    continue;
+                }
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            if !heavy {
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(lim),
+                );
+            }
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                if heavy {
+                    continue;
+                }
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits == "dlink=0" || j.limits == "dlink=2" {
+            assert_eq!(
+                o.stats.dlink_attached,
+                0,
+                "{}: direct links with dlink bit 0 off",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if j.prog == "e6_01_dlink" && plain && j.limits == "dlink=3" {
+            assert!(
+                o.stats.dlink_attached >= 2,
+                "{}: direct links {}",
+                j.tag(),
+                o.stats.dlink_attached
+            );
+            assert!(
+                o.stats.dlink_unlinked >= 1,
+                "{}: no direct link was undone",
+                j.tag()
             );
         }
     }

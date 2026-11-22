@@ -710,6 +710,8 @@ fn base_env(w: &mut World) -> AsmEnv {
         prelude: false,
         lazy_leave_fn: 0,
         lazy_poison: false,
+        dlink_snaps: false,
+        rec_vb_keep: false,
         chain: false,
         root_code: 0,
         lazy_cs: None,
@@ -3191,6 +3193,8 @@ mod e2e {
             prelude: false,
             lazy_leave_fn: 0,
             lazy_poison: false,
+            dlink_snaps: false,
+            rec_vb_keep: false,
             chain: false,
             root_code: 0,
             lazy_cs: None,
@@ -3260,6 +3264,7 @@ mod e2e {
                 unrolled: false,
                 idfold: false,
                 midfold: false,
+                dl_off: 0,
             },
         )
         .map_err(|e| format!("install: {e:?}"))?;

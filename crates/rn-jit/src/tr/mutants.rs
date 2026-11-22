@@ -949,6 +949,11 @@ pub const NAMES: &[&str] = &[
     "midfold_first_keep",
     // docs/JIT_TRACE.md section 36.1: the entry failure of a side trace inside a lazy region
     "lazy_sidefail_no_leave",
+    // E6 (`dlink`): direct exit-to-side links, the budget register across native transfers (docs/JIT_TRACE.md section 36)
+    "dlink_refund_off",
+    "dlink_store_skip",
+    "dlink_unlink_skip",
+    "dlink_vb_fb_nostore",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1025,7 +1030,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 785);
+        assert_eq!(NAMES.len(), 789);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
