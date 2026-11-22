@@ -1,0 +1,28 @@
+== instruction ratio vs session-i > 1.005 (any build)
+lib/concat_op_str pgo ins 1.017 cyc 1.054
+lib/tinsert_append p54 ins 1.011 cyc 0.998; g54 ins 1.012 cyc 1.006
+lib/tinsert_idx p54 ins 1.011 cyc 1.005; g54 ins 1.012 cyc 1.009
+lib/tpack plain ins 1.012 cyc 1.018; pgo ins 1.023 cyc 1.033; p54 ins 1.007 cyc 0.982
+lib/tremove_pop g54 ins 1.007 cyc 1.013
+programs/varargs plain ins 1.006 cyc 1.005; pgo ins 1.010 cyc 1.006
+== short programs (< 40 Mcyc plain), cycles vs session-i, plain/pgo/p54/g54
+lib/fmt_s 1.032 0.984 0.979 0.981
+short programs n 10 geomean [1.002, 0.995, 0.996, 0.991]
+== jit-trace set vs session-i geomean
+plain cyc 1.001 ins 1.0 worst (1.019428621488553, 'jit-trace/int_rec2')
+pgo cyc 1.002 ins 0.999 worst (1.0237814745133489, 'jit-trace/int_rec2')
+p54 cyc 1.002 ins 1.0 worst (1.0276718271184502, 'jit-trace/int_rec2')
+g54 cyc 1.001 ins 1.0 worst (1.021611913824216, 'jit-trace/int_rec2')
+== targets (cyc/ins vs session-i) plain pgo p54 g54
+corpus2/heldout/dijkstra_routes plain 0.823/0.641 | pgo 0.825/0.639 | p54 0.958/0.935 | g54 0.957/0.934
+corpus/lua_lexer plain 0.879/0.861 | pgo 0.881/0.849 | p54 1.008/0.998 | g54 1.013/0.999
+corpus/classic_vector plain 0.746/0.734 | pgo 0.773/0.810 | p54 0.803/0.782 | g54 0.826/0.828
+awfy/cd plain 1.002/0.957 | pgo 0.998/0.964 | p54 1.002/0.959 | g54 0.992/0.966
+apps/expr_lang plain 0.970/0.966 | pgo 0.977/0.976 | p54 0.989/0.969 | g54 0.992/0.975
+apps/raytrace plain 0.972/0.953 | pgo 0.977/0.959 | p54 0.965/0.949 | g54 0.968/0.956
+apps/lru_cache plain 1.008/0.958 | pgo 0.992/0.969 | p54 0.991/0.963 | g54 0.988/0.968
+corpus/astar_jumper plain 0.992/0.997 | pgo 1.001/0.998 | p54 0.989/0.998 | g54 0.995/0.998
+== 1a5aad0-total for targets (plain, p54)
+corpus/classic_vector plain vs h 0.763 p54 vs h 0.794
+corpus2/heldout/dijkstra_routes plain vs h 0.937 p54 vs h 0.941
+corpus/lua_lexer plain vs h 0.861 p54 vs h 0.999
