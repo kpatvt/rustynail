@@ -108,6 +108,11 @@ pub const DLINK_PROCESS: u32 = 3;
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
 pub const DEEPPROBE_PROCESS: u32 = 12;
+/// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
+pub const RETFSEL_PROCESS: u32 = 1;
+/// Section 39.1 (T1): frames from the caller down that the `retfsel` recursion test looks at (the popped prototype among them = the pop is inside a
+/// recursion).
+pub const RETFSEL_DEPTH: usize = 16;
 /// Section 38: a try after the probes is taken when its recorded path is at least `DEEPPROBE_NUM / DEEPPROBE_DEN` of the longest probe's (the probes'
 /// strides do not repeat the iteration of the longest probe exactly; 7/8 took one of the deepest call trees of `rec_loop` at every hot threshold tried).
 pub const DEEPPROBE_NUM: u64 = 7;
@@ -633,6 +638,12 @@ pub struct TrLimits {
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
     pub retfmax: u32,
+    /// Section 39.1 (T1): the per-family RETF selector. With `retf` bit 2 off, a side recording of a function-entry family (`fn_root`) may still pop
+    /// its root frame at the root `RETURN` when (a) the innermost loop of the caller that contains its `CALL` has an installed root trace (the
+    /// continuation reaches compiled code) and (b) the popped prototype is not among the [`RETFSEL_DEPTH`] frames from the caller down (no pop
+    /// inside a recursion). Otherwise the old behaviour (the side trace ends before the `RETURN`). Never adds a form of `RETF` that `retf` bit 2
+    /// does not allow. 0 = off. Default [`RETFSEL_PROCESS`].
+    pub retfsel: u32,
     /// BUNDLE-V V2: record upvalue stores of collectable values (default [`UPBAR_PROCESS`]).
     pub upbar: u32,
     /// BUNDLE-H: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel) (default [`TNEXTINL_PROCESS`]).
@@ -847,6 +858,7 @@ impl Default for TrLimits {
             libcall: LIBCALL_PROCESS,
             retf: RETF_PROCESS,
             retfmax: RETFMAX_PROCESS,
+            retfsel: RETFSEL_PROCESS,
             upbar: UPBAR_PROCESS,
             tnextinl: TNEXTINL_PROCESS,
             randinl: RANDINL_PROCESS,
@@ -1042,6 +1054,7 @@ impl TrLimits {
                 "libcall" => l.libcall = v.min(1023),
                 "retf" => l.retf = v.min(15),
                 "retfmax" => l.retfmax = v.min(8),
+                "retfsel" => l.retfsel = v.min(1),
                 "upbar" => l.upbar = v.min(1),
                 "tnextinl" => l.tnextinl = v.min(3),
                 "randinl" => l.randinl = v.min(1),
@@ -8459,4 +8472,40 @@ pub fn fn_cent(st: &mut State, pr: ProtoRef) -> bool {
 pub fn fn_promoted(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
     tr_of(d, pr.0).is_some_and(|tp| tp.fn_promoted())
+}
+
+/// Section 39.1 (T1, `retfsel`): the head of the innermost loop of `code` that contains the instruction at `pc` (a backward `JMP`, `FORLOOP` or
+/// `TFORLOOP` at `j` with target `h`, `h <= pc < j`; the largest such `h`). `None`: `pc` is in no loop of the function.
+pub fn enclosing_loop_head(code: &[u32], pc: usize) -> Option<u32> {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode as O;
+    let outer = mutants::active("retfsel_outer_loop");
+    let mut best: Option<usize> = None;
+    for (j, &w) in code.iter().enumerate() {
+        let i = Instruction(w);
+        let t = match i.opcode() {
+            Some(O::Jmp) => j as i64 + 1 + i64::from(i.sj()),
+            Some(O::Forloop | O::Tforloop) => j as i64 + 1 - i64::from(i.bx()),
+            _ => continue,
+        };
+        if t < 0 || t > j as i64 {
+            continue;
+        }
+        let t = t as usize;
+        if t <= pc && pc < j && best.is_none_or(|b| if outer { t < b } else { t > b }) {
+            best = Some(t);
+        }
+    }
+    best.map(|b| b as u32)
+}
+
+/// Section 39.1 (T1, `retfsel`): may a side recording of a function-entry family pop its root frame into the caller? `caller_loop`: the state
+/// of the head of the caller's innermost loop around the call site (`Some(true)` = root trace installed, `Some(false)` = a head without one,
+/// `None` = no loop, or not a head); `recursive`: the popped prototype is among the frames from the caller down.
+pub fn retf_sel_rule(caller_loop: Option<bool>, recursive: bool) -> bool {
+    if mutants::active("retfsel_never") {
+        return false;
+    }
+    (caller_loop == Some(true) || (caller_loop.is_some() && mutants::active("retfsel_untraced_ok")))
+        && (!recursive || mutants::active("retfsel_recursion_ok"))
 }

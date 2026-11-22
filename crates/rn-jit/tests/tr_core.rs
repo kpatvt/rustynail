@@ -13023,3 +13023,83 @@ fn dp_deep_probe_programs() {
         }
     }
 }
+
+/// docs/JIT_TRACE.md section 39.1 (T1, `retfsel`): side traces of a function-entry family pop the root frame where the caller's loop around the call
+/// has a root trace and the popped prototype is not part of a recursion below. `t1_01_retfsel` (the lexer shape: a scanner returning tokens to a
+/// hot caller loop, the caller loop inside a repeatedly called function, an error raised in the caller after the pop under `pcall`, a coroutine
+/// driver that yields, collections in the continuation) and `t1_02_retfsel_recursion` (a backtracking search and a mutual recursion whose sides
+/// would pop into their own recursion) x `always` / `on2` x `retfsel` 0 / 1, `+verify`; for the shipped value: exit storm, budgets 3 / 17 / 200, GC
+/// stress 1 / 2 in both collector modes, stack-move stress, the emulator; every job against the interpreter. On 5.5 `t1_01` installs RETF traces
+/// with the selector in `always` mode and none without it, `t1_02` none in either (RETF is inert on 5.4: none anywhere). Detector of `retfsel_never` (`t1_01`) and
+/// `retfsel_recursion_ok` (`t1_02`); `retfsel_untraced_ok` and `retfsel_outer_loop` are caught by `tr_policy::t1_retfsel_policy`.
+#[test]
+fn t1_retfsel_programs() {
+    let mut jobs = Vec::new();
+    for p in ["t1_01_retfsel", "t1_02_retfsel_recursion"] {
+        for trace in ["always", "on2"] {
+            for lim in ["retfsel=0", "retfsel=1"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "retfsel=1";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+            for b in [3, 17, 200] {
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s(lim),
+            );
+        }
+    }
+    let res = compare(jobs);
+    // installed RETF traces of the plain / `+verify` jobs by (program, mode, opts) and knob value (the `retf` bit 0 traces of loop families
+    // exist with and without the selector: the selector's share is the difference)
+    let mut n: std::collections::HashMap<(String, String, String), [u64; 2]> = Default::default();
+    for (j, o) in &res {
+        if cfg!(rustynail_lua54) {
+            assert_eq!(
+                o.stats.retf,
+                0,
+                "{}: RETF is inert on 5.4 ({})",
+                j.tag(),
+                o.stats.line()
+            );
+        }
+        if j.env.is_empty() && j.budget.is_none() && (j.opts.is_empty() || j.opts == "+verify") {
+            let k = usize::from(j.limits == "retfsel=1");
+            n.entry((j.prog.to_string(), j.trace.to_string(), j.opts.to_string()))
+                .or_default()[k] = o.stats.retf;
+        }
+    }
+    if !cfg!(rustynail_lua54) {
+        for ((p, trace, opts), [off, on]) in &n {
+            if p == "t1_02_retfsel_recursion" {
+                assert_eq!(
+                    on, off,
+                    "{p} [{trace} {opts}]: the selector popped inside a recursion"
+                );
+            } else if trace == "always" {
+                assert!(
+                    on > off,
+                    "{p} [{trace} {opts}]: no RETF trace from the selector ({on} vs {off})"
+                );
+            }
+        }
+    }
+}

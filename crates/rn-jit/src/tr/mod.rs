@@ -815,6 +815,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         // BUNDLE-N: RETF (not with lazy frames: the pop assumes every frame below the running one is complete)
         retf: if lazy_root { 0 } else { cfg.limits.retf },
         retfmax: cfg.limits.retfmax,
+        retf_sel: cfg.limits.retfsel != 0,
         upbar: cfg.limits.upbar,
         f2mt: true,
         f2cmp: true,
@@ -1002,6 +1003,7 @@ pub fn driver_start_side(
             cfg.limits.retf
         },
         retfmax: cfg.limits.retfmax,
+        retf_sel: cfg.limits.retfsel != 0,
         upbar: cfg.limits.upbar,
         f2mt: true,
         f2cmp: true,

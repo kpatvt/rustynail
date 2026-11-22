@@ -963,6 +963,11 @@ pub const NAMES: &[&str] = &[
     "deepprobe_any_try",
     "deepprobe_uniform_keep",
     "deepprobe_abort_keeps",
+    // docs/JIT_TRACE.md section 39.1 (T1, `retfsel`): RETF for function-entry families where the caller's loop is traced and no recursion is popped
+    "retfsel_never",
+    "retfsel_untraced_ok",
+    "retfsel_recursion_ok",
+    "retfsel_outer_loop",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1039,7 +1044,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 796);
+        assert_eq!(NAMES.len(), 800);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

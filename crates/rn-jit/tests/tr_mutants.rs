@@ -4412,6 +4412,32 @@ const TABLE: &[Row] = &[
         owner: "DP",
         dets: &[d("tr_policy", "dp_policy")],
     },
+    Row {
+        name: "retfsel_never",
+        owner: "T1",
+        dets: &[
+            d("tr_policy", "t1_retfsel_policy"),
+            d("tr_core", "t1_retfsel_programs"),
+        ],
+    },
+    Row {
+        name: "retfsel_untraced_ok",
+        owner: "T1",
+        dets: &[d("tr_policy", "t1_retfsel_policy")],
+    },
+    Row {
+        name: "retfsel_recursion_ok",
+        owner: "T1",
+        dets: &[
+            d("tr_policy", "t1_retfsel_policy"),
+            d("tr_core", "t1_retfsel_programs"),
+        ],
+    },
+    Row {
+        name: "retfsel_outer_loop",
+        owner: "T1",
+        dets: &[d("tr_policy", "t1_retfsel_policy")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

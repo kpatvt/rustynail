@@ -16316,6 +16316,17 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e10_02_deep_probe_tries.lua"),
     },
+    // docs/JIT_TRACE.md section 39.1 (T1, `retfsel`): RETF for function-entry families where the caller's loop is traced, never inside a recursion
+    Prog {
+        name: "t1_01_retfsel",
+        small: true,
+        src: include_str!("../../../../tests/vm/t1_01_retfsel.lua"),
+    },
+    Prog {
+        name: "t1_02_retfsel_recursion",
+        small: true,
+        src: include_str!("../../../../tests/vm/t1_02_retfsel_recursion.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

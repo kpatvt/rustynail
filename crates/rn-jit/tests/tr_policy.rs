@@ -2303,3 +2303,105 @@ fn e5_policy() {
     assert!(!tp.midfold_first(false, false), "a later trace");
     assert!(tp.midfold_on());
 }
+
+/// docs/JIT_TRACE.md section 39.1 (T1, `retfsel`): the knob (struct default = shipped, parse, cap), the rule (caller loop traced and no recursion;
+/// an untraced head, no loop and a recursion refuse) and the innermost enclosing loop of a call site in real bytecode (nested numeric, generic and
+/// `while` loops, a call outside every loop). Detector of `retfsel_never`, `retfsel_untraced_ok`, `retfsel_recursion_ok`, `retfsel_outer_loop`.
+#[test]
+fn t1_retfsel_policy() {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode as O;
+    use rn_jit::tr::cache::{
+        enclosing_loop_head, retf_sel_rule, TrConfig, TrMode, RETFSEL_PROCESS,
+    };
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.retfsel, RETFSEL_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    assert_eq!(RETFSEL_PROCESS, 1);
+    for (env, want) in [
+        (Some("retfsel=0"), 0),
+        (Some("retfsel=9"), 1),
+        (Some("retfsel=1"), 1),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.retfsel, want, "limits env {env:?}");
+    }
+    // the rule
+    assert!(
+        retf_sel_rule(Some(true), false),
+        "traced caller loop, no recursion"
+    );
+    assert!(
+        !retf_sel_rule(Some(false), false),
+        "the caller loop head has no root trace"
+    );
+    assert!(
+        !retf_sel_rule(None, false),
+        "no loop around the call (or not a head)"
+    );
+    assert!(
+        !retf_sel_rule(Some(true), true),
+        "the pop is inside a recursion"
+    );
+    assert!(!retf_sel_rule(Some(false), true));
+    // the innermost loop around each call of `f` in compiled code
+    init();
+    let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
+    let src = "local f = print\n\
+        f(0)\n\
+        for i = 1, 3 do\n\
+          f(1)\n\
+          for j = 1, 2 do f(2) end\n\
+          f(3)\n\
+          for _, v in next, {} do f(4) end\n\
+          local k = 0\n\
+          while k < 2 do k = k + 1; f(5) end\n\
+          f(6)\n\
+        end\n\
+        f(7)\n";
+    assert_eq!(st.load_buffer(src.as_bytes(), b"=t1", None), Status::Ok);
+    let cl = st.get(st.top() - 1).as_lclosure().expect("closure");
+    let p = cl.proto();
+    let code = p.code();
+    // the call sites in order and the loop heads (targets of the backward jumps), outermost first
+    let calls: Vec<usize> = (0..code.len())
+        .filter(|&i| Instruction(code[i]).opcode() == Some(O::Call))
+        .collect();
+    assert_eq!(calls.len(), 8, "eight calls of f");
+    let mut heads: Vec<(usize, usize)> = Vec::new(); // (head, backward jump)
+    for (j, &w) in code.iter().enumerate() {
+        let i = Instruction(w);
+        let t = match i.opcode() {
+            Some(O::Jmp) => j as i64 + 1 + i64::from(i.sj()),
+            Some(O::Forloop | O::Tforloop) => j as i64 + 1 - i64::from(i.bx()),
+            _ => continue,
+        };
+        if t <= j as i64 {
+            heads.push((t as usize, j));
+        }
+    }
+    heads.sort_unstable();
+    assert_eq!(heads.len(), 4, "four loops: {heads:?}");
+    let (outer, inner_for, inner_gen, inner_while) =
+        (heads[0].0, heads[1].0, heads[2].0, heads[3].0);
+    let want = [
+        None,
+        Some(outer),
+        Some(inner_for),
+        Some(outer),
+        Some(inner_gen),
+        Some(inner_while),
+        Some(outer),
+        None,
+    ];
+    for (k, (&c, w)) in calls.iter().zip(want).enumerate() {
+        assert_eq!(
+            enclosing_loop_head(code, c).map(|h| h as usize),
+            w,
+            "call f({k}) at pc {c}, heads {heads:?}"
+        );
+    }
+}

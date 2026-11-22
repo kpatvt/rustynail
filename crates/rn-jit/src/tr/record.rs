@@ -343,6 +343,9 @@ pub struct RecCfg {
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF`.
     pub retfmax: u32,
+    /// Section 39.1 (T1, `TrLimits::retfsel`): a function-entry family's side recording may pop its root frame where the selector allows it
+    /// ([`super::cache::retf_sel_rule`]; the caller's head state comes from `retf_head`, so the selector is off without it).
+    pub retf_sel: bool,
     /// BUNDLE-V V2 (`TrLimits::upbar`): record `SETUPVAL` of a collectable value into a real upvalue cell (`USTORE` + the upvalue write barrier).
     pub upbar: u32,
     /// N3a: (prototype, pc) head query for the root frame of a side recording AFTER a `RETF` (its root is the caller `C`, not the entry
@@ -575,6 +578,7 @@ impl Default for RecCfg {
             libcall_mask: 0,
             retf: 0,
             retfmax: 0,
+            retf_sel: false,
             upbar: 0,
             f2mt: false,
             f2cmp: false,
@@ -1340,6 +1344,9 @@ struct Rec {
     mm_pending: Option<MmCall>,
     /// N2c (RETF): the segments of the recording (`segs[0]` = the entry root, pushed at the first `RETF`); empty when no `RETF` was recorded.
     segs: Vec<Seg>,
+    /// Section 39.1 (T1, `retfsel`): the selector allows the pop at the root `RETURN` this step executes (computed in `on_step`, where the
+    /// state is at hand; false at every other step).
+    retf_sel_ok: bool,
     /// N2c: slots between the current root frame and the entry root (the sum of the `A + 1` of the `RETF`s).
     shift: usize,
     /// N2c: the path index of the first step of each segment after a `RETF` (snapshots of those steps belong to segment `k`).
@@ -1639,6 +1646,7 @@ impl Rec {
             idfolded: false,
             midfolded: false,
             segs: Vec::new(),
+            retf_sel_ok: false,
             retf_below: Default::default(),
             retf_funcs: Default::default(),
             model_func: 1,
@@ -1988,6 +1996,18 @@ impl Rec {
                 return Err(AbortReason::DepFreed);
             }
         }
+        // section 39.1 (T1, `retfsel`): at a `RETURN` of the root frame of a function-entry family's side recording (before the first pop), ask
+        // the selector with the caller's head state; `ret` reads the answer
+        self.retf_sel_ok = self.cfg.retf_sel
+            && self.cfg.fn_root
+            && self.cfg.side.is_some()
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && self.retf_sel_check(st, ci);
         let vm = Vm {
             base: ci.r().func.0 + 1,
             root_base: self.root_func + 1,
@@ -7239,7 +7259,7 @@ impl Rec {
             // caller; anything that makes the pop unsound or unprofitable keeps the old behaviour (`None`)
             if self.cfg.retf & 1 != 0
                 && self.cfg.side.is_some()
-                && (!self.cfg.fn_root || self.cfg.retf & 4 != 0)
+                && (!self.cfg.fn_root || self.cfg.retf & 4 != 0 || self.retf_sel_ok)
             {
                 if let Some(r) = self.retf(vm, i, op)? {
                     return Ok(r);
@@ -7284,6 +7304,49 @@ impl Rec {
             }
         };
         self.ret_from(vm, a, nret)
+    }
+
+    /// Section 39.1 (T1, `retfsel`): the selector's question for the root frame `ci` about to return: the state of the head of the caller's innermost
+    /// loop around its `CALL` (asked through `retf_head`: installed root trace or not) and whether the root's prototype is among the
+    /// [`super::cache::RETFSEL_DEPTH`] frames from the caller down. A caller that is not a Lua frame suspended at a call answers no (`retf` refuses
+    /// it anyway).
+    fn retf_sel_check(&self, st: &mut State, ci: Ci) -> bool {
+        let Some(q) = self.cfg.retf_head.clone() else {
+            return false;
+        };
+        let Some(c_ci) = ci.previous() else {
+            return false;
+        };
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return false;
+        }
+        let Some(ccl) = st.ci_lclosure(c_ci) else {
+            return false;
+        };
+        let cp = ccl.proto();
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let Some(call_pc) = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1) else {
+            return false;
+        };
+        if call_pc >= ccode.len() {
+            return false;
+        }
+        let head = super::cache::enclosing_loop_head(ccode, call_pc);
+        let traced = head.and_then(|h| q(st, &cp, h));
+        let mut recursive = false;
+        let mut x = Some(c_ci);
+        for _ in 0..super::cache::RETFSEL_DEPTH {
+            let Some(xc) = x else { break };
+            if let Some(xl) = st.ci_lclosure(xc) {
+                if &*xl.proto() as *const Proto as usize == self.entry_proto {
+                    recursive = true;
+                    break;
+                }
+            }
+            x = xc.previous();
+        }
+        super::cache::retf_sel_rule(traced, recursive)
     }
 
     /// N2c (RETF): the `RETURN` of the root frame in a side recording. Emits `RETF` (the caller-identity guards and the native pop, see
