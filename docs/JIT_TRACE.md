@@ -3420,3 +3420,9 @@ through it. Classification: **(c) a test-harness artifact**, with an input depen
 `h2_newkey_programs` and `h5_sink_next_programs` (now seed per job) pass. Registry unchanged: **759** mutants (`scripts/gate-mutant-map.tsv`
 regenerated for the moved test lines).
 
+### 33.4 Gates
+
+Light gate (changed-file plan, 60 mutants incl. the five `lazystub_*`, the P1 and the `newkey_*` / `sinkfast_*` mutants of the re-seeded tests): OK (882 s).
+`gate-heavy.sh` (2026-11-21, at 41467fe, 4479 s): OK. light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only); tests-5.4-oracle
+PASS; `oracle_options` PASS; jit-diff 1-200 (7 modes) PASS; mutant runner 751 ran, 751 caught, no survivors (`lazystub_dbl_skip` included).
+`scripts/gate-mutant-times.tsv` refreshed by that run.
