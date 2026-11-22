@@ -354,6 +354,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         for (reason, n) in &s.side_aborted {
             let _ = writeln!(o, "[trace] side aborted {reason}: {n}");
         }
+        if s.heat_granted > 0 {
+            let _ = writeln!(o, "[trace] heatside: granted {}", s.heat_granted);
+        }
     }
     if s.nest_installed > 0 || s.frame_links > 0 || s.stitches > 0 || s.side_frame_links > 0 {
         let _ = writeln!(

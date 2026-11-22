@@ -545,6 +545,8 @@ struct TStats {
     deep_recs: u64,
     /// docs/JIT_TRACE.md section 38 (`deepprobe`): closed root recordings of deep sites dropped as probes or short tries.
     deep_probes: u64,
+    /// docs/JIT_TRACE.md section 39.2 (`heatside`): side traces granted beyond `maxside`.
+    heat_granted: u64,
     /// BUNDLE-S/P: `loopany` guard firings / whole-family flushes / pruned side traces / of those the trace whose exit raised the guard.
     la_fired: u64,
     la_family: u64,
@@ -773,6 +775,8 @@ impl TStats {
                     .nth(1)
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("heatside: granted ") {
+                s.heat_granted = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("links: nest roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 let g = |k: &str| {
@@ -2339,14 +2343,24 @@ fn side_traces_install_and_run() {
             with.iterations,
             without.iterations
         );
+        // (`heatside=0`: the hard cap; section 39.2's grants beyond it are bounded by `heatside`, checked below)
         let mut j = Job::new("side_many", trace);
-        j.limits = "maxside=1".into();
+        j.limits = "maxside=1,heatside=0".into();
         let one = run_all(vec![j]).remove(0).1;
         assert!(one.ok, "side_many maxside=1: {}", one.stderr);
         assert!(
             one.stats.side_installed <= 1,
             "side_many [{trace}] maxside=1: {}",
             one.stats.line()
+        );
+        let mut j = Job::new("side_many", trace);
+        j.limits = "maxside=1,heatside=2".into();
+        let three = run_all(vec![j]).remove(0).1;
+        assert!(three.ok, "side_many maxside=1,heatside=2: {}", three.stderr);
+        assert!(
+            three.stats.side_installed <= 3,
+            "side_many [{trace}] maxside=1,heatside=2: {}",
+            three.stats.line()
         );
     }
     for trace in ["always", "on2"] {
@@ -13101,5 +13115,88 @@ fn t1_retfsel_programs() {
                 );
             }
         }
+    }
+}
+
+/// docs/JIT_TRACE.md section 39.2 (T3, `heatside`): exits of a full family that keep coming back get side traces beyond `maxside`. `t3_01_heatside`
+/// (a 40-way branch chain in one hot loop, a chain whose late branches stop being taken, an error raised in a late branch under `pcall` and a
+/// collection in another) x `always` / `on2` x `heatside` 0 / 48, `+verify`; for the shipped value: exit storm, emulator, budgets 3 / 17 / 200, GC
+/// stress 1 / 2 in both collector modes, stack-move stress; every job against the interpreter. In `always` mode (deterministic counts) the shipped
+/// rule grants side traces and `heatside=0` none; the family cap (`heatside=4`), the state budget (`heatbudget=3`: exactly 3), the wait
+/// (`heatwait=255`) and the depth limit (`heatdepth=0`) each grant fewer than the shipped values. Detector of `heatside_never`, `heatside_cap_ignored`,
+/// `heatside_budget_ignored`, `heatwait_ignored`, `heatdepth_ignored`.
+#[test]
+fn t3_heatside_programs() {
+    let p = "t3_01_heatside";
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["heatside=0", "heatside=48"] {
+            jobs.push(Job::new(p, trace).limits_s(lim));
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+        }
+        let lim = "heatside=48";
+        jobs.push(
+            Job::new(p, trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s(lim),
+        );
+        jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        for b in [3, 17, 200] {
+            jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+        }
+        for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+            let mut j = Job::new(p, trace)
+                .env("RUSTYNAIL_GC_STRESS", gc)
+                .limits_s(lim);
+            if mode == "inc" {
+                j = j.env("RUSTYNAIL_GC_MODE", "inc");
+            }
+            jobs.push(j);
+        }
+        jobs.push(
+            Job::new(p, trace)
+                .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                .limits_s(lim),
+        );
+    }
+    for lim in ["heatside=4", "heatbudget=3", "heatwait=255", "heatdepth=0"] {
+        jobs.push(Job::new(p, "always").limits_s(lim));
+    }
+    let res = compare(jobs);
+    let granted = |lim: &str| {
+        res.iter()
+            .find(|(j, _)| {
+                j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.env.is_empty()
+                    && j.budget.is_none()
+                    && j.limits == lim
+            })
+            .map(|(_, o)| o.stats.heat_granted)
+            .expect("job")
+    };
+    for (j, o) in &res {
+        if j.limits == "heatside=0" {
+            assert_eq!(
+                o.stats.heat_granted,
+                0,
+                "{}: grants with the rule off ({})",
+                j.tag(),
+                o.stats.line()
+            );
+        }
+    }
+    let full = granted("heatside=48");
+    assert!(
+        full >= 8,
+        "the shipped rule grants side traces beyond the cap: {full}"
+    );
+    assert_eq!(granted("heatbudget=3"), 3, "the state budget");
+    for lim in ["heatside=4", "heatwait=255", "heatdepth=0"] {
+        let g = granted(lim);
+        assert!(
+            g < full,
+            "{lim}: {g} grants, not fewer than the shipped {full}"
+        );
     }
 }

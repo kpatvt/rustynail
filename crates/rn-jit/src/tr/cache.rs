@@ -361,6 +361,14 @@ pub const POLYSIDE_PROCESS: u32 = 48;
 pub const POLYWAIT_PROCESS: u32 = 2;
 /// See [`POLYSIDE_PROCESS`].
 pub const POLYFRAMES_PROCESS: u32 = 2;
+/// Section 39.2 (T3, `heatside`): process values of [`TrLimits::heatside`] / [`TrLimits::heatwait`] / [`TrLimits::heatbudget`] (also the struct defaults).
+pub const HEATSIDE_PROCESS: u32 = 48;
+/// See [`HEATSIDE_PROCESS`].
+pub const HEATWAIT_PROCESS: u32 = 16;
+/// See [`HEATSIDE_PROCESS`].
+pub const HEATBUDGET_PROCESS: u32 = 64;
+/// Section 39.2 (T3): process value of [`TrLimits::heatdepth`] (also the struct default).
+pub const HEATDEPTH_PROCESS: u32 = 8;
 /// K4: process value of [`TrLimits::innerside`] (also the struct default).
 pub const INNERSIDE_PROCESS: u32 = 4;
 /// BUNDLE-S: process value of [`TrLimits::loopany`] (K3a: also the struct default): `while` / `repeat` loops of inlined callees are unrolled, guarded by
@@ -408,6 +416,19 @@ pub struct TrLimits {
     pub polyside: u32,
     /// See `polyside`: deferrals of a capped exit before it may exceed `maxside`.
     pub polywait: u32,
+    /// Section 39.2 (T3): side traces a family may hold beyond `maxside` for exits that keep coming back after the family is full (any exit, not only
+    /// the dispatch guards of `polyside`): such an exit is deferred (re-armed, no fault) instead of blacklisted, and once it has been reported
+    /// `heatwait` times since the family filled up (about `heatwait * hot_exit` more exits, deterministic) it gets a side trace if the family holds
+    /// fewer than `maxside + heatside` and the state has granted fewer than `heatbudget` such side traces. 0 = off (the hard cap). Default
+    /// [`HEATSIDE_PROCESS`].
+    pub heatside: u32,
+    /// See `heatside`: reports of a capped exit before it may exceed `maxside` (default [`HEATWAIT_PROCESS`]).
+    pub heatwait: u32,
+    /// See `heatside`: side traces beyond `maxside` the `heatside` rule may grant in a state (a compile budget; default [`HEATBUDGET_PROCESS`]).
+    pub heatbudget: u32,
+    /// See `heatside`: an exit whose trace lies more than this many side links below its family root gets no grant (a chain that keeps re-exiting:
+    /// `corpus2/dev/expr_compiler` grew a 48-link chain at one pc and lost 18 % instructions; default [`HEATDEPTH_PROCESS`]).
+    pub heatdepth: u32,
     /// See `polyside`: only an exit that lies in at least `polyframes` inlined frames may exceed `maxside` (0 = any exit): the outcomes of branches
     /// inside the bodies of inlined methods (several receiver classes, each with its own paths).
     pub polyframes: u32,
@@ -785,6 +806,10 @@ impl Default for TrLimits {
             maxside: MAXSIDE_PROCESS,
             polyside: POLYSIDE_PROCESS,
             polywait: POLYWAIT_PROCESS,
+            heatside: HEATSIDE_PROCESS,
+            heatwait: HEATWAIT_PROCESS,
+            heatbudget: HEATBUDGET_PROCESS,
+            heatdepth: HEATDEPTH_PROCESS,
             polyframes: POLYFRAMES_PROCESS,
             innerside: INNERSIDE_PROCESS,
             maxdepth: 4,
@@ -981,6 +1006,10 @@ impl TrLimits {
                 "maxside" => l.maxside = v,
                 "polyside" => l.polyside = v,
                 "polywait" => l.polywait = v,
+                "heatside" => l.heatside = v.min(256),
+                "heatwait" => l.heatwait = v.clamp(1, 255),
+                "heatbudget" => l.heatbudget = v,
+                "heatdepth" => l.heatdepth = v,
                 "polyframes" => l.polyframes = v,
                 "innerside" => l.innerside = v,
                 "maxdepth" => l.maxdepth = v,
@@ -2648,6 +2677,8 @@ pub struct TrStats {
     pub dom_flushes: u64,
     /// P3: chain re-orders (child subtrees flushed by [`chain_check`]).
     pub chain_flushes: u64,
+    /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
+    pub heat_granted: u64,
     /// P3: chain checks made ([`chain_check`]).
     pub chain_checks: u64,
     /// BUNDLE-G (`chaindepth`): hot callee-guard exits at the end of a full chain that were blacklisted instead of getting another link.
@@ -2858,6 +2889,9 @@ struct Trace {
     la_any: bool,
     /// BUNDLE-O: per exit, how often a full family deferred it (see `TrLimits::polyside`).
     defer: Vec<u8>,
+    /// Section 39.2 (T3): per exit, how often a full family deferred it under the `heatside` rule (its own count: the `polyside` counter `defer`
+    /// keeps its meaning, and an exit deferred here counts once in the `loopany` guard's side attempts, at its first report).
+    hdefer: Vec<u8>,
     /// P3: per snapshot, whether the exit counter counts twice per exit (`Asm::dbl`).
     dbl: Vec<bool>,
     /// P3 (`ncallee`): the entry segment of this root holds a callee identity guard (`EQREF` on an empty-map snapshot).
@@ -4436,6 +4470,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         side_inner: 0,
         la_any: false,
         defer: vec![0; nex],
+        hdefer: vec![0; nex],
         dbl: Vec::new(),
         entry_callee: false,
         hoisted: false,
@@ -5505,7 +5540,10 @@ fn side_attempt(
         && !mutants::active("loopany_guard_never")
     {
         let sites = family_la(d, id);
-        if !sites.is_empty() {
+        // (section 39.2: a report of an exit the `heatside` rule deferred is not another side attempt: it counted at its first report)
+        let redeferred = matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. })
+            if t.hdefer.get(k as usize).is_some_and(|&c| heat_redeferred(c)));
+        if !sites.is_empty() && !redeferred {
             let (fam, max) = match d.tr.slot(id) {
                 Some(Slot {
                     body: Body::Trace(t),
@@ -5659,6 +5697,45 @@ fn side_attempt(
                 capped = false;
             } else {
                 side_failed(d, link, false, "PolyWait", false);
+                return HotAction::None;
+            }
+        }
+    }
+    if capped {
+        // section 39.2 (T3, `heatside`): any exit of a full family that keeps coming back may get a side trace up to `maxside + heatside`, within the
+        // state's budget: it is deferred (re-armed, no fault) until it has been reported `heatwait` times since the family filled up
+        let (extra, wait, budget, maxdepth) = {
+            let l = &d.tr.cfg.limits;
+            (l.heatside, l.heatwait, l.heatbudget, l.heatdepth)
+        };
+        if let Some(waited) = heat_side_rule(
+            nside,
+            d.tr.cfg.limits.maxside,
+            extra,
+            d.tr.stats.heat_granted,
+            budget,
+            side_depth(d, link.parent),
+            maxdepth,
+        )
+        .then(|| match d.tr.slot_mut(link.parent) {
+            Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) if (k as usize) < t.hdefer.len() => {
+                let c = &mut t.hdefer[k as usize];
+                *c = c.saturating_add(1);
+                heat_waited(*c, wait)
+            }
+            _ => false,
+        }) {
+            if waited {
+                d.tr.stats.heat_granted += 1;
+                vlog(d, || {
+                    format!("heatside: exit {k} (pc {} frames {}) of {:?} beyond the cap ({nside} side traces in the family) depth {}", snap.pc, snap.frames.len(), link.parent, side_depth(d, link.parent))
+                });
+                capped = false;
+            } else {
+                side_failed(d, link, false, "HeatWait", false);
                 return HotAction::None;
             }
         }
@@ -8508,4 +8585,56 @@ pub fn retf_sel_rule(caller_loop: Option<bool>, recursive: bool) -> bool {
     }
     (caller_loop == Some(true) || (caller_loop.is_some() && mutants::active("retfsel_untraced_ok")))
         && (!recursive || mutants::active("retfsel_recursion_ok"))
+}
+
+/// Section 39.2 (T3, `heatside`): may an exit of a full family (`nside` side traces, `maxside` the cap) be deferred towards a side trace beyond the cap?
+/// Only while the family holds fewer than `maxside + extra`, the state has granted fewer than `budget` such side traces (`granted`) and the exit's trace
+/// lies at most `maxdepth` side links below its family root (`depth`).
+#[allow(clippy::too_many_arguments)]
+pub fn heat_side_rule(
+    nside: u32,
+    maxside: u32,
+    extra: u32,
+    granted: u64,
+    budget: u32,
+    depth: u32,
+    maxdepth: u32,
+) -> bool {
+    if extra == 0 || mutants::active("heatside_never") {
+        return false;
+    }
+    (nside < maxside.saturating_add(extra) || mutants::active("heatside_cap_ignored"))
+        && (granted < u64::from(budget) || mutants::active("heatside_budget_ignored"))
+        && (depth <= maxdepth || mutants::active("heatdepth_ignored"))
+}
+
+/// Section 39.2 (T3, `heatside`): has a deferred exit been reported often enough (`reports` deferrals since its family filled up) to get its side trace?
+pub fn heat_waited(reports: u8, wait: u32) -> bool {
+    u32::from(reports) >= wait || mutants::active("heatwait_ignored")
+}
+
+/// Section 39.2 (T3): side links from the trace `id` up to its family root (0 = a root).
+pub(crate) fn side_depth(d: &JitData, id: TrId) -> u32 {
+    let mut n = 0;
+    let mut cur = id;
+    while let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(cur)
+    {
+        match t.side {
+            Some(l) if n < 1000 => {
+                n += 1;
+                cur = l.parent;
+            }
+            _ => break,
+        }
+    }
+    n
+}
+
+/// Section 39.2 (T3, `heatside`): is a report of an exit that the rule deferred `hdefer` times a repeat (not another side attempt for the `loopany`
+/// guard, which counts each exit once, at its first report: the deferrals of a full family must not trip it, 5.4 `dijkstra_routes` +6.6 % otherwise)?
+pub fn heat_redeferred(hdefer: u8) -> bool {
+    hdefer > 0 && !mutants::active("heatdefer_counts_la")
 }

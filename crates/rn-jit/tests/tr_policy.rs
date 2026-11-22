@@ -2405,3 +2405,82 @@ fn t1_retfsel_policy() {
         );
     }
 }
+
+/// docs/JIT_TRACE.md section 39.2 (T3, `heatside`): the knobs (struct defaults = shipped, parse, caps) and the rule: a grant needs room in the
+/// family (`nside < maxside + heatside`), room in the state budget, a trace at most `heatdepth` side links below its root, and `heatwait` reports.
+/// Detector of `heatside_never`, `heatside_cap_ignored`, `heatside_budget_ignored`, `heatwait_ignored`, `heatdepth_ignored`, `heatdefer_counts_la`.
+#[test]
+fn t3_heatside_policy() {
+    use rn_jit::tr::cache::{
+        heat_redeferred, heat_side_rule, heat_waited, TrConfig, TrMode, HEATBUDGET_PROCESS,
+        HEATDEPTH_PROCESS, HEATSIDE_PROCESS, HEATWAIT_PROCESS,
+    };
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        (l.heatside, l.heatwait, l.heatbudget, l.heatdepth),
+        (
+            HEATSIDE_PROCESS,
+            HEATWAIT_PROCESS,
+            HEATBUDGET_PROCESS,
+            HEATDEPTH_PROCESS
+        ),
+        "struct defaults (tests) = shipped"
+    );
+    assert_eq!(
+        (
+            HEATSIDE_PROCESS,
+            HEATWAIT_PROCESS,
+            HEATBUDGET_PROCESS,
+            HEATDEPTH_PROCESS
+        ),
+        (48, 16, 64, 8)
+    );
+    for (env, want) in [
+        (
+            "heatside=0,heatwait=0,heatbudget=5,heatdepth=2",
+            (0, 1, 5, 2),
+        ),
+        ("heatside=999,heatwait=999", (256, 255, 64, 8)),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, Some(env), None);
+        c.apply_process_limits(Some(env));
+        let l = c.limits;
+        assert_eq!(
+            (l.heatside, l.heatwait, l.heatbudget, l.heatdepth),
+            want,
+            "limits env {env}"
+        );
+    }
+    // (nside, maxside, extra, granted, budget, depth, maxdepth)
+    assert!(
+        heat_side_rule(16, 16, 48, 0, 64, 2, 8),
+        "full family, room beyond the cap"
+    );
+    assert!(
+        heat_side_rule(63, 16, 48, 63, 64, 8, 8),
+        "last slot, last budget, deepest allowed"
+    );
+    assert!(
+        !heat_side_rule(64, 16, 48, 0, 64, 1, 8),
+        "the family holds maxside + heatside"
+    );
+    assert!(
+        !heat_side_rule(20, 16, 48, 64, 64, 1, 8),
+        "the state budget is spent"
+    );
+    assert!(
+        !heat_side_rule(20, 16, 48, 0, 64, 9, 8),
+        "too deep in the family"
+    );
+    assert!(!heat_side_rule(16, 16, 0, 0, 64, 0, 8), "heatside=0: off");
+    assert!(!heat_waited(15, 16));
+    assert!(heat_waited(16, 16));
+    assert!(heat_waited(255, 255));
+    assert!(!heat_waited(1, 2));
+    // the `loopany` guard counts a deferred exit once
+    assert!(!heat_redeferred(0), "the first report is a side attempt");
+    assert!(
+        heat_redeferred(1) && heat_redeferred(255),
+        "later reports are repeats"
+    );
+}

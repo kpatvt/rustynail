@@ -4438,6 +4438,51 @@ const TABLE: &[Row] = &[
         owner: "T1",
         dets: &[d("tr_policy", "t1_retfsel_policy")],
     },
+    Row {
+        name: "heatside_never",
+        owner: "T3",
+        dets: &[
+            d("tr_policy", "t3_heatside_policy"),
+            d("tr_core", "t3_heatside_programs"),
+        ],
+    },
+    Row {
+        name: "heatside_cap_ignored",
+        owner: "T3",
+        dets: &[
+            d("tr_policy", "t3_heatside_policy"),
+            d("tr_core", "t3_heatside_programs"),
+        ],
+    },
+    Row {
+        name: "heatside_budget_ignored",
+        owner: "T3",
+        dets: &[
+            d("tr_policy", "t3_heatside_policy"),
+            d("tr_core", "t3_heatside_programs"),
+        ],
+    },
+    Row {
+        name: "heatwait_ignored",
+        owner: "T3",
+        dets: &[
+            d("tr_policy", "t3_heatside_policy"),
+            d("tr_core", "t3_heatside_programs"),
+        ],
+    },
+    Row {
+        name: "heatdepth_ignored",
+        owner: "T3",
+        dets: &[
+            d("tr_policy", "t3_heatside_policy"),
+            d("tr_core", "t3_heatside_programs"),
+        ],
+    },
+    Row {
+        name: "heatdefer_counts_la",
+        owner: "T3",
+        dets: &[d("tr_policy", "t3_heatside_policy")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

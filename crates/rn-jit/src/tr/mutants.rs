@@ -968,6 +968,13 @@ pub const NAMES: &[&str] = &[
     "retfsel_untraced_ok",
     "retfsel_recursion_ok",
     "retfsel_outer_loop",
+    // docs/JIT_TRACE.md section 39.2 (T3, `heatside`): side traces beyond `maxside` for exits that keep coming back, within a state budget
+    "heatside_never",
+    "heatside_cap_ignored",
+    "heatside_budget_ignored",
+    "heatwait_ignored",
+    "heatdepth_ignored",
+    "heatdefer_counts_la",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1044,7 +1051,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 800);
+        assert_eq!(NAMES.len(), 806);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
