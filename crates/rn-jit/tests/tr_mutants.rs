@@ -4383,6 +4383,35 @@ const TABLE: &[Row] = &[
         owner: "E9",
         dets: &[d("tr_core", "e9_t1call_programs")],
     },
+    Row {
+        name: "deepprobe_never",
+        owner: "DP",
+        dets: &[
+            d("tr_policy", "dp_policy"),
+            d("tr_core", "dp_deep_probe_programs"),
+        ],
+    },
+    Row {
+        name: "deepprobe_any_try",
+        owner: "DP",
+        dets: &[
+            d("tr_policy", "dp_policy"),
+            d("tr_core", "dp_deep_probe_programs"),
+        ],
+    },
+    Row {
+        name: "deepprobe_uniform_keep",
+        owner: "DP",
+        dets: &[
+            d("tr_policy", "dp_policy"),
+            d("tr_core", "dp_deep_probe_programs"),
+        ],
+    },
+    Row {
+        name: "deepprobe_abort_keeps",
+        owner: "DP",
+        dets: &[d("tr_policy", "dp_policy")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

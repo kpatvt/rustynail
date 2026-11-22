@@ -1167,6 +1167,16 @@ fn finish_outcome(st: &mut State) {
             ),
         },
         RecOutcome::Closed(rec) => {
+            // section 38 (`deepprobe`): a deep site picks the iteration its root is recorded on (the longest of its probes)
+            if !act.side
+                && cache::deep_probe_drop(
+                    st,
+                    act.id,
+                    u32::try_from(rec.path.len()).unwrap_or(u32::MAX),
+                )
+            {
+                return;
+            }
             if let Err(e) = pipeline(st, &act, &rec) {
                 if act.verbose >= 2 {
                     eprintln!("[trace] --- pipeline: {}", e.detail);

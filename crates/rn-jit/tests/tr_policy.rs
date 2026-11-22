@@ -2032,6 +2032,74 @@ fn bp_rearmside_rule() {
     assert!(ok(M - 1, 1, false, 1, 0));
 }
 
+/// docs/JIT_TRACE.md section 38 (`deepprobe`): a deep site's choice of the iteration its root is recorded on. The first `deepprobe` closed
+/// recordings are probes (dropped; the longest path is kept); then the first recording of at least 7/8 of that path is taken, the `deepprobe`-th
+/// try whatever its length; `DEEPPROBE_UNIFORM` probes with one path end the probing at once (the last one is taken); a recording of the site
+/// that aborts ends the probing (the next closed one is taken); a site probes once. Detector of `deepprobe_never`, `deepprobe_any_try`,
+/// `deepprobe_uniform_keep`, `deepprobe_abort_keeps`.
+#[test]
+fn dp_policy() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, TrProto, DEEPPROBE_PROCESS, DEEPPROBE_UNIFORM};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.deepprobe, DEEPPROBE_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (Some("deepprobe=0"), 0),
+        (Some("deepprobe=999"), 64),
+        (Some("deepprobe=5"), 5),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.deepprobe, want, "limits env {env:?}");
+    }
+    let mk = || {
+        let tp = TrProto::new(10, &[0, 7], 256, true, 77, 1);
+        assert!(tp.on_deep(1));
+        tp
+    };
+    // (a) varied probes: all dropped; tries below 7/8 of the longest dropped; the first one at 7/8 taken; nothing probes afterwards
+    let tp = mk();
+    for len in [10, 40, 20, 30] {
+        assert!(tp.deep_probe(1, len, 4), "probe {len}");
+    }
+    assert!(tp.deep_probe(1, 20, 4), "short try");
+    assert!(tp.deep_probe(1, 34, 4), "34 * 8 < 40 * 7");
+    assert!(!tp.deep_probe(1, 35, 4), "35 * 8 = 40 * 7: taken");
+    assert!(!tp.deep_probe(1, 1, 4), "the site probes once");
+    // (b) the tries are capped: the `probes`-th try is taken whatever its length
+    let tp = mk();
+    for len in [10, 40, 20] {
+        assert!(tp.deep_probe(1, len, 3));
+    }
+    assert!(tp.deep_probe(1, 10, 3));
+    assert!(tp.deep_probe(1, 10, 3));
+    assert!(!tp.deep_probe(1, 10, 3), "last try taken");
+    // (c) one path in the first DEEPPROBE_UNIFORM probes: the last of them is taken
+    let tp = mk();
+    for k in 1..DEEPPROBE_UNIFORM {
+        assert!(tp.deep_probe(1, 50, 12), "uniform probe {k}");
+    }
+    assert!(!tp.deep_probe(1, 50, 12), "uniform: taken");
+    assert!(!tp.deep_probe(1, 99, 12));
+    // (d) an abort of the site's recording ends the probing
+    let tp = mk();
+    assert!(tp.deep_probe(1, 50, 12));
+    tp.deep_probe_end(1);
+    assert!(
+        !tp.deep_probe(1, 10, 12),
+        "after an abort the next closed recording is taken"
+    );
+    // (e) an abort of a head that is not a deep site changes nothing; knob 0 never drops
+    let tp = TrProto::new(10, &[0, 7], 256, true, 77, 1);
+    tp.deep_probe_end(1);
+    assert!(tp.on_deep(1));
+    assert!(tp.deep_probe(1, 50, 12));
+    let tp = mk();
+    assert!(!tp.deep_probe(1, 50, 0), "deepprobe=0");
+}
+
 /// E1 (`recunroll`, docs/JIT_TRACE.md section 34.2): the knobs and the per-prototype unroll policy. `k` applies only to lazy-aware function-entry
 /// prototypes; `UNROLL_FAILS` unroll failures in a row lower `k` by one, below 2 the prototype is demoted for good; a success resets the count;
 /// the fixed mode (`recunroll=2`) never demotes; an `Unroll` abort costs the head a short flat wait and never blacklists it. Detector of

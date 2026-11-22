@@ -1784,6 +1784,9 @@ fn hand_entry_failure_bookkeeping_follows_the_free_peel_rule() {
             rec: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
+            deep_n: Cell::new(0),
+            deep_best: Cell::new(0),
+            deep_low: Cell::new(0),
         });
         let hp = std::ptr::addr_of!(*head) as u64;
         let mut rng = Rng::new(99);
@@ -2214,6 +2217,9 @@ fn new_head() -> Box<rn_jit::tr::cache::HeadData> {
         rec: Cell::new(0),
         lazy: Cell::new(false),
         deep: Cell::new(false),
+        deep_n: Cell::new(0),
+        deep_best: Cell::new(0),
+        deep_low: Cell::new(0),
     })
 }
 

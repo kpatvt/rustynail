@@ -958,6 +958,11 @@ pub const NAMES: &[&str] = &[
     "t1_jret_site_next",
     "t1_jret_ignore_mark",
     "t1_jret_no_setk",
+    // docs/JIT_TRACE.md section 38 (`deepprobe`): a deep site picks the longest of its probe iterations
+    "deepprobe_never",
+    "deepprobe_any_try",
+    "deepprobe_uniform_keep",
+    "deepprobe_abort_keeps",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1034,7 +1039,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 792);
+        assert_eq!(NAMES.len(), 796);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

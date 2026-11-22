@@ -543,6 +543,8 @@ struct TStats {
     /// J2-2: sites re-recorded deeper / deep recordings started.
     deep_sites: u64,
     deep_recs: u64,
+    /// docs/JIT_TRACE.md section 38 (`deepprobe`): closed root recordings of deep sites dropped as probes or short tries.
+    deep_probes: u64,
     /// BUNDLE-S/P: `loopany` guard firings / whole-family flushes / pruned side traces / of those the trace whose exit raised the guard.
     la_fired: u64,
     la_family: u64,
@@ -762,6 +764,12 @@ impl TStats {
                     .unwrap_or(0);
                 s.deep_recs = r
                     .split("recordings: ")
+                    .nth(1)
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                s.deep_probes = r
+                    .split("dropped: ")
                     .nth(1)
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
@@ -2215,7 +2223,9 @@ fn pm4_recursion_entry_counters() {
     for trace in ["always", "on2"] {
         for opts in ["", "+verify"] {
             let mut j = Job::new("pm4_rec_counters", trace).opts(opts);
-            j.limits = "recnat=1".into();
+            // (`deepprobe=0`: the program's loop is a deep site; the stale-word case needs the formation of its first closed recording,
+            // docs/JIT_TRACE.md section 38.7)
+            j.limits = "recnat=1,deepprobe=0".into();
             jobs.push(j);
         }
     }
@@ -12931,6 +12941,84 @@ fn e5_midfold_programs() {
                 o.stats.midfold_refused >= 1,
                 "{}: the family rule never fired",
                 j.tag()
+            );
+        }
+    }
+}
+
+/// docs/JIT_TRACE.md section 38 (`deepprobe`): a deep site (a loop whose recording stopped at the recursion limit, J2-2) drops its first closed root
+/// recordings as probes and compiles one of its longest. `e10_01` (the `bench/jit-trace/rec_loop` shape: fib / ack of varying depth from one loop;
+/// depths with an even period; a rare deep iteration; a recursion deeper than any limit; a callee switched while the site probes; errors from depth;
+/// tables and floats through the recursion), `e10_02` (three sites with known counts: tries dropped until a deep iteration comes round, a uniform
+/// site, a site whose recording aborts after it became deep) and `j2_deep` x `always` / `on2` x `deepprobe` 0 / 3 / 12, `+verify`; for the shipped
+/// value: exit storm, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress. Pins the number of dropped recordings of
+/// `e10_02` in `always` mode (12 probes and 2 tries at the first site, 3 probes at the uniform one, none at the aborting one) and asserts none
+/// without the knob. Detector of `deepprobe_never`, `deepprobe_any_try`, `deepprobe_uniform_keep` (`deepprobe_abort_keeps` is caught by
+/// `tr_policy::dp_policy`; the third site of `e10_02` does not separate it in the jobs' configuration).
+#[test]
+fn dp_deep_probe_programs() {
+    let mut jobs = Vec::new();
+    for p in ["e10_01_deep_probe", "e10_02_deep_probe_tries", "j2_deep"] {
+        for trace in ["always", "on2"] {
+            for lim in ["deepprobe=0", "deepprobe=3", "deepprobe=12"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "deepprobe=12";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            for b in [3, 17, 200] {
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s(lim),
+            );
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits == "deepprobe=0" {
+            assert_eq!(
+                o.stats.deep_probes,
+                0,
+                "{}: dropped recordings with deepprobe=0",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none();
+        if j.prog == "e10_02_deep_probe_tries"
+            && plain
+            && j.trace == "always"
+            && j.limits == "deepprobe=12"
+        {
+            assert_eq!(
+                (o.stats.deep_sites, o.stats.deep_probes),
+                (3, 17),
+                "{}: deep sites / dropped recordings ({})",
+                j.tag(),
+                o.stats.line()
+            );
+        }
+        if j.prog == "e10_01_deep_probe" && plain && j.limits == "deepprobe=12" {
+            assert!(
+                o.stats.deep_probes >= 12,
+                "{}: the rec_loop site did not probe ({})",
+                j.tag(),
+                o.stats.line()
             );
         }
     }

@@ -106,6 +106,18 @@ pub const LAZYLOOP_PROCESS: u32 = 1;
 pub const DLINK_PROCESS: u32 = 3;
 /// E9: the process default of [`TrLimits::t1call`] (also the struct default).
 pub const T1CALL_PROCESS: u32 = 0;
+/// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
+pub const DEEPPROBE_PROCESS: u32 = 12;
+/// Section 38: a try after the probes is taken when its recorded path is at least `DEEPPROBE_NUM / DEEPPROBE_DEN` of the longest probe's (the probes'
+/// strides do not repeat the iteration of the longest probe exactly; 7/8 took one of the deepest call trees of `rec_loop` at every hot threshold tried).
+pub const DEEPPROBE_NUM: u64 = 7;
+/// See [`DEEPPROBE_NUM`].
+pub const DEEPPROBE_DEN: u64 = 8;
+/// Section 38: probes with the same recorded path after which a deep site stops probing and compiles the last one (`awfy/list`: every probe of its
+/// site had the same path, and twelve dropped recordings only delayed its formation).
+pub const DEEPPROBE_UNIFORM: u32 = 4;
+/// Section 38: [`HeadData::deep_n`] of a site that has finished probing.
+pub const DEEP_DONE: u32 = u32::MAX;
 /// E5: the process default of [`TrLimits::midfold`] (also the struct default).
 pub const MIDFOLD_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
@@ -743,6 +755,13 @@ pub struct TrLimits {
     /// of looking the caller's resume entry up. Bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`, like
     /// `t1q`). Default [`T1CALL_PROCESS`].
     pub t1call: u32,
+    /// Section 38 (`deepprobe`, docs/JIT_TRACE.md): a deep site (J2-2: a loop head whose recording ended at the recursion / depth limit) picks the
+    /// iteration its root trace is recorded on: its first `deepprobe` closed root recordings are probes (dropped, the longest recorded path is
+    /// kept), the next ones are dropped while their path is shorter than 7/8 of that, for at most `deepprobe` more recordings (the last one is
+    /// taken whatever its length); four probes with one path, or an abort of a recording of the site, end the probing ([`TrProto::deep_probe`]).
+    /// Policy only: it decides which iteration is recorded, never how a trace runs. 0 = off (the first closed recording compiles, as before).
+    /// Default [`DEEPPROBE_PROCESS`].
+    pub deepprobe: u32,
 }
 
 impl Default for TrLimits {
@@ -863,6 +882,7 @@ impl Default for TrLimits {
             lazypoison: 0,
             dlink: DLINK_PROCESS,
             t1call: T1CALL_PROCESS,
+            deepprobe: DEEPPROBE_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1056,6 +1076,7 @@ impl TrLimits {
                 "regcarry" => l.regcarry = v.min(3),
                 "lazypoison" => l.lazypoison = v.min(1),
                 "dlink" => l.dlink = v.min(3),
+                "deepprobe" => l.deepprobe = v.min(64),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 _ => bad.push(w.to_string()),
             }
@@ -1397,6 +1418,13 @@ pub struct HeadData {
     /// J2-2: the site is recorded with the deep limits (`TrLimits::deep`): set once, when a recording of the head ended at the
     /// recursion / depth limit (never reset: the site gets exactly one deeper re-record).
     pub deep: Cell<bool>,
+    /// Section 38 (`deepprobe`): closed root recordings of the deep site so far (probes and dropped tries; [`DEEP_DONE`] once a recording was
+    /// taken or a recording of the site aborted: the site probes once).
+    pub deep_n: Cell<u32>,
+    /// Section 38: the longest recorded path (bytecodes) among the deep site's probes.
+    pub deep_best: Cell<u32>,
+    /// Section 38: the shortest recorded path among the deep site's probes.
+    pub deep_low: Cell<u32>,
 }
 
 /// Byte offsets of the fields machine code touches.
@@ -1500,6 +1528,9 @@ impl HeadData {
             stale: Cell::new(0),
             lazy: Cell::new(false),
             deep: Cell::new(false),
+            deep_n: Cell::new(0),
+            deep_best: Cell::new(0),
+            deep_low: Cell::new(0),
         }
     }
 
@@ -2393,6 +2424,62 @@ impl TrProto {
         true
     }
 
+    /// Section 38 (`deepprobe`): a root recording of the deep site `i` closed with a recorded path of `len` bytecodes; `probes` = the knob. True: the
+    /// recording is dropped (a probe, or a short try), false: it is compiled. The first `probes` closed recordings are probes (their longest path is
+    /// kept); afterwards the first recording whose path is at least [`DEEPPROBE_NUM`] / [`DEEPPROBE_DEN`] of that is taken, and the `probes`-th try
+    /// is taken whatever its length. A probe is taken at once when the first [`DEEPPROBE_UNIFORM`] probes all had the same path (nothing to choose
+    /// from). Once a recording is taken, or a recording of the site aborted ([`TrProto::deep_probe_end`]), the site never probes again.
+    pub fn deep_probe(&self, i: usize, len: u32, probes: u32) -> bool {
+        let h = &self.heads[i];
+        let n = h.deep_n.get();
+        if probes == 0 || n == DEEP_DONE || mutants::active("deepprobe_never") {
+            return false;
+        }
+        if n < probes {
+            let (best, low) = if n == 0 {
+                (len, len)
+            } else {
+                (h.deep_best.get().max(len), h.deep_low.get().min(len))
+            };
+            h.deep_best.set(best);
+            h.deep_low.set(low);
+            if n + 1 >= DEEPPROBE_UNIFORM
+                && best == low
+                && !mutants::active("deepprobe_uniform_keep")
+            {
+                h.deep_n.set(DEEP_DONE);
+                return false;
+            }
+            h.deep_n.set(n + 1);
+            return true;
+        }
+        let long = u64::from(len) * DEEPPROBE_DEN >= u64::from(h.deep_best.get()) * DEEPPROBE_NUM;
+        if long || n + 1 >= probes.saturating_mul(2) || mutants::active("deepprobe_any_try") {
+            h.deep_n.set(DEEP_DONE);
+            return false;
+        }
+        h.deep_n.set(n + 1);
+        true
+    }
+
+    /// Section 38: a root recording of head `i` aborted (any reason but a dropped probe): a deep site stops probing for good (its recordings do not
+    /// close reliably, so the next one that closes is compiled: dropping it could cost the site its only trace).
+    pub fn deep_probe_end(&self, i: usize) {
+        let h = &self.heads[i];
+        if h.deep.get() && !mutants::active("deepprobe_abort_keeps") {
+            h.deep_n.set(DEEP_DONE);
+        }
+    }
+
+    /// Section 38: a probe or a short try was dropped: the head records again after one back-edge, or after two when the count of closed recordings
+    /// is odd (alternating strides of two and three iterations, as the recording that closed used up the back-edge it ended at: a stride of two
+    /// alone saw only every other iteration of a loop whose call depths alternate with an even period, `bench/jit-trace/rec_loop`).
+    fn on_deep_probe(&self, i: usize) {
+        let h = &self.heads[i];
+        h.trace.set(None);
+        self.to_warm_keep(i, 1 + i64::from(h.deep_n.get() & 1));
+    }
+
     /// A recording of head `i` was dropped without fault of the head (a dependency or the root was freed, the
     /// recorder disappeared, traces were switched off): no penalty counter changes, the head waits a normal period.
     pub fn on_dropped(&self, i: usize) {
@@ -2622,6 +2709,8 @@ pub struct TrStats {
     pub deep_sites: u64,
     /// J2-2: recordings (root and side) started with the deep limits.
     pub deep_recs: u64,
+    /// Section 38 (`deepprobe`): closed root recordings of deep sites dropped as probes or short tries.
+    pub deep_probes: u64,
     /// F5: nests handed to J4 by the nest rule (TR19b(a)).
     pub nest_rule: u64,
     /// F5: times the nest rule was withheld because an inner trace inlines calls.
@@ -3664,6 +3753,45 @@ pub fn abort_transient(st: &mut State, id: TrId, reason: &'static str) {
     finish_abort(st, id, reason, AbortKind::Transient);
 }
 
+/// Section 38 (`deepprobe`): the root recording `id` closed with a recorded path of `len` bytecodes. When its head is a deep site still choosing its
+/// iteration ([`TrProto::deep_probe`]) the recording is dropped here (no penalty, the head records again at its next back-edge) and true is returned;
+/// false: compile it.
+pub fn deep_probe_drop(st: &mut State, id: TrId, len: u32) -> bool {
+    let d = d_of(st);
+    let probes = d.tr.cfg.limits.deepprobe;
+    if probes == 0 || d.tr.cfg.limits.deep == 0 {
+        return false;
+    }
+    let Some(Slot {
+        body: Body::Rec(r), ..
+    }) = d.tr.slot(id)
+    else {
+        return false;
+    };
+    if r.side.is_some() {
+        return false;
+    }
+    let (root, head) = (r.root, r.head);
+    let Some(tp) = tr_of(d, root).filter(|_| root != 0) else {
+        return false;
+    };
+    if !tp.head_deep(head) || !tp.deep_probe(head, len, probes) {
+        return false;
+    }
+    d.tr.stats.deep_probes += 1;
+    vlog(d, || {
+        format!(
+            "--- deepprobe: proto:{} pc {} path {len} dropped (longest probe {}, closed {})",
+            tp.line,
+            tp.head(head).pc,
+            tp.heads[head].deep_best.get(),
+            tp.heads[head].deep_n.get()
+        )
+    });
+    finish_abort(st, id, "DeepProbe", AbortKind::Probe);
+    true
+}
+
 /// How a dying recording treats its head.
 #[derive(Clone, Copy)]
 enum AbortKind {
@@ -3677,6 +3805,8 @@ enum AbortKind {
     Identical,
     /// Not the head's fault (DepFreed, abandoned, traces off): no penalty.
     Drop,
+    /// Section 38: a deep site's probe (or short try) closed and was dropped: no penalty, the next back-edge records again.
+    Probe,
 }
 
 fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind) {
@@ -3724,6 +3854,10 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
     let Some(tp) = tr_of(d, r.root).filter(|_| r.root != 0) else {
         return;
     };
+    // section 38: a deep site whose recording aborted stops probing (before `on_deep` below can make a new site of this head)
+    if !matches!(kind, AbortKind::Probe) {
+        tp.deep_probe_end(r.head);
+    }
     if reason == "Unroll" {
         // E1: the unroll policy of the prototype (section 34.2)
         let (mode, k) = (d.tr.cfg.limits.recunroll, d.tr.cfg.limits.unrollk);
@@ -3808,6 +3942,10 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
         AbortKind::Drop => {
             tp.on_dropped(r.head);
             Penalty::Wait(tp.hot)
+        }
+        AbortKind::Probe => {
+            tp.on_deep_probe(r.head);
+            Penalty::Wait(1)
         }
     };
     note_black(d, tp, r.head, p);

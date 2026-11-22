@@ -372,8 +372,8 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     if s.deep_sites > 0 || s.deep_recs > 0 {
         let _ = writeln!(
             o,
-            "[trace] deep sites: {} deep recordings: {}",
-            s.deep_sites, s.deep_recs
+            "[trace] deep sites: {} deep recordings: {} probes dropped: {}",
+            s.deep_sites, s.deep_recs, s.deep_probes
         );
     }
     {

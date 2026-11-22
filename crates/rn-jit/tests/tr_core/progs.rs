@@ -16305,6 +16305,17 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e9_01_t1call.lua"),
     },
+    // docs/JIT_TRACE.md section 38 (`deepprobe`): deep sites pick the iteration their root is recorded on
+    Prog {
+        name: "e10_01_deep_probe",
+        small: true,
+        src: include_str!("../../../../tests/vm/e10_01_deep_probe.lua"),
+    },
+    Prog {
+        name: "e10_02_deep_probe_tries",
+        small: true,
+        src: include_str!("../../../../tests/vm/e10_02_deep_probe_tries.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

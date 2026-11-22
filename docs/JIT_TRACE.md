@@ -4330,3 +4330,166 @@ trusted stale cell. (2) `ck` is shared with the C API's continuation for C frame
 collide. (3) The item is off by default: the shipped configuration does not exercise it outside `e9_t1call_programs` (vm_corpus and jit-diff run
 the default knobs). (4) Items 2 and 3 stay open with their ceilings; the reach of item 1 in the shipped configuration is limited by which frames
 the flat call pushes (37.3), and the extension to exit-rebuilt frames is estimated at under 1 % on cd.
+
+## 38. The `rec_loop` regression of session-k: a formation lottery at deep sites, and `deepprobe` (2026-11-22, base 2222703)
+
+Benchmark session-k (bench/results/session-k/report.md) found one real regression: `jit-trace/rec_loop` (`fib(i % 3 + 4) + ack(1, i % 4)` summed in
+a hot loop of `run`, called 6000 times) +14.6 % cycles / +17.9 % instructions against b116447 (before E1 / E2 / E4 / E5 / E6), the same on 5.5 / 5.4,
+plain / PGO.
+
+### 38.1 Bisection
+
+One binary (2222703, 5.5, `RUSTYNAIL_SEED=0`), instructions of `rec_loop`: shipped knobs 516.7 M; `recunroll=0` 437.6 M; `idfold=0`, `lazyloop=0`,
+`midfold=0`, `dlink=0`, `t1call=0` each within 0.03 % of the shipped value; every E-knob off 438.1 M; b116447 (built at an equal-length path)
+438.0 M. So the whole delta follows **E1's `recunroll`**; no commit bisection was needed beyond b116447 against the knob (E1 is the only stage whose
+knob moves it).
+
+### 38.2 Root cause: which iteration the loop's root trace is recorded on
+
+E1 does not make any iteration of `rec_loop` more expensive. The time is spent in the family of the loop trace of `run` (98 % of the samples;
+`fib`'s own unrolled family is entered 1407 times). That loop is a **deep site** (J2-2): its first recording stops at the recursion limit, and
+the re-record with the deep limits records whatever iteration comes next. The recursion inlined into the root then depends on `i`: the root inlines
+`fib(i % 3 + 4)` and `ack(1, i % 4)` of that iteration, the other depths leave through side traces, and the cost of the whole tree depends on that
+choice (a recorded `fib(6)` lets the shallower calls leave early at the base-case guards; a recorded `fib(4)` makes the deeper calls continue in
+chains of side traces that inline more levels; exits per iteration 1.85 against 2.70).
+
+* With `recunroll=0` the loop head fires at `i = 23` of the second `run` call (`fib(6)`, `ack(1, 3)`, path 190 bytecodes, the longest variant);
+  with E1 at `i = 24` (`fib(4)`, `ack(1, 0)`, 66 bytecodes). Read with a temporary print of the `for` index at the recording start.
+* The shift is not E1-specific: the hotness of a loop with calls is counted in compiled code and by sampling ticks (rt.rs `hot_loop`), and E1's
+  unrolled `fib` family records three more side traces (exits inside the inlined frames) while `run`'s loop warms up, which moves the firing by one
+  iteration.
+* It is a lottery, not a cost. `RUSTYNAIL_JIT_TRACE_HOT` = 250 .. 268 (19 thresholds; 10 of the 12 residues of `i mod 12` are the recorded iteration at one of them at least):
+
+| binary / knobs | mean | min | max | at the default 256 |
+|---|---|---|---|---|
+| b116447 | 485.0 M | 438.0 | 529.3 | **438.0** (the luckiest of the 19) |
+| 2222703 shipped (`deepprobe=0` on the new binary) | 482.4 M | 462.5 | 529.9 | 516.7 |
+| new (`deepprobe=12`) | **447.6 M** | 444.3 | 452.0 | 444.5 |
+
+By recorded iteration (residue `i mod 12`, instructions M): `fib(6)` + `ack(1,3)` 437.6; `fib(6)` + `ack(1,1)` 462; `fib(5)` + `ack(1,3)` 463;
+`fib(6)` + `ack(1,0)` 469; `fib(5)` + `ack(1,2)` 470; `fib(5)` + `ack(1,1)` 488; `fib(5)` + `ack(1,0)` 493; `fib(4)` + `ack(1,2)` 504;
+`fib(4)` + `ack(1,0)` 516; `fib(4)` + `ack(1,1)` 529. The longer the recorded path, the cheaper the tree. b116447 sat on the best phase at the
+default threshold, 2222703 on one of the worst; averaged over the phases E1 is neutral (-0.5 %).
+
+### 38.3 The fix: a deep site records several probe iterations and compiles one of the longest (`deepprobe`)
+
+Knob `deepprobe` (`RUSTYNAIL_JIT_TRACE_LIMITS`, 0 = off, **12 = default**, at most 64). Only root recordings of a head that is a deep site
+(`HeadData::deep`, set by the J2-2 re-record) are affected; everything else is unchanged.
+
+* When such a recording **closes** (`finish_outcome`, before the pipeline), `cache::deep_probe_drop` asks `TrProto::deep_probe` with the length of
+  the recorded path (bytecodes). The first `deepprobe` closed recordings are **probes**: dropped (`AbortKind::Probe`: no penalty counter changes,
+  the head records again after one or two back-edges, alternately, so that the probes' strides of two and three iterations cover loops whose depth
+  pattern has an even period: with one-back-edge waits only every other iteration was seen, 6 of the 12 phases of `rec_loop`), the longest path kept.
+* Then the first closed recording whose path is at least 7/8 of the longest probe is compiled (the strides do not repeat the longest probe's iteration
+  exactly; 7/8 took a `fib(6)` iteration at every threshold), at most `deepprobe` tries, the last one is taken whatever its length.
+* **Uniform sites** stop early: after four probes with one path the fourth is compiled (`DEEPPROBE_UNIFORM`; `awfy/list`'s site recorded twelve
+  probes of 99 bytecodes each and the delay cost it +1.6 % instructions; with the rule +0.4 %).
+* **Aborts end the probing** (`TrProto::deep_probe_end`, from `finish_abort` for any root abort of the head but a dropped probe): a site whose
+  recordings do not close reliably compiles the next one that closes. `corpus2/heldout/scheme_interp`'s site closed one recording after many
+  `InnerLoop` / `LeaveLoop` aborts; dropping it as a probe cost +0.8 % instructions; with the rule the run is identical to `deepprobe=0`.
+* A site probes once: once a recording is taken (or an abort ended the probing) `deep_n = DEEP_DONE`; a re-record after a flush compiles its first
+  closed recording, as before.
+* Cost: a probe is a full recording (lockstep with the interpreter) that is not compiled; on `rec_loop` 14 dropped recordings, `rec_step` 1.33 ->
+  2.34 Mtsc. Fewer probes do not cover the phases: `deepprobe` 4 / 6 / 8 left 440-508 / 441-473 / 443-473 M over thresholds 250-262, 12 gives
+  444-452.
+
+### 38.4 Soundness
+
+A policy decision only: which closed recording of a head is compiled. A dropped probe is a recording that ends without a trace, exactly like an abort
+that is not the head's fault (the recording's id is freed, its buffers uncharged, its dependency edges dropped by `end_rec_common`, the head returns
+to `Warm` with no trace); nothing of it was installed, no cell, exit or dispatch entry ever pointed at it, and the interpreter ran the iteration
+itself (the recorder runs beside it). The compiled recording is an ordinary root recording with the deep limits, unchanged code from the recorder
+to the install. Decisions taken at a prototype's first recording (E2's `idfold_decide`, E5's `midfold_decide`) happen at the first recording
+whether it is later dropped or not, as for an aborted first recording; decisions taken at the first compile (E4's `lazy_loop_decide`) happen at the
+compile of the recording that is taken. No invariant of this document (TR1-TR32, I1-I10, the region and identity arguments of sections 34-36) refers
+to which iteration a trace was recorded on.
+
+Lua-visible behaviour is unchanged: hooks, errors, `pcall` from depth, coroutines and GC see the interpreter run the probe iterations as they run any
+recorded iteration (`e10_01` cases (5) and (6): a callee switched while the site probes, errors from depth inside the probed loop).
+
+### 38.5 Measured (release `rn-cli`; `RUSTYNAIL_SEED=0`; binaries at equal-length paths, environment strings of equal length; instructions of the first run (deterministic), cycles min of 5 interleaved on CPU 4 (`rec_loop`, `list`, `coro_generators`: min of 10))
+
+Columns: b116447, `off` = the new binary with `deepprobe=0` (2222703's behaviour), `new` = the new binary, shipped knobs.
+
+| program (5.5) | instr M b116447 / off / new | new vs b116447 | new vs off | cycles M b116447 / off / new | new vs b116447 | new vs off |
+|---|---|---|---|---|---|---|
+| jit-trace/rec_loop | 438.0 / 516.7 / 444.5 | **+1.48 %** | **-13.97 %** | 78.4 / 89.9 / 80.8 (min of 15) | +3.0 % | **-10.2 %** |
+| programs/fib | 7780.9 / 3928.0 / 3928.0 | -49.52 % | 0 | 1244.5 / 641.1 / 631.9 | -49.2 % | -1.4 % (equal instructions) |
+| programs/binary_trees | 7301.4 / 5526.5 / 5526.5 | -24.31 % | 0 | 1552.3 / 1206.4 / 1190.8 | -23.3 % | -1.3 % (equal) |
+| awfy/permute | 235.5 / 195.3 / 195.3 | -17.04 % | 0 | 43.9 / 36.2 / 36.0 | -18.2 % | -0.6 % (equal) |
+| awfy/towers | 179.2 / 175.3 / 175.3 | -2.17 % | 0 | 49.0 / 47.7 / 48.4 | -1.1 % | +1.5 % (equal) |
+| awfy/list | 412.7 / 395.7 / 397.3 | -3.74 % | +0.40 % | 97.1 / 93.8 / 93.9 | -3.3 % | +0.06 % |
+| awfy/cd | 770.8 / 774.4 / 774.4 | +0.46 % | 0 | 260.2 / 262.3 / 264.9 | +1.8 % | +1.0 % (equal) |
+| apps/raytrace | 366.3 / 366.7 / 366.6 | +0.08 % | -0.03 % | 114.4 / 114.0 / 113.6 | -0.7 % | -0.3 % |
+| awfy/richards | 177.0 / 177.2 / 177.2 | +0.13 % | 0 | 60.3 / 60.7 / 60.4 | +0.2 % | -0.5 % (equal) |
+| awfy/deltablue | 323.3 / 324.1 / 324.1 | +0.25 % | 0 | 141.0 / 170.4 / 138.4 | -1.8 % | (equal; `off` reading disturbed) |
+| awfy/havlak | 515.8 / 516.0 / 516.1 | +0.07 % | +0.03 % | 292.5 / 295.3 / 313.5 | +7.2 % | +6.2 % (equal: noise, see below) |
+| awfy/queens | 511.7 / 511.8 / 511.8 | +0.03 % | 0 | 143.5 / 161.5 / 142.2 | -0.9 % | (equal) |
+| programs/queens | 5391.4 / 5391.6 / 5391.6 | 0 | 0 | 2377.2 / 2352.9 / 2406.1 | +1.2 % | +2.3 % (equal) |
+| corpus2/dev/coro_generators | 4096.3 / 4036.2 / 4028.8 | -1.65 % | -0.18 % | 1254.2 / 1263.8 / 1253.6 | -0.05 % | -0.8 % |
+
+`new` and `off` are the same binary: where their instruction counts are equal, the trace sets are equal and a cycle difference is measurement spread
+(this round shared the machine with another builder's study: havlak, deltablue, queens moved by 6-19 % between configurations that execute the same
+instructions). The E-stage gains are intact (fib -49.5 %, binary_trees -24.3 %, permute -17.0 % instructions against b116447).
+
+**Sanity set** (instructions, one run each, 5.5): the 14 awfy programs, the 25 of `bench/programs`, the 5 apps, the 35 jit-trace programs and the six
+other programs with deep sites (`corpus/{astar_jumper,parser_combinator}`, `corpus2/dev/{coro_generators,expr_compiler,lua_parser}`,
+`corpus2/heldout/scheme_interp`): `new` against `off` within 0.05 % everywhere except `rec_loop` (-13.97 %), `awfy/list` (+0.40 %) and
+`coro_generators` (-0.18 %); `corpus/astar_jumper` is not deterministic in either configuration (bimodal, 4.80 / 5.55 G instructions from run to
+run, no probe dropped: `deep recordings 2 probes dropped 0`). Nothing above +1 % instructions.
+
+**Formation sensitivity.** The programs with deep sites are sensitive to the binary path and the environment (pointer-keyed hashing moves the
+formation): `scheme_interp` closes a deep recording with the absolute binary path and none with a relative one; the numbers above use the bench
+method (absolute, equal-length paths). `awfy/list` moves by the same +0.4 % under both environments tried.
+
+**Lua 5.4** (the same binaries' 5.4 builds, `target-54`; instructions deterministic): `rec_loop` 441.3 / 519.5 / 447.7 M (b116447 / off / new:
+**+1.45 %** against b116447, **-13.82 %** against off); fib, binary_trees, permute, towers, cd, raytrace, richards, deltablue, havlak, queens,
+scheme_interp, parser_combinator, lua_parser, expr_compiler: `new` = `off` within 0.01 % (the E-stage gains against b116447 as on 5.5: fib
+-49.5 %, binary_trees -21.2 %, permute -16.5 %); `awfy/list` +0.39 %, `coro_generators` +0.33 %, `apps/expr_lang` **-1.76 %** (its site probes on
+5.4). The 5.4 cycle round ran while another builder's test suite held the machine at load 31 (havlak +12 % at equal instructions): not usable,
+not reported.
+
+### 38.6 Tests and mutants
+
+* `tests/vm/e10_01_deep_probe.lua` (also in `vm_corpus`; same output as the reference 5.5 and 5.4): the `rec_loop` shape, depths with an even
+  period, a rare deep iteration, a recursion deeper than any limit, a callee switched while the site probes and after its trace is installed, errors
+  from depth under `pcall`, tables and floats through the recursion.
+* `tests/vm/e10_02_deep_probe_tries.lua`: three sites with known counts (tries dropped until a deep iteration comes round again, a uniform site, a
+  site whose recording aborts after it became deep).
+* `tr_core::dp_deep_probe_programs`: `e10_01`, `e10_02`, `j2_deep` x `always` / `on2` x `deepprobe` 0 / 3 / 12, `+verify`; for 12: exit storm,
+  budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress; every job against the interpreter. Pins `e10_02` in `always`
+  mode at 3 deep sites and **17 dropped recordings** (12 probes and 2 tries, 3 uniform probes, none at the aborting site); none with `deepprobe=0`;
+  at least 12 for `e10_01`.
+* `tr_policy::dp_policy`: the knob (struct default = shipped, parse, cap), probes, the 7/8 rule at its boundary, the cap on tries, the uniform rule,
+  the abort rule, a non-deep head, knob 0.
+* Mutants (registry 792 -> **796**): `deepprobe_never` (no probing), `deepprobe_any_try` (the first try after the probes taken whatever its length),
+  `deepprobe_uniform_keep` (no uniform rule), `deepprobe_abort_keeps` (aborts do not end the probing). All four caught by `tr_policy::dp_policy`;
+  the first three also by `dp_deep_probe_programs` (17 -> 0 / 15 / 26 dropped recordings).
+
+### 38.7 Gates, what ran and what did not, risks
+
+**What is left of the regression, and why.** Against b116447 `rec_loop` stays +1.5 % instructions / +3.0 % cycles (5.4: +1.45 % / +3.1 %,
+min of 15, 78.6 / 81.0 Mcyc). That is a fixed cost, not a per-iteration one: the probes (14 recordings that are not compiled, `rec_step`
++1.0 Mtsc) and three more side traces of the later-forming tree. With four times the work (`rec_loop.lua 24000`) the difference is +0.38 %
+instructions (1686.0 -> 1692.5 M) and +0.89 % cycles (291.8 -> 294.3 M, min of 5). Getting b116447's exact number back at the default threshold
+would need its lucky phase, which no policy can promise (at 18 of the 19 thresholds b116447 is slower than the new binary, by up to 17 %). The
+target of "within +2 %" is met for instructions, not for cycles at the default size (+3.0 %); the stage behind the regression is E1 (38.1), and
+the regression was its phase shift, which this section removes from the formation instead of from E1.
+
+**Gates.** `scripts/gate-light.sh --base 2222703` (GATE_CPUS=2-9) on the commit before the last test change: fmt, mutant map, clippy 5.5 / 5.5-jit
+/ 5.4, core 5.5 / 5.4, trace suites 5.5 (193 s) / 5.4 (188 s), `vm_corpus` (with `e10_01` / `e10_02` against the reference 5.5), jit-diff 1-50 PASS;
+the mutant group (115 mutants) ran, 114 caught: `rec_inner_first_stale` survived. Its detector `tr_core::pm4_recursion_entry_counters` depends on
+the formation of `pm4_rec_counters`, whose loop is a deep site: with probing the stale-first-word case is no longer reached. The job is now pinned
+to `deepprobe=0` (the formation the rule was written on, like `bc_sbump_programs` with `recunroll=0`): caught again
+(`gate-mutants.sh --only rec_inner_first_stale,deepprobe_`: 5 ran, 5 caught on 5.5 and on 5.4). A second `gate-light.sh` ran on the final commit
+(all steps PASS, trace suites 175 s / 166 s, mutant group 115 ran, 115 caught, 506 s). An earlier run failed at clippy (`tr_asm.rs` builds `HeadData` literally: the three new fields were missing) and the
+mutant-map step (stale map); both fixed before the runs above. **Not run** (by instruction): `gate-heavy.sh`, the oracle-feature suites
+(`tr_identity`, `instruction_count_identity`, `oracle_options`), jit-diff 1-200 in seven modes, the full mutant runner (796), no full benchmark.
+
+**Risks.** (1) The path length is a proxy for "the deepest call tree"; a loop whose longest iteration is a rare path (an error branch with deep
+recursion) would now record that path and leave the common one to side traces. The 7/8 rule and the 12-try cap bound the delay, not that choice;
+no measured program has such a site (the deep sites of the sanity set: `rec_loop`, `list`, `coro_generators`, `expr_lang` on 5.4 probe; the
+others abort first). (2) Probes cost recordings: a deep site with very long iterations (bounded by `deepins` = 300 IR instructions) pays up to 24
+of them once. (3) The formation of programs with deep sites stays sensitive to the binary path and environment (38.5); the probes make
+`rec_loop` itself insensitive to the phase, not the rest of such programs. (4) Tests that pin formations of deep-site programs may need
+`deepprobe=0` (as `pm4_recursion_entry_counters` did); the full mutant runner has not run with the new default.
