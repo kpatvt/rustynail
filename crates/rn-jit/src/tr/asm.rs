@@ -230,6 +230,11 @@ pub struct AsmEnv {
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
     pub lazy_cs: Option<u32>,
     /// BUNDLE-K L1: `numparams` of the root prototype (the end of the arguments of a frame just pushed natively).
+    /// E2 (`idfold`, docs/JIT_TRACE.md section 34): the self upvalue of the family whose identity the region's checked entries verify (`None`: no
+    /// region check). Set for every trace of a lazy-aware family while folding is on or a folded trace of it is installed: the outer entry checks
+    /// `upvalue n of the running closure == the running closure` (and TR15: its value is not in the root frame) with the room checks, and a return
+    /// of the region root continues through the plain dispatch cell (an outer entry) instead of the inner entry.
+    pub idfold_uv: Option<u8>,
     pub lazy_nparams: u16,
     /// HDRSUB: `LIB sub` calls the lean entry [`jit_tr_lib_sub`] (`libsub`).
     pub lean_sub: bool,
@@ -362,6 +367,7 @@ impl Default for AsmEnv {
             lazy_leave_fn: 0,
             lazy_cs: None,
             lazy_nparams: 0,
+            idfold_uv: None,
             lean_sub: false,
             libcall: 0,
             sink_stub: false,
@@ -3868,6 +3874,10 @@ impl Cx<'_> {
         if self.env.lazy {
             return self.rec_call_tail_lazy(rc, loop_l, rec_fail);
         }
+        if rc.ninl != 0 {
+            // E1: the frames of an unroll chain become lazy frames; only lazy-aware families unroll (`driver_start`)
+            return incons("an unrolled native self-call in a family that is not lazy-aware");
+        }
         if mutants::active("rec_push_no_ci_next") {
             // (mutant: reuse the running CallInfo instead of its successor)
             self.push(Op::Lea(1, ciw(0)));
@@ -3958,6 +3968,26 @@ impl Cx<'_> {
             base: Base::Ci,
             off: o as i32,
         };
+        // E1 (`recunroll`, docs/JIT_TRACE.md section 34.1): the frames of the unroll chain (inlined self-calls, virtual so far) become lazy frames
+        // first, outermost first, exactly as the push of each of them would have made them: the callee's `func`, the caller's `savedpc` (the
+        // continuation after the inlined `CALL`), then `r13` / the frame base move to it. Their slots were stored by the writeback above
+        // (root-relative), so every frame of the chain is in the state the interpreter's push and body would have left it in.
+        for j in 0..usize::from(rc.ninl) {
+            if j == 0 && mutants::active("h9_inl_push_skip") {
+                continue; // (mutant: the outermost chain frame is not materialised)
+            }
+            let (ia, iafter) = rc.inl[j];
+            self.ld(1, W::B8, ciw(ci::NEXT));
+            self.ld(2, W::B8, ciw(ci::FUNC));
+            self.push(Op::Add(2, Src::Imm(i32::from(ia) + 1)));
+            self.st(W::B8, rm(1, ci::FUNC as i32), Src::V(2));
+            self.push(Op::Mov(3, iafter));
+            self.st(W::B8, ciw(ci::SAVEDPC), Src::V(3));
+            self.push(Op::SetCi(1));
+            let bump =
+                (i32::from(ia) + 1) * 16 - 16 * i32::from(mutants::active("h9_inl_bump_off"));
+            self.push(Op::AddFrame(bump));
+        }
         if mutants::active("rec_push_no_ci_next") {
             self.push(Op::Lea(1, ciw(0)));
         } else {
@@ -4147,6 +4177,47 @@ impl Cx<'_> {
             self.st(W::B8, thw(thr::CI), Src::V(1));
             if !mutants::active("lazy_ret_root_stale") {
                 self.st(W::B8, Self::lroot_m(), Src::V(1));
+            }
+            if let Some(un) = self
+                .env
+                .idfold_uv
+                .filter(|_| !mutants::active("idfold_rootret_inner"))
+            {
+                // E2: the region root returns into its caller, which was suspended while code outside the region ran (it may run another closure
+                // of the prototype, whose self upvalue may have changed, and the root's result is stored into one of its registers): the caller,
+                // the new root, gets the region check of the outer entry in line; when it holds, the return continues at the inner entry as before,
+                // else through the continuation head's plain dispatch cell, an outer entry (the leave block's fast path: the caller is the root)
+                self.push(Op::SetCi(1));
+                if let Some(r) = self.env.budget_reg {
+                    self.st(
+                        W::B4,
+                        M {
+                            base: Base::Cnt,
+                            off: 0,
+                        },
+                        Src::V(r),
+                    );
+                }
+                let ns = usize::from(self.env.rec_nsites);
+                for k in 0..ns {
+                    let (site, cell, a) = self.env.rec_sites[k];
+                    let next = self.label();
+                    if k + 1 < ns {
+                        self.push(Op::Mov(3, site));
+                        self.br(Cc::Ne, 2, Src::V(3), next);
+                    }
+                    self.push(Op::AddFrame(-(i32::from(a) + 1) * 16));
+                    let outer = self.label();
+                    self.idfold_check(un, outer);
+                    self.lazy_rec_jump(cell, false);
+                    self.bind(outer);
+                    let plain = cell - head_off::REC as u64 + head_off::CELL as u64;
+                    self.push(Op::Mov(7, plain));
+                    self.ld(6, W::B8, rm(7, 0));
+                    let l = self.lz_leave_label(false);
+                    self.push(Op::Jmp(l));
+                    self.bind(next);
+                }
             }
             self.bind(lz);
         }
@@ -4440,6 +4511,14 @@ impl Cx<'_> {
             self.room_stack_check(fail);
             self.room_ci_check_root(fail);
         }
+        let link_root = self.env.head != 0 && !mutants::active("lazy_root_link_root_unset");
+        let region_start =
+            self.env.lazy && (self.env.side.is_none() || self.env.prelude || link_root);
+        if let Some(n) = self.env.idfold_uv.filter(|_| region_start) {
+            if !mutants::active("idfold_outer_unchecked") {
+                self.idfold_check(n, fail);
+            }
+        }
         if let Some(l) = self.e2n.take() {
             // G1: the entry past the room checks (taken by a link whose chain proves the room)
             self.bind(l);
@@ -4476,7 +4555,6 @@ impl Cx<'_> {
         }
         // A root that ends with a link (`pipeline_inner::link_root`: nest frame links, `env.side` is `Some` and `env.head != 0`) enters like any
         // root: it must store the region root too, or the exit handler completes a chain against a stale `lazy_root` (docs/JIT_TRACE.md "lazy_root")
-        let link_root = self.env.head != 0 && !mutants::active("lazy_root_link_root_unset");
         if self.env.lazy
             && (self.env.side.is_none() || self.env.prelude || link_root)
             && !mutants::active("lazy_root_not_set")
@@ -4492,6 +4570,41 @@ impl Cx<'_> {
             self.st(W::B8, Self::lroot_m(), Src::V(1));
         }
         Ok(())
+    }
+
+    /// E2 (`idfold`, docs/JIT_TRACE.md section 34): the region's checked entry. The running closure `C` (the function slot), its upvalue `n`, the
+    /// value address `v`: `v` is not inside the root frame (TR15: `v - base` unsigned `>= maxstacksize * 16`), and `*v` is `C` (Lua closure tag
+    /// and pointer). A failure takes `fail`, the TR6 path: the trace is not entered, tier 1 runs the frame. `V0..V2`, `V7` are scratch (nothing
+    /// is live before the budget load).
+    fn idfold_check(&mut self, n: u8, fail: L) {
+        self.ld(0, W::B8, fm(FUNC_SLOT, 8));
+        self.ld(1, W::B8, rm(0, lclosure::UPVALS as i32 + 8 * i32::from(n)));
+        self.ld(1, W::B8, rm(1, upval::V as i32));
+        self.push(Op::MovR(2, 1));
+        self.push(Op::Lea(
+            7,
+            M {
+                base: Base::Frame,
+                off: 0,
+            },
+        ));
+        self.push(Op::Sub(2, Src::V(7)));
+        let lim = i32::from(self.env.root_maxstack) * 16;
+        self.br(Cc::Ult, 2, Src::Imm(lim), fail);
+        let tag = tag_of(Ty::Lcf).expect("closure tag");
+        self.push(Op::BrM {
+            cc: Cc::Ne,
+            w: W::B1,
+            m: rm(1, 0),
+            imm: i32::from(tag as i8),
+            to: fail,
+        });
+        self.push(Op::BrMR {
+            cc: Cc::Ne,
+            m: rm(1, 8),
+            src: 0,
+            to: fail,
+        });
     }
 
     /// The failure bookkeeping of 3.3 (all of `V0..V4`, `V7` are free): `entry_fail += pending_before;

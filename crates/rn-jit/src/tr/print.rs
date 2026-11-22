@@ -218,6 +218,18 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         "[trace] presize: groups {}",
         super::presize::GROUPS.load(std::sync::atomic::Ordering::Relaxed)
     );
+    if s.unroll_installed + s.unroll_demoted + s.idfold_traces + s.idfold_ustore > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] unroll: installed {} demoted {} flushed {}; idfold: traces {} ustore {} banned {}",
+            s.unroll_installed,
+            s.unroll_demoted,
+            s.unroll_flushed,
+            s.idfold_traces,
+            s.idfold_ustore,
+            s.idfold_banned
+        );
+    }
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,

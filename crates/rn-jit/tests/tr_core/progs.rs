@@ -16229,6 +16229,32 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/k7_01_aref_phi.lua"),
     },
+    // E1 / E2 (docs/JIT_TRACE.md section 34): up-recursion unrolling, region-scoped callee identity
+    Prog {
+        name: "e1_01_unroll_shapes",
+        small: true,
+        src: include_str!("../../../../tests/vm/e1_01_unroll_shapes.lua"),
+    },
+    Prog {
+        name: "e1_02_unroll_depth_errors",
+        small: true,
+        src: include_str!("../../../../tests/vm/e1_02_unroll_depth_errors.lua"),
+    },
+    Prog {
+        name: "e1_03_unroll_coro_hooks",
+        small: true,
+        src: include_str!("../../../../tests/vm/e1_03_unroll_coro_hooks.lua"),
+    },
+    Prog {
+        name: "e1_04_unroll_method_only",
+        small: true,
+        src: include_str!("../../../../tests/vm/e1_04_unroll_method_only.lua"),
+    },
+    Prog {
+        name: "e2_01_idfold_callee_switch",
+        small: true,
+        src: include_str!("../../../../tests/vm/e2_01_idfold_callee_switch.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

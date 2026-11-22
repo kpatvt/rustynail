@@ -4219,6 +4219,75 @@ const TABLE: &[Row] = &[
         name: "presize_no_free",
         owner: "P1",
         dets: &[d("tr_core", "p1_presize_programs")],
+    },    Row {
+        name: "h9_inl_push_skip",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_programs")],
+    },
+    Row {
+        name: "h9_inl_savedpc_off",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_programs")],
+    },
+    Row {
+        name: "h9_inl_bump_off",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_programs")],
+    },
+    Row {
+        name: "h9_maxci_short",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_programs")],
+    },
+    Row {
+        name: "h9_fallback_never",
+        owner: "E1",
+        dets: &[dl("tr_policy", "e1_policy")],
+    },
+    Row {
+        name: "h9_fail_penalised",
+        owner: "E1",
+        dets: &[dl("tr_policy", "e1_policy")],
+    },
+    Row {
+        name: "h9_demote_ignored",
+        owner: "E1",
+        dets: &[dl("tr_policy", "e1_policy")],
+    },
+    Row {
+        name: "h9_code_rule_never",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_policy_programs")],
+    },
+    Row {
+        name: "h9_doom_never",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_policy_programs")],
+    },
+    Row {
+        name: "h9_shape_any",
+        owner: "E1",
+        dets: &[d("tr_core", "e1_unroll_policy_programs")],
+    },
+    Row {
+        name: "idfold_outer_unchecked",
+        owner: "E2",
+        dets: &[d("tr_core", "e2_idfold_programs")],
+    },
+    Row {
+        name: "idfold_rootret_inner",
+        owner: "E2",
+        dets: &[d("tr_core", "e2_idfold_programs")],
+    },
+    Row {
+        name: "idfold_ustore_family",
+        owner: "E2",
+        dets: &[d("tr_core", "e2_idfold_programs")],
+    },
+    Row {
+        name: "idfold_push_proto",
+        owner: "E2",
+        dets: &[d("tr_core", "e2_idfold_programs")],
     },
 ];
 

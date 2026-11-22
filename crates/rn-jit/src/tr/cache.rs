@@ -65,6 +65,33 @@ pub const SLOTLIVE_PROCESS: u32 = 1;
 pub const LAZYSTUB_PROCESS: u32 = 1;
 /// P1: the process default of [`TrLimits::presize`] (also the struct default).
 pub const PRESIZE_PROCESS: u32 = 1;
+/// E1: the process default of [`TrLimits::recunroll`] (also the struct default).
+pub const RECUNROLL_PROCESS: u32 = 1;
+/// E1: the process default of [`TrLimits::unrollk`] (also the struct default).
+pub const UNROLLK_PROCESS: u32 = 3;
+/// E1: the process default of [`TrLimits::unrollcode`] (also the struct default).
+pub const UNROLLCODE_PROCESS: u32 = 400;
+/// E1: the largest `unrollk` (inlined self-call levels + 1; `RecCall::inl` holds `MAX_UNROLL_K - 1` frames).
+pub const MAX_UNROLL_K: u32 = 4;
+/// E1: unroll failures in a row after which `k` is lowered by one (section 34.2).
+pub const UNROLL_FAILS: u8 = 12;
+/// E1: the wait (entries of the head, plus `rand4`) after an `Unroll` failure.
+pub const UNROLL_WAIT: i64 = 8;
+
+/// E1: why a prototype went back to `k = 1` for good.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum UnrollDemote {
+    /// Unrolled recordings kept failing in their unrolled part ([`UNROLL_FAILS`] per level).
+    Fails = 1,
+    /// The installed unrolled trace exited too often (the exit rule of section 34.2).
+    Exits = 2,
+    /// The unrolled family's code outgrew `unrollcode` (the code-growth rule of section 34.2).
+    Code = 3,
+}
+
+/// E2: the process default of [`TrLimits::idfold`] (also the struct default).
+pub const IDFOLD_PROCESS: u32 = 0;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
@@ -635,6 +662,21 @@ pub struct TrLimits {
     /// replayed on the allocator) and the others inline, when the recorded interpreter layout equals the presized one: 1 = on (default
     /// [`PRESIZE_PROCESS`]), 0 = every insertion through the helper as before.
     pub presize: u32,
+    /// E1 (`recunroll`, docs/JIT_TRACE.md section 34): up-recursion unrolling. The function-entry recording of a lazy-aware native-recursion
+    /// prototype inlines its self-call up to `unrollk - 1` times and pushes the inlined frames (lazily) with the final native push: 0 = off
+    /// (`k = 1`, the code of before), 1 = adaptive (the per-prototype policy of section 34.2 may demote a prototype to `k = 1`; default
+    /// [`RECUNROLL_PROCESS`]), 2 = fixed `k` (no demotion: the tests' and the measurements' twin).
+    pub recunroll: u32,
+    /// E1: the unroll factor `k` (2 ..= [`MAX_UNROLL_K`]; default [`UNROLLK_PROCESS`]).
+    pub unrollk: u32,
+    /// E1: the code-growth rule: an unrolled family whose traces hold more than this many IR instructions in total demotes its prototype to
+    /// `k = 1` (0 = no limit; default [`UNROLLCODE_PROCESS`]).
+    pub unrollcode: u32,
+    /// E2 (`idfold`, docs/JIT_TRACE.md section 34): region-scoped callee identity. In a lazy-aware native-recursion family, a `GETUPVAL` of the
+    /// prototype's self upvalue whose value is the running closure records as the running closure (no identity chain); the chain runs at the
+    /// region's checked entries (outer entries, returns of the region root through the plain dispatch cell) and the family admits no upvalue
+    /// store. 0 = off, 1 = on (default [`IDFOLD_PROCESS`]).
+    pub idfold: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -762,6 +804,10 @@ impl Default for TrLimits {
             bytext: BYTEXT_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
+            recunroll: RECUNROLL_PROCESS,
+            unrollk: UNROLLK_PROCESS,
+            unrollcode: UNROLLCODE_PROCESS,
+            idfold: IDFOLD_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -947,6 +993,10 @@ impl TrLimits {
                 "bytext" => l.bytext = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
+                "recunroll" => l.recunroll = v.min(2),
+                "unrollk" => l.unrollk = v.clamp(1, MAX_UNROLL_K),
+                "unrollcode" => l.unrollcode = v,
+                "idfold" => l.idfold = v.min(1),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
@@ -1161,6 +1211,8 @@ pub enum FlushWhy {
     Dep,
     /// C36: the root was recorded on a rare path of its loop (most entries hop through one side trace): re-record, no penalty, once per head.
     Dom,
+    /// E1: the prototype was demoted to `k = 1` (section 34.2): its unrolled function-entry family is flushed and re-recorded, no penalty.
+    Unroll,
     /// P3 (`chainre`): the child subtree of a pass-through callee-guard exit is flushed so that the exit records the currently hot callee first (side traces only: no head transition).
     Chain,
     /// Code cap or `maxtrace` reached (flush all, global penalty).
@@ -1518,6 +1570,22 @@ pub struct TrProto {
     selfref: Cell<bool>,
     /// BUNDLE-K L1: every trace of this prototype is lazy-aware (`TrLimits::lazyci`; fixed when the dispatch table is made).
     lazy: Cell<bool>,
+    /// E1 (`recunroll`, docs/JIT_TRACE.md section 34.2): the prototype was demoted to `k = 1` for good (0 = not demoted; else the reason code
+    /// [`UnrollDemote`] as `u8`).
+    unroll_off: Cell<u8>,
+    /// E1: unrolled function-entry recordings of this prototype that failed in their unrolled part since the last success.
+    unroll_fails: Cell<u8>,
+    /// E1: how many times `k` was lowered by failures (`k = unrollk - unroll_lvl`).
+    unroll_lvl: Cell<u8>,
+    /// E1: an unrolled function-entry trace of this prototype was installed (cleared again by a demotion).
+    unroll_ok: Cell<bool>,
+    /// E2 (`idfold`, section 34.3): 0 = undecided, 1 = folding on (self upvalue `idfold_uv`), 2 = off for good.
+    idfold_st: Cell<u8>,
+    /// E2: the self upvalue index (valid while `idfold_st != 0` and it was on once).
+    idfold_uv: Cell<u8>,
+    /// E2: installed traces of this prototype that folded a `GETUPVAL` (`Trace::idfold`): while any lives, every trace of the family keeps the
+    /// checked entries and the family admits no upvalue store.
+    idfold_live: Cell<u32>,
     /// P-G: the block structure of the prototype for the recorder's count model (P-G, always on in the pipeline).
     landing: RefCell<Option<std::rc::Rc<Lowered>>>,
     /// F4: the pruning data of the prototype (`snap::prune_info` with no fault and no locals), computed by the first recording that closes: the liveness analysis is
@@ -1582,6 +1650,13 @@ impl TrProto {
             recursive: Cell::new(false),
             selfref: Cell::new(false),
             lazy: Cell::new(false),
+            unroll_off: Cell::new(0),
+            unroll_fails: Cell::new(0),
+            unroll_lvl: Cell::new(0),
+            unroll_ok: Cell::new(false),
+            idfold_st: Cell::new(0),
+            idfold_uv: Cell::new(0),
+            idfold_live: Cell::new(0),
             landing: RefCell::new(None),
             prune: std::cell::OnceCell::new(),
             fnpromo: Cell::new(false),
@@ -1942,6 +2017,13 @@ impl TrProto {
     ) -> Penalty {
         let h = &self.heads[i];
         h.trace.set(None);
+        if reason == "Unroll" && !mutants::active("h9_fail_penalised") {
+            // E1: an unrolled recording that failed in its unrolled part is data (the sampled invocation was too close to the leaves), not a
+            // fault of the head: a short flat wait, `k` / `kl` untouched (the policy counts it in `on_unroll_fail`)
+            let p = UNROLL_WAIT + i64::from(self.rand4(h.pc));
+            self.to_warm_keep(i, p);
+            return Penalty::Wait(p as i32);
+        }
         if reason == "LeaveLoop" || reason == "FnShort" {
             // F2c: the recording ran past the end of a short loop (data, not a fault of the head): own budget, own
             // backoff; `k` and `last_reason` are untouched. The phase moves by `kl * 3` back-edges (plus `rand4`) so a
@@ -2028,6 +2110,77 @@ impl TrProto {
         let p = penalty(w as u8, self.rand4(h.pc));
         self.to_warm_keep(i, p);
         Some(Penalty::Wait(p as i32))
+    }
+
+    /// E1: marks the prototype lazy-aware with a function-entry head (what the dispatch table does for a loop-free native-recursion prototype;
+    /// public for the policy tests).
+    pub fn mark_lazy_fn(&self) {
+        self.lazy.set(true);
+        self.fn_head.set(true);
+    }
+
+    /// E1: the unroll factor of the next function-entry recording (1 = none) for the knobs `recunroll` = `mode`, `unrollk` = `k`: `k` less the
+    /// degradation steps of [`TrProto::on_unroll_fail`]; 1 for a prototype that is not lazy-aware or was demoted (adaptive mode only).
+    pub fn unroll_k(&self, mode: u32, k: u32) -> u32 {
+        if mode == 0 || k < 2 || !self.lazy.get() || !self.fn_head.get() {
+            return 1;
+        }
+        if mode == 2 {
+            return k.min(MAX_UNROLL_K);
+        }
+        if self.unroll_off.get() != 0 && !mutants::active("h9_demote_ignored") {
+            return 1;
+        }
+        let kk = k
+            .min(MAX_UNROLL_K)
+            .saturating_sub(u32::from(self.unroll_lvl.get()));
+        if kk < 2 {
+            1
+        } else {
+            kk
+        }
+    }
+
+    /// E1: an unrolled recording failed in its unrolled part (`Unroll`). In the adaptive mode, [`UNROLL_FAILS`] failures in a row (no unrolled
+    /// trace installed in between) lower `k` by one; below 2 the prototype is demoted to `k = 1` for good. `Some(reason)`: demoted now.
+    pub fn on_unroll_fail(&self, mode: u32, k: u32) -> Option<UnrollDemote> {
+        if mode != 1 || mutants::active("h9_fallback_never") {
+            return None;
+        }
+        let f = self.unroll_fails.get().saturating_add(1);
+        if f < UNROLL_FAILS {
+            self.unroll_fails.set(f);
+            return None;
+        }
+        self.unroll_fails.set(0);
+        let lvl = self.unroll_lvl.get().saturating_add(1);
+        self.unroll_lvl.set(lvl);
+        if k.min(MAX_UNROLL_K).saturating_sub(u32::from(lvl)) < 2 {
+            self.unroll_off.set(UnrollDemote::Fails as u8);
+            return Some(UnrollDemote::Fails);
+        }
+        None
+    }
+
+    /// E1: an unrolled function-entry trace of this prototype is being installed: the failure count starts again.
+    pub fn on_unroll_ok(&self) {
+        self.unroll_fails.set(0);
+        self.unroll_ok.set(true);
+    }
+
+    /// E1: demote the prototype to `k = 1` for good (adaptive mode); true when it was not demoted before.
+    pub fn unroll_demote(&self, why: UnrollDemote) -> bool {
+        if self.unroll_off.get() != 0 {
+            return false;
+        }
+        self.unroll_off.set(why as u8);
+        self.unroll_ok.set(false);
+        true
+    }
+
+    /// E1: the demotion reason (0 = not demoted; [`UnrollDemote`] as `u8`).
+    pub fn unroll_demoted(&self) -> u8 {
+        self.unroll_off.get()
     }
 
     /// K6: the closure of this prototype reaches itself through an upvalue (`mark_selfref`; public for the policy tests).
@@ -2321,6 +2474,16 @@ pub struct TrStats {
     pub nest_rule: u64,
     /// F5: times the nest rule was withheld because an inner trace inlines calls.
     pub nest_rule_kept: u64,
+    /// E1: prototypes demoted to `k = 1` by the code-growth or exit rules (section 34.2).
+    pub unroll_demoted: u64,
+    /// E1: unrolled function-entry traces installed / families flushed by a demotion.
+    pub unroll_installed: u64,
+    pub unroll_flushed: u64,
+    /// E2: traces installed that folded a `GETUPVAL` / recordings refused by the family's upvalue-store rule / prototypes whose folding was
+    /// switched off by it.
+    pub idfold_traces: u64,
+    pub idfold_ustore: u64,
+    pub idfold_banned: u64,
     /// R1: rearm ticks armed by a hand-off to the interpreter.
     pub rearm_arms: u64,
     /// R1: rearm ticks that entered a traced head.
@@ -2449,6 +2612,15 @@ struct Trace {
     /// S1 (`lazystub`): the blocks of the deferred stubs assembled so far ([`add_defer_stub`]); freed with the trace, refunded with `dstub_own`.
     dstubs: Vec<CodeBlock>,
     dstub_own: usize,
+    /// E1: the trace ends with an unrolled native self-call (the root of an unrolled family: the code-growth rule of section 34.2).
+    unrolled: bool,
+    /// E1: IR instructions of the trace (`TraceInstall::weight`; the code-growth rule sums them over a family: unlike code bytes it does not
+    /// depend on whether exit stubs are deferred, `lazystub`).
+    weight: u32,
+    /// E1: the code-growth rule demoted the prototype; the family is flushed at the next exit through the handler (`unroll_doom_check`).
+    unroll_doom: bool,
+    /// E2: the trace folded a `GETUPVAL` of its family's self upvalue (counted in `TrProto::idfold_live`).
+    idfold: bool,
 }
 
 // (a slot of the trace table: boxing `Trace` would cost an indirection in the exit handler's lookups for nothing)
@@ -3386,6 +3558,15 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
     let Some(tp) = tr_of(d, r.root).filter(|_| r.root != 0) else {
         return;
     };
+    if reason == "Unroll" {
+        // E1: the unroll policy of the prototype (section 34.2)
+        let (mode, k) = (d.tr.cfg.limits.recunroll, d.tr.cfg.limits.unrollk);
+        if let Some(why) = tp.on_unroll_fail(mode, k) {
+            vlog(d, || {
+                format!("--- unroll: proto:{} demoted to k = 1 ({why:?})", tp.line)
+            });
+        }
+    }
     let p = match kind {
         AbortKind::Unstable => {
             d.tr.stats.rerec += 1;
@@ -3517,6 +3698,10 @@ pub struct TraceInstall {
     pub hash: u64,
     /// BUNDLE-J: number of IR instructions of the trace (the `centry` weight rule).
     pub weight: u32,
+    /// E1: the trace ends with an unrolled native self-call (`RecCall::ninl != 0`).
+    pub unrolled: bool,
+    /// E2: the trace folded a `GETUPVAL` of the family's self upvalue (`TraceIr::idfold`).
+    pub idfold: bool,
 }
 
 /// Why [`install`] did not install.
@@ -3837,7 +4022,20 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         dstubs: Vec::new(),
         dstub_own: 0,
         chain_off: vec![0; nex],
+        unrolled: ti.unrolled,
+        weight: ti.weight,
+        unroll_doom: false,
+        idfold: ti.idfold,
     });
+    if ti.idfold {
+        if let Some(tp) = tr_of(d, root) {
+            tp.idfold_live.set(tp.idfold_live.get() + 1);
+        }
+        d.tr.stats.idfold_traces += 1;
+    }
+    if ti.unrolled {
+        d.tr.stats.unroll_installed += 1;
+    }
     d.tr.active = None;
     d.tr.live_traces += 1;
     let hot_exit = d.tr.cfg.hot_exit;
@@ -3998,6 +4196,11 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
     }
     d.tr.stats.exits += trace_exits(&t);
     exit_dump(&t, "flushed");
+    if t.idfold {
+        if let Some(tp) = tr_of(d, t.root) {
+            tp.idfold_live.set(tp.idfold_live.get().saturating_sub(1));
+        }
+    }
     let hot = d.tr.cfg.hot_loop;
     let mut blacklisted = false;
     let mut entries = 0;
@@ -4011,6 +4214,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                 FlushWhy::Ineffective => "Ineffective",
                 FlushWhy::Dep => "Dep",
                 FlushWhy::Dom => "Dom",
+                FlushWhy::Unroll => "Unroll",
                 FlushWhy::Chain => "Chain",
                 FlushWhy::Cap => "Cap",
                 FlushWhy::Off => "Off",
@@ -4022,6 +4226,15 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
         if h.trace.get() == Some(id) {
             if matches!(why, FlushWhy::Rerec | FlushWhy::Ineffective) {
                 h.flushed_hash.set(t.hash);
+            }
+            // E1 (section 34.2): an unrolled function-entry root that the ineffective-trace rule flushes demotes its prototype to `k = 1` (the
+            // re-record is the code of before, not the same unrolled trace again)
+            if why == FlushWhy::Ineffective
+                && t.unrolled
+                && d.tr.cfg.limits.recunroll == 1
+                && tp.unroll_demote(UnrollDemote::Exits)
+            {
+                d.tr.stats.unroll_demoted += 1;
             }
             let p = match why {
                 FlushWhy::Rerec | FlushWhy::Ineffective => {
@@ -4039,6 +4252,7 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                 | FlushWhy::Cap
                 | FlushWhy::Unsink
                 | FlushWhy::Dom
+                | FlushWhy::Unroll
                 | FlushWhy::Chain => {
                     tp.to_warm(t.head, i64::from(hot));
                     Penalty::Wait(hot)
@@ -4525,6 +4739,10 @@ pub fn exit_hot_policy(
     out: &super::exit::CoreOut,
     meta: &ExitMeta,
 ) -> HotAction {
+    // E1: a family the code-growth rule doomed is flushed at its next hot exit through the handler (section 34.2)
+    if unroll_doom_check(st, id) {
+        return HotAction::Flushed;
+    }
     let d = d_of(st);
     let Some(Slot {
         body: Body::Trace(t),
@@ -5205,6 +5423,198 @@ pub fn mark_selfref(st: &mut State, pr: ProtoRef) {
     let d = d_of(st);
     if let Some(tp) = tr_of(d, pr.0) {
         tp.selfref.set(true);
+    }
+}
+
+/// E1: the unroll factor of a function-entry recording of `pr` at `pc` (1 = none; see [`TrProto::unroll_k`]).
+pub fn unroll_k(st: &mut State, pr: ProtoRef, pc: u32) -> u32 {
+    let d = d_of(st);
+    let (mode, k) = (d.tr.cfg.limits.recunroll, d.tr.cfg.limits.unrollk);
+    if pc != 0 || mode == 0 {
+        return 1;
+    }
+    tr_of(d, pr.0).map_or(1, |tp| tp.unroll_k(mode, k))
+}
+
+/// E2 (`idfold`, section 34.3): the decision, once per prototype, at the first function-entry or continuation recording of a lazy-aware prototype
+/// that has no trace yet: folding is on when the running closure reaches itself through upvalue `self_uv` and the prototype has no `SETUPVAL` of
+/// its own (it would only trip the family rule); otherwise off for good. A prototype that has a trace already stays off (its traces have no
+/// checked entries).
+pub fn idfold_decide(st: &mut State, pr: ProtoRef, self_uv: Option<u8>, has_setupval: bool) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.idfold == 0 {
+        return;
+    }
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if tp.idfold_st.get() != 0 {
+        return;
+    }
+    // (no installed trace of the prototype: the heads' `trace` fields also name the recording being started)
+    let untraced = !d
+        .tr
+        .slots
+        .iter()
+        .any(|sl| matches!(&sl.body, Body::Trace(t) if t.root == pr.0));
+    vlog(d, || {
+        format!(
+            "--- idfold: proto:{} self upvalue {self_uv:?} lazy {} untraced {untraced} setupval {has_setupval}",
+            tp.line,
+            tp.lazy.get()
+        )
+    });
+    match self_uv {
+        Some(n) if tp.lazy.get() && untraced && !has_setupval => {
+            tp.idfold_uv.set(n);
+            tp.idfold_st.set(1);
+        }
+        _ => tp.idfold_st.set(2),
+    }
+}
+
+/// E2: what a recording / compile of `pr` gets: the self upvalue to fold (`Some` while folding is on), and the self upvalue the region's checks
+/// verify (`Some` while folding is on or a folded trace of the prototype is installed).
+pub fn idfold_cfg(st: &mut State, pr: ProtoRef) -> (Option<u8>, Option<u8>) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.idfold == 0 {
+        return (None, None);
+    }
+    tr_of(d, pr.0).map_or((None, None), |tp| {
+        let n = tp.idfold_uv.get();
+        let on = tp.idfold_st.get() == 1;
+        let ident = on || tp.idfold_live.get() > 0;
+        (on.then_some(n), ident.then_some(n))
+    })
+}
+
+/// E2: the family rule caught a trace with an upvalue store in a family under the region invariant (the recording is refused): folding goes off
+/// for good and every family that holds a folded trace is doomed (flushed at its next hot exit through the handler, like the code-growth rule of
+/// E1); once none is left, traces with upvalue stores install as before.
+pub fn idfold_ban(st: &mut State, pr: ProtoRef) {
+    let d = d_of(st);
+    d.tr.stats.idfold_ustore += 1;
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if tp.idfold_st.get() == 1 {
+        tp.idfold_st.set(2);
+        d.tr.stats.idfold_banned += 1;
+    }
+    let fams: Vec<TrId> =
+        d.tr.slots
+            .iter()
+            .filter_map(|sl| match &sl.body {
+                Body::Trace(t) if t.root == pr.0 && t.idfold => Some(t.family),
+                _ => None,
+            })
+            .collect();
+    for f in fams {
+        if let Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) = d.tr.slot_mut(f)
+        {
+            t.unroll_doom = true;
+        }
+    }
+}
+
+/// E1: the code-growth rule (section 34.2). A side trace was just installed in `family`; when the family's root is an unrolled function-entry
+/// trace and the family (the root and every side trace) holds more than `unrollcode` IR instructions, the prototype is demoted to `k = 1`
+/// (adaptive mode) and the family is flushed (re-recorded without unrolling, no penalty): the unrolled levels duplicate the leaf and down-recursion
+/// side traces once per level, which costs instruction-cache misses when they are large (`awfy/towers`: L1i misses x3.2, cycles +36 %).
+pub fn unroll_code_rule(st: &mut State, id: TrId) -> bool {
+    let d = d_of(st);
+    let (family, root) = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) if t.side.is_some() => (t.family, t.root),
+        _ => return false,
+    };
+    let lim = d.tr.cfg.limits.unrollcode;
+    if d.tr.cfg.limits.recunroll != 1 || lim == 0 || mutants::active("h9_code_rule_never") {
+        return false;
+    }
+    let unrolled =
+        matches!(d.tr.slot(family), Some(Slot { body: Body::Trace(f), .. }) if f.unrolled);
+    if unrolled
+        && matches!(d.tr.slot(family), Some(Slot { body: Body::Trace(f), .. }) if f.unroll_doom)
+    {
+        return false;
+    }
+    if !unrolled {
+        return false;
+    }
+    let bytes: usize =
+        d.tr.slots
+            .iter()
+            .filter_map(|sl| match &sl.body {
+                Body::Trace(t) if t.family == family => Some(t.weight as usize),
+                _ => None,
+            })
+            .sum();
+    vlog(d, || {
+        format!(
+            "--- unroll: family slot {} weight {bytes} IR instructions",
+            family.slot
+        )
+    });
+    if bytes <= lim as usize {
+        return false;
+    }
+    let Some(tp) = tr_of(d, root) else {
+        return false;
+    };
+    if !tp.unroll_demote(UnrollDemote::Code) {
+        return false;
+    }
+    d.tr.stats.unroll_demoted += 1;
+    vlog(d, || {
+        format!(
+            "--- unroll: proto:{} demoted to k = 1 (family weight {bytes} > {lim} IR instructions)",
+            tp.line
+        )
+    });
+    // (the flush itself waits for the next exit of the family through the handler, `unroll_doom_check`: flushing here, at the end of a side
+    // trace's pipeline, is not a safe point for a lazy-aware family, see section 34.2)
+    if let Some(Slot {
+        body: Body::Trace(f),
+        ..
+    }) = d.tr.slot_mut(family)
+    {
+        f.unroll_doom = true;
+    }
+    true
+}
+
+/// E1: called by the exit handler for a hot exit of trace `id` (`exit_hot_policy`): when its family was doomed by the code-growth rule, the family is flushed now
+/// (deferred to the graveyard while the handler runs, like every policy flush of the handler). True: flushed.
+pub fn unroll_doom_check(st: &mut State, id: TrId) -> bool {
+    let d = d_of(st);
+    let family = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => t.family,
+        _ => return false,
+    };
+    let doomed =
+        matches!(d.tr.slot(family), Some(Slot { body: Body::Trace(f), .. }) if f.unroll_doom);
+    if !doomed || mutants::active("h9_doom_never") {
+        return false;
+    }
+    d.tr.stats.unroll_flushed += 1;
+    request_flush(st, family, FlushWhy::Unroll);
+    true
+}
+
+/// E1: an unrolled function-entry trace of `pr` is being installed.
+pub fn unroll_ok(st: &mut State, pr: ProtoRef) {
+    let d = d_of(st);
+    if let Some(tp) = tr_of(d, pr.0) {
+        tp.on_unroll_ok();
     }
 }
 

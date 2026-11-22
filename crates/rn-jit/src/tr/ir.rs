@@ -828,6 +828,9 @@ pub struct TraceIr {
     /// P-M3: the trace ends with a native `RETURN1` of the root frame (see [`RecRet`]); the only writeback entry is the
     /// returned value, stored into the function slot. Like `rec_call`, the last IR instruction is the placeholder guard.
     pub rec_ret: Option<RecRet>,
+    /// E2 (`idfold`): a `GETUPVAL` of the family's self upvalue was folded to the running closure: the trace relies on the region invariant
+    /// (docs/JIT_TRACE.md section 34.3).
+    pub idfold: bool,
     /// BUNDLE-L B: the pre-roll holds the hoisted bounds guards of a counted loop (`opt_loop::Em::plan_bhoist`): a persistent failure of them
     /// re-records the head without the hoist (`HeadData::nohoist`).
     pub hoisted: bool,
@@ -910,7 +913,16 @@ pub struct RecCall {
     pub code: u64,
     /// Address of the instruction after the `CALL` (the caller's `savedpc`).
     pub after: u64,
+    /// E1 (`recunroll`, docs/JIT_TRACE.md section 34.1): the frames of the unroll chain (the self-calls inlined before this one), outermost
+    /// first: the callee's function slot relative to its caller's base (the inlined `CALL`'s `A`) and the caller's continuation address
+    /// (`savedpc` after that `CALL`). The push turns them into lazy frames before the final one; `a` is then relative to the innermost.
+    pub inl: [(u16, u64); MAX_INL],
+    /// E1: entries of `inl` in use (0 = no unrolling: the push of before).
+    pub ninl: u8,
 }
+
+/// E1: the most inlined frames of an unroll chain (`TrLimits::unrollk - 1`).
+pub const MAX_INL: usize = 3;
 
 impl TraceIr {
     /// BUNDLE-C: empties the trace but keeps the buffers' capacity (a reusable scratch IR; the result equals `TraceIr::default()`).
@@ -933,6 +945,7 @@ impl TraceIr {
         self.prune = None;
         self.rec_call = None;
         self.rec_ret = None;
+        self.idfold = false;
     }
 
     /// Is `r` an instruction ref?

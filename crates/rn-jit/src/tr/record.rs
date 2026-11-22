@@ -162,6 +162,10 @@ pub enum AbortReason {
     /// P-B: the loop allocates strings in every iteration and the collector steps about as often (a trace would exit at each
     /// allocation: see `RecCfg::storm_step`).
     AllocStorm,
+    /// E1 (`recunroll`): an unrolled function-entry recording failed after its root frame's self-call was inlined (a frame of the unroll
+    /// chain returned or tail-called before its own self-call, or any other abort in the unrolled part): the recording with `k = 1` would
+    /// have ended at that call. Data, not a fault of the head: the per-prototype unroll policy counts it (docs/JIT_TRACE.md section 34.2).
+    Unroll,
 }
 
 impl From<IrAbort> for AbortReason {
@@ -274,6 +278,16 @@ pub struct RecCfg {
     pub slot_live: bool,
     /// R2: a native self-call of the root prototype was recorded before (`recany` gates native returns on it).
     pub rec_seen: bool,
+    /// E1 (`recunroll`, docs/JIT_TRACE.md section 34): the unroll factor `k` of a function-entry recording of native recursion: the self-call of
+    /// the root frame is inlined up to `k - 1` times (the unroll chain) and the native push happens at depth `k - 1`. 1 = no unrolling.
+    pub rec_unroll: u32,
+    /// E2 (`idfold`, docs/JIT_TRACE.md section 34): the self upvalue of the root prototype whose `GETUPVAL` folds to the running closure in a
+    /// frame that runs the root closure (`None`: no folding; the family rule and the checked entries are the driver's).
+    pub idfold: Option<u8>,
+    /// E2: the family's region invariant is in force (folding on, or a folded trace of the family installed): every native push and every
+    /// inlined frame of the unroll chain is guarded by identity with the closure of the frame that calls (so every frame of a region runs the
+    /// closure its checked entry verified).
+    pub idfold_ident: bool,
     /// J2-2: most IR instructions of this recording (0 = the general limit): a deep recording's bound.
     pub max_ins: usize,
     /// P-E2: record `table.pack(...)` of a fixed argument count (see `Rec::pack_call`).
@@ -525,6 +539,9 @@ impl Default for RecCfg {
             hstore_mt: false,
             slot_live: false,
             rec_seen: false,
+            rec_unroll: 1,
+            idfold: None,
+            idfold_ident: false,
             max_ins: 0,
             pack: false,
             gfor: false,
@@ -783,6 +800,15 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
         }
         Err(why) => {
             st.heap().unwatch_all();
+            // E1: any abort in the unrolled part of a function-entry recording is an unroll failure (the `k = 1` recording would have
+            // closed at the root frame's self-call); the original reason goes to the verbose log only
+            let why0 = why;
+            let why =
+                if rec.unr_started && !matches!(why, AbortReason::DepFreed | AbortReason::Close) {
+                    AbortReason::Unroll
+                } else {
+                    why
+                };
             if super::diag::enabled() {
                 let line = rec.frames.last().map_or(0, |f| {
                     // SAFETY: the frame's prototype is alive for as long as the recording is (it is a dependency of it)
@@ -805,8 +831,16 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
             }
             if super::cache::verbose_aborts() {
                 eprintln!(
-                    "[trace] abort {:?} at pc {} (depth {}, op {})",
-                    why, rec.cur_pc, rec.cur_depth, rec.cur_op
+                    "[trace] abort {:?} at pc {} (depth {}, op {}){}",
+                    why,
+                    rec.cur_pc,
+                    rec.cur_depth,
+                    rec.cur_op,
+                    if why0 != why {
+                        format!(" (in the unroll chain: {why0:?})")
+                    } else {
+                        String::new()
+                    }
                 );
             }
             finish_with(token, RecOutcome::Aborted(why));
@@ -1001,6 +1035,9 @@ struct RecFrame {
     ectx: Option<std::rc::Rc<EntryCtx>>,
     /// Generic `for` over a Lua iterator: the frame was called by a `TFORCALL`; its return also runs the `TFORLOOP` behind it.
     tfor: Option<TforRet>,
+    /// E1 (`recunroll`): an inlined self-call of the unroll chain (the root prototype called by its caller frame under the conditions of a native
+    /// push): the final native push turns it into a lazy frame.
+    unr: bool,
 }
 
 /// The `TFORLOOP` the interpreter runs unfetched after the iterator returned (see [`RecFrame::tfor`]).
@@ -1315,6 +1352,11 @@ struct Rec {
     ci_entry: u8,
     /// BUNDLE-N: the argument refs of a `TAILCALL` of a table (`__call`: the object first), consumed by the tail path of [`Rec::call_lua`] (the shifted slots may lie beyond the frame).
     tail_args: Option<Vec<Ref>>,
+    /// E1: the root frame's self-call was inlined as the first level of an unroll chain (an abort from here on is an `Unroll` failure: the
+    /// recording with `k = 1` would have ended at that call).
+    unr_started: bool,
+    /// E2: a `GETUPVAL` was folded to the running closure (the trace relies on the region invariant: `TraceIr::idfold`).
+    idfolded: bool,
 }
 
 type R<T> = Result<T, AbortReason>;
@@ -1479,6 +1521,7 @@ impl Rec {
                 mm: None,
                 ectx: None,
                 tfor: None,
+                unr: false,
             }],
             cur_depth: 0,
             next_depth: 0,
@@ -1580,6 +1623,8 @@ impl Rec {
             mm_jmp: false,
             mm_pending: None,
             tail_args: None,
+            unr_started: false,
+            idfolded: false,
             segs: Vec::new(),
             retf_below: Default::default(),
             retf_funcs: Default::default(),
@@ -1689,6 +1734,7 @@ impl Rec {
                 mm,
                 ectx: None,
                 tfor: None,
+                unr: false,
             });
         }
         let d = fr.len();
@@ -2391,6 +2437,7 @@ impl Rec {
         ir.rec_ret = self.rec_ret.map(|x| x.0);
         LA_LAST.with(|l| *l.borrow_mut() = self.la_seen.borrow().clone());
         ir.fn_root = self.cfg.fn_root && self.cfg.side.is_none() && ir.rec_call.is_none();
+        ir.idfold = self.idfolded;
         Recorded {
             writeback: match self.rec_ret {
                 Some((rr, r)) if rr.n == 1 => vec![SnapEntry {
@@ -5515,18 +5562,7 @@ impl Rec {
         let cref = if self.cur_depth > 0 {
             self.frames[self.cur_depth].cref
         } else {
-            if self.func_ref == NOREF {
-                self.func_ref = self.b.emit_raw(Ins {
-                    op: TOp::Sload,
-                    t: Ty::Lcf,
-                    flags: 0,
-                    a: FUNC_SLOT,
-                    b: 0,
-                    prev: NOREF,
-                    aux: 0,
-                })?;
-            }
-            self.func_ref
+            self.func_ref_load()?
         };
         let kn = self.kint(n as i64);
         // P2 bundle 2: the identity of the real `UpVal` (0 = unknown): two `UREF`s of different identities were different upvalues when recorded
@@ -5560,6 +5596,58 @@ impl Rec {
         Ok(UvAcc::Cell(u))
     }
 
+    /// The ref of the root frame's closure (`SLOAD` of the function slot, emitted once).
+    fn func_ref_load(&mut self) -> R<Ref> {
+        if self.func_ref == NOREF {
+            self.func_ref = self.b.emit_raw(Ins {
+                op: TOp::Sload,
+                t: Ty::Lcf,
+                flags: 0,
+                a: FUNC_SLOT,
+                b: 0,
+                prev: NOREF,
+                aux: 0,
+            })?;
+        }
+        Ok(self.func_ref)
+    }
+
+    /// E2 (`idfold`, docs/JIT_TRACE.md section 34.3): `GETUPVAL` of the family's self upvalue `n` in a frame that runs the region's closure (the
+    /// root frame, or a frame whose closure ref is the root's: identity-guarded) whose value is that closure: the closure's ref, with no `UREF`,
+    /// TR15 range guard or `ULOAD`. Sound because the region's checked entries verified `upvalue n == closure` and nothing inside a region can
+    /// change it (no code outside the family's traces runs, and the family admits no upvalue store: section 34.3).
+    fn idfold_uload(&mut self, vm: &Vm<'_>, n: usize) -> R<Option<((Ref, Ty), Value)>> {
+        let Some(fu) = self.cfg.idfold else {
+            return Ok(None);
+        };
+        if usize::from(fu) != n || n >= vm.cl.nupvalues() {
+            return Ok(None);
+        }
+        let v = vm.cl.upval(n).get();
+        if !v
+            .as_lclosure()
+            .is_some_and(|c| c.as_ptr() == vm.cl.as_ptr())
+        {
+            return Ok(None);
+        }
+        // (an address inside the trace's frames never holds the self upvalue: refuse rather than argue)
+        let at = vm.cl.upval(n).value_ptr() as usize;
+        let lo = vm.st.slot_ptr(StkId(vm.root_base)) as usize;
+        if at >= lo && at < lo + self.ext.max(self.nslots) * std::mem::size_of::<Value>() {
+            return Ok(None);
+        }
+        let d = self.cur_depth;
+        let r = if d == 0 {
+            self.func_ref_load()?
+        } else if self.func_ref != NOREF && self.frames[d].cref == self.func_ref {
+            self.func_ref
+        } else {
+            return Ok(None);
+        };
+        self.idfolded = true;
+        Ok(Some(((r, Ty::Lcf), v)))
+    }
+
     /// Whether upvalue `n` of the current closure is an open upvalue at a slot of the root frame (N1; no emission).
     fn uv_is_slot(&self, vm: &Vm<'_>, n: usize) -> bool {
         n < vm.cl.nupvalues() && self.in_root_frame(vm.cl.upval(n).value_ptr() as usize)
@@ -5573,6 +5661,9 @@ impl Rec {
     /// `GETUPVAL`-style read of upvalue `n`: the value ref and type (typed by the VM's current value for a cell; a slot
     /// alias reads the register).
     fn uload(&mut self, vm: &Vm<'_>, n: usize) -> R<((Ref, Ty), Value)> {
+        if let Some(r) = self.idfold_uload(vm, n)? {
+            return Ok(r);
+        }
         let acc = self.uref(vm, n)?;
         let v = vm.cl.upval(n).get();
         match acc {
@@ -6488,13 +6579,39 @@ impl Rec {
         let _ = cl;
         let key = p as *const Proto as usize;
         let nslots = usize::from(p.maxstacksize);
-        let top_rel = self.frames[0].base_off + a + 1 + nargs;
+        // E1: the push happens in frame `d` (0 without unrolling; `d` frames of the unroll chain are inlined below it)
+        let d = self.cur_depth;
+        let top_rel = self.frames[d].base_off + a + 1 + nargs;
+        let mut inl = [(0u16, 0u64); super::ir::MAX_INL];
+        if d > 0 {
+            if d > super::ir::MAX_INL || !self.frames[1..=d].iter().all(|f| f.unr && f.proto == key)
+            {
+                return Err(AbortReason::Unroll);
+            }
+            for j in 1..=d {
+                let f = &self.frames[j];
+                // (the inlined `CALL`'s `A` in its caller's frame, and that caller's continuation)
+                let a_rel = f.base_off - 1 - self.frames[j - 1].base_off;
+                let after = p.code_ptr() as u64 + 4 * (u64::from(f.call_pc) + 1);
+                inl[j - 1] = (
+                    a_rel as u16,
+                    after + 4 * u64::from(mutants::active("h9_inl_savedpc_off")),
+                );
+            }
+        }
         // callee identity (TR7a): the function slot holds a Lua closure of this very proto
         let (cref, _) = self.rd(vm, a)?;
-        // (the callee is the running closure: equality with it implies the proto, and costs one compare)
-        let running = self.func_ref;
-        if mutants::active("callee_guard_skip") {
-            // (mutant: no guard)
+        // (the callee is the running closure: equality with it implies the proto, and costs one compare; E1: the closure of frame `d`)
+        let running = if d > 0 {
+            self.frames[d].cref
+        } else if self.cfg.idfold_ident && !mutants::active("idfold_push_proto") {
+            // (E2: the push is guarded by identity with the running closure, never by the prototype alone)
+            self.func_ref_load()?
+        } else {
+            self.func_ref
+        };
+        if mutants::active("callee_guard_skip") || (running != NOREF && cref == running) {
+            // (mutant: no guard; E2: the callee is the running closure's own ref, a folded `GETUPVAL`)
         } else if running != NOREF {
             self.entry_guard(TOp::Eq, Ty::I64, cref, running, 0)?;
         } else {
@@ -6503,7 +6620,9 @@ impl Rec {
         }
         // TR6c / TR6b: what the interpreter's fast path needs for this call (the entry checks of the trace)
         self.room = self.room.max((top_rel + nslots) as u32);
-        self.max_ci = self.max_ci.max(1);
+        // (E1: the `d` frames of the chain and the pushed one; mutant: one spare node too few)
+        let need = (d + 1).saturating_sub(usize::from(d > 0 && mutants::active("h9_maxci_short")));
+        self.max_ci = self.max_ci.max(need as u8);
         let code = p.code_ptr() as u64;
         self.rec_call = Some(RecCall {
             a: a as u16,
@@ -6512,6 +6631,8 @@ impl Rec {
             maxstack: p.maxstacksize as u16,
             code,
             after: code + 4 * (idx as u64 + 1),
+            inl,
+            ninl: d as u8,
         });
         self.end_exit()
     }
@@ -6603,6 +6724,20 @@ impl Rec {
         Ok(s)
     }
 
+    /// E1 (section 34.2, the shape rule): the callee in register `a` of the current frame was read from an upvalue (a `ULOAD`, or the running
+    /// closure that E2 folded a `GETUPVAL` to): the recursion of `local function f .. f() ..`. A callee found through a table (method recursion
+    /// `self:m()`, a field, a global) is not unrolled: each inlined level would repeat the lookup chain and the leaf side traces of every level
+    /// inline the method bodies (`awfy/towers` with a fixed `k = 3`: +36 % cycles, L1i misses x3.2).
+    fn callee_from_upvalue(&self, a: usize) -> bool {
+        let slot = self.frames[self.cur_depth].base_off + a;
+        let c = self.sm.cur.get(slot).copied().unwrap_or(NOREF);
+        if c == NOREF || !TraceIr::is_ins(c) {
+            return false;
+        }
+        (c == self.func_ref && self.cfg.idfold.is_some())
+            || self.b.ir.ins[usize::from(c - REF_BIAS)].op == TOp::Uload
+    }
+
     /// BUNDLE-L (`cloreuse`): the ref of a closure that the trace holds for the closure object at `addr` (a frame `0..=d` whose function it is), other than `cref`
     /// itself. The root frame's ref exists once an upvalue of the root closure was addressed (`func_ref`); a frame without a ref (side traces start so) has none.
     fn known_closure(&self, addr: usize, d: usize, cref: Ref) -> Option<Ref> {
@@ -6685,28 +6820,47 @@ impl Rec {
             .enumerate()
             .filter(|(i, f)| f.proto == key && !(tail && *i == d))
             .count();
-        if uses > 0
+        let push_ok = uses > 0
             && self.cfg.rec_native
             && (self.cfg.fn_root || self.cfg.rec_cont)
             && self.cfg.side.as_ref().map_or(true, |sd| {
                 self.cfg.rec_any && self.cfg.fn_root && sd.frames.is_empty()
             })
-            && d == 0
             && !tail
             && !vararg
             && wanted >= 0
             && nargs == usize::from(p.numparams)
-        {
+            // E2: inside a region every frame runs the closure the checked entry verified: a native push (or an inlined frame of the chain)
+            // of another closure of the prototype is not made
+            && (!self.cfg.idfold_ident || cl.as_ptr() as usize == self.frames[d].closure);
+        // E1 (`recunroll`, docs/JIT_TRACE.md section 34.1): the unroll chain. In a function-entry recording (not a side, not a continuation)
+        // whose frames are all activations of the root prototype, each entered by a self-call that satisfied the conditions of a native push,
+        // a self-call that satisfies them too is inlined while the chain is shorter than `k - 1` frames; at depth `k - 1` it is the native push.
+        let unr = push_ok
+            && self.cfg.rec_unroll > 1
+            && (self.callee_from_upvalue(a) || mutants::active("h9_shape_any"))
+            && self.cfg.fn_root
+            && self.cfg.side.is_none()
+            && !self.cfg.rec_cont
+            && uses == d + 1
+            && self.frames[1..=d].iter().all(|f| f.unr)
+            && d < self.cfg.rec_unroll as usize
+            && d < (if self.cfg.max_depth == 0 {
+                MAX_DEPTH
+            } else {
+                (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES)
+            });
+        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= self.cfg.rec_unroll as usize)) {
             return self.end_rec_call(vm, idx, a, nargs, wanted, &p, cl);
         }
         if uses > 0 {
             CONT_OK.with(|c| c.borrow_mut().insert(key));
-            if self.cfg.unroll == 0 {
+            if self.cfg.unroll == 0 && !unr {
                 return Err(AbortReason::Recursion);
             }
             let limit =
                 self.cfg.unroll as usize + usize::from(mutants::active("unroll_off_by_one"));
-            if uses >= limit {
+            if uses >= limit && !unr {
                 return self.stitch(idx, AbortReason::Recursion);
             }
         }
@@ -6754,8 +6908,23 @@ impl Rec {
         } else {
             None
         };
-        let fcref = known.unwrap_or(cref);
-        if !mutants::active("callee_guard_skip") {
+        // E2: a frame of the unroll chain in a family under the region invariant is guarded by identity with the calling frame's closure (no
+        // guard at all when the callee is that closure's ref itself: a folded `GETUPVAL`)
+        let idf_run = if unr && self.cfg.idfold_ident {
+            Some(if d == 0 {
+                self.func_ref_load()?
+            } else {
+                self.frames[d].cref
+            })
+        } else {
+            None
+        };
+        let fcref = idf_run.unwrap_or(known.unwrap_or(cref));
+        if let Some(run) = idf_run.filter(|_| !mutants::active("callee_guard_skip")) {
+            if cref != run {
+                self.entry_guard(TOp::Eq, Ty::I64, cref, run, 0)?;
+            }
+        } else if !mutants::active("callee_guard_skip") {
             if let Some(k) = known {
                 if !mutants::active("cloreuse_guard_skip") {
                     self.entry_guard(TOp::Eqref, Ty::I64, cref, k, 0)?;
@@ -6823,6 +6992,9 @@ impl Rec {
         }
         let vpending = vararg.then_some(totalargs);
         self.max_ci = self.max_ci.max((self.ci_depth(d) + 1) as u8);
+        if unr {
+            self.unr_started = true;
+        }
         self.frames.push(RecFrame {
             ci: 0,
             func_abs: vm.base + a,
@@ -6843,6 +7015,7 @@ impl Rec {
             mm: None,
             ectx: None,
             tfor: None,
+            unr,
         });
         self.next_depth = d + 1;
         Ok(0)
@@ -6857,6 +7030,9 @@ impl Rec {
                 return self.fn_end();
             }
             return Err(AbortReason::TailCall);
+        }
+        if self.frames[self.cur_depth].unr {
+            return Err(AbortReason::Unroll); // E1: a frame of the unroll chain tail-calls before its self-call
         }
         if self.frames[self.cur_depth].pc_shift != 0 {
             return Err(AbortReason::TailCall); // P-O: the body of an inlined protected call returns normally
@@ -7257,6 +7433,7 @@ impl Rec {
             mm: None,
             ectx: None,
             tfor: None,
+            unr: false,
         });
         self.root_ci = c_ci.as_ptr() as usize;
         if !mutants::active("retf_root_func_stale") {
@@ -7299,6 +7476,11 @@ impl Rec {
     /// The results `R[a .. a + nret]` of the current inlined frame move to the caller (see [`Rec::ret`]).
     fn ret_from(&mut self, vm: &Vm<'_>, a: usize, nret: usize) -> R<usize> {
         let d = self.cur_depth;
+        if d > 0 && self.frames[d].unr {
+            // E1: a frame of the unroll chain returns before its self-call: the chain is broken (the trace would bake a leaf path into the
+            // inlined levels); the recording fails as `Unroll`
+            return Err(AbortReason::Unroll);
+        }
         if self.frames[d].pc_shift != 0 {
             return self.pcall_ret(vm, a, nret);
         }
@@ -7788,6 +7970,7 @@ impl Rec {
             mm: None,
             ectx: None,
             tfor: None,
+            unr: false,
         });
         self.next_depth = d + 1;
         Ok(0)
@@ -11182,6 +11365,7 @@ impl Rec {
             mm: Some(c.fin),
             ectx,
             tfor: None,
+            unr: false,
         });
         self.next_depth = d + 1;
         Ok(0)

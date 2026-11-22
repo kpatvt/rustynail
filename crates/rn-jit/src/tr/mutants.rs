@@ -918,6 +918,22 @@ pub const NAMES: &[&str] = &[
     "p1_memo_any",
     "p1_memo_dunder",
     "presize_no_free",
+    // E1 (`recunroll`): up-recursion unrolling (docs/JIT_TRACE.md section 34)
+    "h9_inl_push_skip",
+    "h9_inl_savedpc_off",
+    "h9_inl_bump_off",
+    "h9_maxci_short",
+    "h9_fallback_never",
+    "h9_fail_penalised",
+    "h9_demote_ignored",
+    "h9_code_rule_never",
+    "h9_doom_never",
+    "h9_shape_any",
+    // E2 (`idfold`): region-scoped callee identity (docs/JIT_TRACE.md section 34)
+    "idfold_outer_unchecked",
+    "idfold_rootret_inner",
+    "idfold_ustore_family",
+    "idfold_push_proto",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -994,7 +1010,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 759);
+        assert_eq!(NAMES.len(), 773);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

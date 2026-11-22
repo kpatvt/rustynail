@@ -2968,6 +2968,8 @@ mod handler {
             text: Some("fake trace".into()),
             hash: 0,
             weight: 0,
+            unrolled: false,
+            idfold: false,
         };
         let tid = c::install(st, id, ti).expect("install");
         let meta = ExitMeta {
@@ -3145,6 +3147,8 @@ mod handler {
             text: None,
             hash: 0,
             weight: 0,
+            unrolled: false,
+            idfold: false,
         };
         let tid = c::install(st, id, ti).expect("install");
         let snaps = (0..n)
@@ -3217,6 +3221,8 @@ mod handler {
             text: None,
             hash: 0,
             weight: 0,
+            unrolled: false,
+            idfold: false,
         };
         let tid = c::install(st, id, ti).expect("install side");
         let meta = ExitMeta {

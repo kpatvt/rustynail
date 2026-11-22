@@ -2031,3 +2031,95 @@ fn bp_rearmside_rule() {
     assert!(ok(0, 3, false, 3, 0), "rearmclean=0: the BUNDLE-P rule");
     assert!(ok(M - 1, 1, false, 1, 0));
 }
+
+/// E1 (`recunroll`, docs/JIT_TRACE.md section 34.2): the knobs and the per-prototype unroll policy. `k` applies only to lazy-aware function-entry
+/// prototypes; `UNROLL_FAILS` unroll failures in a row lower `k` by one, below 2 the prototype is demoted for good; a success resets the count;
+/// the fixed mode (`recunroll=2`) never demotes; an `Unroll` abort costs the head a short flat wait and never blacklists it. Detector of
+/// `h9_fallback_never`, `h9_fail_penalised`, `h9_demote_ignored`.
+#[test]
+fn e1_policy() {
+    use rn_jit::tr::cache::{
+        Penalty, TrConfig, TrMode, TrProto, UnrollDemote, MAX_UNROLL_K, RECUNROLL_PROCESS,
+        UNROLLCODE_PROCESS, UNROLLK_PROCESS, UNROLL_FAILS, UNROLL_WAIT,
+    };
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.recunroll, RECUNROLL_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    assert_eq!(l.unrollk, UNROLLK_PROCESS);
+    assert_eq!(l.unrollcode, UNROLLCODE_PROCESS);
+    for (env, want) in [
+        (Some("recunroll=0"), (0, UNROLLK_PROCESS)),
+        (Some("recunroll=9,unrollk=99"), (2, MAX_UNROLL_K)),
+        (Some("recunroll=1,unrollk=2"), (1, 2)),
+        (Some("unrollk=0"), (RECUNROLL_PROCESS, 1)),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(
+            (c.limits.recunroll, c.limits.unrollk),
+            want,
+            "limits env {env:?}"
+        );
+    }
+    let mk = || TrProto::new(10, &[0, 7], 256, true, 77, 1);
+    let tp = mk();
+    assert_eq!(tp.unroll_k(1, 3), 1, "not lazy-aware: no unrolling");
+    tp.mark_lazy_fn();
+    assert_eq!(tp.unroll_k(0, 3), 1, "recunroll=0");
+    assert_eq!(tp.unroll_k(1, 1), 1, "unrollk=1");
+    assert_eq!(tp.unroll_k(1, 3), 3);
+    assert_eq!(tp.unroll_k(2, 9), MAX_UNROLL_K, "capped");
+    // UNROLL_FAILS failures in a row lower k by one
+    for i in 1..UNROLL_FAILS {
+        assert_eq!(tp.on_unroll_fail(1, 3), None, "failure {i}");
+        assert_eq!(tp.unroll_k(1, 3), 3, "failure {i}");
+    }
+    assert_eq!(tp.on_unroll_fail(1, 3), None);
+    assert_eq!(
+        tp.unroll_k(1, 3),
+        2,
+        "k lowered after {UNROLL_FAILS} failures"
+    );
+    // a success starts the count again
+    for _ in 1..UNROLL_FAILS {
+        assert_eq!(tp.on_unroll_fail(1, 3), None);
+    }
+    tp.on_unroll_ok();
+    for _ in 1..UNROLL_FAILS {
+        assert_eq!(tp.on_unroll_fail(1, 3), None);
+    }
+    assert_eq!(tp.unroll_k(1, 3), 2, "the success reset the count");
+    assert_eq!(
+        tp.on_unroll_fail(1, 3),
+        Some(UnrollDemote::Fails),
+        "below 2: demoted"
+    );
+    assert_eq!(tp.unroll_k(1, 3), 1, "demoted for good");
+    assert_eq!(tp.unroll_demoted(), UnrollDemote::Fails as u8);
+    assert_eq!(tp.unroll_k(2, 3), 3, "the fixed mode ignores the policy");
+    // the fixed mode never counts
+    let tp2 = mk();
+    tp2.mark_lazy_fn();
+    for _ in 0..3 * u32::from(UNROLL_FAILS) {
+        assert_eq!(tp2.on_unroll_fail(2, 3), None);
+    }
+    assert_eq!(tp2.unroll_k(1, 3), 3);
+    // an explicit demotion (code-growth / exit rules) is final
+    assert!(tp2.unroll_demote(UnrollDemote::Code));
+    assert!(!tp2.unroll_demote(UnrollDemote::Exits), "once");
+    assert_eq!(tp2.unroll_k(1, 3), 1);
+    assert_eq!(tp2.unroll_demoted(), UnrollDemote::Code as u8);
+    // an `Unroll` abort: a short flat wait, never Black
+    let tp3 = mk();
+    for k in 0..200 {
+        match tp3.on_abort_with(0, "Unroll", false, 16) {
+            Penalty::Wait(w) => assert!(
+                (UNROLL_WAIT as i32..UNROLL_WAIT as i32 + 16).contains(&w),
+                "abort {k}: wait {w}"
+            ),
+            o => panic!("abort {k}: {o:?}"),
+        }
+    }
+}

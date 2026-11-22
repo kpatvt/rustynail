@@ -450,6 +450,7 @@ pub fn abort_name(r: AbortReason) -> &'static str {
         AbortReason::AtouchFlip => "AtouchFlip",
         AbortReason::SideShort => "SideShort",
         AbortReason::AllocStorm => "AllocStorm",
+        AbortReason::Unroll => "Unroll",
     }
 }
 
@@ -583,6 +584,26 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             }
         }
     }
+    // E2 (`idfold`): the per-prototype decision at its first recording (a closure that reaches itself through an upvalue)
+    if let Some(pr) = pr {
+        if cfg.limits.idfold != 0 {
+            let me = cl.as_ptr();
+            let self_uv = (0..cl.nupvalues())
+                .find(|&i| {
+                    cl.upval(i)
+                        .get()
+                        .as_lclosure()
+                        .is_some_and(|c| c.as_ptr() == me)
+                })
+                .and_then(|i| u8::try_from(i).ok());
+            let has_setupval = proto.code().iter().any(|&w| {
+                rn_core::instruction::Instruction(w).opcode()
+                    == Some(rn_core::ver::active::OpCode::Setupval)
+            });
+            cache::idfold_decide(st, pr, self_uv, has_setupval);
+        }
+    }
+    let (idf_fold, idf_ident) = pr.map_or((None, None), |pr| cache::idfold_cfg(st, pr));
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
     // function with calls would get continuation traces whose return guard fails when no recursion is involved)
     let cok = cfg.limits.contok >= 1 && record::cont_ok(root);
@@ -654,6 +675,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             && !promoted
             && (pc == 0 || cfg.limits.recany != 0),
         rec_cont: pr.is_some_and(|pr| cache::head_is_cont(st, pr, pc)),
+        // E1: the unroll factor of a function-entry recording (1 everywhere else, and for prototypes the policy demoted)
+        rec_unroll: pr.map_or(1, |pr| cache::unroll_k(st, pr, pc)),
+        // E2: folding and the region invariant of the family (lazy-aware prototypes only: `idfold_decide`)
+        idfold: idf_fold,
+        idfold_ident: idf_ident.is_some(),
         fn_min: if pr.is_some_and(|pr| cache::fn_cent(st, pr))
             && !mutants::active("centry_fnmin_kept")
         {
@@ -795,6 +821,7 @@ pub fn driver_start_side(
     });
     let hs: record::HeadQuery = Rc::new(move |st, pc| cache::head_traced(st, pr, pc));
     let fn_side = cache::head_is_fn(st, pr, 0);
+    let (idf_fold, idf_ident) = cache::idfold_cfg(st, pr);
     let deep =
         cfg.limits.deep != 0 && cache::rec_deep(st, id) && !mutants::active("deep_limits_ignored");
     let rc = RecCfg {
@@ -897,6 +924,8 @@ pub fn driver_start_side(
         hstore_mt: cfg.limits.hstoreguard != 0,
         slot_live: cfg.limits.slotlive != 0,
         rec_seen: cache::proto_recursive(st, pr),
+        idfold: idf_fold,
+        idfold_ident: idf_ident.is_some(),
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)
         } else {
@@ -1033,6 +1062,10 @@ fn finish_outcome(st: &mut State) {
                 match e.kind {
                     Fail::Abort(why) if act.side && !rec.ir.segs.is_empty() => {
                         cache::abort_retf(st, act.id, abort_name(why));
+                    }
+                    // E1: an unrolled trace that the pipeline refuses is an unroll failure (the policy counts it; `k = 1` may compile)
+                    Fail::Abort(_) if rec.ir.rec_call.is_some_and(|rc| rc.ninl != 0) => {
+                        cache::abort_recording(st, act.id, "Unroll", false);
                     }
                     Fail::Abort(why) => {
                         let u = if act.side {
@@ -1982,6 +2015,24 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     // P-M3: the continuation heads of the root prototype (the targets of a native return), and the function-entry head's
     // dispatch cell (the target of the native self-call of a continuation trace)
     let lazy = cache::proto_lazy(st, rpr);
+    // E2 (`idfold`, docs/JIT_TRACE.md section 34.3): the family rule. While the family is under the region invariant (folding on, or a folded
+    // trace installed), no trace of it may store an upvalue (`(closure, index)` pairs may alias the self upvalue, P3d): the recording is
+    // refused and folding goes off for good (the folded families are flushed at their next hot exit)
+    let idf_env = if lazy {
+        cache::idfold_cfg(st, rpr).1
+    } else {
+        None
+    };
+    if idf_env.is_some()
+        && ir.ins.iter().any(|i| i.op == ir::TOp::Ustore)
+        && !crate::tr::mutants::active("idfold_ustore_family")
+    {
+        cache::idfold_ban(st, rpr);
+        return Err(abort_err(
+            "idfold_ustore",
+            "an upvalue store in a family under the region invariant",
+        ));
+    }
     // BUNDLE-K L1: the `callstatus` every lazy frame of this prototype gets when all of its `CALL`s want the same number of results
     let lazy_cs = if lazy {
         let mut cs: Option<u32> = None;
@@ -2007,8 +2058,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     let mut rec_sites = [(0u64, 0u64, 0u8); cache::MAX_CONT_SITES];
     let mut rec_nsites = 0u8;
     let mut rec_link_cell = 0u64;
-    if ir.rec_call.is_some() {
+    if let Some(rc) = ir.rec_call {
         cache::mark_recursive(st, rpr);
+        if rc.ninl != 0 {
+            cache::unroll_ok(st, rpr);
+        }
     }
     if ir.rec_ret.is_some() || ir.rec_call.is_some() {
         let code = rootp.code_ptr() as u64;
@@ -2126,6 +2180,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         lazy_leave_fn: exit::jit_tr_lazy_leave as *const () as usize as u64,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
+        idfold_uv: idf_env,
         root_maxstack: u16::from(rootp.maxstacksize),
         // S1: a frameful side trace has no entry checks. CP2: neither has a frameless one whose needs the parent's checks cover (it is entered
         // by an exit of the parent, in the very frame the parent's checks promised room for); a prelude is entered through the head's cell
@@ -2344,6 +2399,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             text,
             hash,
             weight: ir.ins.len() as u32,
+            unrolled: ir.rec_call.is_some_and(|rc| rc.ninl != 0),
+            idfold: ir.idfold,
         },
     )
     .map_err(|e| PipeErr {
@@ -2506,6 +2563,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     }
     if !ir.segs.is_empty() {
         sink::RETF_TRACES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    // E1: the code-growth rule of an unrolled family (after everything above used the new trace: it may flush the family)
+    if act.side {
+        cache::unroll_code_rule(st, newid);
     }
     jit_hooks::rec_request_enter();
     Ok(())

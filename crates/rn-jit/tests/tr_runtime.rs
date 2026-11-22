@@ -185,6 +185,8 @@ fn fake(counter: &AtomicU64, land: usize, handler: Option<(u64, u32, u32)>) -> T
         text: Some("fake trace".to_string()),
         hash: 0,
         weight: 0,
+        unrolled: false,
+        idfold: false,
     }
 }
 
@@ -1446,6 +1448,8 @@ fn code_cap_flushes_all_traces_and_sets_a_global_penalty() {
         text: None,
         hash: 0,
         weight: 0,
+        unrolled: false,
+        idfold: false,
     };
     assert_eq!(
         c::install(&mut st, id, big).err(),

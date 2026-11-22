@@ -472,6 +472,13 @@ struct TStats {
     code_bytes: u64,
     /// P1 (`presize`): presized insertion groups installed (`presize: groups N`).
     presized: u64,
+    /// E1 / E2 (docs/JIT_TRACE.md section 34): `unroll: installed U demoted D flushed F; idfold: traces T ustore S banned B`.
+    unroll_installed: u64,
+    unroll_demoted: u64,
+    unroll_flushed: u64,
+    idfold_traces: u64,
+    idfold_ustore: u64,
+    idfold_banned: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -677,6 +684,21 @@ impl TStats {
                 }
             } else if let Some(r) = l.strip_prefix("presize: groups ") {
                 s.presized = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("unroll: installed ") {
+                // `unroll: installed U demoted D flushed F; idfold: traces T ustore S banned B`
+                let nums: Vec<u64> = r
+                    .split(|c: char| !c.is_ascii_digit())
+                    .filter(|w| !w.is_empty())
+                    .filter_map(|w| w.parse().ok())
+                    .collect();
+                if let [u, dm, f, t, us, b] = nums[..] {
+                    s.unroll_installed = u;
+                    s.unroll_demoted = dm;
+                    s.unroll_flushed = f;
+                    s.idfold_traces = t;
+                    s.idfold_ustore = us;
+                    s.idfold_banned = b;
+                }
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.barrier_table = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -7319,15 +7341,15 @@ fn c39_inner_programs() {
 
 /// BUNDLE-C `sbump`: a stitch exit at the recursion limit gets a side trace on the retry (program `bc_sbump`: a recursive walk over a tree whose depth varies by data,
 /// called from a loop). Same output as the interpreter in every mode; `sbump=1` installs at least as many side traces as `sbump=0`, and more in the loop shapes of
-/// `always`. Mutant `sbump_never`.
+/// `always`. Mutant `sbump_never`. (`recunroll=0`: the side-trace counts compared are those of the `k = 1` formation the rule was measured on.)
 #[test]
 fn bc_sbump_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
         for lim in [
-            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=0",
-            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=1",
-            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,sbump=2",
+            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,recunroll=0,sbump=0",
+            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,recunroll=0,sbump=1",
+            "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,recunroll=0,sbump=2",
         ] {
             jobs.push(Job::new("bc_sbump", trace).opts("+verify").limits_s(lim));
             jobs.push(
@@ -7364,7 +7386,7 @@ fn bc_sbump_programs() {
     };
     let (mut gained, mut lost) = (false, false);
     for trace in ["always", "on2"] {
-        let p = "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4";
+        let p = "recnat=1,recany=1,siderooms=1,nilstore=1,typesides=1,ineffcover=1,sidemin=4,recunroll=0";
         let (off, on) = (
             find(trace, &format!("{p},sbump=0")),
             find(trace, &format!("{p},sbump=1")),
@@ -12263,6 +12285,251 @@ fn p1_presize_programs() {
                 "{}: too few presized groups: {}",
                 j.tag(),
                 o.stats.presized
+            );
+        }
+    }
+}
+
+/// E1 (`recunroll`, docs/JIT_TRACE.md section 34): up-recursion unrolling. The recursion programs (shapes, depth to `stack overflow`, errors and
+/// tracebacks at depth, `pcall` at every level, coroutines yielding inside the recursion, hooks installed from inside it, a finalizer) in every
+/// trace mode with unrolling off, adaptive, and fixed at `k = 2 / 3 / 4`, under `+verify`, exit storms, budgets 3 / 17 / 200, GC stress 1 / 2 in
+/// both collector modes and stack-move stress: same output as the interpreter. The fixed-`k` runs install unrolled traces (the stats line).
+/// Detector of the frame mutants `h9_inl_push_skip`, `h9_inl_savedpc_off`, `h9_inl_bump_off`, `h9_maxci_short`.
+#[test]
+fn e1_unroll_programs() {
+    let progs = [
+        "e1_01_unroll_shapes",
+        "e1_02_unroll_depth_errors",
+        "e1_03_unroll_coro_hooks",
+        "h7_02_rec_shapes",
+        "h7_04_rec_depth_limit",
+        "k6_01_leaf_heavy_recursion",
+        "k6_04_deep_errors_coroutines",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("depth") || p.contains("deep");
+        for trace in ["always", "on2"] {
+            for lim in [
+                "recunroll=0",
+                "recunroll=1",
+                "recunroll=2,unrollk=2",
+                "recunroll=2",
+                "recunroll=2,unrollk=4",
+            ] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            if heavy {
+                continue;
+            }
+            for lim in ["recunroll=2", "recunroll=2,unrollk=4"] {
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
+                for b in [3, 17, 200] {
+                    jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+                }
+                for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                    let mut j = Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .limits_s(lim);
+                    if mode == "inc" {
+                        j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                    }
+                    jobs.push(j);
+                }
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(lim),
+                );
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits == "recunroll=0" {
+            assert_eq!(
+                o.stats.unroll_installed,
+                0,
+                "{}: unrolled with recunroll=0",
+                j.tag()
+            );
+        }
+    }
+    for p in ["e1_01_unroll_shapes", "h7_02_rec_shapes"] {
+        for trace in ["always", "on2"] {
+            let o = res
+                .iter()
+                .find(|(j, _)| {
+                    j.prog == p
+                        && j.trace == trace
+                        && j.limits == "recunroll=2"
+                        && j.opts.is_empty()
+                        && j.env.is_empty()
+                        && j.budget.is_none()
+                })
+                .map(|(_, o)| o)
+                .expect("job");
+            assert!(
+                o.stats.unroll_installed >= 2,
+                "{p} {trace}: unrolled traces {}",
+                o.stats.unroll_installed
+            );
+        }
+    }
+}
+
+/// E1 (docs/JIT_TRACE.md section 34.2): the adaptive policy. Method recursion is not unrolled (`e1_04_unroll_method_only`: no unrolled trace with
+/// `recunroll=1`; detector of `h9_shape_any`); the code-growth rule with a tiny budget (`unrollcode=1`) demotes the unrolled prototypes and their
+/// families are flushed at a later hot exit through the handler (detectors of `h9_code_rule_never`, `h9_doom_never`); outputs equal the
+/// interpreter's throughout.
+#[test]
+fn e1_unroll_policy_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for opts in ["", "+verify"] {
+            for lim in ["recunroll=1", "recunroll=2"] {
+                jobs.push(
+                    Job::new("e1_04_unroll_method_only", trace)
+                        .opts(opts)
+                        .limits_s(lim),
+                );
+            }
+            for p in ["e1_01_unroll_shapes", "k6_01_leaf_heavy_recursion"] {
+                for lim in ["recunroll=1,unrollcode=1", "recunroll=1"] {
+                    jobs.push(Job::new(p, trace).opts(opts).limits_s(lim));
+                }
+            }
+        }
+        jobs.push(
+            Job::new("e1_01_unroll_shapes", trace)
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .limits_s("recunroll=1,unrollcode=1"),
+        );
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.prog == "e1_04_unroll_method_only" && j.limits == "recunroll=1" {
+            assert_eq!(
+                o.stats.unroll_installed,
+                0,
+                "{}: method recursion unrolled",
+                j.tag()
+            );
+        }
+        if j.prog == "e1_01_unroll_shapes" && j.limits.contains("unrollcode=1") && j.env.is_empty()
+        {
+            assert!(
+                o.stats.unroll_demoted >= 1,
+                "{}: no demotion by the code-growth rule",
+                j.tag()
+            );
+            assert!(
+                o.stats.unroll_flushed >= 1,
+                "{}: no doomed family flushed",
+                j.tag()
+            );
+        }
+        if j.prog == "e1_01_unroll_shapes" && j.limits == "recunroll=1" {
+            assert!(
+                o.stats.unroll_installed >= 2,
+                "{}: adaptive mode installed {}",
+                j.tag(),
+                o.stats.unroll_installed
+            );
+        }
+    }
+}
+
+/// E2 (`idfold`, docs/JIT_TRACE.md section 34): region-scoped callee identity. Every way the self upvalue or the function value can change
+/// (the main chunk, `debug.setupvalue` from a leaf while frames of the old region are suspended, `debug.upvaluejoin`, a global, many closures of
+/// one prototype, crossed self upvalues, `__call` / `__index` replaced, upvalue stores inside the family, a field switched to another closure)
+/// and the recursion programs, with folding off / on, alone and with unrolling, under `+verify`, exit storms, budgets, GC stress 1 / 2 in both
+/// collector modes and stack-move stress: same output as the interpreter. Folded traces are installed and the family rule fires.
+/// Detector of `idfold_outer_unchecked`, `idfold_rootret_inner`, `idfold_ustore_family`, `idfold_push_proto`.
+#[test]
+fn e2_idfold_programs() {
+    let progs = [
+        "e2_01_idfold_callee_switch",
+        "k6_02_path_switch",
+        "e1_01_unroll_shapes",
+        "e1_02_unroll_depth_errors",
+        "e1_03_unroll_coro_hooks",
+        "h7_02_rec_shapes",
+        "h7_03_rec_closures_varargs",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("depth");
+        for trace in ["always", "on2"] {
+            for lim in [
+                "idfold=0,recunroll=0",
+                "idfold=1,recunroll=0",
+                "idfold=1,recunroll=1",
+                "idfold=1,recunroll=2",
+            ] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            if heavy {
+                continue;
+            }
+            for lim in ["idfold=1,recunroll=0", "idfold=1,recunroll=2"] {
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
+                for b in [3, 17] {
+                    jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+                }
+                for (gc, mode) in [("1", "gen"), ("2", "gen"), ("2", "inc")] {
+                    let mut j = Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .limits_s(lim);
+                    if mode == "inc" {
+                        j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                    }
+                    jobs.push(j);
+                }
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(lim),
+                );
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits.starts_with("idfold=0") {
+            assert_eq!(
+                o.stats.idfold_traces,
+                0,
+                "{}: folded with idfold=0",
+                j.tag()
+            );
+        }
+        if j.prog == "e2_01_idfold_callee_switch"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+            && j.limits.starts_with("idfold=1")
+        {
+            assert!(
+                o.stats.idfold_traces >= 2,
+                "{}: folded traces {}",
+                j.tag(),
+                o.stats.idfold_traces
+            );
+            assert!(
+                o.stats.idfold_ustore >= 1,
+                "{}: the family rule never fired",
+                j.tag()
             );
         }
     }
