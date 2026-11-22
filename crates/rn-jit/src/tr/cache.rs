@@ -91,7 +91,7 @@ pub enum UnrollDemote {
 }
 
 /// E2: the process default of [`TrLimits::idfold`] (also the struct default).
-pub const IDFOLD_PROCESS: u32 = 0;
+pub const IDFOLD_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).

@@ -10516,7 +10516,7 @@ fn random_storm_programs() {
 fn cloreuse_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["cloreuse=0", "cloreuse=1"] {
+        for lim in ["cloreuse=0", "cloreuse=1", "cloreuse=1,idfold=0"] {
             for opts in ["+verify", "+exitstorm=3 +verify", "+emurun +verify", ""] {
                 jobs.push(Job::new("c64_cloreuse", trace).opts(opts).limits_s(lim));
             }
@@ -10525,7 +10525,10 @@ fn cloreuse_programs() {
     jobs.push(Job::new("c64_cloreuse", "t1"));
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.trace == "always" && j.limits == "cloreuse=1" && j.opts == "+verify" {
+        // (`idfold=0`: the program swaps the self upvalue of the recursion for another closure mid-run, so with E2 the region checks of the
+        // function-entry traces fail in that phase and the entry-failure rule flushes them (docs/JIT_TRACE.md section 34.8); the knob's effect
+        // on whether traces run is asserted without E2, the outputs with both)
+        if j.trace == "always" && j.limits == "cloreuse=1,idfold=0" && j.opts == "+verify" {
             assert!(
                 o.stats.installed >= 1 && o.stats.entered >= 1,
                 "{}: traces did not run: {}",

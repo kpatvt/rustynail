@@ -3426,3 +3426,223 @@ Light gate (changed-file plan, 60 mutants incl. the five `lazystub_*`, the P1 an
 `gate-heavy.sh` (2026-11-21, at 41467fe, 4479 s): OK. light PASS; tests-5.5-oracle KNOWN (`tr_identity_pre::fetch_plus_insns_identity` only); tests-5.4-oracle
 PASS; `oracle_options` PASS; jit-diff 1-200 (7 modes) PASS; mutant runner 751 ran, 751 caught, no survivors (`lazystub_dbl_skip` included).
 `scripts/gate-mutant-times.tsv` refreshed by that run.
+
+## 34. E1 / E2: up-recursion unrolling and region-scoped callee identity (stages 1 and 2 of docs/DESIGN_CALL_PROTOCOL.md; 2026-11-21, base f076f17)
+
+Stages 1 and 2 of the call-protocol redesign, re-implemented from the design (sections 4.1, 4.2) and not from the prototype patch: the patch's E1 had
+no policy (fixed `k = 3` regressed `permute` / `towers` / `list`) and its E2 skipped the identity chain everywhere (fails `k6_02_path_switch`). Knobs
+(`RUSTYNAIL_JIT_TRACE_LIMITS`): `recunroll` (0 = off, 1 = adaptive, **default**; 2 = fixed `k`, no demotion: the tests' and measurements' twin),
+`unrollk` (2..4, default 3), `unrollcode` (IR instructions of an unrolled family, default 400, 0 = no limit), `idfold` (0 / 1, default 1). The name `unroll` was taken (F4: inlined
+recursion levels of loop traces), hence `recunroll`.
+
+### 34.1 E1 as built
+
+**Recording** (`record.rs`, `call_lua`). A function-entry recording (`fn_root`, not a side, not a continuation) of native recursion gets
+`RecCfg::rec_unroll = k` from the driver (`cache::unroll_k`: the prototype is lazy-aware and not demoted). A self-call of the prototype is an
+**unroll-chain call** when (a) it satisfies every condition of a native push (`push_ok`: not a tail call, not vararg, a fixed result count, `nargs ==
+numparams`, and under E2's region invariant the record-time callee is the calling frame's closure), (b) every frame of the recording is an
+activation of the root prototype (`uses == d + 1`) and each inlined one was itself entered by a chain call (`RecFrame::unr`), (c) the callee was read
+from an upvalue (`callee_from_upvalue`: a `ULOAD`, or the root closure folded by E2: the shape rule of 34.2), (d) the depth is below `k` and below
+the inlining limit. A chain call at depth `d < k - 1` is inlined like any call (F4 machinery: identity guard, frame, TR6b / TR6c room); at depth
+`k - 1` it ends the recording with the native push (`end_rec_call` at depth `d`). A frame of the chain that returns or tail-calls before its own
+self-call breaks the chain: the recording fails with `AbortReason::Unroll` (and so does any other abort after the root's self-call was inlined:
+the `k = 1` recording would have ended at that call). `end_rec_call` records the chain in `RecCall::inl` (per inlined frame: the `CALL`'s `A` in
+its caller, the caller's continuation address), guards the callee against frame `d`'s closure, and asks for `d + 1` spare `CallInfo` nodes and the
+room of the final frame (the inlined frames' room was added by their own calls).
+
+**Assembly** (`asm.rs`, `rec_call_tail_lazy`). After the writeback (every live slot of every frame, root-relative), the inlined frames become lazy
+frames outermost first, exactly as `d` lazy pushes would have made them (`ci.next`, `func = caller func + A + 1`, the caller's `savedpc` = the
+continuation, `SetCi`, `AddFrame`), then the final frame is pushed as before and control jumps to the loop top (or through the entry head's cell).
+The eager push refuses an unrolled call (`incons`): only lazy-aware prototypes unroll (`driver_start`), so permute-like protos with loops never do.
+Leaves inside the inlined frames are frameful exits; their side traces are S1 frame side traces with the inlined frames virtual (unchanged code).
+
+### 34.2 The adaptive policy (criteria from the measurements of 34.6)
+
+| criterion | rule | data behind it |
+|---|---|---|
+| lazy-aware only | `TrProto::unroll_k` returns 1 unless the prototype is lazy-aware (loop-free, one result count, not vararg, not C-entered) | the prototype's `permute` +37 % instructions: the recording reached the loop of an inlined level (`InnerLoop`) and the entry head went `Black`; permute is not lazy-aware: 0 % now |
+| shape | only a callee read from an upvalue unrolls (`local function f .. f() ..`); method / field / global recursion does not | `towers` (method recursion `self:moveDisks`, lazy-aware) with fixed `k = 3`: +3.4 % instructions, **+36 % cycles**; L1i misses 0.73 -> 2.35 M, branch misses 0.30 -> 0.53 M, family code 80 -> 158 KB: every level repeats the 34-instruction lookup chain and the leaf side traces of every level inline `moveTopDisk` / `pushDisk` / `popDiskFrom`. With the rule: identical instruction count |
+| chain break | a frame of the chain that returns before its self-call aborts at once (`Unroll`); the trace is k copies of the path from the entry to the first self-call (LuaJIT's up-recursion), never a leaf path baked into a level | the prototype's `list` +65 % (leaf paths of `tail` recorded into the levels); with the rule `list` +0.2 % |
+| failure budget | an `Unroll` abort costs the head a flat wait of `UNROLL_WAIT + rand4` entries, no `k` / `kl` (no blacklisting); `UNROLL_FAILS` = 12 failures in a row lower `k` by one, below 2 the prototype is demoted for good; a success resets the count | fib: 62 % of the invocations that pass the root's self-call are too shallow for `k = 3` (`n` in {2, 3}); with 6 failures per level `fib 27` fell to `k = 2` in one run (0.62^6 = 5.6 %); 12 gives 0.3 % |
+| code growth | an unrolled family (root + side traces) holding more than `unrollcode` = 400 IR instructions demotes the prototype; the family is flushed at its next hot exit through the handler (`unroll_doom_check`, the graveyard path every policy flush of the handler uses) and re-recorded with `k = 1`. IR instructions, not code bytes: bytes depend on whether stubs are deferred (`lazystub`), and a byte budget made the `lazystub=1/0` twins of `s1_lazystub_programs` form differently | family weights with `k = 3`: fib 61, sumrec 32, list 123, binary_trees 145; cd's `delete` 1385 (cd: +0.06 % instructions unrolled, neutral; 85 KB of code); towers (excluded by the shape rule) 150 KB of code, same order as cd |
+| ineffective | an unrolled root flushed by the ineffective-trace rule demotes the prototype (the re-record is the `k = 1` trace) | safety net; not triggered by the measured set |
+
+**A finding, not fixed here.** Flushing a lazy-aware function-entry family *at the end of a side trace's pipeline* (the first implementation of the
+code-growth rule) corrupts the run: `awfy/cd 20` died with "attempt to call a nil value (method 'compareTo')" or a SIGSEGV in `TableRef::finish_set`,
+and it does so with `unrollk=1` as well (a scratch hook that applied the rule to the `k = 1` family of `delete`), so it is not an E1 defect: some
+state outside the trace table still refers to the family at that point. Flushing the same family from the exit handler (deferred to the
+graveyard) is correct in every run. The rule therefore only marks the family (`Trace::unroll_doom`); recorded as a risk in 34.8.
+
+### 34.3 E2 as built
+
+**Decision** (`cache::idfold_decide`, once per prototype at its first recording): folding is on when the prototype is lazy-aware, has no installed
+trace, the running closure reaches *itself* (the same object) through an upvalue `n` (`TrProto::idfold_uv`), and the prototype has no `SETUPVAL`
+of its own (it would only trip the family rule); otherwise off for good. **Region invariant in force** (`idfold_cfg`): folding is on, or a folded
+trace of the prototype is still installed (`TrProto::idfold_live`).
+
+**Recording.** `GETUPVAL n` in a frame that runs the region closure (the root frame; a frame whose closure ref is the root's, i.e. identity-guarded)
+whose record-time value is that closure, whose value address is outside the trace's frames, records as the closure's ref (`func_ref`): no `UREF`,
+TR15 guard or `ULOAD`; `end_rec_call` drops the then trivial self-compare. Under the invariant every native push and every inlined chain frame is
+guarded by identity with the calling frame's closure (`idfold_ident`: a push of another closure of the prototype is never made, the push guard is
+never the prototype-only `EQREF`), so every frame of a region runs the closure its checked entry verified.
+
+**Checked entries** (`asm.rs`). (a) Every outer entry of every trace of the family while the invariant is in force (where `entry_checks` stores
+`lazy_root`: roots, preludes, link roots) runs `idfold_check` with the TR6 room checks: the running closure `C`, `v = C.upvals[n]->v`, `v - base`
+unsigned `>= maxstacksize * 16` (TR15), `*v` is a Lua closure equal to `C`; a failure is a TR6 failure (the trace is not entered, tier 1 runs the
+frame). (b) A return of the region root (`rec_ret_tail`, `r13 == lazy_root`): the caller, which becomes the root and may have been suspended while
+foreign code ran, gets the same check in line after the pop; if it holds the return continues at the inner entry as before, else through the
+continuation head's plain dispatch cell (an outer entry, the leave block's fast path). The in-line form matters: `sumrec` returns through its region
+root at every level after a leaf exit (no side trace covers it): with the plain-cell form every such return was an outer entry, +26 % instructions;
+with the in-line check +0.1 %.
+
+**Family rule** (`pipeline`): while the invariant is in force, a trace of the family with a `USTORE` (any upvalue: `(closure, index)` pairs may
+alias the self upvalue, P3d; an inlined callee's store counts) is refused (`Compile("idfold_ustore")`), folding goes off for good
+(`idfold_ban`) and every family that holds a folded trace is doomed (flushed at its next hot exit, as in 34.2); once `idfold_live` is 0 traces with
+upvalue stores install as before. The open-upvalue range (TR15) is part of the checks above.
+
+### 34.4 Soundness
+
+**E1.** No new kind of state: an unrolled trace is an inlined recursion (F4) followed by lazy pushes (C70).
+* I1 (TR3): the chain frames are virtual inlined frames until the push; every exit before it rebuilds them from the snapshot `FrameLink`s (the
+  existing `exit.rs` / `mat_stub` paths); S1 side traces keep them virtual.
+* I3 (TR6b / TR6c): the entry checks cover the room of every inlined call and of the final frame and `d + 1` spare nodes, all or nothing: the trace
+  never pushes a frame the interpreter's fast path would not push; when the room is short the trace exits before any push and tier 1 / the
+  interpreter call one frame at a time, growing the stack or raising `stack overflow` at the reference depth (`e1_02`: cold and warm overflow depths
+  equal, messages equal; `h7_04` near the limit). The post-push checks of the next iteration are the trace's own (`ir.extent`, `ir.depth = k`).
+* I2 (TR5): one budget charge for the whole recorded path, exits refund per snapshot (unchanged); the unrolled path is a longer straight-line
+  segment.
+* I6 (L-INV): the `d` chain frames and the pushed one are pushed during the region by a trace of the family and are lazy; `lazy_leave`
+  completes them like any lazy frame (`callstatus` from the `CALL`s' `C`, one value for a lazy-aware prototype; `savedpc` = the continuation of each
+  inlined `CALL`, `func`, `top`, `kcache`), so errors, `debug.traceback` / `getinfo`, hooks and the GC only ever see complete frames (tracebacks at
+  depth, `getinfo` from the bottom frame and errors at depths 1..40 in `e1_02` / `e1_03`).
+* I5 (TR22): the loop top polls once per `k` calls; the inlined calls need no poll (asynchronous hooks may fire one iteration late, the argument of
+  every inlined call). A count hook installed from inside the recursion and a hook installed by a finalizer: `e1_03`.
+* I9 / I10: the chain frames register the root prototype (no new dependency); `RETF` is off for lazy prototypes (unchanged).
+* Coroutines: no region spans a C function; yields at the leaves and in the middle of an unrolled recursion (`e1_03`).
+* Policy state (failure counts, `unroll_off`, `unroll_doom`) only decides *what* is recorded or *when* a family is flushed, never how a trace runs.
+
+**E2.** The fold assumes `C.upvals[n] == C` for the region closure `C` at every folded `GETUPVAL`.
+* *Established* at every checked entry: an outer entry verifies it for the frame it enters, which becomes the region root (`lazy_root`), and so does
+  a root return for the caller that becomes the root.
+* *Every region frame runs `C`*: frames above the root were pushed in this region by family traces, each push (and each inlined chain frame) guarded
+  by identity with the pushing frame's closure (`idfold_ident`), by induction `C`.
+* *Nothing in a region can change it.* Code outside the family's traces (the main chunk's register store into an open upvalue, `SETUPVAL` in tier 1
+  / the interpreter, `debug.setupvalue` / `upvaluejoin`, a C function, a finalizer, another coroutine) cannot run inside a region (I6: no Lua code
+  outside the family's traces, no C function, no GC safepoint); a family trace cannot store an upvalue (family rule; the refused trace is never
+  installed, and traces compiled before the ban held no store); slot stores of the family's traces write frames at or above the root and the root
+  return writes one register of the caller: the self upvalue's value address is outside the root frame (TR15 at the check), not above it (open
+  upvalues point into live frames, which at the check are at or below the root), and outside the caller's frame at a root return (the in-line check
+  repeats TR15 for the new root); and a closure's own frames never hold its self upvalue (it is a local of the enclosing function).
+* *Every way back into the family after foreign code is a checked entry*: outer entries (dispatch cells), root returns; inner entries (native push,
+  native return of a frame above the root) are taken only by frames pushed in the current region. Exits leave the region (`lazy_leave`); a side
+  trace attached to an exit continues the region and is a family trace (the rule and the fold apply to it).
+* *Transitions*: the decision happens before the prototype's first trace; folding never turns on later; while a folded trace lives every new family
+  trace keeps the checked entries, so a region started by an unfolded trace still verifies the invariant.
+* The naive form (no checked entries) fails `k6_02_path_switch` and `e2_01` (the prototype's measurement: mutant `idfold_outer_unchecked`).
+
+Lua-visible behaviour (design section 5): hooks and count hooks, the budget semantic (`instruction_count_identity`, `tr_identity`), stack overflow
+depth and message, C-stack limit (native pushes are Lua-to-Lua calls), errors / tracebacks / `getinfo`, coroutines, GC and memory errors (nothing
+allocates in a region that did not before) are unchanged by both elements for the reasons above; each has a program in 34.5.
+
+### 34.5 Tests and mutants
+
+New programs (`tests/vm`, also in the `vm_corpus` against the reference builds): `e1_01_unroll_shapes` (tree / linear / allocating / float
+recursion, mutual recursion, tail recursion beside a non-tail self-call, vararg recursion, closures captured per level, method recursion,
+Ackermann, data-dependent paths), `e1_02_unroll_depth_errors` (stack overflow: cold and warm depths equal, same message; recursion near the limit;
+errors at depths 1..12 with traceback frames; `pcall` at every level; arithmetic errors on values from deep frames; `getinfo` from the bottom),
+`e1_03_unroll_coro_hooks` (yields at the leaves and mid-recursion, a count hook and a call hook installed from inside, `traceback` at depth, a
+finalizer, coroutines inside recursion), `e1_04_unroll_method_only` (towers: method recursion only), `e2_01_idfold_callee_switch` (13 cases: the
+upvalue reassigned by the main chunk; replaced by `debug.setupvalue` from a leaf; `debug.upvaluejoin` onto another cell; a global recursion
+replaced; many closures of one prototype; crossed self upvalues, linear and tree-shaped (the root-return case); `__call` and `__index` replaced;
+upvalue stores in the family by an inlined callee, on the self upvalue, mid-recursion on a hot path; a field switched to another closure whose
+upvalue names the first).
+
+`tr_core` (every job compared with the interpreter): `e1_unroll_programs` (7 programs x `always` / `on2` x `recunroll` 0 / 1 / fixed k 2 / 3 / 4,
+`+verify`; for fixed k 3 and 4: exit storm, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress; asserts unrolled
+installs with fixed k and none with 0), `e1_unroll_policy_programs` (shape rule: no unrolled trace in `e1_04` with `recunroll=1`; code-growth rule
+with `unrollcode=1`: demotions and doomed-family flushes; adaptive installs), `e2_idfold_programs` (7 programs incl. `k6_02_path_switch` x
+`idfold` 0 / 1 alone and with unrolling, `+verify`, exit storms, budgets, GC stress 1 / 2 both modes, stack-move stress; asserts folded traces
+and the family rule firing in `e2_01`). `tr_policy::e1_policy` (knobs, `unroll_k`, failure budget, degradation, demotion, the `Unroll` wait).
+The emulator (`+emurun`) refuses native self-calls (unchanged), so it adds nothing here; `tr_identity` / `instruction_count_identity` / the
+oracle run in the heavy gate over the corpus with the new defaults.
+
+Mutants (registry 759 -> **773**): `h9_inl_push_skip`, `h9_inl_savedpc_off`, `h9_inl_bump_off`, `h9_maxci_short` (frames of the chain; caught by
+`e1_unroll_programs`), `h9_fallback_never`, `h9_fail_penalised`, `h9_demote_ignored` (policy; `e1_policy`), `h9_code_rule_never`,
+`h9_doom_never`, `h9_shape_any` (`e1_unroll_policy_programs`), `idfold_outer_unchecked` (the naive form), `idfold_rootret_inner`,
+`idfold_ustore_family`, `idfold_push_proto` (`e2_idfold_programs`; `idfold_rootret_inner` survived the first run and is caught since case (13),
+the tree-shaped crossed recursion, was added). Pinned to `recunroll=0`: `bc_sbump_programs` (its side-trace counts are those of the `k = 1`
+formation the rule was measured on).
+
+### 34.6 Measured (release `rn-cli`, `RUSTYNAIL_SEED=0`, `taskset -c 4`, instructions of the first run, cycles min of 5 (5.5 key set) / 3 (sanity set, 5.4); binaries at equal-length paths, one environment string of equal length in every column)
+
+Columns: `base` = f076f17 (`b55`); the new binary with `recunroll=0,idfold=0` (`off`: the code of before; its cycle column is the layout
+reference), `recunroll=1,idfold=0` (**E1**), `recunroll=0,idfold=1` (**E2** alone), `recunroll=1,idfold=1` (**E1 + E2**, the shipped default).
+Deltas are against `off` (same binary: no layout effect). LuaJIT 2.1 from docs/DESIGN_CALL_PROTOCOL.md section 8 (same machine and method).
+
+| program (5.5) | base | off | E1 | E2 | E1 + E2 | vs prototype (E1 / E1+E2) | LuaJIT | ratio cyc E1+E2 (was) |
+|---|---|---|---|---|---|---|---|---|
+| fib 32 | 703.6 / 113.5 | 703.6 / 114.9 | 451.5 / 73.0 (**-35.8 % / -36.5 %**) | 612.0 / 100.4 (-13.0 / -12.6 %) | **390.2 / 62.4 (-44.5 % / -45.7 %)** | 451.6 / 73.0; 410.9 / 65.2 | 227.0 / 42.9 | **1.45x** (2.65x) |
+| binary_trees 15 | 3104.1 / 601.7 | 3104.1 / 616.7 | 2496.2 / 495.1 (-19.6 / -19.7 %) | 2938.8 / 577.2 (-5.3 / -6.4 %) | **2397.5 / 483.8 (-22.8 / -21.6 %)** | 2498 / 496.0; 2448 / 484.1 | 3083 / 864.3 | 0.56x (0.71x) |
+| sumrec (linear) | 1055.8 / 232.2 | 1055.8 / 233.0 | 693.1 / 110.7 (-34.4 / -52.5 %) | 1057.2 / 184.7 (+0.1 / -20.7 %) | **659.8 / 110.0 (-37.5 / -52.8 %)** | 693.1 / 115.4; 702.4 / 116.1 | 244.4 / 85.7 | 1.28x (2.73x) |
+| permute 300 | 692.7 / 122.9 | 692.7 / 120.7 | = / 120.4 | = / 120.3 | = / 121.0 | prototype fixed k: +37.4 % instr | 1462.7 / 31.3 (lottery) | |
+| towers 100 | 353.1 / 85.4 | 353.2 / 86.2 | = / 86.6 | = / 85.9 | = / 85.6 | prototype fixed k: +4.4 % / +35.6 % | 205.9 / 44.9 | |
+| list 300 | 342.4 / 81.8 | 342.5 / 81.4 | 343.1 / 81.9 (+0.2 %) | = / 81.5 | 343.1 / 81.9 (+0.2 % / +0.6 %) | prototype fixed k: +65.3 % | 270.4 / 76.9 | |
+| cd 20 | 10716.2 / 2891.6 | 10712.4 / 2875.9 | 10731.7 / 2897.2 (+0.18 / +0.7 %) | 10721.2 / 2901.9 (+0.08 %) | 10735.7 / 2918.2 (+0.22 % / +1.5 %) | | | |
+| queens, pqueens, richards, deltablue, havlak, raytrace, raytrace 40, nbody, awfy nbody, lua_lexer, classic_vector, dijkstra_routes, expr_lang, lru_cache, tremove_front | | | within 0.04 % instructions of `off` | | within 0.07 % (havlak +0.07 %, deltablue +0.04 %); cycles within the run-to-run spread (largest: raytrace +1.3 %, classic_vector +0.3 %, lua_lexer -0.3 %) | | | |
+
+`base` against `off` (knob off, a different binary): instructions within 0.12 % (classic_vector +0.12 %, cd -0.03 %; the allocator addresses
+behind pointer-keyed hashing move with the binary), cycles up to +5 % on nbody (layout: equal instructions).
+
+**Sanity set** (44 programs: the 14 awfy programs, the 25 of `bench/programs`, the 5 apps; min of 3): only `programs/fib` (7780.7 -> 4287.8 M,
+-44.9 %; 1243 -> 678 Mcyc), `programs/binary_trees` (7403.9 -> 5755.4, -22.3 %; 1583 -> 1254 Mcyc), `awfy/cd` (+0.22 %) and `awfy/list`
+(+0.15 %) move by more than 0.1 % instructions; every other program is within 0.07 %. Cycle differences at equal instruction counts (same binary)
+reach +3.5 % (`programs/closures`), +3.3 % (`awfy/storage`), +1.4 % (`programs/string_ops`): run-to-run spread of min-of-3 on paths that execute
+the same instructions; nothing above +1 % instructions.
+
+**Lua 5.4** (the design applies unchanged: the code is version-neutral; min of 3):
+
+| program (5.4) | base | off | E1 | E1 + E2 |
+|---|---|---|---|---|
+| fib 32 | 703.6 / 113.5 | 703.6 / 114.1 | 451.5 / 72.6 (-35.8 %) | 390.1 / 62.2 (-44.6 % / -45.5 %) |
+| binary_trees 15 | 3402.2 / 664.5 | 3402.2 / 675.5 | 2788.5 / 559.7 (-18.0 %) | 2689.9 / 542.1 (-20.9 % / -19.7 %) |
+| sumrec | 1056.0 / 232.7 | 1056.0 / 233.3 | 693.3 / 112.1 | 660.0 / 113.3 (-37.5 % / -51.4 %) |
+| cd 20 | 12539.2 / 3389.2 | 12535.7 / 3369.2 | 12246.2 / 3278.3 (-2.3 %) | 12255.0 / 3308.2 (-2.2 % / -1.8 %) |
+| list 300 | 359.0 / 85.4 | 359.1 / 85.2 | 356.0 / 85.6 (-0.9 %) | 355.9 / 84.7 (-0.9 %) |
+| permute, towers, queens, richards, deltablue, havlak, raytrace (40), nbody, lua_lexer, classic_vector, dijkstra_routes, expr_lang, lru_cache, tremove_front | | | within 0.04 % | within 0.1 % (havlak +0.05 %); raytrace cycles +2.8 % at equal instructions (spread) |
+
+**Compile cost** (verbose stats, `off` -> E1 -> E1 + E2; code bytes = traces + deferred stubs, pipeline time in Mtsc):
+fib 32: 7.4 -> 12.1 -> 12.9 KB, 0.34 -> 0.59 -> 0.54 Mtsc (3 -> 4 recordings); binary_trees: 16.0 -> 32.3 -> 33.7 KB, 0.50 -> 1.01 -> 0.90 Mtsc;
+cd 20: 826 -> 891 -> 883 KB (+7 %), 68 -> 77 -> 76 recordings, pipeline 45.7 -> 36.1 -> 35.4 Mtsc (single runs: the pipeline time varies by
++-25 % between runs); expr_lang: identical (no lazy-aware recursion).
+
+### 34.7 Gates
+
+E1 commit (1f54faa, E2 machinery present with `idfold=0`): light gate all steps PASS (fmt, mutant map, clippy 5.5 / 5.5-jit / 5.4, rn-core
+5.5 / 5.4, trace suites 5.5 / 5.4, `vm_corpus` + rn-cli, jit-diff 1-50); mutant group of the changed files 241 ran, 240 caught;
+`idfold_rootret_inner` survived and is caught (re-run) since `e2_01` case (13).
+
+E2 commit (`idfold=1` by default): light gate on the final tree: fmt, mutant map, clippy x3, rn-core x2, `vm_corpus`, jit-diff 1-50 PASS;
+the trace suites 5.5 / 5.4 failed on `cloreuse_programs` only (the program swaps the self upvalue mid-run: with E2 its function-entry traces are
+flushed by the entry-failure rule in that phase, 34.8; the "traces ran" assertion now uses `cloreuse=1,idfold=0`, outputs are still compared
+with E2 on; the test passes on 5.5 and 5.4 after the change); the mutant group (241) left `cloreuse_guard_skip` alive for the same reason, caught
+after the change (re-run of `cloreuse_*`, `idfold_*`, `h9_*`: 15 ran, 15 caught).
+
+**Heavy gate: not run on these commits.** One heavy run of the final tree was started and stopped after ~4 minutes on the lead's instruction
+(the lead believed the heavy run of 41467fe, section 33.4, covered this work; that run predates every source change of E1 / E2). In its place the
+oracle-feature tests that E1 / E2 can affect were run on the final tree, on 5.5 and 5.4: `tr_core::instruction_count_identity` (the budget
+semantic in every mode), `tr_core::{e1_unroll_programs, e1_unroll_policy_programs, e2_idfold_programs}` (oracle build), and the whole
+`tr_identity` binary (`identity_budget_sweep`, `identity_options`, `identity_trace_modes`): all PASS on both versions (`instruction_count_identity` 212-223 s, `tr_identity` 5 of 5 in 452-477 s). Not run: `oracle_options` (sharded),
+jit-diff 1-200 in seven modes, the full mutant runner (773): the lead's heavy gate should cover them.
+
+### 34.8 Remaining risks
+
+* **The pipeline-time flush of a lazy-aware family** (34.2 finding) is a latent defect outside E1 / E2: nothing ships that flushes at that point
+  now, but any future policy that does (or an existing path that reaches it in a way not exercised here) can corrupt a run. Reproduction: apply the
+  code-growth rule to every function-entry family (any prototype, `unrollk=1`) with an immediate `request_flush` at the end of `pipeline` and run
+  `awfy/cd 20`.
+* E1's policy is calibrated on the measured set: a heavy *upvalue* recursion whose family stays under 400 IR instructions but whose leaves are
+  costly is not demoted (no such program in the 22 + 44 measured; cd's `delete` crosses the budget and is neutral either way).
+* E2 changes the behaviour of a prototype whose self upvalue keeps changing between outer entries (k6_02-like): its entries fail the check, the
+  entry-failure rule flushes and the head ends in tier 1 (sound; slower than before for that shape only).
+* Global-function and method recursion get neither element (the shape rule; E5 is the design's answer for methods).
+* The emulator does not run native self-calls (unchanged), so `+emurun` twins add no coverage for E1 / E2.
