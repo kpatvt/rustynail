@@ -207,3 +207,51 @@ for it = 1, 80 do
   s12 = s12 + o:r(5)
 end
 print("rootret", s12)
+
+-- (13) register 0 reassigned, then a guard: a side trace that starts after the write (at the `val` test) sees the new receiver as its entry
+-- register 0. It is recorded while the new receivers are instances of the class itself, then entered with instances of another class: the
+-- prototype writes register 0, so its lookups are never folded (with a fold, the side trace would call the class's method on them)
+local Z = newclass()
+local Z2 = newclass()
+function Z:z(n)
+  if n == 0 then return 1 end
+  if n == 3 then local nx = self.nx if nx then self = nx end end
+  local v = self.val
+  if v == 2 then v = 7 end
+  return self:z(n - 1) + v
+end
+function Z2:z(n) return 1000 + n end
+local s13 = 0
+for it = 1, 150 do
+  local nx
+  local val = (it % 2 == 0) and 2 or 1
+  if it <= 60 then nx = setmetatable({ val = val }, Z)
+  else nx = setmetatable({ val = val }, (it % 3 == 0) and Z2 or Z) end
+  s13 = s13 + setmetatable({ val = 1, nx = nx }, Z):z(9)
+end
+print("reg0write", s13)
+
+-- (14) as (12), formed so that the root return happens: every call passes all three arguments and wants one result (the prototype is
+-- lazy-aware), the peer calls run without a victim first (the continuation after the peer call gets its trace), then some peers change the
+-- class of the waiting receiver: the peer frame returns natively as the root of its region into that receiver's continuation, which must look
+-- the method up again (the receiver's class is now RR2)
+local RR = newclass()
+local RR2 = newclass()
+function RR:r(n, victim)
+  if victim then local ok = pcall(setmetatable, victim, RR2) end
+  if n == 0 then return 1 end
+  local v = 0
+  local p = self.peer
+  if p then v = p:r(n - 1, self.flag) end
+  return v + self:r(n - 1, nil) + 1
+end
+function RR2:r(n, victim) return 50 end
+local s14 = 0
+for it = 1, 200 do
+  local p = setmetatable({}, RR)
+  local o = setmetatable({}, RR)
+  o.peer = p
+  if it > 100 and it % 5 == 0 then o.flag = o end
+  s14 = s14 + o:r(5, nil)
+end
+print("rootret2", s14)

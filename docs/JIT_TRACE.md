@@ -3879,7 +3879,7 @@ and 5.4. **Not run** (by instruction): the heavy gate, the oracle-feature suites
   prototype" assertion does not fire, so it is not a walk over frames of another prototype. E5 avoids (2) by ending the recording at a refused
   push; the `e5_01` twin skips GC stress 1 in `always` mode for (1). Release builds do not check `kcache`; a frame whose `kcache` is 0 and whose
   function reads a constant would crash.
-* **Two E5 mutants survive**. `midfold_reg0_any` (the decision ignores writes of register 0): the record-time rules (`slot0_entry`, the push
+* **Two E5 mutants survive** (**both caught since, 36.2**: `e5_01` cases (13) and (14)). `midfold_reg0_any` (the decision ignores writes of register 0): the record-time rules (`slot0_entry`, the push
   receiver rule) already keep a trace from folding or pushing after its own write of register 0, and outer entries check the current register
   0; only a side trace that starts after such a write could fold on the new receiver, and `e5_01` case (11) did not produce one.
   `midfold_rootret_inner` (no check at root returns): needs a native root return into a caller suspended across foreign code with a receiver
@@ -3890,7 +3890,7 @@ and 5.4. **Not run** (by instruction): the heavy gate, the oracle-feature suites
 * E5's checked entries call a Rust helper at every outer entry (a family with frequent outer entries pays ~80 instructions each); root returns
   usually take the in-line cache.
 
-## 36. The lazy-chain defect of 35.8 (2026-11-22, base 7b121ea)
+## 36. The lazy-chain defect of 35.8, the two E5 survivors, E6: direct exit-to-side links for recursion families (stage 5 of docs/DESIGN_CALL_PROTOCOL.md; 2026-11-22, base 7b121ea)
 
 ### 36.1 The lazy-chain defect (35.8): root cause and fix
 
@@ -3942,4 +3942,30 @@ pinned seed); it passes in every job with it, on 5.5 and 5.4. The `e5_midfold_pr
 `CallInfo` node too (point (2) above no longer hides a missing completion). The 224 programs of `tests/vm` and `tests/lazyci` in `always` /
 `on` with `lazypoison=1` (debug `rnlua`, against the interpreter): no difference.
 
-Mutants: registry 784 -> 785 (`lazy_sidefail_no_leave`, caught by `lz_side_entry_programs` on 5.5 and 5.4).
+Mutants: registry 784 -> 785 (`lazy_sidefail_no_leave`, caught by `lz_side_entry_programs` on 5.5 and 5.4). Gate (light, commit 91bd3f7): fmt, clippy x3,
+core x2, `vm_corpus`, jit-diff 1-50 PASS; the trace suites and the mutant map failed on the registry count / stale map (fixed, re-run PASS); mutant
+group 124 ran, 122 caught (the two survivors of 35.8, caught by 36.2).
+
+### 36.2 The two E5 survivors of 35.8
+
+Both are observable; the programs that catch them needed a formation the earlier cases did not produce.
+
+* **`midfold_reg0_any`** (the decision ignores writes of register 0). `e5_01` case (13): `Z:z` writes `self = self.nx` on the `n == 3`
+  path and then tests `self.val`. The side trace of the write path does not fold (its register 0 is not the entry load); its exit at the
+  `val` test starts a side trace *after* the write, whose entry register 0 is the new receiver: recorded while the new receivers are `Z`
+  instances, the record-time lookup gives `Z.z`, the `SELF` folds and the push passes the receiver rule. Later the same side trace is
+  entered with `Z2` instances (nothing on its path guards their class), so a fold calls `Z.z` on them. The outer calls use depth 9, so that
+  the first root trace (which the first-trace rule needs to fold) is recorded on a path without the write; the receivers alternate their
+  `val` so that whichever branch the write path records, the side trace of the other branch exists before the `Z2` phase. With the
+  mutant: output differs in `always` and `on2` (`reg0write` 17835 instead of 32640); without it the prototype is never folded.
+* **`midfold_rootret_inner`** (no check at root returns). Case (12) never folded: its `pcall` statement wants 0 results and the
+  self-calls 1 (mixed result counts: the prototype is not lazy-aware), and `self:r(n - 1)` passes 2 arguments to a 3-parameter function
+  (no native push). Case (14) is (12) with every call passing all three arguments and wanting one result, and a first phase in which the
+  peer calls run without a victim (the continuation after the peer call gets its trace and becomes a native-return site). In the second
+  phase the peer changes the class of the waiting receiver with `pcall(setmetatable, victim, RR2)` (foreign code, outside every region),
+  then returns natively as the root of its region into that receiver's continuation trace, whose folded `self:r` must not run: the check
+  fails (the receiver's lookup now gives `RR2.r`) and the return continues through the head's plain dispatch cell. With the mutant: output
+  differs in `on2` (`rootret2` 4298 instead of 4900).
+
+Both rules were right; the mutants model real failures and stay. `gate-mutants.sh --only
+midfold_,lazy_sidefail`: 9 ran, 9 caught on 5.5 and on 5.4.
