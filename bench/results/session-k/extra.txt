@@ -1,0 +1,28 @@
+== instruction ratio vs b116447 > 1.005 (any build)
+apps/markdown pgo ins 1.017 cyc 1.015
+corpus/csv_ini_yaml pgo ins 1.012 cyc 1.013
+corpus/markdown_conv pgo ins 1.013 cyc 1.025
+corpus/penlight_mix pgo ins 1.027 cyc 1.019
+corpus/testrunner_luaunit pgo ins 1.006 cyc 1.003
+corpus2/dev/csv_report pgo ins 1.006 cyc 1.018
+corpus2/dev/template_gsub pgo ins 1.010 cyc 1.012
+corpus2/dev/wordfreq_wrap pgo ins 1.007 cyc 1.013
+jit-trace/alloc_ctor g54 ins 1.009 cyc 1.035
+jit-trace/rec_loop plain ins 1.179 cyc 1.146; pgo ins 1.179 cyc 1.139; p54 ins 1.177 cyc 1.131; g54 ins 1.176 cyc 1.133
+lib/error_tbl pgo ins 1.008 cyc 1.013
+lib/find_cap pgo ins 1.014 cyc 1.002
+lib/find_pat pgo ins 1.012 cyc 1.000
+lib/fmt_d pgo ins 1.006 cyc 1.004
+lib/load_small p54 ins 1.015 cyc 1.028; g54 ins 1.017 cyc 0.998
+lib/match pgo ins 1.009 cyc 1.002
+lib/setmt g54 ins 1.007 cyc 1.027
+lib/tunpack g54 ins 1.008 cyc 1.002
+programs/string_ops pgo ins 1.005 cyc 0.982
+real/lua_interp p54 ins 1.010 cyc 0.951; g54 ins 1.011 cyc 0.954
+== short programs (< 40 Mcyc plain), cycles vs b116447, plain/pgo/p54/g54
+short programs n 11 geomean [0.984, 0.986, 0.991, 0.988]
+== jit-trace set vs b116447 geomean
+plain cyc 1.003 ins 1.006 worst (1.1462567412609201, 'jit-trace/rec_loop')
+pgo cyc 1.004 ins 1.006 worst (1.1391438505512794, 'jit-trace/rec_loop')
+p54 cyc 1.004 ins 1.006 worst (1.1310348214266837, 'jit-trace/rec_loop')
+g54 cyc 1.004 ins 1.006 worst (1.1325395362022757, 'jit-trace/rec_loop')
