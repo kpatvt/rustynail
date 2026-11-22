@@ -2212,7 +2212,8 @@ fn e5_policy() {
     );
     for (env, want) in [
         (Some("midfold=0"), 0),
-        (Some("midfold=7"), 1),
+        (Some("midfold=7"), 2),
+        (Some("midfold=1"), 1),
         (None, MIDFOLD_PROCESS),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);

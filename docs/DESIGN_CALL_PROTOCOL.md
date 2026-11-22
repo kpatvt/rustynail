@@ -9,7 +9,14 @@ Measured (5.5, instructions / cycles against the same binary with both knobs off
 -36.5 % [-35.8 / -35.9], E1 + E2 **-44.5 % / -45.7 %** [-41.6 / -42.8], 62.4 Mcyc = **1.45x LuaJIT** (was 2.65x; the prototype reached 1.52x);
 binary_trees 15 -22.8 % / -21.6 % [-21.1 / -21.0]; sumrec -37.5 % / -52.8 % [-33.5 / -50.4]; permute / towers 0 (fixed k gave +37 % / +36 %
 cycles), list +0.2 % instructions (fixed k +65 %), cd 20 +0.2 % (5.4: -2.2 %); every other program of a 44-program sanity set within 0.07 %
-instructions. 5.4 matches (fib -44.6 %, binary_trees -20.9 %). Stages 3-8 are not built.
+instructions. 5.4 matches (fib -44.6 %, binary_trees -20.9 %).
+
+**Built (2026-11-22): stages 3 (E4) and 4 (E5)**, on by default (`lazyloop=1`, `midfold=1`); K5 left out (nothing measurable left after E5);
+design as built, soundness, tests, gates and findings in docs/JIT_TRACE.md section 35. Measured (5.5, one binary, against `lazyloop=0,midfold=0`):
+permute 300 **-14.2 % instructions / -15.9 % cycles** (E4 alone -4.8 % / -6.0 %; E5 needs E4's region; 5.4 -13.7 % / -14.0 %); towers, fib,
+binary_trees, list, queens, richards, deltablue, havlak, cd, raytrace and the 44-program sanity set within 0.09 % instructions (E5 is limited to
+method families with loops by default: on towers it cost +2.6 % cycles for nothing). Two E5 mutants survive and a pre-existing lazy-chain defect
+was found (JIT_TRACE 35.8). Stages 5-8 are not built.
 
 Evidence tags as in the other JIT documents: **[M]** measured here (command and binary stated), **[D]** disassembly count (exact for the path
 counted, the path frequencies from the call tree), **[E]** estimate with the derivation stated, **[J]** judgment.
@@ -423,8 +430,8 @@ builder sessions (one Sonnet builder, light gates per commit, heavy gate per sta
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | **E1 up-recursion unrolling, adaptive `k`** (lazy families) **BUILT** (JIT_TRACE 34; fib -35.8 % / -36.5 % as built) | **-35.8 % instr / -35.9 % cyc [M]** | 0 with the fallback (fixed k: +37 % [M]); after stage 4: [E] -20..30 % | **-19.5 % / -19.1 % [M]** | 0 with the fallback (fixed k: +4 % / +36 % [M]) | 0 / 0 / -2.5 % instr (cd 50, with E2) / 0 / 0 / 0 [M] | 3 | medium (formation policy; existing frame machinery) | 4.1 |
 | 2 | **E2 region-scoped callee identity** **BUILT** (JIT_TRACE 34; with 1: fib -44.5 % / -45.7 % as built) | -13.0 % / -9.6 % alone; **with 1: -41.6 % / -42.8 % [M]** | 0 | -5.4 % / -3.7 % [M] | 0 | 0 [M] | 2 | medium (new invariant, checked entries) | 4.2 |
-| 3 | E4 lazy frames for families with loops | 0 | [E] -5.6 % alone, enables 1 | 0 | 0 | 0 [J] | 2-3 | medium-high (loop roots in the region, RETF rule) | 4.4 |
-| 4 | E5 method identity + K5 | 0 | [E] -13.5 % | 0 | [E] -10..15 % | richards [E] < 2 % | 2-3 | medium-high (family store rule) | 4.5 |
+| 3 | E4 lazy frames for families with loops **BUILT** (JIT_TRACE 35; only families whose first trace is the entry trace ending in a self-call) | 0 | [E] -5.6 % alone, enables 1; **as built -4.8 % / -6.0 % [M]** | 0 | 0 | 0 [J]; as built 0 | 2-3 | medium-high (loop roots in the region, RETF rule) | 4.4 |
+| 4 | E5 method identity + K5 **BUILT** (E5 only; JIT_TRACE 35) | 0 | [E] -13.5 %; **as built with E4 -14.2 % / -15.9 % [M]** | 0 | [E] -10..15 %; **as built 0 (E5 off for loop-free families; on: +2.6 % cycles [M])** | richards [E] < 2 %; as built within 0.09 % [M] | 2-3 | medium-high (family store rule) | 4.5 |
 | 5 | E6 direct exit links (+ budget in `r11` across transfers) | [E] -5.5 % instr | [E] -2 % | [E] 2-4 % | [E] small | queens [E] 2-7 % (35 M exits; carry-path share unknown) | 2-3 | medium (patching lifetime) | 4.6 |
 | 6 | E9 tier-1 `jret` return, then IC, then native `fn_end` returns | 0 | 0 | 0 | 0 | [E] cd ~3 %, raytrace / deltablue / list a few % of instructions; cycles unknown (P-M2: 0 % for -4 %) | 2 + 2 | medium | 4.9 |
 | 7 | E3 direct native return | -4.5 % instr / 0 % cyc alone; **0 % cyc after 1 + 2 [M]** | needs 3 | [M] -1.8 % instr | 0 | 0 | 1-2 | low-medium | 4.3 |

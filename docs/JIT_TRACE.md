@@ -3646,3 +3646,245 @@ jit-diff 1-200 in seven modes, the full mutant runner (773): the lead's heavy ga
   entry-failure rule flushes and the head ends in tier 1 (sound; slower than before for that shape only).
 * Global-function and method recursion get neither element (the shape rule; E5 is the design's answer for methods).
 * The emulator does not run native self-calls (unchanged), so `+emurun` twins add no coverage for E1 / E2.
+
+## 35. E4 / E5: lazy frames for recursion families with loops, region-scoped method identity (stages 3 and 4 of docs/DESIGN_CALL_PROTOCOL.md; 2026-11-22, base 9812416)
+
+Stages 3 and 4 of the call-protocol redesign, built from the design (sections 4.4, 4.5) on top of the as-built E1 / E2 (section 34: same region,
+checked entries, family store rule, demotion by flush through the handler). Knobs (`RUSTYNAIL_JIT_TRACE_LIMITS`): `lazyloop` (0 = off, **1 = on,
+default**, 2 = on and E1 may unroll such prototypes), `midfold` (0 = off, **1 = method families with loops (E4 candidates), default**, 2 = every
+lazy-aware method family). K5 (method-lookup CSE inside one trace, docs/STUDY_COVERAGE.md 5) was
+**left out**: the existing CSE already shares the lookup prefix inside a trace (the second `SELF` of a trace re-emits only `HMISS` / `HREFK` /
+`HLOAD` / `EQREF` of its own key: permute's traces 8-10 in the dump of 35.6), the remaining ops differ by key, and E5 removes the recursive key's
+chain at the source; nothing measurable was left for K5 on the measured set.
+
+### 35.1 E4 as built: which prototypes with loops become lazy-aware
+
+**The naive form is a regression.** Dropping the loop condition of the lazy decision (`dispatch`: `env.backedges.is_empty()`) makes every
+function with a loop and a function-entry head lazy-aware, recursive or not: `programs/heapsort` +101 % instructions, `programs/nbody` +13.4 %,
+`awfy/nbody` +7.0 %, `programs/queens` +10.0 %, `awfy/storage` +2.5 %, `awfy/richards` +2.0 % (one binary, the knob on against off). A lazy
+family pays at its links (always through the leave block: no guard-free second entry, no register carry) and at every leave (completion of the
+chain); it gains only per native push and return. A family that never pushes natively, or whose regions end at every call, loses.
+
+**The rule** (`cache::lazy_loop_rule`, `TrProto::lazy_loop_decide`). A native-recursion prototype with loops that satisfies every other condition
+of the lazy decision (function-entry head, not vararg, not C-entered, one `CALL` result count) is a *candidate* (`TrProto::lazy_st = LAZY_CAND`).
+The decision happens at the compile of its **first root trace**: lazy-aware (`LAZY_ON`: `TrProto::lazy`, every head's `lazy` and `rec` / `e2`
+cells via `set_rec`) when that trace is its **function-entry trace ending in a native self-call** without `RETF` segments; eager for good
+(`LAZY_OFF`) otherwise. A family whose first trace is a loop trace or a leaf path (queens: the column loop; storage: the leaf's fill loop) has
+its regions end at every call (the leaves return through exits of loop-family side traces, which cannot return natively): with the rule both
+are unchanged. Root recordings of an undecided candidate run as if it were lazy-aware (`driver_start`: no `RETF`), so the first trace never holds
+a `RETF` that the decision would make unsound.
+
+**RETF into a candidate** (`Rec::retf`, I9). The static superset `maybe_lazy_proto` stays for loop-free prototypes; for a prototype with loops
+`cache::retf_into_loop_proto` decides dynamically: a lazy-aware one refuses, an undecided candidate is decided **eager for good** at that moment
+(a `RETF` trace that pops into it may then be installed; it never becomes lazy-aware under it), a prototype without a dispatch table refuses
+(it could still become a candidate). Effect: `heapsort` keeps its `RETF` (0.00 %).
+
+**E1 on such prototypes** stays off by default (`unroll_k_loops`: only `lazyloop=2`); the method recursion permute has is excluded by E1's
+shape rule anyway (section 34.2), and E5's receiver rule refuses pushes from inlined frames (35.4), so unrolling a method family needs receiver
+provenance through inlined frames: not built. E2 is not applied to candidates either (its decision needs `lazy` at the first recording, which a
+candidate does not have yet).
+
+**Considered and dropped (measured, no gain).** `lazylink`: a side trace of a lazy family links like an eager one (guard-free second entry, G1's
+room skip) when no lazy frame exists (`r13 == lazy_root`). It was built and measured: identical instruction counts on the key and the 44-program
+sets (storage's cost is the push into a non-direct head, not the link), so it was removed. A handler shortcut (`lazy_leave` skipping the closure
+lookup when the running frame is the root): no measurable change, removed.
+
+### 35.2 E4 soundness
+
+* **I6 (L-INV) for loop roots.** A loop trace of a lazy family is entered only at its outer entry, which stores `lazy_root := r13` like every root
+  (`entry_checks`, unchanged; mutant `lazyloop_root_not_set` skips it for loop roots only, caught). Loop traces push no frames (`rec_call` ends a
+  trace, `LOOP` ends another), so inside a loop trace the running frame is the region root; its back edge stays in the region (no Lua code, no
+  safepoint: TR1 holds for every trace; class-A helpers exit before a GC step). Every exit completes the chain (`exit_entry` with `meta.lazy`,
+  the leave blocks; unchanged code, the predicate only widened).
+* **Pushes from continuation traces that crossed a loop back edge** (permute: the continuation after the in-loop self-call runs the swap, the
+  `FORLOOP`, and pushes): the lazy push of C70 with the same `lazy_cs` (one `CALL` result count is part of the candidate rule), the same
+  completion at leave.
+* **I9 (RETF never pops into a maybe-lazy caller).** Static for loop-free prototypes, dynamic for prototypes with loops (above): a candidate
+  becomes lazy-aware only at its first root compile and only if no `RETF` recording popped into it before (the query decides it eager); a
+  lazy-aware one is refused. Mutant `lazyloop_retf_ok` (the dynamic refusal skipped) is caught by `tr_core::e4_lazyloop_programs`
+  (`e4_04_lazy_loop_retf`; 5.5 only, RETF is 5.5 only).
+* **The decision cannot change a running family.** It happens before the prototype's first trace is installed (`untraced`); afterwards the state
+  is final. The heads' cells are recomputed (`set_rec`) at that point, when no trace of the prototype exists.
+* **Lua-visible behaviour** (each with a program, `e4_02`): stack overflow at the same depth and with the same message cold and warm (a recursion
+  inside a loop), recursion close to the limit, errors and tracebacks from depth, `pcall` at every level inside the loop, arithmetic errors on
+  values from deep frames, yields at the leaves and in the middle of the loop, a count hook and a call hook installed from inside, `getinfo` /
+  `traceback` at depth, a finalizer and collections in a recursion that allocates in its loops, a metatable changed during method recursion.
+
+### 35.3 E4 measured
+
+permute 300: 692.7 -> 659.6 M instructions (-4.8 %), cycles -5.9 % (one binary, `lazyloop` 1 against 0; the design's estimate was -5.6 %
+instructions); every other program of the key set and of the 44-program sanity set: identical instruction count except raytrace -0.05 %.
+Full tables: 35.6.
+
+### 35.4 E5 as built: region-scoped method identity
+
+**Decision** (`driver_start`, `midfold_key`, `cache::midfold_decide`, once per prototype at its first recording, searched only while pending):
+on when the prototype is a candidate with loops (with `midfold=2` also any lazy-aware prototype), has no installed trace, **its register 0 is never written by an instruction** (`OP_PROPS[op].a && A == 0`, the
+interpreter's "sets register A" bit) **and never captured by a closure it makes** (an upvalue descriptor `instack && idx == 0`), and a
+`SELF A 0 K` of it (`K` a short-string constant) whose lookup on the running frame's register 0 — raw gets and `__index` links of tables only,
+at most `MIDFOLD_DEPTH` tables — gives the running closure. The key's constant index is kept (`midfold_kidx`). **First-trace rule**
+(`TrProto::midfold_first`): when the first root trace of the prototype compiles without a folded lookup, folding goes off for good (nothing
+relies on it yet). **Loop families only by default**: on towers (loop-free method recursion, lazy-aware since C70) E5 folds but buys nothing
+(+0.11 % instructions) and costs +2.6..3.0 % cycles (5.5 and 5.4, interleaved min-of-5 runs: the helper at every region start, towers' regions are
+short); permute (a loop family, E4) gains -14.2 % / -16 %. Earlier forms on towers: helper at every root return +9.7 % instructions; first
+trace without a fold (the first-trace rule) and the root-return cache below brought it to +0.1 % instructions, the cycles remained.
+
+**Recording** (`Rec::midfold_self`). `SELF A 0 K` of the key in the root frame of the recording (`cur_depth == 0`), with register 0 still its entry
+load (`slot0_entry`) and the record-time lookup giving the running closure, records as `R[A] = func_ref` (the running closure's `SLOAD`),
+`R[A+1] = register 0`: no `HMISS` / metatable / `__index` / `HREFK` / `HLOAD` / `EQREF` chain (13 IR instructions in permute's entry trace).
+`TraceIr::midfold` carries it through the optimiser (`opt_loop::run` copies it: a pass that rebuilds the IR must).
+
+**Pushes under the invariant** (`midfold_ident`: folding on, or a folded trace installed). A native push from the root frame requires the callee
+to be the running closure (identity, as E2's `idfold_ident`) **and its register 0 to be the pusher's own, unchanged register 0**
+(`midfold_recv_ok`: slot-map refs, no loads). Otherwise the push is not made and **the recording ends at that call with an exit**
+(`end_exit`): tier 1 makes the call and the callee's frame starts its own region through a checked entry. (Inlining such a call instead, the
+path a refused push took first, met a defect of the inlined-recursion path under lazy regions that predates E5: 35.8.)
+
+**Checked entries.** (a) Every outer entry of a family trace while the invariant is in force (`entry_checks`, where `lazy_root` is stored) calls
+`cache::jit_tr_midfold_check(thread, ci, kidx)` (class N: reads only) with the room checks: register 0 of the frame is a table whose lookup of
+the key gives the frame's closure; a failure is a TR6 failure (tier 1 runs the frame). A passing check stores the verified pair (receiver,
+closure) into `ExitArea::mf_recv` / `mf_cl`. (b) A return of the region root (`rec_ret_tail`, `r13 == lazy_root`): the caller gets the check in
+line: a table receiver and a Lua closure equal to `mf_recv` / `mf_cl` pass without a lookup (every frame of a method region shares the root's
+receiver and closure, and a caller with the same receiver and closure has the same lookup result), otherwise the helper; failing, the return
+goes through the continuation head's plain dispatch cell (an outer entry), as E2's.
+
+**Family rule** (`pipeline_inner`, `midfold_stores_ok`). While the invariant is in force no trace of the family may: store into a hash part
+through an `HREFK` of the key or of `__index`, or through an `HREFV` of a string key (an integer `HREFV` is fine), insert (`NEWREF`) the key or
+`__index`, or call `setmetatable` (`LIB SETMT`). Array stores, integer-key sets (`TSET`), upvalue stores are fine (register 0 is not captured).
+A refused trace bans folding (`midfold_ban`: off for good, folded families doomed and flushed at their next hot exit through the handler, as
+E1 / E2). A folded trace of a family that turns out not lazy-aware (a candidate decided eager at that compile) is refused the same way.
+
+### 35.5 E5 soundness
+
+The fold assumes, for every frame `X` of a region that runs a folded trace, `lookup(X.R0, K) == X.closure`.
+
+* *Established* at every checked entry: the outer entry verifies it for the frame it enters (the region root); a root return verifies it for the
+  caller that becomes the root (the cache case: the caller has the same receiver object and the same closure as the region root, whose fact was
+  verified at the region's start and is preserved, so the caller's holds).
+* *Every frame of a region has the root's receiver and closure*: frames above the root were pushed in this region by family traces, each push
+  from a recording's root frame with callee == running closure (identity) and register 0 == the pusher's unchanged entry register 0
+  (`midfold_recv_ok`); by induction from the root. Inlined frames never push under the invariant (refused), side traces start in their parent's
+  frame.
+* *A frame's register 0 does not change while it lives*, except by foreign code: no instruction of the prototype writes it and no closure
+  captures it (the decision), `debug.setlocal` is a C function (outside any region; the frame's next region entry is checked: `e5_02` swaps a
+  suspended receiver with `setlocal`).
+* *Nothing in a region changes a lookup of K*: the lookup depends on the receiver's hash entry for K, its metatable, that metatable's `__index`
+  entry and the next table's K entry (and so on down the chain). Code outside the family cannot run in a region (I6). A family trace cannot store
+  K or `__index` into any table, cannot store a string key it does not know, cannot set a metatable (family rule; key-based, so it holds for every
+  table on every chain at once), and insertions of other keys only rehash (a rehash keeps the mapping). `rawset` is recorded as those stores.
+  An `__index` function is never followed (the check and the decision require tables).
+* *Every way into a region after foreign code is a checked entry*: outer entries, root returns. Inner entries (native push, native return of a
+  frame above the root) and side traces continue a region without foreign code in between.
+* *Transitions*: the decision happens before the first trace; folding never turns on later; the first-trace rule and bans only turn it off;
+  while a folded trace lives every family trace keeps the checks and the push rule.
+
+Lua-visible behaviour (design section 5; programs `e5_01`, `e5_02`): instances that override the method, a subclass through the same call
+sites, the class method rebound by a leaf inside the region (the family rule fires), `setmetatable` on the receiver and `__index` replaced,
+another receiver passed to the running closure (`f(self.peer, ..)`), another closure of the prototype called on the receiver, register 0
+reassigned (the prototype is not folded), an `__index` function; stack overflow depth and message, errors and method tracebacks, `pcall` at
+every level, yields, hooks installed from inside, `getinfo` / `getlocal` of the receiver at depth.
+
+### 35.6 Measured (release `rn-cli`, one binary; `RUSTYNAIL_SEED=0`, `taskset -c 4`; instructions of the first run, cycles min of 5 (key set) / 3 (sanity set, 5.4); deltas against the same binary with `lazyloop=0,midfold=0` (E1 / E2 on))
+
+**Lua 5.5** (cycles min of 5; one environment string of equal length in every column):
+
+| program (5.5) | ref (E1+E2) instr M / cyc M | E4 | E5 | E4 + E5 |
+|---|---|---|---|---|
+| fib | 390.2 / 62.5 | 390.2 / 62.5 (+0.00 % / +0.0 %) | 390.2 / 62.4 (+0.00 % / -0.2 %) | 390.2 / 62.4 (+0.00 % / -0.2 %) |
+| binary_trees | 2397.5 / 482.7 | 2397.5 / 480.8 (+0.00 % / -0.4 %) | 2397.5 / 480.9 (+0.00 % / -0.4 %) | 2397.5 / 477.4 (+0.00 % / -1.1 %) |
+| sumrec | 659.8 / 112.8 | 659.8 / 110.5 (+0.00 % / -2.0 %) | 659.8 / 112.5 (+0.00 % / -0.3 %) | 659.8 / 108.4 (+0.00 % / -3.9 %) |
+| permute | 692.7 / 120.7 | 659.6 / 113.4 (-4.78 % / -6.0 %) | 692.7 / 120.4 (+0.00 % / -0.2 %) | 594.5 / 101.5 (-14.18 % / -15.9 %) |
+| towers | 353.3 / 86.3 | 353.3 / 85.9 (+0.00 % / -0.5 %) | 353.3 / 86.0 (+0.00 % / -0.3 %) | 353.3 / 86.0 (+0.00 % / -0.3 %) |
+| list | 343.1 / 82.2 | 343.1 / 82.2 (+0.00 % / +0.0 %) | 343.2 / 82.1 (+0.03 % / -0.1 %) | 343.2 / 82.2 (+0.03 % / +0.0 %) |
+| queens | 511.5 / 95.6 | 511.5 / 95.6 (+0.00 % / +0.0 %) | 511.6 / 95.7 (+0.02 % / +0.1 %) | 511.6 / 95.7 (+0.02 % / +0.1 %) |
+| pqueens | 5391.4 / 1849.1 | 5391.4 / 1846.9 (+0.00 % / -0.1 %) | 5391.4 / 1848.9 (+0.00 % / -0.0 %) | 5391.4 / 1845.3 (+0.00 % / -0.2 %) |
+| richards | 176.8 / 59.8 | 176.8 / 59.6 (+0.00 % / -0.3 %) | 176.9 / 59.6 (+0.06 % / -0.3 %) | 176.9 / 59.5 (+0.06 % / -0.5 %) |
+| deltablue | 323.6 / 108.0 | 323.6 / 107.6 (+0.00 % / -0.4 %) | 323.8 / 107.8 (+0.06 % / -0.2 %) | 323.8 / 108.6 (+0.06 % / +0.6 %) |
+| havlak | 515.8 / 160.1 | 515.7 / 160.2 (-0.02 % / +0.1 %) | 515.8 / 158.2 (+0.00 % / -1.2 %) | 516.0 / 158.4 (+0.04 % / -1.1 %) |
+| cd | 10736.4 / 2944.8 | 10736.2 / 2929.0 (-0.00 % / -0.5 %) | 10736.5 / 2944.0 (+0.00 % / -0.0 %) | 10736.6 / 2930.4 (+0.00 % / -0.5 %) |
+| raytrace | 365.7 / 113.5 | 365.6 / 112.8 (-0.03 % / -0.6 %) | 365.6 / 114.2 (-0.03 % / +0.6 %) | 365.6 / 113.5 (-0.03 % / +0.0 %) |
+| raytrace40 | 4601.7 / 1173.5 | 4601.7 / 1162.0 (+0.00 % / -1.0 %) | 4601.8 / 1177.6 (+0.00 % / +0.3 %) | 4601.5 / 1169.5 (-0.00 % / -0.3 %) |
+
+**Lua 5.4** (cycles min of 3; measured before the loop-only default of `midfold`, so its E5 column is `midfold=1` folding every lazy-aware method
+family: towers +0.11 % instructions / +2.5 % cycles there, which is what made `midfold=1` loop-only; E4 + E5 on permute -13.7 % / -14.0 %):
+
+| program (5.4) | ref (E1+E2) instr M / cyc M | E4 | E5 | E4 + E5 |
+|---|---|---|---|---|
+| fib | 390.2 / 61.9 | 390.2 / 62.1 (+0.00 % / +0.3 %) | 390.2 / 62.3 (+0.00 % / +0.6 %) | 390.2 / 61.9 (+0.00 % / +0.0 %) |
+| binary_trees | 2689.9 / 550.7 | 2689.9 / 548.3 (+0.00 % / -0.4 %) | 2689.9 / 563.1 (+0.00 % / +2.3 %) | 2689.9 / 549.6 (+0.00 % / -0.2 %) |
+| sumrec | 660.0 / 114.2 | 660.0 / 119.7 (+0.00 % / +4.8 %) | 660.0 / 109.4 (+0.00 % / -4.2 %) | 660.0 / 108.7 (+0.00 % / -4.8 %) |
+| permute | 712.7 / 121.0 | 679.7 / 114.7 (-4.63 % / -5.2 %) | 712.7 / 121.0 (+0.00 % / +0.0 %) | 614.9 / 104.1 (-13.72 % / -14.0 %) |
+| towers | 358.5 / 87.0 | 358.5 / 87.0 (+0.00 % / +0.0 %) | 358.9 / 89.2 (+0.11 % / +2.5 %) | 358.9 / 89.0 (+0.11 % / +2.3 %) |
+| list | 356.5 / 85.8 | 356.5 / 85.5 (+0.00 % / -0.3 %) | 356.5 / 86.1 (+0.00 % / +0.3 %) | 356.5 / 85.8 (+0.00 % / +0.0 %) |
+| queens | 430.4 / 80.4 | 430.4 / 80.8 (+0.00 % / +0.5 %) | 430.4 / 80.5 (+0.00 % / +0.1 %) | 430.4 / 80.6 (+0.00 % / +0.2 %) |
+| pqueens | 5878.8 / 1959.6 | 5878.8 / 1968.7 (+0.00 % / +0.5 %) | 5878.8 / 1971.1 (+0.00 % / +0.6 %) | 5878.8 / 1961.1 (+0.00 % / +0.1 %) |
+| richards | 177.6 / 59.9 | 177.6 / 59.8 (+0.00 % / -0.2 %) | 177.6 / 59.9 (+0.00 % / +0.0 %) | 177.7 / 59.2 (+0.06 % / -1.2 %) |
+| deltablue | 348.4 / 118.6 | 348.4 / 118.6 (+0.00 % / +0.0 %) | 349.0 / 119.6 (+0.17 % / +0.8 %) | 349.0 / 117.7 (+0.17 % / -0.8 %) |
+| havlak | 576.2 / 177.1 | 576.2 / 178.2 (+0.00 % / +0.6 %) | 576.6 / 180.2 (+0.07 % / +1.8 %) | 576.8 / 172.5 (+0.10 % / -2.6 %) |
+| cd | 12255.0 / 3310.2 | 12255.0 / 3345.1 (+0.00 % / +1.1 %) | 12255.7 / 3354.1 (+0.01 % / +1.3 %) | 12255.8 / 3328.5 (+0.01 % / +0.6 %) |
+| raytrace | 367.3 / 117.7 | 367.2 / 117.9 (-0.03 % / +0.2 %) | 367.4 / 118.0 (+0.03 % / +0.3 %) | 367.3 / 118.4 (+0.00 % / +0.6 %) |
+| raytrace40 | 4510.0 / 1198.7 | 4509.9 / 1221.1 (-0.00 % / +1.9 %) | 4510.1 / 1193.1 (+0.00 % / -0.5 %) | 4510.1 / 1199.3 (+0.00 % / +0.1 %) |
+
+**Sanity set** (the 44 programs: 14 awfy, 25 `bench/programs`, 5 apps; min of 3; default against `lazyloop=0,midfold=0`): `awfy/permute`
+235.3 -> 202.5 M instructions (-13.9 %), 43.6 -> 37.0 Mcyc (-15.1 %); every other program within 0.09 % instructions (`awfy/deltablue` +0.09 %,
+`awfy/richards` +0.06 %, `awfy/towers` +0.06 %: the decision's key search at the first recording of each prototype; the rest 0.00 %). Cycle
+differences above 2 % occur only at equal instruction counts and are spread: `awfy/havlak` +6.2 % / `awfy/storage` +2.8 % in the batch run,
+re-measured interleaved (min of 5, two rounds): havlak 156.4 / 159.5 against 157.7 / 161.6 Mcyc, storage 100.0 / 100.5 against 101.1 / 101.1;
+`programs/matmul` -4.1 %. No program above +1 % instructions or +2 % cycles.
+
+**Per stage.** E4 alone: permute -4.8 % instructions / -6.0 % cycles (5.4: -4.6 % / -5.2 %), nothing else moves. E5 alone (`lazyloop=0`):
+nothing (permute is folded only once it is lazy-aware: E5 needs E4's region). E4 + E5: permute **-14.2 % / -15.9 %** (5.4: -13.7 % / -14.0 %);
+the design's estimates were -5.6 % (E4) and -13.5 % (E5). towers: 0 (E5 is off for loop-free method families by default; with it on, +2.6 %
+cycles: 35.4). E1 on loop families (`lazyloop=2`): no program changes (permute's method recursion is excluded by E1's shape rule), so it stays
+off. Lua 5.4 permute absolute: 712.7 -> 614.9 M instructions, 121.0 -> 104.1 Mcyc.
+
+### 35.7 Tests, mutants, gates
+
+New programs (`tests/vm`, also in `vm_corpus` against the reference builds, identical on 5.5 and 5.4): `e4_01_lazy_loop_shapes`,
+`e4_02_lazy_loop_errors`, `e4_03_lazy_loop_policy`, `e4_04_lazy_loop_retf`, `e5_01_method_identity`, `e5_02_method_errors`. `tr_core`:
+`e4_lazyloop_programs` (5 programs incl. `k6_02_path_switch`, `deep_recursion` x `lazyloop` 0 / 1 / 2, `+verify`; for 1: exit storm, budgets
+3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress; asserts lazy-aware candidates with the knob on and none off),
+`e5_midfold_programs` (`e5_01`, `e5_02`, `e1_04` (towers), `e4_01` x `midfold` 0 / 1, `+verify`; for 1 the same stresses; asserts folded traces
+and the family rule firing in `e5_01`); `tr_policy::e4_policy` (knob, decision rule, state transitions, the RETF query, the unroll rule),
+`tr_policy::e5_policy` (knob, first-trace rule). `cp1_leaf_programs` asserts its repair counter with `lazyloop=0` (its permute-shaped program is
+lazy-aware with E4 in 5.4 `on2`; outputs compared in both).
+
+Mutants (registry 773 -> **784**): `lazyloop_retf_ok`, `lazyloop_decide_any`, `lazyloop_root_not_set` (all caught), `midfold_outer_unchecked`,
+`midfold_check_true`, `midfold_store_family`, `midfold_recv_any`, `midfold_push_proto`, `midfold_first_keep` (caught), **`midfold_reg0_any` and
+`midfold_rootret_inner` survive** (35.8).
+
+Gates (light gate per commit, nothing heavier, by instruction): E4 commit 20b8121: all steps PASS except `tests-5.4-trace` (`cp1_leaf_programs`, a
+stat assertion: fixed, re-run 5.5 / 5.4 PASS); mutant group (96 mutants incl. `lazyloop_*`, `idfold_*`, `centry_*`) PASS. E5 commit 991838d: all
+steps PASS except the trace suites (`exit_area_layout_is_frozen`, the two new area words: fixed, re-run PASS) and the mutant group (the two
+survivors of 35.8). The policy commit (loop-only `midfold`, pending-only key search, these docs): light gate as reported in its message. Also
+run: `gate-mutants.sh --only lazyloop_` (3 / 3), `--only midfold_` (5.5: 6 / 8), `--only lazyloop_,midfold_ --version 5.4` (8 / 10,
+`lazyloop_retf_ok` is 5.5-only); `tr_core::{e4_lazyloop_programs, e5_midfold_programs, cp1_*}` and `tr_policy::{e4_policy, e5_policy}` on 5.5
+and 5.4. **Not run** (by instruction): the heavy gate, the oracle-feature suites (`tr_identity`, `instruction_count_identity`,
+`oracle_options`), jit-diff 1-200 in seven modes, the full mutant runner.
+
+### 35.8 Findings and remaining risks
+
+* **The 34.8 hazard did not reproduce on this base.** A scratch hook that flushed every lazy-aware family above 400 IR instructions (and a
+  variant flushing at its first side trace) at the end of a side trace's pipeline ran `awfy/cd 20` in `on` / `always`, seeds 0-3,
+  `unrollk=1` / `recunroll` 0 / 1 / 2, and the 213 `tests/vm` programs in `on` / `always`: no difference, no crash. The deferred doom stays (E5's
+  ban uses it too); the hazard remains documented, root cause unknown.
+* **A pre-existing defect of the lazy chain, found by the new programs (not fixed).** With every new knob off (`lazyloop=0,midfold=0,recunroll=0,
+  idfold=0`) a debug build fails `debug_assert!(ci.kcache == ...)` in `run_mode`: the interpreter returns into frames whose `callstatus` and
+  `kcache` are 0 (fresh `CallInfo` nodes of lazy frames never completed). Reproductions: (1) the two method recursions of `e5_01` cases (3)
+  and (9) together under `RUSTYNAIL_GC_STRESS=1` or `2`, `RUSTYNAIL_JIT_TRACE=always` (`lazyci=0` or `recany=0` make it pass; the GC-stress check
+  of every frame below `thread.ci` at each collector step never fires, so the incomplete frames appear between collections); (2) any self-call
+  whose native push is refused and that is inlined instead, with a count budget of 17 (`e5_01` case (7) with the push refused): the caller
+  resumes with the closure where the call's result belongs (needs `lazyci`, `recany` and `unroll`). The Rust completion helper's "one
+  prototype" assertion does not fire, so it is not a walk over frames of another prototype. E5 avoids (2) by ending the recording at a refused
+  push; the `e5_01` twin skips GC stress 1 in `always` mode for (1). Release builds do not check `kcache`; a frame whose `kcache` is 0 and whose
+  function reads a constant would crash.
+* **Two E5 mutants survive.** `midfold_reg0_any` (the decision ignores writes of register 0): the record-time rules (`slot0_entry`, the push
+  receiver rule) already keep a trace from folding or pushing after its own write of register 0, and outer entries check the current register
+  0; only a side trace that starts after such a write could fold on the new receiver, and `e5_01` case (11) did not produce one.
+  `midfold_rootret_inner` (no check at root returns): needs a native root return into a caller suspended across foreign code with a receiver
+  whose lookup changed; since refused pushes end the recording, `e5_01` case (12) did not produce one. Both rules stay (they are what the
+  soundness argument uses); the programs that would catch them are open work.
+* The decision rules are formation-dependent: E4's rule looks at which root trace compiles first (in the tests' `always` mode queens' entry
+  trace compiles first and is lazy-aware), E5's first-trace rule likewise. Policy only: both orders are sound.
+* E5's checked entries call a Rust helper at every outer entry (a family with frequent outer entries pays ~80 instructions each); root returns
+  usually take the in-line cache.

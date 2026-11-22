@@ -12644,9 +12644,9 @@ fn e4_lazyloop_programs() {
 /// method, a subclass through the same sites, the class method rebound by a leaf, `setmetatable` / `__index` replaced, another receiver passed to
 /// the running closure, another closure of the prototype called on the receiver, register 0 reassigned, an `__index` function) and `e5_02`
 /// (overflow depth and message, errors and method tracebacks, pcall at every level, yields, hooks installed from inside, getinfo, setlocal of
-/// a suspended receiver), plus `e1_04` (towers) and `e4_01` x `midfold` 0 / 1, `+verify`; for `midfold=1`: exit storm, budgets 3 / 17 / 200,
-/// GC stress 1 / 2 in both collector modes, stack-move stress. Asserts folded traces and the family rule firing in `e5_01` with the knob on,
-/// none with it off.
+/// a suspended receiver), plus `e1_04` (towers) and `e4_01` x `midfold` 0 / 1 (loop families) / 2 (every method family), `+verify`; for
+/// `midfold=2`: exit storm, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress. Asserts folded traces and the
+/// family rule firing in `e5_01` with `midfold=2`, none with it off.
 #[test]
 fn e5_midfold_programs() {
     let progs = [
@@ -12659,11 +12659,11 @@ fn e5_midfold_programs() {
     for p in progs {
         let heavy = p.contains("errors");
         for trace in ["always", "on2"] {
-            for lim in ["midfold=0", "midfold=1"] {
+            for lim in ["midfold=0", "midfold=1", "midfold=2"] {
                 jobs.push(Job::new(p, trace).limits_s(lim));
                 jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
             }
-            let lim = "midfold=1";
+            let lim = "midfold=2";
             jobs.push(
                 Job::new(p, trace)
                     .opts("+exitstorm=3 +verify")
@@ -12710,7 +12710,7 @@ fn e5_midfold_programs() {
             );
         }
         let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none();
-        if j.prog == "e5_01_method_identity" && plain && j.limits == "midfold=1" {
+        if j.prog == "e5_01_method_identity" && plain && j.limits == "midfold=2" {
             assert!(
                 o.stats.midfold_traces >= 4,
                 "{}: folded traces {}",

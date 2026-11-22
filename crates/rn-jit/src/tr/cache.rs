@@ -1022,7 +1022,7 @@ impl TrLimits {
                 "unrollcode" => l.unrollcode = v,
                 "idfold" => l.idfold = v.min(1),
                 "lazyloop" => l.lazyloop = v.min(2),
-                "midfold" => l.midfold = v.min(1),
+                "midfold" => l.midfold = v.min(2),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
@@ -5837,7 +5837,11 @@ pub fn midfold_decide(st: &mut State, pr: ProtoRef, key: Option<(u32, u64, u64)>
         .slots
         .iter()
         .any(|sl| matches!(&sl.body, Body::Trace(t) if t.root == pr.0));
-    let lazyish = tp.lazy.get() || tp.lazy_st.get() == LAZY_CAND;
+    let lazyish = if d.tr.cfg.limits.midfold >= 2 {
+        tp.lazy.get() || tp.lazy_st.get() == LAZY_CAND
+    } else {
+        tp.lazy_st.get() == LAZY_CAND
+    };
     vlog(d, || {
         format!(
             "--- midfold: proto:{} key {key:x?} lazy {lazyish} untraced {untraced}",
@@ -5853,6 +5857,12 @@ pub fn midfold_decide(st: &mut State, pr: ProtoRef, key: Option<(u32, u64, u64)>
         }
         _ => tp.midfold_st.set(2),
     }
+}
+
+/// E5: is the decision of `pr` still pending (the key search of `driver_start` runs only then)?
+pub fn midfold_pending(st: &mut State, pr: ProtoRef) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| tp.midfold_st.get() == 0)
 }
 
 /// E5: what a recording / compile of `pr` gets: the key to fold (`Some` while folding is on), and the key the region's checks verify (`Some`

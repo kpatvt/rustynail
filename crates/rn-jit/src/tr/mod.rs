@@ -699,7 +699,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     let (idf_fold, idf_ident) = pr.map_or((None, None), |pr| cache::idfold_cfg(st, pr));
     // E5 (`midfold`): the per-prototype decision at its first recording (a method recursion on its own register 0)
     if let Some(pr) = pr {
-        if cfg.limits.midfold != 0 {
+        if cfg.limits.midfold != 0 && cache::midfold_pending(st, pr) {
             let key = midfold_key(st, ci, cl);
             cache::midfold_decide(st, pr, key);
         }
