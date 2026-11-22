@@ -312,10 +312,13 @@ fn one_state(job: &Job, baseline: bool) -> (String, u64, u64) {
         }
         None => rn_std::new_state_with_libs().expect("state"),
     };
-    rn_jit::set_t15(
-        &mut st,
-        rn_jit::t15::runtime::T15Config::for_mode(rn_jit::t15::runtime::T15Mode::Off),
-    );
+    // (E9: `TR_CORE_T15=1` in a job's environment runs it with tier 1.5 in `always` mode: recompiles while frames of the old version are live)
+    let t15 = if std::env::var_os("TR_CORE_T15").is_some() {
+        rn_jit::t15::runtime::T15Mode::Always
+    } else {
+        rn_jit::t15::runtime::T15Mode::Off
+    };
+    rn_jit::set_t15(&mut st, rn_jit::t15::runtime::T15Config::for_mode(t15));
     {
         let g = st.globals();
         st.raw_set_str(g, b"__citop", rn_core::value::Value::native(citop))
@@ -12745,6 +12748,70 @@ fn e6_dlink_programs() {
             );
         }
     }
+}
+
+/// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Frames the tier-1 `CALL` pushes carry `CIST_T1RET` and their site's resume
+/// cell, and their tier-1 return jumps through the cell. `e9_01` mixes them with frames other pushers make on the same nodes (the general helper,
+/// metamethods, C functions, coroutines), several sites per callee with every result count, tail calls inside marked frames, hooks installed from
+/// inside, tracebacks, errors, stack overflow, a callee replaced while marked frames are suspended, and a recursive loop function that tier 1.5
+/// recompiles while outer activations wait at their call (`TR_CORE_T15`: the cells are rewritten, older activations return into the new version).
+/// Tier 1 alone (`t1`: the knob applies when named) and with traces (`always`, `on2`), knob off / on, budgets, GC stress in both collector modes,
+/// stack-move stress, `+verify`; with the oracle feature the instruction-count identity. Detector of `t1_jret_site_next`, `t1_jret_ignore_mark`,
+/// `t1_jret_no_setk`.
+#[test]
+fn e9_t1call_programs() {
+    let mut jobs = Vec::new();
+    for p in ["e9_01_t1call", "e6_01_dlink", "deep_recursion"] {
+        let heavy = p.contains("deep");
+        for trace in ["t1", "always", "on2"] {
+            for lim in ["t1call=0", "t1call=1"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).limits_s(lim).env("TR_CORE_T15", "1"));
+            }
+            let lim = "t1call=1";
+            if trace != "t1" {
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            for b in [3, 17, 200] {
+                if heavy && b != 17 {
+                    continue;
+                }
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                if heavy && gc == "1" {
+                    continue;
+                }
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            // (stack-move stress moves the stack at every growth: `e9_01`'s stack overflow case is quadratic in tier 1 alone, with the knob
+            // off as well; `e6_01` covers tier 1 under it)
+            if !heavy && !(trace == "t1" && p == "e9_01_t1call") {
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(lim),
+                );
+            }
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                if heavy {
+                    continue;
+                }
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let _ = compare(jobs);
 }
 
 /// docs/JIT_TRACE.md section 36.1 (the lazy-chain defect of 35.8): a side trace of a lazy-aware family entered by an exit of its parent inside the

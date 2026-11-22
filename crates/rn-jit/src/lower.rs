@@ -318,6 +318,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) armm_next: Vec<bool>,
     /// BUNDLE-D: the tag-checking landing label of the mid-block pcs that have one.
     pub(crate) land_of: HashMap<u32, L>,
+    /// E9 (`CallEnv::jret`): the index of each `CALL`'s resume cell (the number of `CALL`s before it); empty when the cells are off.
+    pub(crate) call_ord: Vec<u32>,
 }
 
 impl Cx<'_> {
@@ -1132,7 +1134,19 @@ pub(crate) fn lower_ex(
         is_head: head[..n].to_vec(),
         armm_next,
         land_of: HashMap::new(),
+        call_ord: Vec::new(),
     };
+    if cfg.calls.is_some_and(|e| e.jret != 0) {
+        let mut k = 0u32;
+        cx.call_ord = ops
+            .iter()
+            .map(|o| {
+                let i = k;
+                k += u32::from(*o == Some(OpCode::Call));
+                i
+            })
+            .collect();
+    }
     cx.pcl = (0..n).map(|_| cx.p.label()).collect();
     cx.pcl_post = cx.pcl.clone();
     let mut bind_idx: Vec<usize> = vec![usize::MAX; n];

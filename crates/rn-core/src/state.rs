@@ -117,6 +117,12 @@ pub const CIST_MMRET: u32 = CIST_FIN << 1;
 /// (JIT, placement (d).) The frame's function has compiled code (`Proto.jit != null`).
 #[cfg(feature = "jit_check_d")]
 pub const CIST_JIT: u32 = 1 << 27;
+/// (JIT, not in the reference; E9 of docs/DESIGN_CALL_PROTOCOL.md, docs/JIT_TRACE.md section 37.) The frame was pushed by the
+/// tier-1 `CALL` template, which also stored in the frame's `ck` word (unused by Lua frames: C continuations only) the address
+/// of the caller's per-site resume cell (`jit_layout::callinfo::JRET`). Only the tier-1 `RETURN` reads it; every other
+/// frame creator writes `callstatus` whole (clearing the bit), the interpreter's tail call keeps it (same caller, same
+/// continuation). No other reader compares it (the trace guards mask their bits explicitly).
+pub const CIST_T1RET: u32 = 1 << 28;
 /// `CIST_LEQ` (5.4, `LUA_COMPAT_LT_LE`): using `__lt` for `__le`.
 #[cfg(rustynail_lua54)]
 pub const CIST_LEQ: u32 = CIST_MMRET << 1;

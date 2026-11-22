@@ -254,6 +254,11 @@ pub(crate) struct JitProto {
     /// traces are off (docs/JIT_TRACE.md 3.1).
     #[cfg(feature = "trace")]
     pub(crate) tr: Option<Box<crate::tr::cache::TrProto>>,
+    /// E9 (`t1call` bit 0, docs/JIT_TRACE.md section 37): one resume cell per `CALL` instruction (bytecode order): the absolute address of
+    /// the current code version's resume entry of the instruction after it (0 = none: the return looks the entry up as before). The
+    /// tier-1 `CALL` stores the address of its cell in the frame it pushes; a recompile rewrites the cells (the box never moves, so
+    /// frames pushed by older versions stay valid). Empty when the knob is off.
+    pub(crate) jret_cells: Box<[usize]>,
 }
 
 impl JitProto {
@@ -1059,6 +1064,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl_mut: 0,
         t1q: 0,
         hints: std::ptr::null(),
+        jret: 0,
     };
     d.env = Some(e);
     let (idx_name, idx_hash, idx_levels) = idx_name(st, d);
@@ -1221,6 +1227,8 @@ fn transient_bytes(p: &Proto) -> usize {
 /// the prototype is freed): the `JitProto` box, its resume table, the monitor, and the live-set slot.
 fn descriptor_bytes(p: &Proto) -> usize {
     std::mem::size_of::<JitProto>()
+        // (E9: the resume cells are charged by `compile` when they exist; the empty box is not, so that the knob off charges what it did)
+        - std::mem::size_of::<Box<[usize]>>()
         // (the `tr` pointer of the trace build is charged with the trace table, `TrProto::bytes_for`, so that a state
         // with traces off is charged exactly what the build without the feature charges)
         - if cfg!(feature = "trace") { std::mem::size_of::<usize>() } else { 0 }
@@ -1251,13 +1259,19 @@ fn compile(st: &mut State, p: &Proto) -> Result<(), Fail> {
     if !nests.is_empty() {
         desc += t15rt::data_bytes(p.code().len(), nests.len());
     }
+    let ncells = if t1call_bits(d0) & T1CALL_JRET != 0 {
+        jret_sites(p)
+    } else {
+        0
+    };
+    desc += ncells * std::mem::size_of::<usize>();
     let transient = transient_bytes(p);
     if !jit_hooks::charge_code(st, desc + transient) {
         // SAFETY: as in `set_mode`.
         unsafe { (*data_ptr(st)).deny = 32 };
         return Err(Fail::Retry);
     }
-    let r = compile_inner(st, p, desc, &nests);
+    let r = compile_inner(st, p, desc, &nests, ncells);
     jit_hooks::uncharge_code(st, transient);
     if r.is_err() {
         jit_hooks::uncharge_code(st, desc);
@@ -1414,7 +1428,64 @@ fn resume_table(n: usize, low: &Lowered, em: &x86::Emitted) -> Vec<u32> {
     resume
 }
 
-fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -> Result<(), Fail> {
+/// E9: bit 0 of the `t1call` knob (`jret`).
+pub(crate) const T1CALL_JRET: u32 = 1;
+
+/// E9 (`t1call`): the knob's bits in effect: with traces on, or with traces off when the limit was named (as `t1q_bits`).
+pub(crate) fn t1call_bits(d: &JitData) -> u32 {
+    #[cfg(feature = "trace")]
+    {
+        let l = d.tr.cfg.limits.t1call;
+        if d.tr.cfg.mode != crate::tr::cache::TrMode::Off || l & 0x80 != 0 {
+            return l & 0x7f;
+        }
+    }
+    let _ = d;
+    0
+}
+
+/// E9: the number of `CALL` instructions of `p` (its resume cells, in bytecode order).
+fn jret_sites(p: &Proto) -> usize {
+    p.code()
+        .iter()
+        .filter(|&&w| {
+            rn_core::instruction::Instruction(w).opcode()
+                == Some(rn_core::ver::active::OpCode::Call)
+        })
+        .count()
+}
+
+/// E9: writes the resume cells of a code version (`resume`: its resume table, `base`: its block address): cell `k` = the entry of the
+/// instruction after the `k`-th `CALL`, 0 when that instruction has none. Called while no generated code runs (compile, the swap of a
+/// recompile), so no activation can read a half-written set.
+fn fill_jret_cells(cells: &mut [usize], code: &[u32], resume: &[u32], base: usize) {
+    if cells.is_empty() {
+        return;
+    }
+    let mut k = 0;
+    for (pc, &w) in code.iter().enumerate() {
+        if rn_core::instruction::Instruction(w).opcode() != Some(rn_core::ver::active::OpCode::Call)
+        {
+            continue;
+        }
+        let e = resume.get(pc + 1).copied().unwrap_or(0);
+        cells[k] = if e == 0 || e & crate::lower::calls::RESUME_MM_ONLY != 0 {
+            0
+        } else {
+            base - 1 + e as usize
+        };
+        k += 1;
+    }
+    debug_assert_eq!(k, cells.len());
+}
+
+fn compile_inner(
+    st: &mut State,
+    p: &Proto,
+    desc: usize,
+    nests: &[(u32, u32)],
+    ncells: usize,
+) -> Result<(), Fail> {
     let dp = data_ptr(st);
     // SAFETY: as in `set_mode`; `st` is not used through another path while `d` is live except
     // `charge_code`, which touches the heap accounting only.
@@ -1426,7 +1497,12 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
         d.deny -= 1;
         return Err(Fail::Retry);
     }
-    let env = call_env(st, d);
+    let mut env = call_env(st, d);
+    // E9: the resume cells live in the descriptor (allocated here so that the code can embed their addresses)
+    let mut jret_cells: Box<[usize]> = vec![0usize; ncells].into_boxed_slice();
+    if ncells > 0 {
+        env.jret = jret_cells.as_ptr() as u64;
+    }
     if env.inl != 0 {
         d.t1i_hints
             .entry(p.code_ptr() as usize)
@@ -1532,6 +1608,7 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
     // SAFETY: `dp` is still the live per-state data.
     let d = unsafe { &mut *dp };
     let resume = resume_table(p.code().len(), &low, &em);
+    fill_jret_cells(&mut jret_cells, p.code(), &resume, block.addr());
     let sym = if d.arena.perf_names() {
         format!("lua_proto:{}@{:p}", p.linedefined, p.code_ptr())
     } else {
@@ -1577,6 +1654,7 @@ fn compile_inner(st: &mut State, p: &Proto, desc: usize, nests: &[(u32, u32)]) -
         t15,
         #[cfg(feature = "trace")]
         tr: dis.and_then(|dis| dis.finish(base, &low, &em)),
+        jret_cells,
     });
     jp.hdr.resume = jp.resume.as_ptr();
     // P-G: the recorder's landing structure comes from this lowering (no second lowering at the first recording)
@@ -1702,7 +1780,11 @@ fn recompile_inner(
 ) -> Result<(), Fail> {
     // SAFETY: see `recompile`.
     let (d, jp) = unsafe { (&mut *dp, &mut *jpp) };
-    let env = call_env(st, d);
+    let mut env = call_env(st, d);
+    // E9: the new version's `CALL`s store the same cells (the box of the descriptor); the swap below rewrites them
+    if !jp.jret_cells.is_empty() {
+        env.jret = jp.jret_cells.as_ptr() as u64;
+    }
     let t15 = jp.t15.as_deref().expect("checked by recompile");
     // J5/F5 (TR19b): with traces on the new version gets the dispatch cells of the heads the regions do not own, the
     // dispatch table is the prototype's (`jp.tr`), and the version-install step below rewrites its cells.
@@ -1887,6 +1969,7 @@ fn recompile_inner(
         t15.retired.push(old);
     }
     jp.resume = resume;
+    fill_jret_cells(&mut jp.jret_cells, p.code(), &jp.resume, base);
     jp.hdr = JitProtoHdr {
         entry0: if entry_ok { base + off0 } else { 0 },
         base_m1: base - 1,

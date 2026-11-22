@@ -16299,6 +16299,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e6_01_dlink.lua"),
     },
+    // E9 (docs/JIT_TRACE.md section 37): the tier-1 call protocol (`t1call`)
+    Prog {
+        name: "e9_01_t1call",
+        small: true,
+        src: include_str!("../../../../tests/vm/e9_01_t1call.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

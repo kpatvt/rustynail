@@ -269,6 +269,10 @@ pub mod callinfo {
     pub const CIST_MMRET: u32 = crate::state::CIST_MMRET;
     /// `CIST_TAIL`: the frame was reused by a tail call.
     pub const CIST_TAIL: u32 = crate::state::CIST_TAIL;
+    /// E9 `CIST_T1RET`: pushed by the tier-1 `CALL`; [`JRET`] holds the caller's resume cell.
+    pub const CIST_T1RET: u32 = crate::state::CIST_T1RET;
+    /// E9: the resume-cell word of a frame marked [`CIST_T1RET`] (the `ck` field: C continuations only, never read for a Lua frame).
+    pub const JRET: usize = offset_of!(CallInfo, ck);
 }
 
 #[cfg(test)]

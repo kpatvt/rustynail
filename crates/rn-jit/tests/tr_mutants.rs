@@ -4368,6 +4368,21 @@ const TABLE: &[Row] = &[
         owner: "E6",
         dets: &[d("tr_core", "e6_dlink_programs")],
     },
+    Row {
+        name: "t1_jret_site_next",
+        owner: "E9",
+        dets: &[d("tr_core", "e9_t1call_programs")],
+    },
+    Row {
+        name: "t1_jret_ignore_mark",
+        owner: "E9",
+        dets: &[d("tr_core", "e9_t1call_programs")],
+    },
+    Row {
+        name: "t1_jret_no_setk",
+        owner: "E9",
+        dets: &[d("tr_core", "e9_t1call_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

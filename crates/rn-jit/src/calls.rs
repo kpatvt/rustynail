@@ -94,6 +94,10 @@ pub struct CallEnv {
     /// BUNDLE-T1I: the per-prototype masks of the rows worth emitting at each `CALL` (`t1inline::site_hints`, keyed by the address of
     /// the prototype's code; lives in the state's `JitData`, which outlives every lowering); null or no entry = every enabled row.
     pub hints: *const super::t1inline::SiteHints,
+    /// E9 (`t1call` bit 0, docs/JIT_TRACE.md section 37): address of the prototype's resume cells (one `usize` per `CALL` instruction, in
+    /// bytecode order, owned by its `JitProto`: stable across code versions); the flat call marks the frame `CIST_T1RET` and stores the
+    /// address of its site's cell in it, and the tier-1 return of such a frame jumps through the cell. 0 = off (the code is as before).
+    pub jret: u64,
 }
 
 /// R1: bits of [`CallEnv::tail_mut`], the test-only code mutations of the inline tail call (`tr::mutants`).
@@ -105,6 +109,19 @@ const TM_CLOSE: u8 = 8;
 /// H2c mutants of the inline tail call with a dynamic argument count (`B` = 0).
 const TM_DYN_COUNT: u8 = 16;
 const TM_DYN_TOP: u8 = 32;
+
+/// E9: a test-only mutant of the tier-1 resume cells (`tr::mutants`; never active without the `tr_mutants` feature).
+fn mut_active(name: &str) -> bool {
+    #[cfg(feature = "trace")]
+    {
+        crate::tr::mutants::active(name)
+    }
+    #[cfg(not(feature = "trace"))]
+    {
+        let _ = name;
+        false
+    }
+}
 
 /// Shared stubs of one function, created on demand.
 #[derive(Default)]
@@ -295,7 +312,20 @@ impl Cx<'_> {
         self.op(Op::Add(0, Src::V(1)));
         self.op(Op::Add(0, Src::Imm(1)));
         self.st(W::B8, Self::m_reg(6, ci::TOP as i32), 0); // func + 1 + fsize
-        self.st_imm(W::B4, Self::m_reg(6, ci::CALLSTATUS as i32), c as i32); // nresults + 1
+        if env.jret != 0 {
+            // E9: the frame returns through its site's resume cell (`ret_tail`); `CIST_T1RET` says the `JRET` word is this frame's
+            let ord = self.call_ord[pc as usize] + u32::from(mut_active("t1_jret_site_next"));
+            self.st_imm(
+                W::B4,
+                Self::m_reg(6, ci::CALLSTATUS as i32),
+                (c | ci::CIST_T1RET) as i32,
+            ); // nresults + 1
+            self.op(Op::Mov(4, env.jret + 8 * u64::from(ord)));
+            self.st(W::B8, Self::m_reg(6, ci::JRET as i32), 4);
+        } else {
+            self.st_imm(W::B4, Self::m_reg(6, ci::CALLSTATUS as i32), c as i32);
+            // nresults + 1
+        }
         self.st_imm(W::B4, Self::m_reg(6, ci::TRAP as i32), 0);
         self.ld(0, W::B8, Self::m_reg(2, env.proto_code));
         self.st(W::B8, Self::m_reg(6, ci::SAVEDPC as i32), 0);
@@ -820,6 +850,34 @@ impl Cx<'_> {
             let ret = self.l_exit(2);
             self.op(Op::Bind(l));
             self.ld(0, W::B4, ciw(ci::CALLSTATUS));
+            if env.jret != 0 {
+                // E9 (docs/JIT_TRACE.md 37): a frame the tier-1 `CALL` pushed (`CIST_T1RET`, never `CIST_FRESH`) holds its site's resume cell:
+                // the caller is suspended after that `CALL` (its `savedpc`), so the cell is the entry the walk below would find (0 = none:
+                // the walk decides). The caller's frame and constants come from its `CallInfo` as below.
+                let walk = self.p.label();
+                if !mut_active("t1_jret_ignore_mark") {
+                    self.op(Op::MovR(1, 0));
+                    self.op(Op::And(1, Src::Imm(ci::CIST_T1RET as i32)));
+                    self.br(Cc::Eq, 1, Src::Imm(0), walk);
+                }
+                self.ld(1, W::B8, ciw(ci::JRET));
+                self.ld(1, W::B8, Self::m_reg(1, 0));
+                self.br(Cc::Eq, 1, Src::Imm(0), walk);
+                self.ld(2, W::B8, thw(thr::CI)); // the caller (popped to by the return)
+                self.ld(3, W::B8, Self::m_reg(2, ci::FUNC as i32));
+                self.op(Op::Shl(3, 4));
+                self.ld(4, W::B8, thw(env.stack_off as usize));
+                self.op(Op::Add(4, Src::V(3))); // &stack[caller.func]
+                self.ld(3, W::B8, Self::m_reg(2, ci::KCACHE as i32));
+                self.op(Op::Lea(4, Self::m_reg(4, 16)));
+                self.op(Op::SetCi(2));
+                self.op(Op::SetFrame(4));
+                if !mut_active("t1_jret_no_setk") {
+                    self.op(Op::SetK(3));
+                }
+                self.op(Op::JmpR(1));
+                self.op(Op::Bind(walk));
+            }
             self.op(Op::And(0, Src::Imm(ci::CIST_FRESH as i32)));
             self.br(Cc::Ne, 0, Src::Imm(0), ret);
             self.ld(2, W::B8, thw(thr::CI)); // the caller (popped to by the return)

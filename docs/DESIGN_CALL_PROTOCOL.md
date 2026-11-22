@@ -23,7 +23,17 @@ transfers); the lazy-chain defect of 35.8 fixed first and the two E5 survivors c
 lifetime, flush ordering, TR5), tests and gates in JIT_TRACE section 36. Measured (5.5, one binary, `dlink=0` against `dlink=3`): fib **-8.3 %
 instructions / -5.8 % cycles** (estimate -5.5 % instructions), permute -3.7 % / -2.3 %, towers -2.8 % / -0.4 %, binary_trees -2.2 % / -0.4 %
 (estimate 2-4 %), sumrec -1.6 % / -2.5 %; queens **0** (estimate 2-7 %: queens is not a lazy-aware family, E6 is limited to them); every other
-program of the key and 44-program sets within 0.12 % instructions. 5.4 matches (fib -8.3 % / -6.0 %). Stages 6-8 are not built.
+program of the key and 44-program sets within 0.12 % instructions. 5.4 matches (fib -8.3 % / -6.0 %).
+
+**Stage 6 (E9) PARTIALLY BUILT (2026-11-22): item 1 (`jret` for tier-1 returns) built behind the default-off knob `t1call`; items 2 (call-site
+inline cache) and 3 (native return of function-entry traces) not built.** Design as built, soundness, tests and the measurements in
+docs/JIT_TRACE.md section 37. Measured (5.5, one binary, `t1call=0` against `t1call=1`): shipped configuration (traces on) cd +0.13 % instructions /
+-0.5 % cycles, richards +0.11 % / -0.2 %, deltablue -0.17 % / -0.2 %, raytrace +0.06 % / +1.7 % (re-run +0.2 %), list +0.13 % / +0.6 % (re-run -0.3 %):
+**0 on the five targets**, as P-M2 predicted; tier 1 alone (`RUSTYNAIL_JIT_TRACE=off`) fib **-5.3 % / -9.7 %**, binary_trees -2.2 % / -7.6 %, towers
+-1.3 % / -5.0 %, the five targets within noise. Most tier-1 returns of the targets pop frames the flat call did not push (cd 20: 11.3 M tier-1
+returns, 1.5 M through a cell). Item 2's ceiling (the tests it removes, nothing it adds) -0.2 .. -0.6 % instructions and no cycle change beyond noise
+on the targets; item 3's bound (outer entries of function-entry traces x 75 instructions) under 1 % of instructions on all five (deltablue 0.76 %,
+cd 0.23 %). Stages 7-8 are not built.
 
 Evidence tags as in the other JIT documents: **[M]** measured here (command and binary stated), **[D]** disassembly count (exact for the path
 counted, the path frequencies from the call tree), **[E]** estimate with the derivation stated, **[J]** judgment.
@@ -369,6 +379,12 @@ per call. Three items, none prototyped:
 Files: `rn-jit/src/calls.rs` (`tpl_call`, `tpl_return`, `ret_tail`), `lower.rs`, `rt.rs` (resume cells), `rn-core/src/state.rs` (`jret`), `tr/asm.rs`
 (`fn_end`). Evidence against a large cycle gain: P-M2 removed 4 % of tier-1 call instructions for 0 % cycles. Measure (1) before building (2) and (3).
 
+**As built (JIT_TRACE 37):** (1) built, knob `t1call` bit 0, default off: the flat call stores `callstatus = C | CIST_T1RET` (bit 28) and the address
+of its site's cell (one per `CALL`, owned by the prototype's descriptor, rewritten by a tier-1.5 recompile) in the frame's `ck` word (C
+continuations only; no new `CallInfo` field); `ret_tail` jumps through the cell of a marked frame. Measured: 0 on the five targets in the shipped
+configuration, -5 .. -10 % cycles on recursion in tier 1 alone. (2) not built: ceiling under the bar. (3) not built: bound under 1 % of
+instructions on every target.
+
 ### 4.10 The interpreter
 
 No protocol change. The interpreter's `pre_call_lua_fast` / `OP_RETURN` keep writing complete frames; they do not write `jret` (readers never trust it
@@ -426,7 +442,7 @@ Invariants relied on (names used above):
 | E5 | `po_poly_programs`, new method-recursion programs with metatable / `__index` / instance-key changes inside the recursion | | `oop` set | `midfold_newref_family`, `midfold_receiver_other` |
 | E6 | `r1_*` carry programs, flush stress (`maxtrace` small) | `tr_identity` (folded refund) | | `dlink_refund_off`, `dlink_unlink_skip` |
 | E7 | `tr_poll`, hook programs of `h7_*` (hook installed from inside the recursion, from a finaliser) | | | `poll_rule_null_path_skip` |
-| E9 | `t15_core`, `t1i_inline_programs`, `vm_corpus` | `t15_oracle` | | per item |
+| E9 | `t15_core`, `t1i_inline_programs`, `vm_corpus`; as built `tr_core::e9_t1call_programs` (`tests/vm/e9_01_t1call.lua`) | `t15_oracle` | | per item; as built `t1_jret_site_next`, `t1_jret_ignore_mark`, `t1_jret_no_setk` |
 
 ## 7. Staged plan
 
@@ -440,7 +456,7 @@ builder sessions (one Sonnet builder, light gates per commit, heavy gate per sta
 | 3 | E4 lazy frames for families with loops **BUILT** (JIT_TRACE 35; only families whose first trace is the entry trace ending in a self-call) | 0 | [E] -5.6 % alone, enables 1; **as built -4.8 % / -6.0 % [M]** | 0 | 0 | 0 [J]; as built 0 | 2-3 | medium-high (loop roots in the region, RETF rule) | 4.4 |
 | 4 | E5 method identity + K5 **BUILT** (E5 only; JIT_TRACE 35) | 0 | [E] -13.5 %; **as built with E4 -14.2 % / -15.9 % [M]** | 0 | [E] -10..15 %; **as built 0 (E5 off for loop-free families; on: +2.6 % cycles [M])** | richards [E] < 2 %; as built within 0.09 % [M] | 2-3 | medium-high (family store rule) | 4.5 |
 | 5 | E6 direct exit links (+ budget in `r11` across transfers) **BUILT** (JIT_TRACE 36; fib -8.3 % / -5.8 %, queens 0: lazy families only) | [E] -5.5 % instr | [E] -2 % | [E] 2-4 % | [E] small | queens [E] 2-7 % (35 M exits; carry-path share unknown) | 2-3 | medium (patching lifetime) | 4.6 |
-| 6 | E9 tier-1 `jret` return, then IC, then native `fn_end` returns | 0 | 0 | 0 | 0 | [E] cd ~3 %, raytrace / deltablue / list a few % of instructions; cycles unknown (P-M2: 0 % for -4 %) | 2 + 2 | medium | 4.9 |
+| 6 | E9 tier-1 `jret` return, then IC, then native `fn_end` returns **PARTIALLY BUILT** (JIT_TRACE 37: `jret` behind the default-off knob `t1call`; IC and `fn_end` returns not built, ceilings under the bar) | 0; as built 0 (tier 1 alone -5.3 % / -9.7 % [M]) | 0 | 0; as built 0 (tier 1 alone -2.2 % / -7.6 %) | 0 | [E] cd ~3 %, raytrace / deltablue / list a few % of instructions; cycles unknown (P-M2: 0 % for -4 %); **as built 0 [M]**; IC ceiling 0, `fn_end` bound < 1 % instr | 2 + 2 | medium | 4.9 |
 | 7 | E3 direct native return | -4.5 % instr / 0 % cyc alone; **0 % cyc after 1 + 2 [M]** | needs 3 | [M] -1.8 % instr | 0 | 0 | 1-2 | low-medium | 4.3 |
 | 8 | E7 poll placement | -3.0 % / -2.8 % alone; **0 % cyc after 1 + 2 [M]** | 0 | [M] -1.2 % instr | 0 | 0 | 1 | low-medium | 4.7 |
 

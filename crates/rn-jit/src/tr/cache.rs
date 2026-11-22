@@ -104,6 +104,8 @@ pub const IDFOLD_PROCESS: u32 = 1;
 pub const LAZYLOOP_PROCESS: u32 = 1;
 /// E6: the process default of [`TrLimits::dlink`] (also the struct default).
 pub const DLINK_PROCESS: u32 = 3;
+/// E9: the process default of [`TrLimits::t1call`] (also the struct default).
+pub const T1CALL_PROCESS: u32 = 0;
 /// E5: the process default of [`TrLimits::midfold`] (also the struct default).
 pub const MIDFOLD_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
@@ -736,6 +738,11 @@ pub struct TrLimits {
     /// counter, no budget store / reload, no cell). Bit 1: a native push / return keeps the budget in its register when it jumps to an inner entry (the word is
     /// stored only on the paths that leave). 0 = off, 3 = both (default [`DLINK_PROCESS`]).
     pub dlink: u32,
+    /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Bit 0 (`jret`): the tier-1 `CALL` marks the frame it pushes
+    /// (`CIST_T1RET`) and stores the address of its per-site resume cell in it; the tier-1 return of such a frame jumps through the cell instead
+    /// of looking the caller's resume entry up. Bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`, like
+    /// `t1q`). Default [`T1CALL_PROCESS`].
+    pub t1call: u32,
 }
 
 impl Default for TrLimits {
@@ -855,6 +862,7 @@ impl Default for TrLimits {
             regcarry: REGCARRY_PROCESS,
             lazypoison: 0,
             dlink: DLINK_PROCESS,
+            t1call: T1CALL_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1048,6 +1056,7 @@ impl TrLimits {
                 "regcarry" => l.regcarry = v.min(3),
                 "lazypoison" => l.lazypoison = v.min(1),
                 "dlink" => l.dlink = v.min(3),
+                "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 _ => bad.push(w.to_string()),
             }
         }

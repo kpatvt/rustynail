@@ -632,6 +632,7 @@ fn calls_cfg(f: &Func, irq: *const u8) -> LowerCfg<'_> {
             stack_off: 0,
             proto_code: 0,
             proto_k: 0,
+            jret: 0,
             call_helper: FAKE_CALL,
             ccall_helper: 0,
             armm: false,

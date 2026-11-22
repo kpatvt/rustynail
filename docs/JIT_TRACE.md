@@ -4113,3 +4113,220 @@ trace code of the parent is mid-flight would break it. (2) Linked exits are not 
 side traces attached would see fewer exits (R1's carry path has the same property). (3) `lazystub=0` disables the links (no patch sites).
 (4) The gain is limited to lazy-aware families; the queens-type exits stay on stubs. (5) The two survivors of 35.8 are caught (36.2); the formation
 dependence of their programs is real: case (14) catches `midfold_rootret_inner` only in `on2`.
+
+## 37. E9: the tier-1 call protocol (stage 6 of docs/DESIGN_CALL_PROTOCOL.md; 2026-11-22, base f0a9288)
+
+Stage 6 has three items, built and measured in order (design 4.9: "measure (1) before building (2) and (3)"; cycles decide, not instructions). Result:
+**item 1 (`jret`) is built, sound and tested, and behind the default-off knob `t1call`** (it buys no cycles on cd / richards / deltablue / raytrace /
+list in the shipped configuration, but -5 .. -10 % cycles on recursion in tier 1 alone); **items 2 (call-site inline cache) and 3 (native return of
+function-entry traces) are not built**: their ceilings, measured below, are under the 1 % bar on all five target programs.
+
+### 37.1 Item 1 as built: `jret` for tier-1 returns (`t1call` bit 0)
+
+* **Mark and cell.** The tier-1 `CALL` template's flat call (`calls.rs::tpl_call`, the path that fills the callee's `CallInfo` like
+  `pre_call_lua_fast` and jumps to `entry0`) stores `callstatus = C | CIST_T1RET` (one immediate, as before) and the address of its **site's resume
+  cell** into the new frame's `ck` word (`jit_layout::callinfo::JRET`; `ck` holds a C continuation and is read only for C frames whose `k` is the C
+  trampoline, never for a Lua frame). `CIST_T1RET` is bit 28 (`rn-core/src/state.rs`), free in both versions (5.4's `CIST_LEQ` is bit 26). No
+  `CallInfo` field was added (a new field would change the thread's memory accounting, `collectgarbage("count")` and GC pacing).
+* **Cells.** One `usize` per `CALL` instruction of a prototype (bytecode order; `Cx::call_ord` maps a pc to its index), a `Box<[usize]>` owned by the
+  prototype's `JitProto` (`jret_cells`, allocated before the first lowering so the code can embed the addresses, charged with the descriptor). Cell
+  `k` = the absolute address of the current code version's resume entry of the instruction after the `k`-th `CALL` (`base - 1 + resume[pc + 1]`),
+  0 when that instruction has no entry (the next instruction is an exit stub, or a flagged S1 entry). `rt::fill_jret_cells` writes them at the
+  compile and in the swap of a tier-1.5 recompile (`recompile_inner`), where no generated code runs; the box never moves, so frames pushed by the
+  `CALL` of a retired version carry a cell that now names the new version's entry.
+* **The return.** The shared `ret_tail` stub (every tier-1 `RETURN0` / `RETURN1` / `RETURN`, and the `TAILCALL` whose native callee popped the
+  frame) first tests the popped frame's `CIST_T1RET`; with it set and a non-zero cell it loads the caller (`thread.ci`), computes the caller's
+  frame base from `caller.func` and the current stack pointer and its constants from `caller.kcache` exactly as the walk does, and jumps to the cell's
+  address. Otherwise (bit clear, or cell 0) the walk runs as before: `CIST_FRESH` -> `Returned`, `func -> closure -> proto -> jit -> resume
+  table[savedpc]`. The jret path replaces five dependent loads, the `jit <= 1` test, the `savedpc` arithmetic and the resume-table lookup by two
+  loads (`ck`, the cell) and one test: fib in tier 1 alone, -8 instructions per call (the `CALL` pays 2 more: the cell address and its store).
+* **Knob.** `RUSTYNAIL_JIT_TRACE_LIMITS=t1call=N` (`TrLimits::t1call`, process / struct default `T1CALL_PROCESS = 0`); like `t1q`, a named value also
+  applies with `RUSTYNAIL_JIT_TRACE=off` (bit 7 marks it named), so `RUSTYNAIL_JIT_TRACE=off` stays J4 exactly unless asked. With the knob off no
+  cell is allocated, `CallEnv::jret` is 0 and the generated code is the code of f0a9288 (the descriptor charge too: the empty box is not charged).
+
+### 37.2 Soundness of item 1
+
+The claim: whenever the jret path runs, its target is the address the walk would have computed, with the same `r13` / `rbx` / `r14`.
+
+* **Who writes the mark.** Only the tier-1 flat call. Every other creator of a Lua or C frame writes `callstatus` whole: the interpreter's
+  `pre_call_lua_fast` (`callstatus = nresults + 1`, also for `mm_frame`, which ORs `CIST_MMRET` afterwards), `prep_call_info` (C frames and the general
+  path), the base frame, the trace compiler's eager push (`asm.rs`), the inline frame materialisation of exits (`exit::mat_stub` code), the exit
+  handler's restore (`exit.rs`), `lazy_leave` (the completion of lazy frames), the tier-1 metamethod frames (pushed through the interpreter's helpers).
+  A lazy frame's `callstatus` is stale until its completion (it may hold an old mark), but a lazy frame never reaches a tier-1 `RETURN`: it returns
+  natively inside the region, and every exit or leave completes it first (I6), which rewrites `callstatus`. The ORs and clears of single bits
+  (`CIST_TAIL`, `CIST_HOOKED`, `CIST_FIN`, `CIST_YPCALL`, ...) leave bit 28 alone. So a marked frame was pushed by a tier-1 `CALL` at pc of proto `P`,
+  and its `ck` holds `cell(P, pc)`.
+* **The caller is still where the `CALL` left it.** The caller's frame is suspended at `savedpc = pc + 1` until the callee returns: nothing changes
+  a suspended Lua frame's `savedpc` or function slot (the debug API writes locals only; errors unwind both frames together; a coroutine keeps both).
+  The interpreter's tail call (`pre_tail_call`, and tier 1's inline tail call) reuses the marked node for another function but keeps the caller and
+  its continuation; it ORs `CIST_TAIL` and keeps the mark and `ck`, which stay right. A `CIST_FRESH` frame is never marked (the flag is ORed only
+  into frames that `ccall` itself pushed), so the jret path skipping the `CIST_FRESH` test is exact.
+* **The cell names the walk's answer.** The walk reads the caller's *current* descriptor (`p.jit` of a live prototype is set once, at its compile,
+  and cleared only when the prototype is freed; a live caller activation keeps its closure and so its prototype) and its current resume table; the
+  cell holds the same entry of the same table (both are written from the same `resume_table` in the same step, at compile and in a recompile's
+  swap). Cell 0 is exactly "no entry", where the walk would exit `FrameChanged`; the jret path then falls into the walk.
+* **Lifetime.** The cells live and die with the descriptor, which lives as long as the prototype; a marked frame points at the cells of its
+  caller's prototype, alive while the caller activation is. A stale `ck` in a reused node is never read (the mark is clear). `ck` is not a GC
+  reference; `CallInfo` nodes never move (the stack does, and the jret path recomputes the caller's base from `caller.func` and the current stack
+  pointer, like the walk: `RUSTYNAIL_JIT_STRESS=stackmove` jobs). Shrinking the `CallInfo` list frees only nodes above the running frame.
+* **T15 recompile while frames are live.** Frames pushed by the old version return through the rewritten cell into the new version, which is what
+  the walk does today (it reads the current resume table); TR19 / JIT_TIER15 12 condition (3) makes every version have the same resume points. The old
+  block is retired, not freed.
+* **Lua-visible behaviour.** Nothing is counted on the return path (TR5: the walk does not count either; the oracle-feature identity jobs of
+  `e9_t1call_programs` check it in tier 1 and with traces). Hooks: the `RETURN` prologue's `trap` / interrupt tests run before `ret_tail` as before,
+  so a hook installed while the frame ran sends the return to the interpreter, which never reads the mark; count and line hooks installed from
+  inside a marked frame give the interpreter's counts (`e9_01` case (11)). `stack overflow` (depth, message): the call side is unchanged (the
+  same guards, the same helper on failure), case (8). `pcall` / `error` / `debug.traceback` / `getinfo`: they read `func`, `savedpc`, `callstatus`
+  bits other than 28, all as before (cases (7), (9)). Coroutines: the mark lives in the coroutine's own `CallInfo` list (case (9)). The C API sees
+  `ck` only for C frames.
+* **Invariants I1-I10.** None is touched: the item is tier-1 only. I2 (budget) as above; I3 (room / spare node checks) are the `CALL`'s unchanged
+  guards; I6 (lazy region) is relied on only for "a lazy frame never reaches a tier-1 `RETURN` before its completion"; I9 / `Retf` and the other
+  trace guards on `callstatus` mask explicit bits (`RETF_CS_MASK`, the `CIST_FRESH` / `CIST_C` tests of `rec_ret`): bit 28 is not compared, so a
+  marked root frame returns natively into a continuation trace and is popped by `Retf` as before. Tier-1 <-> trace <-> interpreter transitions do
+  not read `ck`.
+
+### 37.3 Measured (release `rn-cli`, one binary; `t1call=0` against `t1call=1`, every earlier stage on; `RUSTYNAIL_SEED=0`, `taskset -c 4`; instructions of the first run, cycles min of 5 (key set, interleaved) / 3)
+
+Shipped configuration (traces on), 5.5:
+
+| program | `t1call=0` instr M / cyc M | `t1call=1` | delta instr / cyc |
+|---|---|---|---|
+| fib 32 | 357.7 / 58.7 | 357.7 / 58.9 | 0 / +0.4 % |
+| binary_trees 15 | 2345.8 / 470.6 | 2345.2 / 474.7 | -0.03 % / +0.9 % |
+| sumrec | 649.6 / 108.3 | 650.2 / 116.9 | +0.09 % / +7.9 % (ASLR bimodality, below) |
+| permute 300 | 572.3 / 98.9 | 572.3 / 98.6 | 0 / -0.3 % |
+| towers 100 | 343.4 / 82.7 | 343.6 / 83.3 | +0.04 % / +0.7 % |
+| list 300 | 343.2 / 82.2 | 343.6 / 82.7 | +0.13 % / +0.6 % (re-run, min of 7: -0.3 %) |
+| queens | 511.6 / 96.1 | 512.9 / 96.1 | +0.26 % / 0 |
+| pqueens | 5391.4 / 1850.7 | 5391.9 / 1857.1 | +0.01 % / +0.3 % |
+| richards | 176.9 / 59.3 | 177.1 / 59.1 | +0.11 % / -0.2 % (re-run: -0.2 %) |
+| deltablue | 324.2 / 108.0 | 323.7 / 107.8 | -0.17 % / -0.2 % (re-run: -0.5 %) |
+| havlak | 515.9 / 156.8 | 515.3 / 158.2 | -0.11 % / +0.9 % |
+| cd 20 | 10732.6 / 2956.1 | 10746.8 / 2941.6 | +0.13 % / -0.5 % (re-run: +0.1 %) |
+| raytrace | 365.7 / 113.1 | 365.9 / 115.0 | +0.06 % / +1.7 % (re-run: +0.2 %) |
+| raytrace 40 | 4601.7 / 1185.9 | 4604.1 / 1169.1 | +0.05 % / -1.4 % |
+
+`sumrec` at equal instructions: ten single runs per configuration give 109.2 .. 124.6 Mcyc (`t1call=0`) and 113.5 .. 122.3 (`t1call=1`): the base has
+a low mode (109-110) that a run reaches or not by its address layout; the descriptor's extra allocation moves the heap. Not a cost of the item.
+
+Tier 1 alone (`RUSTYNAIL_JIT_TRACE=off`, `t1call` named), 5.5, min of 3 (the five targets re-run interleaved, min of 7, in brackets):
+
+| program | delta instr / cyc |
+|---|---|
+| fib 32 | **-5.29 % / -9.7 %** |
+| binary_trees 15 | -2.18 % / -7.6 % |
+| sumrec | -5.02 % / -5.7 % |
+| towers 100 | -1.30 % / -5.0 % |
+| permute 300 | -0.49 % / -2.6 % |
+| pqueens | -0.48 % / -0.4 % |
+| queens | +0.19 % / +0.9 % |
+| list 300 | -0.37 % / -1.2 % [-1.6 %] |
+| richards | -0.04 % / +1.2 % [+2.5 %] |
+| deltablue | -0.12 % / -0.7 % [+1.1 %] |
+| havlak | -0.01 % / -3.8 % [-0.1 %] |
+| cd 20 | -0.05 % / +0.7 % [+0.2 %] |
+| raytrace | +0.03 % / +0.1 % [-1.4 %] |
+
+The five targets move by +-2.5 % at equal instructions between rounds: tier 1 alone, item 1 is a recursion win (every call a flat call, every
+return a marked one) and nothing on them.
+
+**Why nothing on the targets.** Exact counts of tier-1 returns (a scratch build with counters in `ret_tail`, not committed; shipped configuration,
+`t1call=1`): cd 20 11.31 M returns, of which 1.48 M through a cell; deltablue 250 k / 117 k; havlak 222 k / 102 k; raytrace 40 2.28 M / 163 k;
+richards 34 k / 2 k; list 37 k / 4 k; queens 438 k / 1.5 k. Most tier-1 returns of these programs pop frames that the flat call did not push
+(frames rebuilt by trace exits inside inlined callees, eager trace pushes, the interpreter), and the ones that take the cell save ~8 instructions
+each: 1.48 M x 8 = 12 M instructions on cd's 10.7 G. Extending the mark to the frames exits rebuild (four writers: `mat_stub`, the handler's
+restore, `lazy_leave`, the eager push, each needing its caller's cell) would reach cd's other 9.8 M returns: ~80 M instructions (0.75 %), ~26 Mcyc
+at fib's 2.7 cycles per return (0.9 %) by arithmetic. Not built: under the bar, for four new writers.
+
+**Lua 5.4** (min of 3), shipped configuration: every key program within +0.31 % instructions (queens; cd +0.12 %, richards +0.05 %, deltablue
+-0.15 %, list +0.13 %, raytrace +0.03 %) and -0.9 .. +1.6 % cycles (havlak +1.6 %, sumrec +4.5 % as on 5.5); tier 1 alone: fib -5.29 % / -9.0 %,
+binary_trees -2.03 % / -6.4 %, sumrec -5.02 % / -6.1 %, towers -1.30 % / -6.2 %, list -0.37 % / -1.6 %, raytrace +0.03 % / -2.0 %, cd -0.05 % /
++1.0 %, richards / deltablue / havlak within 0.8 %.
+
+**Sanity set** (44 programs, 5.5, shipped configuration, min of 3): no program above +0.26 % instructions (`awfy/queens`; `programs/closures`
++0.21 %, `awfy/storage` +0.15 %, `awfy/cd` +0.13 %; the largest decrease `programs/json` -0.42 %). Cycle differences above +2 % in the batch, re-run
+interleaved: `programs/table_hash` +4.4 % (re-runs +3.0 %, then +0.4 % at min of 7: identical instruction counts, no flat call on its hot path:
+layout), `programs/binary_trees` +3.5 % (re-run +0.2 %), `awfy/towers` +2.1 % (re-run 0.0 %), `programs/closures` +1.9 % (re-runs +2.3 %, +1.9 %
+with +0.21 % instructions: the two stores the `CALL` adds per flat call on a program whose returns mostly close upvalues; under the +2 % line, and the
+knob is off by default).
+
+### 37.4 Item 2 (call-site inline cache): not built, ceiling measured
+
+The cache would replace, at a flat call or an inline tail call, the `jit <= 1` test, the `entry0 == 0` test and the `numparams` load and test by a
+compare of the closure's proto with the cached one (plus a miss path, and an invalidation story: a proto freed and another allocated at the same
+address must not hit). Its ceiling is the code without the tests it removes and without anything it adds: a scratch build (`RN_E9CEIL`, not
+committed; unsound for callees with too few arguments or without a function entry, harmless on these programs: outputs equal) dropped the
+`entry0` test and, for fixed argument counts, the `numparams` test in both templates. With `t1call=1` in both columns:
+
+| program | traces on: delta instr / cyc | tier 1 alone: delta instr / cyc |
+|---|---|---|
+| fib 32 | 0 / +0.8 % | -4.19 % / -2.8 % |
+| binary_trees 15 | -0.02 % / +0.6 % | -1.67 % / -0.4 % |
+| permute 300 | -0.01 % / +0.1 % | -1.13 % / -1.8 % |
+| towers 100 | -0.15 % / -0.4 % | -0.99 % / -2.0 % |
+| list 300 | -0.58 % / -0.2 % | -0.98 % / -0.3 % |
+| queens | -0.25 % / -1.5 % | -1.04 % / -1.7 % |
+| richards | -0.21 % / +1.4 % | -0.49 % / +0.2 % |
+| deltablue | -0.47 % / -1.0 % | -0.93 % / -2.4 % |
+| havlak | -0.25 % / +0.6 % | -0.23 % / -1.5 % |
+| cd 20 | -0.59 % / +0.7 % | -0.79 % / -1.8 % |
+| raytrace | -0.28 % / +0.8 % | -0.46 % / -0.2 % |
+
+(min of 5 with traces, 3 in tier 1 alone.) In the shipped configuration the ceiling moves cycles within the +-1.5 % noise of equal-instruction
+runs on all five targets (deltablue -1.0 %, the best, at -0.47 % instructions); a real cache adds its compare and miss path back. Left out.
+
+### 37.5 Item 3 (native return of function-entry traces): not built, bound measured
+
+A function-entry trace whose root frame reaches its `RETURN` ends with the always-taken exit of `fn_end` (P-E2); tier 1 then runs the `RETURN` and
+`ret_tail`. Item 3 would pop the frame inside the trace and jump through the cell of item 1 (design 4.9: ~75 instructions per instance). The number
+of instances is bounded by the outer entries of function-entry traces (`[heads] ... fn Traced ... entries`, exact counters of the entry sequence,
+`RUSTYNAIL_JIT_VERBOSE=1`) and by the tier-1 returns of 37.3:
+
+| program | fn-trace entries | tier-1 returns | bound at 75 instructions each |
+|---|---|---|---|
+| cd 20 | 333 k (`cd.lua:168, 122, 204, 140, 289, 88`) | 11.31 M | 25 M of 10.7 G: 0.23 % |
+| deltablue | 32.7 k (`deltablue.lua:303, 126, 198, 211`) | 250 k | 2.5 M of 324 M: 0.76 % |
+| raytrace | 12.4 k (`raytrace.lua:16`) | 120 k | 0.9 M of 366 M: 0.25 % |
+| list 300 | 500 k (`list.lua:31`, a recursion family: its returns are native already) | 37 k | at most 2.8 M of 343 M: 0.8 % |
+| richards | 341 (`richards.lua:172`) | 34 k | 26 k: 0.01 % |
+
+Every bound is below 1 % of instructions before asking how much of it would show in cycles; the item would add a second native-return path to
+the trace assembler (budget charge of the `RETURN`, hook / interrupt tests, the leave of the region, the result moves). Left out.
+
+### 37.6 The interpreter (design 4.10)
+
+No change: `pre_call_lua_fast`, `OP_RETURN` and `do_ret!` write and read what they did; they never write `ck` for a Lua frame, and the only reader
+trusts `ck` under `CIST_T1RET`, which the interpreter's pushes clear (its tail call keeps it, with the caller, above). The interpreter returning
+into a tier-1 caller continues it in the interpreter as before.
+
+### 37.7 Tests, mutants
+
+New program `tests/vm/e9_01_t1call.lua` (also in `vm_corpus`; outputs equal to the reference 5.5 and 5.4): one callee with call sites for 0 / 1 / 2 /
+all results and constants used right after each return; the same callee and depth pushed alternately by the flat call and by the general helper
+(one argument too few: a node holds a stale cell when the helper reuses it); tail calls in marked frames (Lua, C, `select`); vararg callees;
+upvalue and method recursion; metamethod frames between marked frames; errors from depth, a traceback and `getinfo` from depth; stack overflow
+through marked frames; a coroutine yielding from inside marked frames; a sort comparator making flat calls; count and line hooks installed from
+inside a marked frame; the callee replaced while marked frames are suspended; upvalues closed by the return; a recursive function whose loop runs
+after its call (tier 1.5 recompiles it while the outer activations wait: their returns go through rewritten cells into the new version, seen with
+`RUSTYNAIL_JIT_VERBOSE=1`: `promoted nest ... version 0 -> 1`).
+`tr_core::e9_t1call_programs`: `e9_01`, `e6_01`, `deep_recursion` x `t1` (tier 1 alone) / `always` / `on2` x `t1call=0` / `1`, each also with
+tier 1.5 in `always` mode (`TR_CORE_T15`, new job environment read by `one_state`); for `t1call=1`: `+verify` (traced modes), budgets 3 / 17 / 200,
+GC stress 1 / 2 in both collector modes, stack-move stress (not `e9_01` in `t1`: its stack-overflow case is quadratic under that stress with the
+knob off too, past the 120 s leash), the oracle-feature identity at budgets none / 3 / 17. Mutants (registry 789 -> **792**): `t1_jret_site_next`
+(a `CALL` stores the next site's cell), `t1_jret_ignore_mark` (the return trusts `ck` without the mark), `t1_jret_no_setk` (the jret path keeps the
+callee's constants): all caught by `e9_t1call_programs` on 5.5 and 5.4 (`gate-mutants.sh --only t1_jret_`: 3 / 3 each).
+
+### 37.8 Gates, what ran and what did not, risks
+
+Ran: `gate-light.sh` on the commit: fmt, mutant map, clippy x3, core x2, trace suites 5.5 / 5.4, `vm_corpus`, jit-diff 1-50 PASS, mutant group 78 ran, 78 caught (465 s; a first run failed on the frozen registry count and on a `debug.traceback` line count of `e9_01` that depends on how the chunk is started, both fixed before the commit); `gate-mutants.sh --only t1_jret_` on 5.5 and 5.4 (3 / 3 caught each); the
+`tr_core::e9_t1call_programs` matrix (debug, 5.5) inside the light gate's trace suites; the differential runs of `e9_01` against the reference 5.5
+and 5.4 (`RUSTYNAIL_JIT=off`, tier 1 alone with the knob on and off, traces `on` / `always` with the knob, tier 1.5 `always`). **Not run** (by
+instruction): `gate-heavy.sh`, the oracle-feature suites (`tr_identity`, `instruction_count_identity`, `oracle_options`; the identity jobs of
+`e9_t1call_programs` ran only inside the mutant runner's oracle build), jit-diff 1-200 in seven modes, the full mutant runner, no full benchmark.
+
+Risks. (1) The mark's soundness rests on "every frame creator writes `callstatus` whole": a future pusher that ORs into a reused node's
+`callstatus` (or a new field writer of `ck` for Lua frames) would let a stale cell be trusted; `t1_jret_ignore_mark` shows the tests catch a
+trusted stale cell. (2) `ck` is shared with the C API's continuation for C frames: a change that makes Lua frames carry a C continuation would
+collide. (3) The item is off by default: the shipped configuration does not exercise it outside `e9_t1call_programs` (vm_corpus and jit-diff run
+the default knobs). (4) Items 2 and 3 stay open with their ceilings; the reach of item 1 in the shipped configuration is limited by which frames
+the flat call pushes (37.3), and the extension to exit-rebuilt frames is estimated at under 1 % on cd.

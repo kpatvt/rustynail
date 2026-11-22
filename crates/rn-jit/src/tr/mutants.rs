@@ -954,6 +954,10 @@ pub const NAMES: &[&str] = &[
     "dlink_store_skip",
     "dlink_unlink_skip",
     "dlink_vb_fb_nostore",
+    // E9 (`t1call`): the tier-1 call protocol (docs/JIT_TRACE.md section 37)
+    "t1_jret_site_next",
+    "t1_jret_ignore_mark",
+    "t1_jret_no_setk",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1030,7 +1034,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 789);
+        assert_eq!(NAMES.len(), 792);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

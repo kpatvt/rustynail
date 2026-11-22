@@ -690,6 +690,7 @@ pub fn lower_for_landing(p: &Proto) -> Option<Lowered> {
                 stack_off: 0,
                 proto_code: 0,
                 proto_k: 0,
+                jret: 0,
                 call_helper: 0,
                 ccall_helper: 0,
                 armm: false,
