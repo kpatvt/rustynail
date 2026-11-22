@@ -230,6 +230,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.idfold_banned
         );
     }
+    if s.lazyloop_on > 0 {
+        let _ = writeln!(o, "[trace] lazyloop: lazy-aware {}", s.lazyloop_on);
+    }
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,

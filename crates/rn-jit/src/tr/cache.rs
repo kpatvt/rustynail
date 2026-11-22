@@ -71,6 +71,14 @@ pub const RECUNROLL_PROCESS: u32 = 1;
 pub const UNROLLK_PROCESS: u32 = 3;
 /// E1: the process default of [`TrLimits::unrollcode`] (also the struct default).
 pub const UNROLLCODE_PROCESS: u32 = 400;
+/// E4: [`TrProto::lazy_st`] values.
+pub const LAZY_STATIC: u8 = 0;
+/// E4: a prototype with loops whose lazy decision is pending (its first recording decides).
+pub const LAZY_CAND: u8 = 1;
+/// E4: decided lazy-aware.
+pub const LAZY_ON: u8 = 2;
+/// E4: decided eager for good (no recursion evidence at the first recording, or a `RETF` popped into it first).
+pub const LAZY_OFF: u8 = 3;
 /// E1: the largest `unrollk` (inlined self-call levels + 1; `RecCall::inl` holds `MAX_UNROLL_K - 1` frames).
 pub const MAX_UNROLL_K: u32 = 4;
 /// E1: unroll failures in a row after which `k` is lowered by one (section 34.2).
@@ -92,6 +100,8 @@ pub enum UnrollDemote {
 
 /// E2: the process default of [`TrLimits::idfold`] (also the struct default).
 pub const IDFOLD_PROCESS: u32 = 1;
+/// E4: the process default of [`TrLimits::lazyloop`] (also the struct default).
+pub const LAZYLOOP_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
@@ -677,6 +687,10 @@ pub struct TrLimits {
     /// region's checked entries (outer entries, returns of the region root through the plain dispatch cell) and the family admits no upvalue
     /// store. 0 = off, 1 = on (default [`IDFOLD_PROCESS`]).
     pub idfold: u32,
+    /// E4 (`lazyloop`, docs/JIT_TRACE.md section 35): a native-recursion prototype with loops is lazy-aware like a loop-free one (its natively
+    /// pushed frames are lazy, its loop traces belong to the region family): 0 = off (loops exclude a prototype, the code of before), 1 = on
+    /// (default [`LAZYLOOP_PROCESS`]; E1 does not unroll such a prototype), 2 = on and E1 may unroll it.
+    pub lazyloop: u32,
     /// G1 (`guarddiet`): the entry state of a side trace's chain is inherited transitively (the slots the side trace does not touch keep the types its parent
     /// chain proved, for the exit snapshots' `ents` and the writeback tag stores) and a link to a guard-free second entry also skips the room checks when
     /// its source proves at least as much room: 0 = off, 1 = on (default [`GUARDDIET_PROCESS`]).
@@ -808,6 +822,7 @@ impl Default for TrLimits {
             unrollk: UNROLLK_PROCESS,
             unrollcode: UNROLLCODE_PROCESS,
             idfold: IDFOLD_PROCESS,
+            lazyloop: LAZYLOOP_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
@@ -997,6 +1012,7 @@ impl TrLimits {
                 "unrollk" => l.unrollk = v.clamp(1, MAX_UNROLL_K),
                 "unrollcode" => l.unrollcode = v,
                 "idfold" => l.idfold = v.min(1),
+                "lazyloop" => l.lazyloop = v.min(2),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
@@ -1581,6 +1597,11 @@ pub struct TrProto {
     unroll_ok: Cell<bool>,
     /// E2 (`idfold`, section 34.3): 0 = undecided, 1 = folding on (self upvalue `idfold_uv`), 2 = off for good.
     idfold_st: Cell<u8>,
+    /// E4 (`lazyloop`, section 35): the prototype has a backward jump (a loop); E1 unrolls it only with `lazyloop=2`.
+    pub loops: Cell<bool>,
+    /// E4: the lazy decision of a prototype with loops: [`LAZY_STATIC`] (not a candidate: `lazy` was fixed with the dispatch table), [`LAZY_CAND`]
+    /// (undecided), [`LAZY_ON`] (decided lazy-aware), [`LAZY_OFF`] (decided eager for good).
+    pub lazy_st: Cell<u8>,
     /// E2: the self upvalue index (valid while `idfold_st != 0` and it was on once).
     idfold_uv: Cell<u8>,
     /// E2: installed traces of this prototype that folded a `GETUPVAL` (`Trace::idfold`): while any lives, every trace of the family keeps the
@@ -1655,6 +1676,8 @@ impl TrProto {
             unroll_lvl: Cell::new(0),
             unroll_ok: Cell::new(false),
             idfold_st: Cell::new(0),
+            loops: Cell::new(false),
+            lazy_st: Cell::new(LAZY_STATIC),
             idfold_uv: Cell::new(0),
             idfold_live: Cell::new(0),
             landing: RefCell::new(None),
@@ -2141,6 +2164,60 @@ impl TrProto {
         }
     }
 
+    /// E4 (`lazyloop`, section 35.3): the unroll factor with the loop rule: a prototype with loops unrolls only with `lazyloop=2`.
+    pub fn unroll_k_loops(&self, mode: u32, k: u32, lazyloop: u32) -> u32 {
+        if self.loops.get() && lazyloop < 2 {
+            1
+        } else {
+            self.unroll_k(mode, k)
+        }
+    }
+
+    /// BUNDLE-K L1: is the prototype lazy-aware?
+    pub fn is_lazy(&self) -> bool {
+        self.lazy.get()
+    }
+
+    /// E4: marks the prototype a lazy candidate with loops (what the dispatch table does with `lazyloop`; public for the policy tests).
+    pub fn mark_lazy_cand(&self) {
+        self.loops.set(true);
+        self.fn_head.set(true);
+        self.lazy_st.set(LAZY_CAND);
+    }
+
+    /// E4 (section 35.1): the decision of a candidate at the compile of its first root trace (`on`: [`lazy_loop_rule`]; `untraced`: no trace of
+    /// the prototype is installed). True: it became lazy-aware now. A prototype that is not an undecided candidate is left as it is.
+    pub fn lazy_loop_decide(&self, on: bool, untraced: bool) -> bool {
+        if self.lazy_st.get() != LAZY_CAND {
+            return false;
+        }
+        if on && untraced {
+            self.lazy_st.set(LAZY_ON);
+            self.lazy.set(true);
+            for h in self.heads() {
+                h.lazy.set(true);
+                h.set_rec();
+            }
+            true
+        } else {
+            self.lazy_st.set(LAZY_OFF);
+            false
+        }
+    }
+
+    /// E4 (section 35.1): may a `RETF` pop into a frame of this prototype with loops? A lazy-aware prototype refuses; an undecided candidate
+    /// is decided eager for good now (it never becomes lazy-aware under a `RETF` trace that pops into it).
+    pub fn retf_into(&self) -> bool {
+        match self.lazy_st.get() {
+            LAZY_ON => false,
+            LAZY_CAND => {
+                self.lazy_st.set(LAZY_OFF);
+                true
+            }
+            _ => !self.lazy.get(),
+        }
+    }
+
     /// E1: an unrolled recording failed in its unrolled part (`Unroll`). In the adaptive mode, [`UNROLL_FAILS`] failures in a row (no unrolled
     /// trace installed in between) lower `k` by one; below 2 the prototype is demoted to `k = 1` for good. `Some(reason)`: demoted now.
     pub fn on_unroll_fail(&self, mode: u32, k: u32) -> Option<UnrollDemote> {
@@ -2484,6 +2561,8 @@ pub struct TrStats {
     pub idfold_traces: u64,
     pub idfold_ustore: u64,
     pub idfold_banned: u64,
+    /// E4: candidate prototypes with loops that were decided lazy-aware.
+    pub lazyloop_on: u64,
     /// R1: rearm ticks armed by a hand-off to the interpreter.
     pub rearm_arms: u64,
     /// R1: rearm ticks that entered a traced head.
@@ -5433,7 +5512,15 @@ pub fn unroll_k(st: &mut State, pr: ProtoRef, pc: u32) -> u32 {
     if pc != 0 || mode == 0 {
         return 1;
     }
-    tr_of(d, pr.0).map_or(1, |tp| tp.unroll_k(mode, k))
+    let lazyloop = d.tr.cfg.limits.lazyloop;
+    tr_of(d, pr.0).map_or(1, |tp| tp.unroll_k_loops(mode, k, lazyloop))
+}
+
+/// E4 (`lazyloop`, section 35.1): is the first root trace of a candidate prototype with loops one that makes it lazy-aware? Its function-entry
+/// trace (`pc == 0`) ending in a native self-call, without `RETF` segments. A first trace that is a loop or a leaf path keeps the family eager:
+/// its regions would end at every call (the leaves return through exits) and a lazy region pays its completion at every leave.
+pub fn lazy_loop_rule(pc: u32, rec_call: bool, retf: bool) -> bool {
+    (pc == 0 && rec_call && !retf) || mutants::active("lazyloop_decide_any")
 }
 
 /// E2 (`idfold`, section 34.3): the decision, once per prototype, at the first function-entry or continuation recording of a lazy-aware prototype
@@ -5622,6 +5709,57 @@ pub fn unroll_ok(st: &mut State, pr: ProtoRef) {
 pub fn proto_lazy(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
     tr_of(d, pr.0).is_some_and(|tp| tp.lazy.get())
+}
+
+/// E4 (`lazyloop`, section 35.1): the lazy decision of a candidate prototype with loops, at the compile of its first root trace (any head). It
+/// becomes lazy-aware when that trace is its function-entry trace ending in a native self-call (`on`) and no trace of it is installed; otherwise it
+/// stays eager for good (a family whose first trace is a loop or a leaf path ends its regions at every call: the leaves return through exits, and
+/// a lazy region pays its completion at every leave, section 35.3). The heads' `rec` / `e2` cells follow the new mode (`set_rec`).
+pub fn lazy_loop_decide(st: &mut State, pr: ProtoRef, pc: u32, on: bool) {
+    let d = d_of(st);
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if tp.lazy_st.get() != LAZY_CAND {
+        return;
+    }
+    let untraced = !d
+        .tr
+        .slots
+        .iter()
+        .any(|sl| matches!(&sl.body, Body::Trace(t) if t.root == pr.0));
+    let on = on && d.tr.cfg.limits.lazyloop != 0;
+    let lazy = tp.lazy_loop_decide(on, untraced);
+    vlog(d, || {
+        format!(
+            "--- lazyloop: proto:{} pc {pc} untraced {untraced} -> {}",
+            tp.line,
+            if lazy { "lazy" } else { "eager" }
+        )
+    });
+    if lazy {
+        d.tr.stats.lazyloop_on += 1;
+    }
+}
+
+/// E4: is `pr` an undecided lazy candidate (a prototype with loops whose first root trace is not compiled yet)?
+pub fn proto_lazy_cand(st: &mut State, pr: ProtoRef) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| tp.lazy_st.get() == LAZY_CAND)
+}
+
+/// E4 (section 35.1): may a `RETF` recording pop into a frame of `p` (a prototype with loops; the loop-free superset is `maybe_lazy_proto`'s)? A
+/// lazy-aware prototype refuses (its frames can be lazy); an undecided candidate is decided eager for good now, so it never becomes lazy-aware
+/// under a `RETF` trace that pops into it. A prototype without a dispatch table could still become a candidate: refused.
+pub fn retf_into_loop_proto(p: &rn_core::func::Proto) -> bool {
+    let Some(pr) = proto_ref(p) else {
+        return false;
+    };
+    // SAFETY: as in `proto_ref` (a compiled prototype's descriptor lives as long as `p`; the table is never replaced)
+    let Some(tp) = (unsafe { (*(pr.0 as *const JitProto)).tr.as_deref() }) else {
+        return false;
+    };
+    tp.retf_into()
 }
 
 /// R2: has a native self-call of `pr` been recorded?
@@ -7190,6 +7328,8 @@ pub(crate) struct DispatchCfg {
     /// BUNDLE-K L1: `TrLimits::lazyci != 0`; `lazy_any`: `lazyci >= 2` (also prototypes whose `CALL`s want different result counts).
     pub lazy: bool,
     pub lazy_any: bool,
+    /// E4 (`lazyloop`): a prototype with loops may be lazy-aware too.
+    pub lazy_loop: bool,
     /// M1: a function with loops also gets the function-entry head (a loop-free path through it is what the recording sees).
     pub fn_loops: bool,
     /// R2: continuation heads for any callee load, native `RETURN0` (`TrLimits::recany`).
@@ -7304,13 +7444,16 @@ pub(crate) fn emit_dispatch(
             let first = cs.next();
             cs.all(|x| Some(x) == first)
         };
-        let lazy = c.lazy
-            && fn_head
-            && c.recnat
-            && env.backedges.is_empty()
-            && !c.c_entered
-            && (same_c || c.lazy_any);
+        let base = c.lazy && fn_head && c.recnat && !c.c_entered && (same_c || c.lazy_any);
+        let lazy = base && env.backedges.is_empty();
         tp.lazy.set(lazy);
+        tp.loops.set(!env.backedges.is_empty());
+        // E4 (`lazyloop`, section 35.1): a prototype with loops is a candidate; whether it becomes lazy-aware is decided at the start of its first
+        // recording (`lazy_loop_decide`: a function-entry recording with evidence of recursion), not here (most functions with loops are not
+        // recursive, and a lazy family pays at its links and exits)
+        if base && !lazy && c.lazy_loop {
+            tp.lazy_st.set(LAZY_CAND);
+        }
         for h in tp.heads() {
             h.lazy.set(lazy);
         }
@@ -7698,6 +7841,7 @@ pub fn lower_probe(st: &mut State, trace: bool) -> Option<Probe> {
             recnat: false,
             lazy: false,
             lazy_any: false,
+            lazy_loop: false,
             fn_loops: false,
             rec_any: false,
             c_entered: false,

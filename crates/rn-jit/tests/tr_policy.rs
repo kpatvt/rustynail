@@ -2123,3 +2123,80 @@ fn e1_policy() {
         }
     }
 }
+
+/// E4 (`lazyloop`, docs/JIT_TRACE.md section 35.1): the knob, the decision rule of a candidate prototype with loops (its first root trace must be
+/// its function-entry trace ending in a native self-call, without `RETF`; detector of `lazyloop_decide_any`), the state transitions (decided once;
+/// a `RETF` into an undecided candidate decides it eager for good; a lazy-aware one refuses), and the unroll rule (a prototype with loops unrolls
+/// only with `lazyloop=2`).
+#[test]
+fn e4_policy() {
+    use rn_jit::tr::cache::{
+        lazy_loop_rule, TrConfig, TrMode, TrProto, LAZYLOOP_PROCESS, LAZY_CAND, LAZY_OFF, LAZY_ON,
+    };
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.lazyloop, LAZYLOOP_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (Some("lazyloop=0"), 0),
+        (Some("lazyloop=2"), 2),
+        (Some("lazyloop=9"), 2),
+        (None, LAZYLOOP_PROCESS),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.lazyloop, want, "limits env {env:?}");
+    }
+    // the rule: only the function-entry trace that ends in the self-call, without RETF segments
+    assert!(lazy_loop_rule(0, true, false));
+    assert!(
+        !lazy_loop_rule(0, false, false),
+        "a function-entry leaf path"
+    );
+    assert!(!lazy_loop_rule(12, false, false), "a loop trace");
+    assert!(!lazy_loop_rule(11, true, false), "a continuation trace");
+    assert!(!lazy_loop_rule(0, true, true), "RETF segments");
+    let mk = || TrProto::new(10, &[0, 7], 256, true, 77, 1);
+    // a prototype that is not a candidate is never changed
+    let tp = mk();
+    assert!(!tp.lazy_loop_decide(true, true));
+    assert!(tp.retf_into(), "not lazy-aware: RETF may pop into it");
+    // decided lazy-aware once, then RETF refuses
+    let tp = mk();
+    tp.mark_lazy_cand();
+    assert_eq!(tp.lazy_st.get(), LAZY_CAND);
+    assert!(tp.lazy_loop_decide(true, true));
+    assert_eq!(tp.lazy_st.get(), LAZY_ON);
+    assert!(tp.is_lazy());
+    assert!(!tp.lazy_loop_decide(true, true), "decided once");
+    assert!(!tp.retf_into(), "lazy-aware: no RETF into it");
+    // a first trace that does not qualify, or a traced family: eager for good
+    for (on, untraced) in [(false, true), (true, false)] {
+        let tp = mk();
+        tp.mark_lazy_cand();
+        assert!(!tp.lazy_loop_decide(on, untraced));
+        assert_eq!(tp.lazy_st.get(), LAZY_OFF);
+        assert!(!tp.is_lazy());
+        assert!(!tp.lazy_loop_decide(true, true), "never later");
+    }
+    // a RETF into an undecided candidate decides it eager
+    let tp = mk();
+    tp.mark_lazy_cand();
+    assert!(tp.retf_into());
+    assert_eq!(tp.lazy_st.get(), LAZY_OFF);
+    assert!(!tp.lazy_loop_decide(true, true));
+    // unrolling: a lazy-aware prototype with loops only with lazyloop=2
+    let tp = mk();
+    tp.mark_lazy_cand();
+    assert!(tp.lazy_loop_decide(true, true));
+    assert_eq!(tp.unroll_k_loops(2, 3, 1), 1);
+    assert_eq!(tp.unroll_k_loops(2, 3, 2), 3);
+    let tp = mk();
+    tp.mark_lazy_fn();
+    assert_eq!(
+        tp.unroll_k_loops(2, 3, 1),
+        3,
+        "a loop-free prototype is not affected"
+    );
+}

@@ -4289,6 +4289,21 @@ const TABLE: &[Row] = &[
         owner: "E2",
         dets: &[d("tr_core", "e2_idfold_programs")],
     },
+    Row {
+        name: "lazyloop_retf_ok",
+        owner: "E4",
+        dets: &[d("tr_core", "e4_lazyloop_programs")],
+    },
+    Row {
+        name: "lazyloop_decide_any",
+        owner: "E4",
+        dets: &[dl("tr_policy", "e4_policy")],
+    },
+    Row {
+        name: "lazyloop_root_not_set",
+        owner: "E4",
+        dets: &[d("tr_core", "e4_lazyloop_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
@@ -4306,6 +4321,7 @@ const V54_ONLY: &[&str] = &[
 /// Mutants whose injection site is compiled out of the 5.4 build (N7: the end of a traversal is recorded on 5.5 only; the 5.4 run skips them).
 #[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
 const V55_ONLY: &[&str] = &[
+    "lazyloop_retf_ok",
     "gfor_end_meta_skip",
     "gfor_end_guard_skip",
     "gfor_end_always",

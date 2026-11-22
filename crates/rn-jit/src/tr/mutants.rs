@@ -934,6 +934,10 @@ pub const NAMES: &[&str] = &[
     "idfold_rootret_inner",
     "idfold_ustore_family",
     "idfold_push_proto",
+    // E4 (`lazyloop`): lazy frames for recursion families with loops (docs/JIT_TRACE.md section 35)
+    "lazyloop_retf_ok",
+    "lazyloop_decide_any",
+    "lazyloop_root_not_set",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1010,7 +1014,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 773);
+        assert_eq!(NAMES.len(), 776);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

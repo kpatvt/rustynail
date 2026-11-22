@@ -4558,6 +4558,7 @@ impl Cx<'_> {
         if self.env.lazy
             && (self.env.side.is_none() || self.env.prelude || link_root)
             && !mutants::active("lazy_root_not_set")
+            && !(self.ir.loop_at.is_some() && mutants::active("lazyloop_root_not_set"))
         {
             // BUNDLE-K L1: this (complete) frame is the root of the region the trace may start
             self.push(Op::Lea(
@@ -9811,6 +9812,7 @@ pub mod support {
                     recnat: d.tr.cfg.limits.recnat != 0,
                     lazy: d.tr.cfg.limits.lazyci != 0,
                     lazy_any: d.tr.cfg.limits.lazyci >= 2,
+                    lazy_loop: d.tr.cfg.limits.lazyloop != 0,
                     fn_loops: d.tr.cfg.limits.recany != 0,
                     rec_any: d.tr.cfg.limits.recany != 0,
                     c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),

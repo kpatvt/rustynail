@@ -16255,6 +16255,27 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e2_01_idfold_callee_switch.lua"),
     },
+    // E4 (docs/JIT_TRACE.md section 35): lazy frames for recursion families with loops
+    Prog {
+        name: "e4_01_lazy_loop_shapes",
+        small: true,
+        src: include_str!("../../../../tests/vm/e4_01_lazy_loop_shapes.lua"),
+    },
+    Prog {
+        name: "e4_02_lazy_loop_errors",
+        small: true,
+        src: include_str!("../../../../tests/vm/e4_02_lazy_loop_errors.lua"),
+    },
+    Prog {
+        name: "e4_03_lazy_loop_policy",
+        small: true,
+        src: include_str!("../../../../tests/vm/e4_03_lazy_loop_policy.lua"),
+    },
+    Prog {
+        name: "e4_04_lazy_loop_retf",
+        small: true,
+        src: include_str!("../../../../tests/vm/e4_04_lazy_loop_retf.lua"),
+    },
     // P1 (`presize`): constant-key insertion groups into fresh tables (seed-0 script: its interpreter output is the reference's,
     // `tr_presize::presize_pairs_order_matches_the_reference`)
     Prog {

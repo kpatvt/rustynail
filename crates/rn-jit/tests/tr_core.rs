@@ -479,6 +479,8 @@ struct TStats {
     idfold_traces: u64,
     idfold_ustore: u64,
     idfold_banned: u64,
+    /// E4 (docs/JIT_TRACE.md section 35): candidate prototypes with loops decided lazy-aware (`lazyloop: lazy-aware N`).
+    lazyloop_on: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -699,6 +701,8 @@ impl TStats {
                     s.idfold_ustore = us;
                     s.idfold_banned = b;
                 }
+            } else if let Some(r) = l.strip_prefix("lazyloop: lazy-aware ") {
+                s.lazyloop_on = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.barrier_table = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -6691,6 +6695,13 @@ fn cp2_side_room_programs() {
 fn cp1_leaf_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
+        // (the repair counter is asserted on the eager family the program was written for: with E4 `lazyloop` its prototype, a recursion with a
+        // loop, may be lazy-aware, whose chain is repaired by the leave; the outputs are compared in both)
+        jobs.push(
+            Job::new("cp1_leaf", trace)
+                .opts("+verify")
+                .limits_s("lazyloop=0"),
+        );
         jobs.push(Job::new("cp1_leaf", trace).opts("+verify"));
         jobs.push(Job::new("cp1_leaf", trace).opts("+exitstorm=3 +verify"));
         jobs.push(Job::new("cp1_leaf", trace).budget(17));
@@ -6699,7 +6710,7 @@ fn cp1_leaf_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.opts == "+verify" {
+        if j.opts == "+verify" && j.limits == "lazyloop=0" {
             assert!(
                 o.stats.rec_ci_added >= 1,
                 "[{}] the spare node is made in place: {}",
@@ -12533,6 +12544,84 @@ fn e2_idfold_programs() {
                 o.stats.idfold_ustore >= 1,
                 "{}: the family rule never fired",
                 j.tag()
+            );
+        }
+    }
+}
+
+/// E4 (`lazyloop`, docs/JIT_TRACE.md section 35): recursion families with loops. `e4_01` (permute, queens, trees, while / break / generic-for
+/// loops around the self-call, a helper called in the loop, the self upvalue switched, many closures) and `e4_02` (stack overflow depth and
+/// message, errors and tracebacks at depth, pcall at every level, yields, hooks installed from inside, getinfo, a finalizer, a metatable changed
+/// during method recursion) x `lazyloop` 0 / 1 / 2 (2: E1 may unroll them), `+verify`; for `lazyloop=1`: exit storm, budgets 3 / 17 / 200, GC
+/// stress 1 / 2 in both collector modes, stack-move stress; `e4_03` (loop-first families), `e4_04` (a callee's `RETF` side traces beside
+/// lazy-aware callers with loops), `k6_02`, `deep_recursion`. Asserts that lazy-aware candidates exist with the knob on (`e4_01`) and none with
+/// it off. (The decision rule itself: `tr_policy::e4_policy`; which root compiles first depends on the trace mode.)
+#[test]
+fn e4_lazyloop_programs() {
+    let progs = [
+        "e4_01_lazy_loop_shapes",
+        "e4_02_lazy_loop_errors",
+        "e4_03_lazy_loop_policy",
+        "e4_04_lazy_loop_retf",
+        "k6_02_path_switch",
+        "deep_recursion",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("errors") || p.contains("deep");
+        for trace in ["always", "on2"] {
+            for lim in ["lazyloop=0", "lazyloop=1", "lazyloop=2"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "lazyloop=1";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            for b in [3, 17, 200] {
+                if heavy && b != 17 {
+                    continue;
+                }
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                if heavy && gc == "1" {
+                    continue;
+                }
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s(lim),
+            );
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits == "lazyloop=0" {
+            assert_eq!(
+                o.stats.lazyloop_on,
+                0,
+                "{}: lazy-aware with lazyloop=0",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none();
+        if j.prog == "e4_01_lazy_loop_shapes" && plain && j.limits == "lazyloop=1" {
+            assert!(
+                o.stats.lazyloop_on >= 2,
+                "{}: lazy-aware candidates {}",
+                j.tag(),
+                o.stats.lazyloop_on
             );
         }
     }

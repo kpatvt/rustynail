@@ -342,7 +342,8 @@ pub struct RecCfg {
     /// N3a: (prototype, pc) head query for the root frame of a side recording AFTER a `RETF` (its root is the caller `C`, not the entry
     /// prototype the side configuration's `head_state` is bound to).
     pub retf_head: Option<FrameHeadQuery>,
-    /// BUNDLE-K L1 (`lazyci` on): `RETF` does not pop into a caller that may be lazy-aware.
+    /// BUNDLE-K L1 (`lazyci` on): `RETF` does not pop into a caller that may be lazy-aware (the `lazyci` value; bit 2: E4 `lazyloop`, a
+    /// prototype with loops may be lazy-aware too).
     pub retf_nolazy: u32,
     /// F2: record `getmetatable(t)` of a table as inline loads (0 = the stitching C call)
     pub f2mt: bool,
@@ -7222,7 +7223,11 @@ impl Rec {
         // would run in a trace that is not part of its region (`lazyci` is on by default)
         if self.cfg.retf_nolazy != 0
             && !mutants::active("retf_lazy_caller_ok")
-            && maybe_lazy_proto(&cp, self.cfg.retf_nolazy >= 2)
+            && (maybe_lazy_proto(&cp, self.cfg.retf_nolazy & 3 >= 2, false)
+                || (self.cfg.retf_nolazy & 4 != 0
+                    && maybe_lazy_proto(&cp, self.cfg.retf_nolazy & 3 >= 2, true)
+                    && !mutants::active("lazyloop_retf_ok")
+                    && !super::cache::retf_into_loop_proto(&cp)))
         {
             return NO;
         }
@@ -11702,8 +11707,9 @@ pub fn cont_ok(key: usize) -> bool {
     CONT_OK.with(|c| c.borrow().contains(&key))
 }
 
-/// Could the prototype be lazy-aware (`TrProto::lazy`: loop-free, non-vararg; the rest of the rule is dynamic)? A conservative superset, for `Rec::retf`.
-fn maybe_lazy_proto(p: &Proto, any_c: bool) -> bool {
+/// Could the prototype be lazy-aware (`TrProto::lazy`: loop-free, non-vararg; the rest of the rule is dynamic)? A conservative superset, for
+/// `Rec::retf`. `loops`: ignore the loop rule (E4: the candidates with loops, whose decision is dynamic, `cache::retf_into_loop_proto`).
+fn maybe_lazy_proto(p: &Proto, any_c: bool, loops: bool) -> bool {
     if p.is_vararg() {
         return false;
     }
@@ -11720,12 +11726,13 @@ fn maybe_lazy_proto(p: &Proto, any_c: bool) -> bool {
             return false;
         }
     }
-    !p.code().iter().any(|&w| {
-        let i = Instruction(w);
-        match i.opcode() {
-            Some(OpCode::Forloop | OpCode::Tforloop) => true,
-            Some(OpCode::Jmp) => i.sj() < 0,
-            _ => false,
-        }
-    })
+    loops
+        || !p.code().iter().any(|&w| {
+            let i = Instruction(w);
+            match i.opcode() {
+                Some(OpCode::Forloop | OpCode::Tforloop) => true,
+                Some(OpCode::Jmp) => i.sj() < 0,
+                _ => false,
+            }
+        })
 }

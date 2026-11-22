@@ -565,7 +565,9 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     });
     let pr = cache::proto_ref(&proto);
     // BUNDLE-K L1: RETF (and the frame links that go with it) only in traces of a prototype that is not lazy-aware: the pop assumes every frame below the running one is complete
-    let lazy_root = pr.is_some_and(|pr| cache::proto_lazy(st, pr));
+    // (E4: an undecided candidate with loops records like a lazy-aware prototype, it may become one when this recording is compiled)
+    let lazy_root =
+        pr.is_some_and(|pr| cache::proto_lazy(st, pr) || cache::proto_lazy_cand(st, pr));
     // BUNDLE-C (`fnpromo`): this function-entry head is a generic function root (not for a function that reaches itself through an upvalue)
     let promoted = pr.is_some_and(|pr| cache::fn_promoted(st, pr)) && !closure_self_ref(cl);
     // K6: remember that the prototype recurses through its own upvalue (the FnShort budget of its entry head)
@@ -854,7 +856,12 @@ pub fn driver_start_side(
             None
         },
         // N3a: after a `RETF` the root frame is the caller: a loop head of ITS prototype
-        retf_nolazy: cfg.limits.lazyci,
+        // (E4: bit 2 = `lazyloop`, prototypes with loops may be lazy-aware too)
+        retf_nolazy: if cfg.limits.lazyci != 0 && cfg.limits.lazyloop != 0 {
+            cfg.limits.lazyci | 4
+        } else {
+            cfg.limits.lazyci
+        },
         retf_head: if cfg.limits.retf & 1 != 0 && !lazy_root && !start.no_retf {
             Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
                 cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
@@ -1852,6 +1859,12 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     // SAFETY: the root prototype is live (running frame).
     let rootp = unsafe { &*(root as *const rn_core::func::Proto) };
     let rpr = cache::proto_ref(rootp).ok_or_else(|| abort_err("no-descriptor", "root"))?;
+    // E4 (`lazyloop`, docs/JIT_TRACE.md section 35.1): the lazy decision of a candidate prototype with loops, at the compile of its first root
+    // trace (before anything below reads `proto_lazy`): lazy-aware when that trace is its function-entry trace ending in a native self-call
+    if !act.side {
+        let on = cache::lazy_loop_rule(pc, ir.rec_call.is_some(), !ir.segs.is_empty());
+        cache::lazy_loop_decide(st, rpr, pc, on);
+    }
     // TR8: every exit continues through its cell, which starts at the tier-1 landing address. A prelude (F2a) is
     // reached from the head's dispatch cell: when its entry checks fail it continues in the root trace's entry, which
     // is what tier 1 would have reached through the dispatch cell without it. That holds for the snapshots that are
