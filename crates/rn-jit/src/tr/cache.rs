@@ -7350,7 +7350,7 @@ fn exit_dump(t: &Trace, tag: &str) {
         let op = rn_core::instruction::Instruction(w).opcode();
         let gk = t.gk.get(m.exits[k].snap as usize).copied().unwrap_or(0);
         eprintln!(
-            "[exitdump] {tag} trace {} side {} head {} exit {k} n {n} pc {} op {:?} frames {} gk {gk} st {:?} fails {} last {:?} black {}",
+            "[exitdump] {tag} trace {} side {} head {} exit {k} n {n} pc {} op {:?} frames {} gk {gk} st {:?} fails {} last {:?} black {} land {:#x} link {}",
             t.no,
             t.side.is_some(),
             t.head,
@@ -7360,7 +7360,9 @@ fn exit_dump(t: &Trace, tag: &str) {
             t.exit_st.get(k),
             t.fails.get(k).copied().unwrap_or(0),
             t.last.get(k).copied().flatten(),
-            c.get() & EXIT_BLACK_BIT != 0
+            c.get() & EXIT_BLACK_BIT != 0,
+            sn.land_addr,
+            sn.link_cell != 0
         );
     }
 }
