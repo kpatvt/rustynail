@@ -208,6 +208,10 @@ pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
                 a.alu_ri(Alu::Sub, Size::S64, vr(d), imm);
                 a.jcc_label(cond(Cc::Lt), lab(to));
             }
+            Op::SubJae { d, imm, to } => {
+                a.alu_ri(Alu::Sub, Size::S64, vr(d), imm);
+                a.jcc_label(cond(Cc::Uge), lab(to));
+            }
             Op::Jmp(l) => a.jmp_label(lab(l)),
             Op::CountSub { n, exit } => {
                 a.alu_mi(Alu::Sub, Size::S32, Mem::base(R15), n as i32);

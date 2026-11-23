@@ -274,6 +274,16 @@ pub enum Op {
         /// Taken when the result is negative.
         to: L,
     },
+    /// `d -= imm` (64-bit, wrapping); `goto to` if the subtraction did NOT borrow, i.e. `d >= imm` as unsigned numbers before it (`sub d, imm; jae to`).
+    /// N1c (`cloop`): the counted-loop back-edge, `to` is the loop head; the fall-through undoes the subtraction.
+    SubJae {
+        /// Register (updated).
+        d: V,
+        /// Immediate subtracted (sign-extended to 64 bits).
+        imm: i32,
+        /// Taken when `d >= imm` (unsigned) before the subtraction.
+        to: L,
+    },
     /// `goto l`.
     Jmp(L),
     /// `*cnt -= n` (32-bit, wrapping); `goto exit` if the result is negative (C1 block counting).

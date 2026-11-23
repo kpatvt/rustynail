@@ -2387,6 +2387,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         nopay: true,
         divmagic: true,
         hk_fuse: true,
+        // SAFETY: as above.
+        cloop: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cloop } != 0,
         hk_key64: true,
         budget_sub: vbreg.is_some(),
         // `+emuverify` runs the emulation on a private copy of the header, which the far `[r15 + disp]` poll word is not part of: the trace polls

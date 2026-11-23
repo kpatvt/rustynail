@@ -614,6 +614,14 @@ impl Emu {
                         pc = labels[to as usize];
                     }
                 }
+                Op::SubJae { d, imm, to } => {
+                    let old = r[d as usize];
+                    let k = i64::from(imm) as u64;
+                    r[d as usize] = old.wrapping_sub(k);
+                    if old >= k {
+                        pc = labels[to as usize];
+                    }
+                }
                 Op::Jmp(l) => pc = labels[l as usize],
                 Op::CountSub { n, exit } => {
                     // SAFETY: per the function contract.

@@ -203,6 +203,9 @@ pub struct AsmEnv {
     pub hk_key64: bool,
     /// B4-3: an `HREFK` followed by the `HLOAD` of its node checks the key tag and the value tag with one 16-bit compare (`hkfuse`).
     pub hk_fuse: bool,
+    /// N1c (`cloop`): the counted-loop back-edge of a peeled loop is `add idx, step; sub cnt, 1; jae head`, the loop-ending `NE count, #0` guard exits through
+    /// a fall-through that undoes the two updates.
+    pub cloop: bool,
     /// B4-4: `//` and `%` by a constant use multiplication (`divmagic`).
     pub divmagic: bool,
     /// F2: `string.byte(s, i)` with `1 <= i <= #s` is inline loads (the helper call is the slow path) (`f2byte`).
@@ -366,6 +369,7 @@ impl Default for AsmEnv {
             shape_min: 0,
             nopay: false,
             divmagic: false,
+            cloop: false,
             hk_fuse: false,
             hk_key64: false,
             f2_byte: false,
@@ -3147,7 +3151,20 @@ pub fn assemble_dl(
         cx.count_iteration(); // `+verify`: a side trace counts its executions like a loop counts iterations
     }
     let mut inplace = false;
+    // N1c: the counted-loop tail (see `Cx::cloop_plan`)
+    let cloop = cx.cloop_plan(e2plan.as_ref().map(|p| p.0));
+    let mut cloop_done = false;
     for i in 0..ir.ins.len() {
+        if cloop_done {
+            break;
+        }
+        if let Some((g, cnt, ref adds)) = cloop {
+            if i == g {
+                cx.cloop_tail(g, cnt, adds, loop_l)?;
+                cloop_done = true;
+                continue;
+            }
+        }
         if ir.rec_call.is_some() && i + 1 == ir.ins.len() {
             // P-M3: the placeholder exit of a native self-call (an always-failing guard) assembles to nothing; the push
             // follows the writeback
@@ -3246,7 +3263,9 @@ pub fn assemble_dl(
             let m = spill_m(cx.ext_slot(FIRST_SLOT_K));
             cx.st(W::B8, m, Src::Imm(0));
         }
-        cx.push(Op::Jmp(loop_l));
+        if !cloop_done {
+            cx.push(Op::Jmp(loop_l));
+        }
     }
     // A2: the second entry sits behind the main code (nothing falls into it)
     let mut entry2n = None;
@@ -4915,6 +4934,112 @@ impl Cx<'_> {
 
     fn dst(&self, i: usize) -> Loc {
         self.al.ins[i].dst
+    }
+
+    /// N1c: emits the tail planned by [`Self::cloop_plan`] (the guard `g`, the count register, the other in-place adds).
+    fn cloop_tail(
+        &mut self,
+        g: usize,
+        cnt: V,
+        adds: &[(V, i32)],
+        loop_l: L,
+    ) -> Result<(), AsmError> {
+        let x = self.guard_label(g)?;
+        for &(d, imm) in adds {
+            self.push(Op::Add(d, Src::Imm(imm)));
+        }
+        self.push(Op::SubJae {
+            d: cnt,
+            imm: if mutants::active("cloop_cnt_imm2") {
+                2
+            } else {
+                1
+            },
+            to: loop_l,
+        });
+        // the loop ends (`count == 0` in front of the subtraction): the registers get their values in front of the guard back
+        if !mutants::active("cloop_no_fixup_cnt") {
+            self.push(Op::Add(cnt, Src::Imm(1)));
+        }
+        // (the index registers: their stack slots are dead at the loop's end, no program can observe them, so no mutant exists for a wrong
+        // restore; the snapshot still gets the exact value)
+        for &(d, imm) in adds.iter().rev() {
+            self.push(Op::Sub(d, Src::Imm(imm)));
+        }
+        self.push(Op::Jmp(x));
+        for j in g..self.ir.ins.len() {
+            self.track_tags(j);
+        }
+        Ok(())
+    }
+
+    /// N1c (`cloop`): the tail of a peeled loop body that the counted-loop back-edge replaces. The body ends with the loop-ending guard `NE count, #0`, the
+    /// count's `ADD count, #-1` and further integer `ADD reg, #imm` (the index, the carried negated index), every one in place (destination register = first
+    /// operand register), nothing else, and the back-edge moves are empty. The guard and the adds are then
+    /// `add reg, imm...; sub count, 1; jae head` (the borrow of the subtraction is the guard: `count == 0` before it) and the fall-through restores the
+    /// registers (`add count, 1; sub reg, imm...`) before it leaves through the guard's own exit, so the snapshot sees the state in front of the adds.
+    /// Returns the guard's index, the count register and the other adds in program order.
+    fn cloop_plan(&self, e2_end: Option<usize>) -> Option<(usize, V, Vec<(V, i32)>)> {
+        let (ir, al) = (self.ir, self.al);
+        if !self.env.cloop
+            || ir.loop_at.is_none()
+            || ir.rec_call.is_some()
+            || ir.rec_ret.is_some()
+            || self.env.side.is_some()
+            || !al.backedge_seq.is_empty()
+        {
+            return None;
+        }
+        let n = ir.ins.len();
+        let g = (0..n).rev().find(|&k| ir.ins[k].flags & F_GUARD != 0)?;
+        if g + 2 > n || e2_end.is_some_and(|e| e > g) {
+            return None;
+        }
+        let ng = ir.ins[g];
+        let og = al.ins[g].ops;
+        let Loc::G(c) = og[0] else { return None };
+        if ng.op != TOp::Ne
+            || ng.t != Ty::I64
+            || !TraceIr::is_ins(ng.a)
+            || ir.as_int(ng.b) != Some(0)
+            || c == 7
+            || !matches!(og[1], Loc::Const(_))
+        {
+            return None;
+        }
+        let mut adds: Vec<(V, i32)> = Vec::new();
+        for j in g..n {
+            let a = &al.ins[j];
+            if !a.pre.is_empty() || !a.post.is_empty() || !a.stores.is_empty() {
+                return None;
+            }
+            if j == g {
+                continue;
+            }
+            let ins = ir.ins[j];
+            let (Loc::G(d), Loc::G(x), Loc::Const(k)) = (a.dst, a.ops[0], a.ops[1]) else {
+                return None;
+            };
+            let imm = fits(self.kbits_of(k) as i64)?;
+            if ins.op != TOp::Add
+                || ins.t != Ty::Int
+                || ins.flags & F_GUARD != 0
+                || d != x
+                || d == 7
+            {
+                return None;
+            }
+            if j == g + 1 {
+                if ins.a != ng.a || d != c || imm != -1 {
+                    return None;
+                }
+            } else if d == c || adds.iter().any(|&(e, _)| e == d) {
+                return None;
+            } else {
+                adds.push((d, imm));
+            }
+        }
+        Some((g, c, adds))
     }
 
     /// Q1: the last instruction of a looped body is an integer `ADD` (`x = a + b`, `x` in `D`) whose back-edge moves are exactly the

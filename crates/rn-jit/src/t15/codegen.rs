@@ -1847,6 +1847,7 @@ impl Rg<'_, '_> {
                 Op::Jmp(l)
                 | Op::Br { to: l, .. }
                 | Op::SubJl { to: l, .. }
+                | Op::SubJae { to: l, .. }
                 | Op::FBr { to: l, .. }
                 | Op::FBrX { to: l, .. }
                 | Op::BrM { to: l, .. }

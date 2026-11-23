@@ -979,6 +979,9 @@ pub const NAMES: &[&str] = &[
     "ixfuse_tag_disp0",
     "ixfuse_tag_disp_neg",
     "ixfuse_pay_disp_pos",
+    // N1c (`cloop`): the counted-loop back-edge
+    "cloop_cnt_imm2",
+    "cloop_no_fixup_cnt",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1055,7 +1058,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 809);
+        assert_eq!(NAMES.len(), 811);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

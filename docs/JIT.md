@@ -472,6 +472,7 @@ are ignored with a warning at `RUSTYNAIL_JIT_VERBOSE>=1`.
 | `aidx` | 0 | 0-1 | BUNDLE-L A (`aidx`): the complemented index `~i` of an array load is an IR value (`NEG k` with a displacement for `k + c`, shared ... |
 | `bhoist` | 1 | 0-1 | BUNDLE-L B (`bhoist`): the bounds checks `ULT k + c, asize` of a counted `for` loop (induction slot `k` with step 1, loop guard ... |
 | `ixfuse` | 1 | 0-1 | N1a (`ixfuse`, docs/JIT_TRACE.md section 41): an integer `ADD x, #c` whose users are all the index operand of fused `AREF`s is folded into the access displacement (`[base + x + 4 + c]`, `[base + 8 * ~x - 8 * c]`); `x` stays live instead of the sum |
+| `cloop` | 1 | 0-1 | N1c (`cloop`, docs/JIT_TRACE.md section 41): the counted-loop back-edge of a peeled loop is `add idx, step; sub count, 1; jae head` (one branch for the loop-ending guard `NE count, #0` and the jump back); the guard's exit undoes the two updates first |
 | `pollr15` | 2 | 0-2 | P2-3b: the trace poll is `cmp byte [r15 + disp], 0` when the poll word is within reach of the per-state data (0 = address in a ... |
 | `xregs` | 0 | 0-3 | P2 bundle 1: extra general registers of the trace register allocator: bit 0 = `rbp` (`V9`, free: only the thunk's frame-pointer ... |
 | `rearm` | 4 | 0-64 | R1: a stay of compiled code that hands a frame to the interpreter arms the sampling tick (`jit_hooks::rearm_tick`) for the next ... |

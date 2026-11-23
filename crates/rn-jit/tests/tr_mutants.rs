@@ -4498,6 +4498,16 @@ const TABLE: &[Row] = &[
         owner: "N1",
         dets: &[d("tr_core", "n1_programs")],
     },
+    Row {
+        name: "cloop_cnt_imm2",
+        owner: "N1",
+        dets: &[d("tr_core", "n1_programs")],
+    },
+    Row {
+        name: "cloop_no_fixup_cnt",
+        owner: "N1",
+        dets: &[d("tr_core", "n1_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

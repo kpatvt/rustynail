@@ -13211,7 +13211,12 @@ fn t3_heatside_programs() {
 #[test]
 fn n1_programs() {
     let mut jobs = Vec::new();
-    for lim in ["ixfuse=1", "ixfuse=0"] {
+    for lim in [
+        "ixfuse=1,cloop=0",
+        "ixfuse=0,cloop=1",
+        "ixfuse=1,cloop=1",
+        "ixfuse=0,cloop=0",
+    ] {
         for trace in ["always", "on2"] {
             for p in [
                 "n1_offsets",
@@ -13227,6 +13232,7 @@ fn n1_programs() {
                     "+exitstorm=3",
                     "+exitstorm=1 +verify",
                     "+randra=5 +verify",
+                    "+emurun +verify",
                     "-loop",
                 ] {
                     let mut j = Job::new(p, trace).opts(opts);
@@ -13255,7 +13261,7 @@ fn n1_programs_enter_traces() {
     let mut js = Vec::new();
     for p in ["n1_offsets", "n1_matrix", "n1_fill"] {
         let mut j = Job::new(p, "always").opts("+verify");
-        j.limits = "ixfuse=1".into();
+        j.limits = "ixfuse=1,cloop=1".into();
         js.push(j);
     }
     for (j, o) in &compare(js) {

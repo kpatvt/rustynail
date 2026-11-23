@@ -133,6 +133,8 @@ pub const GUARDDIET_PROCESS: u32 = 1;
 pub const HKADDR_PROCESS: u32 = 1;
 /// N1a: the process default of [`TrLimits::ixfuse`] (also the struct default).
 pub const IXFUSE_PROCESS: u32 = 1;
+/// N1c: the process default of [`TrLimits::cloop`] (also the struct default).
+pub const CLOOP_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
 pub const SHAPEGUARD_PROCESS: u32 = 1;
 /// R1 (`regcarry`): the process default of [`TrLimits::regcarry`] (also the struct default).
@@ -761,6 +763,10 @@ pub struct TrLimits {
     /// them (`ra::RaOpts::ixfuse`): the access addresses `[base + x + (tag base + c)]` / `[base + 8 * ~x - 8 * c]` and `x` stays live instead of the
     /// sum (no `mov; add` per access): 0 = off, 1 = on (default [`IXFUSE_PROCESS`]).
     pub ixfuse: u32,
+    /// N1c (`cloop`): the counted-loop back-edge of a peeled loop: the loop-ending guard `NE count, #0`, the count's `ADD -1` and the index update become
+    /// `add idx, step; sub count, 1; jae head` (one branch instead of two, the guard's exit undoes the updates first): 0 = off, 1 = on (default
+    /// [`CLOOP_PROCESS`]).
+    pub cloop: u32,
     /// S4 (`shapeguard`): a table's `HREFK`s are covered by ONE guard on the layout id of its node vector (`HSHAPE`, `shape.rs`) and skip their
     /// key compare: 0 = off, 1 = on (default [`SHAPEGUARD_PROCESS`]).
     pub shapeguard: u32,
@@ -918,6 +924,7 @@ impl Default for TrLimits {
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
             ixfuse: IXFUSE_PROCESS,
+            cloop: CLOOP_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
             shapemin: SHAPE_MIN,
@@ -1119,6 +1126,7 @@ impl TrLimits {
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
                 "ixfuse" => l.ixfuse = v.min(1),
+                "cloop" => l.cloop = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,
                 "shapemin" => l.shapemin = v.min(64),
