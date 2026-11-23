@@ -4459,6 +4459,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_policy", "t1_retfsel_policy")],
     },
     Row {
+        name: "blfirst_never",
+        owner: "blfirst",
+        dets: &[d("tr_policy", "blfirst_policy")],
+    },
+    Row {
+        name: "blfirst_side_always",
+        owner: "blfirst",
+        dets: &[d("tr_policy", "blfirst_policy")],
+    },
+    Row {
         name: "restarts_never",
         owner: "TR24c",
         dets: &[

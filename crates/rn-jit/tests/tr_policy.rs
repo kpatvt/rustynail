@@ -2325,6 +2325,69 @@ fn tr24c_restarts_policy() {
     }
 }
 
+/// docs/JIT_TRACE.md section 44.3 (`blfirst`): the knob (struct default = shipped, parse, cap), the reason mask, and the head policy (the first
+/// unchangeable abort blacklists only for the reasons of the mask; side exits only with bit 16). Detector of `blfirst_never`, `blfirst_side_always`.
+#[test]
+fn blfirst_policy() {
+    use rn_jit::tr::cache::{blfirst_applies, Penalty, TrConfig, TrMode, TrProto, BLFIRST_PROCESS};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.blfirst, BLFIRST_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (Some("blfirst=0"), 0),
+        (Some("blfirst=7"), 7),
+        (Some("blfirst=31"), 31),
+        (Some("blfirst=99"), 31),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.blfirst, want, "limits env {env:?}");
+    }
+    // the mask: 1 TooLong, 2 Compile(..), 4 InnerLoop, 8 the rest; 16 = sides too
+    assert!(!blfirst_applies(0, "TooLong", false));
+    assert!(blfirst_applies(1, "TooLong", false));
+    assert!(!blfirst_applies(2, "TooLong", false));
+    assert!(blfirst_applies(2, "Compile(pass)", false));
+    assert!(!blfirst_applies(1, "Compile(pass)", false));
+    assert!(blfirst_applies(4, "InnerLoop", false));
+    assert!(!blfirst_applies(3, "InnerLoop", false));
+    assert!(blfirst_applies(8, "Nyi(Call)", false));
+    assert!(blfirst_applies(8, "CFunc", false));
+    assert!(!blfirst_applies(7, "CFunc", false));
+    assert!(
+        !blfirst_applies(15, "TooLong", true),
+        "a side exit needs bit 16"
+    );
+    assert!(blfirst_applies(17, "TooLong", true));
+    assert!(
+        !blfirst_applies(31, "MaxSide", true),
+        "the exit policy's own reasons"
+    );
+    // heads: the first unchangeable abort blacklists exactly when the mask says so; a changeable one never does
+    let mk = || TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    assert!(matches!(
+        mk().on_abort_blf(0, "TooLong", true, 0, 0),
+        Penalty::Wait(_)
+    ));
+    assert_eq!(mk().on_abort_blf(0, "TooLong", true, 0, 1), Penalty::Black);
+    assert!(matches!(
+        mk().on_abort_blf(0, "TooLong", true, 0, 2),
+        Penalty::Wait(_)
+    ));
+    assert!(matches!(
+        mk().on_abort_blf(0, "TooLong", false, 0, 31),
+        Penalty::Wait(_)
+    ));
+    let tp = mk();
+    assert!(matches!(
+        tp.on_abort_blf(0, "TooLong", true, 0, 0),
+        Penalty::Wait(_)
+    ));
+    assert_eq!(tp.on_abort_blf(0, "TooLong", true, 0, 0), Penalty::Black);
+}
+
 /// docs/JIT_TRACE.md section 39.1 (T1, `retfsel`): the knob (struct default = shipped, parse, cap), the rule (caller loop traced and no recursion;
 /// an untraced head, no loop and a recursion refuse) and the innermost enclosing loop of a call site in real bytecode (nested numeric, generic and
 /// `while` loops, a call outside every loop). Detector of `retfsel_never`, `retfsel_untraced_ok`, `retfsel_recursion_ok`, `retfsel_outer_loop`.

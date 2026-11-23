@@ -973,6 +973,9 @@ pub const NAMES: &[&str] = &[
     "retfsel_untraced_ok",
     "retfsel_recursion_ok",
     "retfsel_outer_loop",
+    // docs/JIT_TRACE.md section 44.3 (`blfirst`): blacklist at the first unchangeable abort
+    "blfirst_never",
+    "blfirst_side_always",
     // docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of a root recording
     "restarts_never",
     "restarts_unbounded",
@@ -1076,7 +1079,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 821);
+        assert_eq!(NAMES.len(), 823);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

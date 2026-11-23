@@ -112,6 +112,8 @@ pub const DEEPPROBE_PROCESS: u32 = 12;
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
 pub const RESTARTS_PROCESS: u32 = 0;
+/// Section 44.3 (`blfirst`): the process default of [`TrLimits::blfirst`] (also the struct default): **3** = `TooLong` and `Compile(..)` aborts of root recordings blacklist at the first occurrence.
+pub const BLFIRST_PROCESS: u32 = 3;
 /// Section 39.1 (T1): frames from the caller down that the `retfsel` recursion test looks at (the popped prototype among them = the pop is inside a
 /// recursion).
 pub const RETFSEL_DEPTH: usize = 16;
@@ -680,6 +682,11 @@ pub struct TrLimits {
     /// than its first read checked restarts at the head from the types the finished iteration produced (at most this many times) instead of aborting
     /// `Unstable` (which re-arms the head and records again at the next back-edge). 0 = off. Default [`RESTARTS_PROCESS`].
     pub restarts: u32,
+    /// Section 44.3 (`blfirst`): blacklist at the FIRST occurrence of an `unchangeable` abort instead of the second identical one. A bit mask over the
+    /// reasons it applies to: 1 `TooLong`, 2 `Compile(..)`, 4 `InnerLoop`, 8 the other unchangeable reasons (`Nyi`, `CFunc`, `Vararg`, `MultRet`,
+    /// `TailCall`, `Recursion`, `Depth`, `TableHash`); 16 = also for the exits of side traces (default: root heads only). 0 = off.
+    /// Default [`BLFIRST_PROCESS`].
+    pub blfirst: u32,
     /// BUNDLE-V V2: record upvalue stores of collectable values (default [`UPBAR_PROCESS`]).
     pub upbar: u32,
     /// BUNDLE-H: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel) (default [`TNEXTINL_PROCESS`]).
@@ -916,6 +923,7 @@ impl Default for TrLimits {
             retfmax: RETFMAX_PROCESS,
             retfsel: RETFSEL_PROCESS,
             restarts: RESTARTS_PROCESS,
+            blfirst: BLFIRST_PROCESS,
             upbar: UPBAR_PROCESS,
             tnextinl: TNEXTINL_PROCESS,
             randinl: RANDINL_PROCESS,
@@ -1121,6 +1129,7 @@ impl TrLimits {
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
+                "blfirst" => l.blfirst = v.min(31),
                 "upbar" => l.upbar = v.min(1),
                 "tnextinl" => l.tnextinl = v.min(3),
                 "randinl" => l.randinl = v.min(1),
@@ -2203,6 +2212,18 @@ impl TrProto {
         unchangeable: bool,
         fnself: u32,
     ) -> Penalty {
+        self.on_abort_blf(i, reason, unchangeable, fnself, 0)
+    }
+
+    /// [`TrProto::on_abort_with`] with the `blfirst` mask of section 44.3: an unchangeable abort of a reason in the mask blacklists at its first occurrence.
+    pub fn on_abort_blf(
+        &self,
+        i: usize,
+        reason: &'static str,
+        unchangeable: bool,
+        fnself: u32,
+        blfirst: u32,
+    ) -> Penalty {
         let h = &self.heads[i];
         h.trace.set(None);
         if reason == "Unroll" && !mutants::active("h9_fail_penalised") {
@@ -2251,7 +2272,8 @@ impl TrProto {
             return Penalty::Wait(p as i32);
         }
         let k = h.k.get();
-        let repeat = unchangeable && h.last_reason.get() == Some(reason);
+        let repeat = unchangeable
+            && (h.last_reason.get() == Some(reason) || blfirst_applies(blfirst, reason, false));
         h.last_reason.set(unchangeable.then_some(reason));
         h.k.set(k.saturating_add(1));
         if repeat || k + 1 >= MAX_ABORTS {
@@ -3470,6 +3492,34 @@ pub fn begin_side_recording_ex(
     Ok(id)
 }
 
+/// Section 44.3 (`blfirst`): does the first occurrence of the unchangeable abort `reason` blacklist (mask bits of [`TrLimits::blfirst`])? `side`: the abort
+/// is that of a side recording (needs bit 16).
+pub fn blfirst_applies(mask: u32, reason: &str, side: bool) -> bool {
+    if mutants::active("blfirst_never") || mask == 0 {
+        return false;
+    }
+    if side && mask & 16 == 0 && !mutants::active("blfirst_side_always") {
+        return false;
+    }
+    // the exit policy's own reasons (`side_failed` callers) are not recorder aborts
+    if matches!(
+        reason,
+        "ChainDepth" | "InnerFamily" | "MaxSide" | "FrameKind"
+    ) {
+        return false;
+    }
+    let bit = if reason == "TooLong" {
+        1
+    } else if reason.starts_with("Compile(") {
+        2
+    } else if reason == "InnerLoop" {
+        4
+    } else {
+        8
+    };
+    mask & bit != 0
+}
+
 /// F2a: the exit `exit` of `parent` failed to produce a side trace (`fault`: a recording that aborted or did not
 /// compile; otherwise the attempt just could not run now). The exit counter is re-armed so that it reports again after
 /// `hot_exit` more exits; the [`MAX_SIDE_FAILS`]th failure blacklists the exit.
@@ -3508,6 +3558,7 @@ fn side_failed(
         }
     }
     let sbump2 = d.tr.cfg.limits.sbump2;
+    let blfirst = d.tr.cfg.limits.blfirst;
     let Some(Slot {
         body: Body::Trace(t),
         ..
@@ -3523,7 +3574,7 @@ fn side_failed(
     if fault {
         t.fails[k] = t.fails[k].saturating_add(1);
         repeat = unchangeable
-            && t.last[k] == Some(reason)
+            && (t.last[k] == Some(reason) || blfirst_applies(blfirst, reason, true))
             && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
@@ -3980,7 +4031,13 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
                 });
                 Penalty::Wait(1)
             } else {
-                let p = tp.on_abort_with(r.head, reason, u, d.tr.cfg.limits.fnself);
+                let p = tp.on_abort_blf(
+                    r.head,
+                    reason,
+                    u,
+                    d.tr.cfg.limits.fnself,
+                    d.tr.cfg.limits.blfirst,
+                );
                 if second_retry_due(d.tr.cfg.limits.second, p == Penalty::Black, u, reason) {
                     if let Some(w) = tp.second_chance(r.head) {
                         d.tr.stats.retried += 1;
