@@ -131,6 +131,13 @@ impl SlotMap {
         // (sized once: the written slots bound the result; growing it one entry at a time was the larger cost of this function)
         let n: u32 = self.wmask.iter().map(|w| w.count_ones()).sum();
         let mut out = Vec::with_capacity(n as usize + 8);
+        self.entries_into(&mut out);
+        out
+    }
+
+    /// [`SlotMap::entries`] appended to `out` (section 43.2, T2b: [`take`] writes straight into the snapshot map of the trace instead of through a
+    /// vector of its own that is allocated, filled, copied and freed again for every snapshot).
+    pub fn entries_into(&self, out: &mut Vec<SnapEntry>) {
         for (i, &w) in self.wmask.iter().enumerate() {
             let mut w = w;
             while w != 0 {
@@ -145,7 +152,6 @@ impl SlotMap {
                 }
             }
         }
-        out
     }
 
     /// The first slot (lowest number) whose type at the end of the iteration differs from the type its first read
@@ -339,9 +345,12 @@ pub fn take(
     frames: &[FrameRec],
     top: u16,
 ) -> u32 {
-    let mut entries = sm.entries();
-    if mutants::active("snap_drop_last") {
-        entries.pop();
+    // (section 43.2, T2b: the map is built in place at the end of `ir.snapmap`, which is what `TraceIr::snapshot` appends it to)
+    assert!(ir.snaps.len() < MAX_SNAPS, "TooLong");
+    let start = ir.snapmap.len();
+    sm.entries_into(&mut ir.snapmap);
+    if mutants::active("snap_drop_last") && ir.snapmap.len() > start {
+        ir.snapmap.pop();
     }
     for f in frames {
         let e = SnapEntry {
@@ -349,9 +358,9 @@ pub fn take(
             r: f.closure,
             flags: SNAP_FUNC,
         };
-        match entries.binary_search_by_key(&f.func_slot, |x| x.slot) {
-            Ok(i) => entries[i] = e,
-            Err(i) => entries.insert(i, e),
+        match ir.snapmap[start..].binary_search_by_key(&f.func_slot, |x| x.slot) {
+            Ok(i) => ir.snapmap[start + i] = e,
+            Err(i) => ir.snapmap.insert(start + i, e),
         }
     }
     ir.frames.extend(frames.iter().map(|f| FrameLink {
@@ -363,7 +372,7 @@ pub fn take(
         nextra: f.nextra,
         mm: f.mm,
     }));
-    ir.snapshot(
+    ir.snapshot_built(
         Snap {
             pc,
             frame: frames.len() as u8,
@@ -375,7 +384,7 @@ pub fn take(
             top,
             seg: 0,
         },
-        &entries,
+        start,
     )
 }
 
@@ -498,5 +507,60 @@ mod tests {
             }
         }
         assert!(sm.len() > 128, "the map grew across several mask words");
+    }
+
+    /// Section 43.2 (T2b): [`take`] builds the map in place at the end of `ir.snapmap`; the result is the one of the earlier composition
+    /// (`entries()`, the function-slot entries merged in slot order, [`TraceIr::snapshot`]), with frames, a replaced and an inserted function slot,
+    /// and a map that starts after earlier snapshots.
+    #[test]
+    fn take_builds_the_map_in_place() {
+        let mut sm = SlotMap::new(12);
+        let mut ir = TraceIr::default();
+        for s in [1usize, 4, 5, 9] {
+            let k = ir.knum(s as f64);
+            sm.def(s, k);
+        }
+        let frames = [
+            FrameRec {
+                proto: ProtoKey(7),
+                func_slot: 4, // replaces the written slot 4
+                call_pc: 3,
+                nresults: 1,
+                closure: ir.knum(100.0),
+                tail: false,
+                nextra: 0,
+                mm: false,
+            },
+            FrameRec {
+                proto: ProtoKey(8),
+                func_slot: 7, // inserted between 5 and 9
+                call_pc: 6,
+                nresults: -1,
+                closure: ir.knum(101.0),
+                tail: true,
+                nextra: 2,
+                mm: false,
+            },
+        ];
+        for (n, fr) in [(0usize, &frames[..0]), (1, &frames[..]), (2, &frames[..1])] {
+            let before = ir.snapmap.len();
+            let mut want = sm.entries();
+            for f in fr {
+                let e = SnapEntry {
+                    slot: f.func_slot,
+                    r: f.closure,
+                    flags: SNAP_FUNC,
+                };
+                match want.binary_search_by_key(&f.func_slot, |x| x.slot) {
+                    Ok(i) => want[i] = e,
+                    Err(i) => want.insert(i, e),
+                }
+            }
+            let s = take(&mut ir, &sm, 11 + n as u32, Land::Pre, fr, 3);
+            assert_eq!(ir.snap_entries(s), &want[..], "case {n}");
+            assert_eq!(ir.snaps[s as usize].map.0 as usize, before);
+            assert_eq!(ir.snapmap.len(), before + want.len());
+            assert_eq!(usize::from(ir.snaps[s as usize].nframes), fr.len());
+        }
     }
 }

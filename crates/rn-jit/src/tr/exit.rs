@@ -762,7 +762,7 @@ pub fn build_exits_ex(
         if usize::from(s.frame) != usize::from(s.nframes) {
             return Err(format!("snapshot {si}: frame depth != nframes"));
         }
-        let mut frames = Vec::new();
+        let mut frames = Vec::with_capacity(usize::from(s.nframes));
         let seg = ir.segs.get(usize::from(s.seg)).filter(|_| s.seg != 0);
         if s.seg != 0 && seg.is_none() {
             return Err(format!("snapshot {si}: segment {} does not exist", s.seg));
@@ -792,7 +792,7 @@ pub fn build_exits_ex(
             .land_addr(key, s.pc, s.land)
             .ok_or_else(|| format!("snapshot {si}: no landing label for pc {}", s.pc))?;
         let mut usable = true;
-        let mut slots = Vec::new();
+        let mut slots = Vec::with_capacity(usize::from(s.map.1));
         let mut sunk: Vec<SunkTable> = Vec::new();
         let mut pending_key: Option<u64> = None;
         for (e, &loc) in ir.snap_entries(si as u32).iter().zip(&al.snap_locs[si]) {

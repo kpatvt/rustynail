@@ -845,11 +845,12 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
             }
             if super::cache::verbose_aborts() {
                 eprintln!(
-                    "[trace] abort {:?} at pc {} (depth {}, op {}){}",
+                    "[trace] abort {:?} at pc {} (depth {}, op {}, steps {}){}",
                     why,
                     rec.cur_pc,
                     rec.cur_depth,
                     rec.cur_op,
+                    rec.path.len(),
                     if why0 != why {
                         format!(" (in the unroll chain: {why0:?})")
                     } else {
@@ -1556,7 +1557,7 @@ impl Rec {
             first_store: None,
             entry_snap: None,
             entry_sm: SlotMap::new(0),
-            b: Builder::new(cfg.fold, cfg.cse),
+            b: Builder::for_recording(cfg.fold, cfg.cse),
             sm: SlotMap::new(nslots),
             path: Vec::new(),
             path_proto: Vec::new(),
@@ -1774,7 +1775,7 @@ impl Rec {
 
     /// Discards the recorded iteration (an in-place re-record, TR24c).
     fn reset(&mut self) {
-        self.b = Builder::new(self.cfg.fold, self.cfg.cse);
+        self.b = Builder::for_recording(self.cfg.fold, self.cfg.cse);
         self.sm = SlotMap::new(self.nslots);
         self.frames.truncate(1);
         self.cur_depth = 0;

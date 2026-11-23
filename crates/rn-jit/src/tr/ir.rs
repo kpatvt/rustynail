@@ -1015,6 +1015,15 @@ impl TraceIr {
         (self.snaps.len() - 1) as u32
     }
 
+    /// Section 43.2 (T2b): appends a snapshot whose map entries the caller already wrote to the end of `snapmap` (from `start` on): the same
+    /// result as [`TraceIr::snapshot`] with those entries.
+    pub fn snapshot_built(&mut self, mut s: Snap, start: usize) -> u32 {
+        assert!(self.snaps.len() < MAX_SNAPS, "TooLong");
+        s.map = (start as u32, (self.snapmap.len() - start) as u16);
+        self.snaps.push(s);
+        (self.snaps.len() - 1) as u32
+    }
+
     /// The map entries of snapshot `i`.
     pub fn snap_entries(&self, i: u32) -> &[SnapEntry] {
         let (s, n) = self.snaps[i as usize].map;
@@ -1331,6 +1340,16 @@ impl Builder {
             cse_dyn_href: false,
             cse_uv_hits: 0,
         }
+    }
+
+    /// Section 43.2 (T2b): the builder of a recording: its vectors start with the capacity of a typical trace (the recorder's `ins`, `snaps` and `snapmap`
+    /// grew by doubling through six to eight reallocations, with a copy each, at every recording).
+    pub fn for_recording(fold: bool, cse: bool) -> Builder {
+        let mut b = Builder::new(fold, cse);
+        b.ir.ins.reserve(512);
+        b.ir.snaps.reserve(64);
+        b.ir.snapmap.reserve(1024);
+        b
     }
 
     /// A builder with the switches of `o`.

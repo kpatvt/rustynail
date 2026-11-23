@@ -39,8 +39,14 @@ thread_local! {
     static MAXPIPE: Cell<u64> = const { Cell::new(0) };
 }
 
+/// Section 43.2 (T2b): the timers run only when the statistics that print them are on (`RUSTYNAIL_JIT_VERBOSE >= 1`, [`super::diag::enabled`]):
+/// four `rdtsc` per recorded bytecode were about 100 cycles of the recorder's ~1000 per step. A timer read while they are off is `0`, and
+/// [`add`] ignores it.
 #[inline(always)]
 pub fn now() -> u64 {
+    if !super::diag::enabled() {
+        return 0;
+    }
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     // SAFETY: rdtsc has no preconditions.
     unsafe {
@@ -53,6 +59,9 @@ pub fn now() -> u64 {
 
 #[inline(always)]
 pub fn add(ph: usize, t0: u64) {
+    if t0 == 0 {
+        return;
+    }
     let d = now().wrapping_sub(t0);
     ACC.with(|a| a[ph].set(a[ph].get() + d));
     CALLS.with(|a| a[ph].set(a[ph].get() + 1));
@@ -77,4 +86,18 @@ pub fn report() -> String {
     });
     o += &format!(" max_pipeline {}", MAXPIPE.with(|m| m.get()));
     o
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Section 43.2 (T2b): a timer that was read while the statistics were off (`0`) is not added.
+    #[test]
+    fn a_zero_timer_is_ignored() {
+        let (a, c) = (ACC.with(|a| a[RA].get()), CALLS.with(|c| c[RA].get()));
+        add(RA, 0);
+        assert_eq!(ACC.with(|a| a[RA].get()), a);
+        assert_eq!(CALLS.with(|c| c[RA].get()), c);
+    }
 }
