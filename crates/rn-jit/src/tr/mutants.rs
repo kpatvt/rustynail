@@ -986,6 +986,8 @@ pub const NAMES: &[&str] = &[
     "nidx_disp_off1",
     "nidx_step_sign",
     "nidx_entry_off1",
+    // N1d (`leaadd`)
+    "leaadd_disp_off1",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1062,7 +1064,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 814);
+        assert_eq!(NAMES.len(), 815);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -135,6 +135,8 @@ pub const HKADDR_PROCESS: u32 = 1;
 pub const IXFUSE_PROCESS: u32 = 1;
 /// N1c: the process default of [`TrLimits::cloop`] (also the struct default).
 pub const CLOOP_PROCESS: u32 = 1;
+/// N1d: the process default of [`TrLimits::leaadd`] (also the struct default).
+pub const LEAADD_PROCESS: u32 = 1;
 /// N1b: the process default of [`TrLimits::nidx`] (also the struct default).
 pub const NIDX_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
@@ -769,6 +771,9 @@ pub struct TrLimits {
     /// `add idx, step; sub count, 1; jae head` (one branch instead of two, the guard's exit undoes the updates first): 0 = off, 1 = on (default
     /// [`CLOOP_PROCESS`]).
     pub cloop: u32,
+    /// N1d (`leaadd`): an integer `ADD a, #imm` whose destination is another register than `a` is one `lea d, [a + imm]` instead of `mov d, a; add d, imm`:
+    /// 0 = off, 1 = on (default [`LEAADD_PROCESS`]).
+    pub leaadd: u32,
     /// N1b (`nidx`): in a peeled counted loop the complemented index `~(k + c)` of an `ALOAD` whose index is made of the induction variable `k` (the loop-carried
     /// `ADD k, #s`) is the carried value `-k` (a second PHI, updated `ADD -s` once per iteration) with a displacement, instead of `mov; not` in front of every
     /// access (the `aidx` mechanism for the loop's own induction variable only; `aidx` itself keeps its meaning for every other index): 0 = off, 1 = on
@@ -932,6 +937,7 @@ impl Default for TrLimits {
             hkaddr: HKADDR_PROCESS,
             ixfuse: IXFUSE_PROCESS,
             cloop: CLOOP_PROCESS,
+            leaadd: LEAADD_PROCESS,
             nidx: NIDX_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
@@ -1135,6 +1141,7 @@ impl TrLimits {
                 "hkaddr" => l.hkaddr = v.min(1),
                 "ixfuse" => l.ixfuse = v.min(1),
                 "cloop" => l.cloop = v.min(1),
+                "leaadd" => l.leaadd = v.min(1),
                 "nidx" => l.nidx = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,

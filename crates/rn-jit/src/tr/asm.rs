@@ -203,6 +203,8 @@ pub struct AsmEnv {
     pub hk_key64: bool,
     /// B4-3: an `HREFK` followed by the `HLOAD` of its node checks the key tag and the value tag with one 16-bit compare (`hkfuse`).
     pub hk_fuse: bool,
+    /// N1d (`leaadd`): an integer `ADD a, #imm` into another register is `lea d, [a + imm]` (one instruction instead of `mov d, a; add d, imm`).
+    pub lea_add: bool,
     /// N1c (`cloop`): the counted-loop back-edge of a peeled loop is `add idx, step; sub cnt, 1; jae head`, the loop-ending `NE count, #0` guard exits through
     /// a fall-through that undoes the two updates.
     pub cloop: bool,
@@ -370,6 +372,7 @@ impl Default for AsmEnv {
             nopay: false,
             divmagic: false,
             cloop: false,
+            lea_add: false,
             hk_fuse: false,
             hk_key64: false,
             f2_byte: false,
@@ -4941,12 +4944,12 @@ impl Cx<'_> {
         &mut self,
         g: usize,
         cnt: V,
-        adds: &[(V, i32)],
+        adds: &[(V, Src)],
         loop_l: L,
     ) -> Result<(), AsmError> {
         let x = self.guard_label(g)?;
-        for &(d, imm) in adds {
-            self.push(Op::Add(d, Src::Imm(imm)));
+        for &(d, s) in adds {
+            self.push(Op::Add(d, s));
         }
         self.push(Op::SubJae {
             d: cnt,
@@ -4963,8 +4966,8 @@ impl Cx<'_> {
         }
         // (the index registers: their stack slots are dead at the loop's end, no program can observe them, so no mutant exists for a wrong
         // restore; the snapshot still gets the exact value)
-        for &(d, imm) in adds.iter().rev() {
-            self.push(Op::Sub(d, Src::Imm(imm)));
+        for &(d, s) in adds.iter().rev() {
+            self.push(Op::Sub(d, s));
         }
         self.push(Op::Jmp(x));
         for j in g..self.ir.ins.len() {
@@ -4979,7 +4982,7 @@ impl Cx<'_> {
     /// `add reg, imm...; sub count, 1; jae head` (the borrow of the subtraction is the guard: `count == 0` before it) and the fall-through restores the
     /// registers (`add count, 1; sub reg, imm...`) before it leaves through the guard's own exit, so the snapshot sees the state in front of the adds.
     /// Returns the guard's index, the count register and the other adds in program order.
-    fn cloop_plan(&self, e2_end: Option<usize>) -> Option<(usize, V, Vec<(V, i32)>)> {
+    fn cloop_plan(&self, e2_end: Option<usize>) -> Option<(usize, V, Vec<(V, Src)>)> {
         let (ir, al) = (self.ir, self.al);
         if !self.env.cloop
             || ir.loop_at.is_none()
@@ -5007,7 +5010,7 @@ impl Cx<'_> {
         {
             return None;
         }
-        let mut adds: Vec<(V, i32)> = Vec::new();
+        let mut adds: Vec<(V, Src)> = Vec::new();
         for j in g..n {
             let a = &al.ins[j];
             if !a.pre.is_empty() || !a.post.is_empty() || !a.stores.is_empty() {
@@ -5017,10 +5020,18 @@ impl Cx<'_> {
                 continue;
             }
             let ins = ir.ins[j];
-            let (Loc::G(d), Loc::G(x), Loc::Const(k)) = (a.dst, a.ops[0], a.ops[1]) else {
+            let (Loc::G(d), Loc::G(x)) = (a.dst, a.ops[0]) else {
                 return None;
             };
-            let imm = fits(self.kbits_of(k) as i64)?;
+            // the step: a constant that fits an immediate, or a register nothing in the tail changes (a loop with a run-time step)
+            let (imm, step) = match a.ops[1] {
+                Loc::Const(k) => {
+                    let v = fits(self.kbits_of(k) as i64)?;
+                    (Some(v), Src::Imm(v))
+                }
+                Loc::G(y) if y != 7 && y != c && y != d => (None, Src::V(y)),
+                _ => return None,
+            };
             if ins.op != TOp::Add
                 || ins.t != Ty::Int
                 || ins.flags & F_GUARD != 0
@@ -5030,13 +5041,16 @@ impl Cx<'_> {
                 return None;
             }
             if j == g + 1 {
-                if ins.a != ng.a || d != c || imm != -1 {
+                if ins.a != ng.a || d != c || imm != Some(-1) {
                     return None;
                 }
-            } else if d == c || adds.iter().any(|&(e, _)| e == d) {
+            } else if d == c
+                || adds.iter().any(|&(e, _)| e == d)
+                || adds.iter().any(|&(_, s)| s == Src::V(d))
+            {
                 return None;
             } else {
-                adds.push((d, imm));
+                adds.push((d, step));
             }
         }
         Some((g, c, adds))
@@ -5421,6 +5435,21 @@ impl Cx<'_> {
         let ops = self.ops(i);
         let d = self.g(self.dst(i));
         let bloc = ops[1];
+        if self.env.lea_add && ins.op == TOp::Add {
+            if let (Loc::G(a), Loc::Const(k)) = (ops[0], bloc) {
+                if let Some(imm) = fits(self.kbits_of(k) as i64) {
+                    if a != d {
+                        let imm = if mutants::active("leaadd_disp_off1") {
+                            imm.wrapping_add(1)
+                        } else {
+                            imm
+                        };
+                        self.push(Op::Lea(d, rm(a, imm)));
+                        return Ok(());
+                    }
+                }
+            }
+        }
         // the work register: `d`, unless `d` is the second operand's register (then `V7`)
         let w = if matches!(bloc, Loc::G(n) if n == d) && ops[0] != bloc {
             7

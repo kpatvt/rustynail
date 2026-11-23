@@ -229,7 +229,11 @@ impl<'a> Em<'a> {
             aref_loaded: if opts.aidx != 0 || opts.nidx != 0 {
                 let mut v = vec![false; rec.ir.ins.len()];
                 for i in &rec.ir.ins {
-                    if i.op == TOp::Aload && TraceIr::is_ins(i.a) {
+                    // (an `ALOAD` of nil / false / true reads no payload: nothing to address by the complemented index)
+                    if i.op == TOp::Aload
+                        && TraceIr::is_ins(i.a)
+                        && !matches!(i.t, Ty::Nil | Ty::False | Ty::True)
+                    {
                         v[usize::from(i.a - REF_BIAS)] = true;
                     }
                 }
@@ -293,6 +297,10 @@ impl<'a> Em<'a> {
     /// `x` of a slot that carries `e` itself) and emits `NEG e` for each at the end of the pre-roll: the value the negated index starts from in the body's first
     /// iteration. The body's accesses use it (through a PHI that the back-edge updates with `ADD #-s`) when they are indexed by `e + c`.
     fn plan_nidx(&mut self) -> Result<(), Gave> {
+        // (a loop with a helper call: the extra carried value costs a spill and a reload per iteration, `lib/byte` +10 % cycles)
+        if super::ra::has_call(self.src) {
+            return Ok(());
+        }
         let mut cands: Vec<Ref> = self.loop_state.values().map(|&(e, _)| e).collect();
         cands.sort_unstable();
         cands.dedup();

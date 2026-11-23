@@ -366,6 +366,12 @@ pub fn entry_ref(ir: &TraceIr, mut p: usize) -> Ref {
     }
 }
 
+/// Does the trace call a helper (an instruction that clobbers the caller-saved registers, see `is_call`)? A loop with such a call keeps every value it
+/// holds in a callee-saved register or a spill slot across it: one more carried value is a store and a load per iteration (N1b `nidx` stays out).
+pub fn has_call(ir: &TraceIr) -> bool {
+    ir.ins.iter().any(|i| is_call(ir, i))
+}
+
 fn is_call(ir: &TraceIr, ins: &Ins) -> bool {
     // P-B: the length of a string is two loads in the assembler, not a helper call
     if ins.op == TOp::Tlen && matches!(ir.ty_of(ins.a), Ty::ShrStr | Ty::LngStr) {
