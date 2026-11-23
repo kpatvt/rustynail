@@ -135,6 +135,7 @@ Gain = instruction gain of the programs named, geomean column = ln-sum over the 
 | T9 | `InnerLoop` | tried: `preplink`, `nest=2` 0; L | ? | high | L | deltablue, raytrace |
 
 Status: T1, T2 (partly), T3 built; the heavy-gate state of those is still open (report.md). TR24c is a recorded lead only.
+N1 built (docs/JIT_TRACE.md section 41). **N2 built, and measured at -4.4 % instructions per `co_yield` pair, not -30 %** (docs/JIT_TRACE.md section 42: the protocol is ~500 of 753 instructions spread over eight tight functions; the estimate above counted pieces that are shared with every native call or that observable behaviour needs).
 
 ## 4. Recommendation: build N1, the trace loop-body diet
 
