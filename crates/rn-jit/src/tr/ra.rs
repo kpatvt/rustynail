@@ -366,6 +366,19 @@ pub fn entry_ref(ir: &TraceIr, mut p: usize) -> Ref {
     }
 }
 
+/// N1b: how many general registers the allocator can hand out in this trace: the pool `V0..V6, V8`, without the budget register (unless `membudget`) and
+/// without what an instruction of the trace clobbers (`Idiv` takes `V8`, a variable shift `V6`).
+pub fn free_gprs(ir: &TraceIr, membudget: bool) -> u32 {
+    let mut m: u16 = 0x17F;
+    if !membudget {
+        m &= !(1u16 << BUDGET_GPR);
+    }
+    for i in &ir.ins {
+        m &= !op_clobbers(i, ir).gpr;
+    }
+    m.count_ones()
+}
+
 /// Does the trace call a helper (an instruction that clobbers the caller-saved registers, see `is_call`)? A loop with such a call keeps every value it
 /// holds in a callee-saved register or a spill slot across it: one more carried value is a store and a load per iteration (N1b `nidx` stays out).
 pub fn has_call(ir: &TraceIr) -> bool {

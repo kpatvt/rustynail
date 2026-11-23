@@ -1495,6 +1495,25 @@ fn peel_loop(rec: &Recorded, opts: &TraceOpts) -> Result<Out, Gave> {
     if phis.len() > MAX_PHI {
         return up("more than 64 phis");
     }
+    // N1b: one more carried general value only where the allocator has a register for it (spills cost a store and a load per iteration: 5.4 `awfy/bounce`
+    // +2.7 % instructions, `spectral_norm` (an integer division takes `V8`) +4.7 %): the PHIs and the loop-invariant values of the body that live in general
+    // registers, with the carried negated index among them, and two registers of slack (5.4 `spectral_norm`: 6 held of 7 lose, `matmul`'s 6 would win but is not worth the risk)
+    if !em.nidx_used.is_empty() {
+        let ir = &em.b.ir;
+        let general = |r: &Ref| !matches!(ir.at(*r).t, Ty::Num);
+        let held = phis.iter().filter(|r| general(r)).count()
+            + invariant_used
+                .iter()
+                .filter(|&&r| {
+                    TraceIr::is_ins(r)
+                        && general(&r)
+                        && !matches!(ir.at(r).op, TOp::Kint | TOp::Knum | TOp::Kpri | TOp::Kptr)
+                })
+                .count();
+        if held + 2 > super::ra::free_gprs(ir, opts.membudget) as usize {
+            return up("nidx: register pressure");
+        }
+    }
     // deterministic order: by pre-roll ref
     let mut order: Vec<Ref> = phis.clone();
     order.sort_unstable();

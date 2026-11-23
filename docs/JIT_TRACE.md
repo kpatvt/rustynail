@@ -4899,3 +4899,217 @@ to -20 % against the cached 5a064d7 column), roguelike_turns 5.5 (+1.0 % instruc
 real_dis_mips 5.4 (+2.2 % instructions, +4.5 % cycles) and roguelike_turns 5.4 (+0.9 %): lotteries of the deferral (above); nothing cheap
 separates them from the paying grants. **The price:** T3's gain on vending_fsm shrinks from -5.1 % to -2.0 % instructions (5.5; 5.4 -11.0 % to
 -9.6 %), on regex_nfa from -4.3 % to -0.75 % (5.5), on lua_lexer from -3.1 % to -2.5 %; oop_mixins, heapsort and richards 250 keep theirs.
+
+## 41. N1, the trace loop-body diet (docs/STUDY_LUAJIT_GAP_2.md section 4; 2026-11-23, base 432a77d)
+
+The study counted one array-loop iteration of `jit-trace/type_entry_stable` (`for j = 1, m do a = a + t[j] * 0.5 end`): 21 instructions per iteration for
+us against 9 for LuaJIT, 18 against 8 in the loop body. Ten extra: poll 2 and budget 2 (the price of exact hooks / instruction counts: kept), index
+arithmetic 4 (`mov; add -1`, `mov; not`), loop control 2 (a second iteration count). N1 removes the six that are plain code quality. Method of this
+section: instructions of one run (deterministic, `RUSTYNAIL_SEED=0`), cycles min of 5 interleaved pinned runs (CPU 4, `perf stat -e instructions:u,cycles:u`)
+of release `rn-cli` builds (5.5 and `--cfg rustynail_lua54`; plain `cargo build --release`, no PGO); the control is a build of main 432a77d in the same session;
+the per-item columns are the final binary with `RUSTYNAIL_JIT_TRACE_LIMITS` switching the later items off (`a` = `cloop=0,nidx=0,leaadd=0`, `ac` =
+`nidx=0,leaadd=0`, `acb` = `leaadd=0`, `all` = the shipped defaults, `off` = every N1 knob 0: the same binary as `all`, so that code-layout noise of two
+binaries shows). 36 programs (jit-trace 6, awfy 13, programs 14, lib 2, apps 1, real 1) were chosen as the array-loop programs named by the study plus a spread
+of the rest.
+
+### 41.1 What was built (each item one commit, one knob, `RUSTYNAIL_JIT_TRACE_LIMITS=name=0|1`, docs/JIT.md table)
+
+| item | knob | default | what |
+|---|---|---|---|
+| (a) constant index offset | `ixfuse` | **1** | an integer `ADD x, #c` whose users are all the index operand of fused `AREF`s is no instruction and no register: `ALOAD` / `ASTORE` address `[base + x + tag base + c]` (tag byte) and `[base + 8 * ~x - 8 * c]` (payload), `x` stays live (`ra.rs fuse_index_adds`, `operand_refs`, `asm.rs ix_c / ix_tag_off / payload_scaled_c`). `ADD`s that anything else names (a bounds guard, a snapshot, a `PHI`) stay as they were. |
+| (c) counted-loop back-edge | `cloop` | **1** | the loop-ending guard `NE count, #0`, the count's `ADD -1` and the in-place index adds become `add idx, step; sub count, 1; jae head` (new micro-op `SubJae`: `x86.rs`, `emu.rs`); the fall-through of the loop's last exit restores `count` and the indices and leaves through the guard's own exit stub. One branch instead of two, 3 instructions instead of 5 (`asm.rs cloop_plan / cloop_tail`). |
+| (b) carried negated index | `nidx` | **1**, with a policy | in a peeled counted loop the complemented index `~(k + c)` of an `ALOAD` whose index is made of the loop's induction value `e` (`ADD x, #s` of the entry `SLOAD`, carried through a slot) is the carried value `ne = -e` (a PHI: `NEG e` at the end of the pre-roll, `ADD ne, #-s` at the end of the body) plus a displacement: the `aidx` mechanism of BUNDLE-L A (`Aref` third operand) planned from the induction slot (`opt_loop.rs plan_nidx / nidx_aux / emit_nidx_updates`). Policy: only in loops without a helper call (`ra::has_call`), for `ALOAD`s that read a payload, and where the general registers have room (`peel_loop`: PHIs + loop-invariant values of the body in general registers, the new PHI included, plus 2 must not exceed `ra::free_gprs`; otherwise the loop is peeled again without `nidx`, as when its induction value is not updated by `+ step`). |
+| (extra) `lea` for `ADD` | `leaadd` | **1** | an integer `ADD a, #imm` into another register is `lea d, [a + imm]` (one instruction for `mov d, a; add d, imm`; `asm.rs ibin`). |
+
+(`aidx` itself keeps its meaning and its default 0.) `cloop`'s register-step form (a loop with a run-time step, `for j = i * i, n, i`) is included.
+
+### 41.2 Why (c) is not "exit on index against the limit"
+
+The study proposed to drop the iteration-count PHI and test `idx == last`. Every mid-body exit of the loop needs the count in its snapshot (the interpreter's
+`FORLOOP` reads it), so a count that is not carried needs a *derived* snapshot entry (`count = (last - idx) / step` computed by the exit stub). That
+touches the IR (a snapshot-only value), the allocator (two locations per entry, liveness through every guard), `build_exits` / `ValSrc`, the inline and generic
+stub generators, the Rust restore, `regcarry` (`CarrySrc`) and the emulator: seven consumers. What was built instead has the same instruction and branch count
+for the control (`add idx; sub count; jae` = LuaJIT's `add; cmp; jle`), needs no snapshot change, and does not free the count register (which the derived
+form would). The exit state is exact: the fall-through runs only when `count == 0` before the subtraction (the borrow), re-adds 1 and re-subtracts the index
+steps, then jumps to the stub of the guard's own snapshot (state in front of the updates, as before). The exit-storm / verify modes' forced exits come
+earlier (at the guard, before the updates). The index fix-up is not observable by any program (the loop slots are dead when the loop ends; no mutant can be
+written for it; `cloop_no_fixup_cnt` / `cloop_cnt_imm2` cover the count), it is kept so that the snapshot is exact.
+
+What is not changed: `POLL`, `BUDGET`, every guard, every snapshot, GC accounting, the hooks; a wrapped or overflowing index or limit is decided by the same
+guards as before (`forprep` guards, the `count >= 0` guard, the bounds guards `ULT x + c, asize` in 64-bit unsigned arithmetic: `x + c` of the displacement
+form wraps exactly as the `ADD` did).
+
+### 41.3 The loop of `type_entry_stable`
+
+```
+before (main 432a77d, 18 instr)          after (all four, 13 instr)
+cmp byte [r15+POLL],0 ; jne              cmp byte [r15+POLL],0 ; jne
+sub r11,4 ; jl                           sub r11,4 ; jl
+mov r8,rdi ; add r8,-1                   cmp byte [rdx+rdi+3],0x13 ; jne
+cmp byte [rdx+r8+4],0x13 ; jne           movsd xmm1,[rdx+r8*8]            (r8 = -j, carried)
+mov rax,r8 ; not rax                     mulsd xmm1,[r15+0x938]
+movsd xmm1,[rdx+rax*8]                   addsd xmm0,xmm1
+mulsd ; addsd                            add rdi,1 ; add r8,-1 ; sub rsi,1 ; jae top
+cmp rsi,0 ; je ; add rsi,-1 ; add rdi,1 ; jmp top
+```
+Instructions per iteration of the program 21.2 -> 16.4 (`type_entry_stable` 10588 -> 8198 M, -22.6 %).
+
+### 41.4 Tests, mutants, gates
+
+* `tests/tr_core/n1_progs.rs` (7 programs: offsets of both signs with int / float elements, holes, type changes and reads past the end at the first, middle and last iteration;
+  positive / negative / large / run-time steps and loops that run once or not at all; the integer limits (`maxinteger - 3 .. maxinteger`, `mininteger ..`, steps of
+  `maxinteger`, float and string limits); exits in the middle of an iteration and after the last one (an index or count that is off by one runs the loop one
+  iteration more or less after the exit); a matrix product; stores through offsets with overlapping reads and writes; the program's own `-i`, `~i`, `0 - i` next to the
+  carried negated index) in `tr_core::n1_programs`: 6 knob combinations (each alone, all, none, with `aidx=1`) x `always` / `on2` x 7 option sets (`+verify`,
+  `+exitstorm=3`, `+exitstorm=1 +verify`, `+randra=5 +verify`, `+emurun +verify`, `-loop`) + GC stress 2 + budget 17; `n1_programs_enter_traces`; the `tr_asm` environment of
+  the emulator tests runs with `cloop` and `leaadd` on. 5.5 and 5.4.
+* Mutants (9 new, registry 806 -> 815, all caught by `n1_programs`, `TR_MUT_ONLY=ixfuse_,cloop_,nidx_,leaadd_`): `ixfuse_tag_disp0` (the tag displacement ignores `c`),
+  `ixfuse_tag_disp_neg` (sign), `ixfuse_pay_disp_pos` (payload displacement `+8c`), `cloop_cnt_imm2` (the count steps by 2: an off-by-one limit),
+  `cloop_no_fixup_cnt` (the exit leaves the count one short), `nidx_disp_off1`, `nidx_step_sign`, `nidx_entry_off1` (the entry value `~e` instead of `-e`),
+  `leaadd_disp_off1`.
+* A bug the first gate run found (`bq_mod`, `b5_sink`, `bn_random`, ... : 15 failing tests): the planned `NEG e` of the pre-roll was in the CSE chain, so the
+  program's own `-i` of the body merged with it and became loop invariant. The planned values are appended outside the chain (`TraceIr::emit`) and
+  `n1_negidx` pins it.
+
+### 41.5 Measurements
+
+Columns are cumulative against the control build of main 432a77d (`base`): `off` = the final binary with every N1 knob 0 (a measure of the noise of two builds), `a` =
+(a), `ac` = (a) + (c), `acb` = (a) + (c) + (b), `all` = + `leaadd` = the shipped defaults. Each cell is the change of instructions (change of cycles, min of 5
+interleaved runs); **!** marks a cell above the bar (+1 % instructions or +2 % cycles).
+
+**Per item, `jit-trace/type_entry_stable` (the study's example), 5.5, instructions M (cycles M):** control 10588 (1509); `a` 9608 (1549); `ac` 8688 (1366);
+`acb` 8228 (1363); `all` 8198 (1364). Per iteration 21.2 -> 19.2 -> 17.4 -> 16.5 -> 16.4 instructions; cycles -9.6 %. 5.4: 11682 (1543); 11682 (1540); 10762 (1509); 10302
+(1507); 9792 (1501): 5.4 does not hoist the bounds check of a single access (`bhoist` needs two covered checks there), so the `ADD` stays and (a) does not fire
+on `type_entry`; (c), (b) and `leaadd` do.
+
+* **(a) `ixfuse`**: instructions -8.8 % on `type_entry` / -9.3 % `_stable` / -8.6 % `dot` / -11.5 % `array_rec` / -6.0 % `matmul` / -3.7 % `awfy/sieve` / -4.8 % `lib/byte`
+  (5.5; 5.4: `dot` -8.5 %, `array_rec` -11.4 %, `matmul` -5.3 %, `lib/byte` -4.8 %, the loops with a `ULT` of the same index keep their `ADD`). **Cycles do not follow on
+  the two `type_entry` programs: +3.7 % and +2.7 % (5.5, (a) alone)**: the loop is limited by its five branches (poll, budget, tag guard, count guard, back-edge: about 3 cycles per
+  iteration at an IPC of 7), not by instructions, and the shorter loop lands in a worse code-placement zone (Q2, `HEAD_OFFSET`); `programs/sieve` +2.9 % cycles with
+  equal instructions is the same effect (a alone), `programs/heapsort` +1.7 % instructions (a live index kept longer: a spill that `leaadd` takes back, `all` -0.1 %).
+  So (a) alone does not meet the cycle bar on three programs; **together with (c) it does, which is the shipped state**, and the knob stays a
+  separate bisect point (`ixfuse=0`).
+* **(c) `cloop`**: the control of the loop goes from 5 instructions and 2 branches to 3 and 1. `type_entry` -8.2 % further instructions (-17.0 % total), cycles **-8.1 %**
+  against the control (the one item that moves them: 4 branches instead of 5), `type_entry_stable` -9.5 % cycles, `awfy/sieve` -7.5 % / -4.1 %, `programs/loops_arith` -5.7 % / -4.5 %,
+  `programs/sieve` -4.7 % / -2.8 %, `programs/matmul` -11.9 % / -3.3 %, `array_rec` -23.0 % / -0.1 %; 5.4 the same instructions (type_entry -7.4 %).
+* **(b) `nidx`**: `type_entry` -4.1 % more instructions (-21.1 % total), `dot` -12.9 % more (-30.0 % total: two accesses per iteration), cycles equal (the loop is
+  branch-bound). The policy keeps it out of loops that do not pay: **`programs/matmul`'s inner loop (6 general values held of 7 free registers: -3 % instructions and -2..-3 %
+  cycles in a run without the rule, the price of the rule) and `spectral_norm` (6 held: +4.7 % instructions without the rule) are left out**, `lib/byte` (a `string.byte` helper call:
+  +5.3 % instructions, +10 % cycles without the rule) and 5.4 `awfy/bounce` (+2.7 %) likewise. The policy was found by these regressions in the first full runs: helper call
+  (`ra::has_call`), then a carried-value count that counted written temporaries (wrong), then the free registers of the allocator pool (`ra::free_gprs`: 7 after the budget
+  register, minus what the loop clobbers).
+* **(extra) `leaadd`**: `awfy/sieve` -13.5 % total (-6 % more), `programs/spectral_norm` -11.0 % (-4 %), `programs/sieve` -10.2 % (-5.5 %), `programs/heapsort` +1.6 % -> -0.1 %,
+  `programs/fannkuch` -3.4 %, `programs/queens` -3.0 %; 5.4: `spectral_norm` -5.2 %, `awfy/sieve` -11.4 %, `programs/sieve` -9.6 %.
+
+**Geomean over the 36 programs (instructions, cycles) against the control:** 5.5: `off` -0.01 % (+0.08 %), `a` -1.71 % (-0.14 %), `ac` -3.58 % (-1.27 %), `acb` -4.30 % (-1.44 %),
+**`all` -5.01 % (-1.50 %)**. 5.4: `off` +0.03 % (-0.13 %), `a` -0.90 % (-0.48 %), `ac` -2.56 % (-0.99 %), `acb` -3.22 % (-1.02 %), **`all` -4.22 % (-1.08 %)**.
+
+**Programs over the bar** (5.5): in `all`: none (largest cycles: `programs/queens` +1.8 % with -3.0 % instructions, `programs/heapsort` +1.2 %; a 15-run
+rerun of `programs/queens` gave +0.5 % and of `heapsort` +1.3 %, i.e. noise of the min of 5). In the partial configurations: `type_entry` / `_stable` / `programs/sieve` in `a`
+(above), `programs/heapsort` +1.6 / 1.7 % instructions in `a` / `ac` / `acb` (gone in `all`), and `real/lua_interp`, whose `off` column (+2.7 % cycles, instructions -0.6 %) is
+the same binary with the knobs off: a layout difference of the two builds (the interpreter), not of N1. 5.4: none, in any column.
+
+Not moved (the study expected -5..-8 % for them): `awfy/permute` (-0.8 % instructions: its indices are `i` itself, `self.v[i + 1]` is `ADD #1` then `ADD #-1`, folded to `i`), `awfy/queens`
+(-0.7 %), `awfy/towers` (0.0 %), `programs/queens` (-3.0 %: `ixfuse` -1.0, `cloop` -0.7, `leaadd` -1.3), `nbody`, `mandelbrot`, `richards`, `deltablue`, `havlak`, `json`: the loops of these programs
+are not counted array loops, or their traces end in calls and returns; the diet cannot reach them.
+
+### 41.6 What was not built, and what is open
+
+* The derived-count form of (c) (above); its only extra gain would be the freed register.
+* A negated index for `ASTORE` (the operand array of an `AREF` user is `[base, index, value]`; a fourth operand is a change of every consumer of `operand_refs`). Stores through
+  `t[i + c]` keep `mov; not` for the payload; stores of nil / false / true write the tag byte only and are already minimal (`awfy/sieve`'s fill loop is 8 instructions).
+* An `ADD x, #c` that a bounds guard also reads (`ULT x + c, asize` in loops whose bound check is not hoisted: 5.4 single access, run-time steps, a second table per
+  iteration as in `matmul`'s `b[k][j]`) keeps its register: `lea` (`leaadd`) is the one instruction instead of two there.
+* The three item-(a) cycle regressions in the table are a placement lottery of `type_entry`'s loop, not chased (the instruction counts and the final column are the signal).
+* `nidx` policy numbers (5 held, 7 free registers) come from six programs; a register-pressure estimate from the allocator itself (compile twice) would replace them.
+
+### 41.7 Full tables (5.5, then 5.4; the 36 programs)
+
+| program | base ins M | off ins (cyc) | a ins (cyc) | ac ins (cyc) | acb ins (cyc) | all ins (cyc) |
+|---|---:|---:|---:|---:|---:|---:|
+| jit-trace/type_entry | 10958 / 1548.6 cyc | +0.0% (+0.7%) | -8.8% (+3.7%) **!** | -17.0% (-8.1%) | -21.1% (-8.1%) | -21.4% (-8.2%) |
+| jit-trace/type_entry_stable | 10588 / 1508.8 cyc | +0.0% (-0.1%) | -9.3% (+2.7%) **!** | -17.9% (-9.5%) | -22.3% (-9.6%) | -22.6% (-9.6%) |
+| jit-trace/dot | 9307 / 1220.2 cyc | +0.0% (-0.0%) | -8.6% (-0.3%) | -17.1% (-0.4%) | -30.0% (-0.1%) | -30.0% (-0.2%) |
+| jit-trace/float_loop | 9305 / 2773.9 cyc | +0.0% (+0.1%) | +0.0% (+0.1%) | +0.0% (+0.2%) | +0.0% (+0.1%) | +0.0% (+0.1%) |
+| jit-trace/array_rec | 5192 / 1795.4 cyc | +0.0% (+0.0%) | -11.5% (-0.1%) | -23.0% (-0.1%) | -23.0% (-0.1%) | -23.0% (-0.1%) |
+| jit-trace/short_inner | 4944 / 1099.9 cyc | +0.0% (-0.1%) | +0.0% (-0.2%) | -0.0% (-0.1%) | -0.0% (-0.1%) | -0.0% (-0.2%) |
+| awfy/permute | 195 / 36.1 cyc | +0.0% (-0.3%) | +0.0% (-0.6%) | +0.0% (-1.1%) | +0.0% (-1.0%) | -0.8% (-0.6%) |
+| awfy/queens | 511 / 95.8 cyc | +0.0% (+0.2%) | +0.0% (+0.7%) | +0.0% (+0.5%) | +0.0% (-0.8%) | -0.7% (-0.1%) |
+| awfy/towers | 173 / 46.8 cyc | +0.0% (+0.1%) | +0.1% (-0.6%) | +0.1% (-0.9%) | +0.1% (-0.4%) | +0.0% (-1.5%) |
+| awfy/sieve | 903 / 124.5 cyc | +0.0% (+0.2%) | -3.7% (-0.6%) | -7.5% (-4.1%) | -7.5% (-5.3%) | -13.5% (-8.0%) |
+| awfy/nbody | 553 / 92.6 cyc | +0.0% (-0.3%) | -0.2% (-0.2%) | -0.2% (-0.3%) | -0.1% (-0.1%) | -0.7% (-0.3%) |
+| awfy/bounce | 307 / 61.0 cyc | +0.0% (-0.8%) | -0.2% (-1.2%) | -0.2% (-1.3%) | -0.1% (-1.0%) | -0.2% (-1.2%) |
+| awfy/list | 408 / 96.4 cyc | +0.1% (+0.0%) | +0.1% (-0.2%) | +0.1% (-0.7%) | +0.1% (-0.9%) | +0.1% (-0.6%) |
+| awfy/mandelbrot | 520 / 272.5 cyc | +0.0% (+0.1%) | +0.0% (+0.1%) | +0.0% (-0.0%) | +0.0% (+0.0%) | +0.0% (+0.0%) |
+| awfy/storage | 487 / 102.1 cyc | +0.0% (+1.6%) | +0.0% (-0.0%) | +0.0% (-0.3%) | +0.0% (-0.1%) | -0.0% (-0.2%) |
+| awfy/richards | 173 / 60.0 cyc | +0.0% (+0.1%) | +0.1% (-0.9%) | +0.1% (-1.1%) | +0.2% (-1.5%) | +0.1% (-1.6%) |
+| awfy/deltablue | 318 / 106.6 cyc | +0.0% (-0.1%) | -0.1% (-0.9%) | -0.1% (+0.0%) | +0.1% (-0.3%) | +0.1% (-0.5%) |
+| awfy/havlak | 508 / 149.1 cyc | +0.0% (-0.9%) | -0.0% (-0.1%) | -0.0% (-0.4%) | +0.0% (+0.3%) | -0.1% (-0.0%) |
+| awfy/json | 448 / 137.5 cyc | +0.0% (+0.7%) | +0.1% (+0.1%) | +0.1% (+0.4%) | +0.2% (+0.3%) | +0.2% (+0.8%) |
+| programs/matmul | 2131 / 439.8 cyc | +0.0% (-0.6%) | -6.0% (-4.2%) | -11.9% (-3.3%) | -11.9% (-7.0%) | -11.9% (-5.7%) |
+| programs/queens | 5391 / 1855.1 cyc | +0.0% (+0.1%) | -1.0% (+0.3%) | -1.7% (+1.5%) | -1.7% (+0.5%) | -3.0% (+1.8%) |
+| programs/sieve | 2854 / 577.2 cyc | +0.0% (+1.0%) | +0.0% (+2.9%) **!** | -4.7% (-2.8%) | -4.7% (-2.5%) | -10.2% (-2.9%) |
+| programs/spectral_norm | 1454 / 180.3 cyc | +0.0% (-0.2%) | -4.2% (+1.0%) | -7.0% (-0.2%) | -7.0% (-0.3%) | -11.0% (+0.3%) |
+| programs/fannkuch | 4860 / 1035.6 cyc | +0.0% (+0.3%) | -1.0% (+0.6%) | -1.7% (-1.3%) | -2.0% (-1.1%) | -3.4% (-1.5%) |
+| programs/nbody | 1985 / 341.7 cyc | +0.0% (+0.1%) | -0.3% (+0.3%) | -0.3% (+0.2%) | -0.5% (+0.1%) | -1.0% (+0.2%) |
+| programs/heapsort | 2777 / 1037.7 cyc | +0.0% (-0.1%) | +1.7% (+1.0%) **!** | +1.6% (+0.8%) **!** | +1.6% (+0.2%) **!** | -0.1% (+1.2%) |
+| programs/table_array | 1427 / 367.5 cyc | +0.0% (-1.0%) | -0.0% (-1.0%) | -0.1% (-1.3%) | -0.1% (-1.3%) | -0.2% (-1.1%) |
+| programs/loops_arith | 3154 / 476.7 cyc | +0.0% (-0.1%) | +0.0% (-0.1%) | -5.7% (-4.5%) | -5.7% (-4.7%) | -5.7% (-4.5%) |
+| programs/mandelbrot | 1644 / 532.6 cyc | +0.0% (+0.1%) | +0.0% (-0.0%) | +0.0% (-0.0%) | +0.0% (+0.0%) | +0.0% (-0.0%) |
+| programs/string_ops | 2879 / 1124.6 cyc | +0.0% (-0.4%) | +0.0% (-2.5%) | +0.0% (-1.3%) | +0.0% (-0.3%) | +0.0% (-1.7%) |
+| programs/fasta | 4527 / 1294.6 cyc | +0.0% (-1.0%) | +0.0% (-1.7%) | +0.0% (-1.3%) | +0.0% (-1.9%) | -0.2% (-1.5%) |
+| programs/binary_trees | 5527 / 1177.9 cyc | -0.0% (+1.0%) | -0.0% (+0.7%) | -0.0% (+1.7%) | -0.0% (+0.0%) | -0.1% (+1.6%) |
+| lib/byte | 393 / 50.2 cyc | +0.0% (+0.3%) | -4.8% (-4.8%) | -4.8% (-5.7%) | -4.8% (-5.9%) | -4.8% (-5.5%) |
+| lib/byte_multi | 303 / 40.7 cyc | +0.0% (-0.2%) | -1.9% (-1.0%) | -1.9% (-1.7%) | -1.9% (-1.5%) | -2.8% (-2.7%) |
+| apps/raytrace | 351 / 110.7 cyc | +0.0% (-0.3%) | +0.2% (+0.2%) | +0.2% (-0.3%) | +0.7% (+0.6%) | +0.7% (+0.5%) |
+| real/lua_interp | 561 / 105.6 cyc | -0.6% (+2.7%) **!** | -0.6% (+2.5%) **!** | -0.6% (+1.9%) | -0.6% (+2.9%) **!** | -0.7% (+0.8%) |
+| geomean (36 programs) | - | -0.01% (+0.08%) | -1.71% (-0.14%) | -3.58% (-1.27%) | -4.30% (-1.44%) | -5.01% (-1.50%) |
+
+| program | base ins M | off ins (cyc) | a ins (cyc) | ac ins (cyc) | acb ins (cyc) | all ins (cyc) |
+|---|---:|---:|---:|---:|---:|---:|
+| jit-trace/type_entry | 12102 / 1584.0 cyc | +0.0% (+0.2%) | +0.0% (+0.7%) | -7.4% (+0.2%) | -11.2% (-1.3%) | -15.3% (-1.7%) |
+| jit-trace/type_entry_stable | 11682 / 1543.3 cyc | +0.0% (-0.6%) | +0.0% (-0.2%) | -7.9% (-2.3%) | -11.8% (-2.4%) | -16.2% (-2.7%) |
+| jit-trace/dot | 9340 / 1226.6 cyc | +0.0% (-0.2%) | -8.5% (-0.6%) | -17.1% (-0.5%) | -29.9% (-0.1%) | -29.9% (-0.2%) |
+| jit-trace/float_loop | 9433 / 2793.8 cyc | +0.0% (-0.0%) | +0.0% (+0.1%) | +0.0% (-0.0%) | +0.0% (-0.0%) | +0.0% (+0.0%) |
+| jit-trace/array_rec | 5261 / 1820.7 cyc | +0.0% (-0.0%) | -11.4% (-0.1%) | -22.7% (-0.0%) | -22.7% (-0.0%) | -22.7% (-0.1%) |
+| jit-trace/short_inner | 4352 / 994.5 cyc | +0.0% (-0.1%) | +0.0% (-0.1%) | -0.0% (+0.0%) | -0.0% (-0.1%) | -0.0% (-0.1%) |
+| awfy/permute | 202 / 37.1 cyc | +0.0% (-0.1%) | +0.0% (-0.2%) | +0.0% (-0.1%) | +0.0% (-0.3%) | -0.7% (-0.1%) |
+| awfy/queens | 433 / 82.6 cyc | +0.0% (-0.1%) | +0.0% (-0.5%) | +0.0% (-0.9%) | +0.0% (-1.0%) | -0.8% (-0.7%) |
+| awfy/towers | 175 / 47.6 cyc | -0.0% (-0.2%) | +0.1% (-1.4%) | +0.1% (-0.9%) | +0.1% (+0.1%) | +0.0% (-1.1%) |
+| awfy/sieve | 953 / 128.9 cyc | +0.0% (-0.7%) | +0.0% (-1.1%) | -3.6% (-5.8%) | -3.6% (-3.5%) | -11.4% (-9.0%) |
+| awfy/nbody | 566 / 97.4 cyc | -0.0% (-2.3%) | +0.0% (-2.8%) | +0.0% (-2.6%) | +0.1% (-2.5%) | -0.6% (-1.4%) |
+| awfy/bounce | 320 / 64.4 cyc | +0.0% (-0.0%) | +0.0% (-0.5%) | +0.0% (-0.7%) | +0.1% (-0.0%) | -0.3% (-0.7%) |
+| awfy/list | 410 / 96.8 cyc | +0.0% (+0.3%) | +0.0% (-0.4%) | +0.0% (-0.2%) | +0.0% (-0.5%) | +0.0% (-0.7%) |
+| awfy/mandelbrot | 523 / 272.6 cyc | +0.0% (-0.1%) | +0.0% (-0.1%) | +0.0% (-0.0%) | +0.0% (-0.2%) | +0.0% (-0.1%) |
+| awfy/storage | 675 / 147.5 cyc | -0.3% (-1.1%) | -0.3% (-0.9%) | -0.3% (-1.0%) | -0.3% (-1.3%) | -0.3% (-1.6%) |
+| awfy/richards | 174 / 59.6 cyc | +0.0% (+0.1%) | +0.2% (-0.3%) | +0.1% (-0.2%) | +0.2% (-0.2%) | +0.1% (+0.9%) |
+| awfy/deltablue | 343 / 114.4 cyc | +0.0% (+0.8%) | +0.1% (+0.3%) | +0.1% (+0.7%) | +0.2% (+0.8%) | +0.2% (+1.1%) |
+| awfy/havlak | 573 / 172.2 cyc | +0.0% (-0.7%) | +0.0% (-0.5%) | +0.0% (-0.8%) | +0.1% (-1.1%) | +0.0% (-1.0%) |
+| awfy/json | 490 / 151.0 cyc | +0.7% (-0.5%) | +0.7% (-0.5%) | +0.7% (-0.2%) | +0.8% (-0.3%) | +0.8% (-0.2%) |
+| programs/matmul | 2384 / 441.0 cyc | +0.0% (+1.4%) | -5.3% (-0.9%) | -10.6% (-0.5%) | -10.6% (-1.2%) | -10.7% (-0.3%) |
+| programs/queens | 5878 / 1918.3 cyc | +0.0% (+0.3%) | +0.0% (+0.5%) | -0.6% (+0.2%) | -0.6% (-0.3%) | -2.4% (+0.3%) |
+| programs/sieve | 3006 / 613.7 cyc | +0.0% (-0.2%) | +0.0% (+0.5%) | -4.5% (-5.0%) | -4.5% (-4.6%) | -9.6% (-5.1%) |
+| programs/spectral_norm | 1539 / 185.3 cyc | +0.0% (+0.3%) | +0.0% (-0.2%) | +0.0% (-0.0%) | +0.0% (+0.1%) | -5.2% (+1.3%) |
+| programs/fannkuch | 5134 / 1085.2 cyc | +0.0% (+0.1%) | -0.9% (+0.3%) | -1.6% (-2.9%) | -1.9% (-3.0%) | -2.7% (-2.8%) |
+| programs/nbody | 2037 / 350.7 cyc | +0.0% (+0.0%) | +0.0% (-0.0%) | +0.0% (-0.1%) | +0.0% (+0.0%) | -0.8% (-0.1%) |
+| programs/heapsort | 9586 / 2201.7 cyc | +0.0% (+0.1%) | -0.0% (-0.5%) | -0.0% (+0.4%) | -0.1% (-0.0%) | -0.1% (-0.4%) |
+| programs/table_array | 1644 / 404.2 cyc | +0.0% (-1.1%) | +0.0% (-0.9%) | -0.0% (-1.0%) | -0.0% (-1.2%) | -0.1% (-0.8%) |
+| programs/loops_arith | 3154 / 480.1 cyc | +0.0% (+0.1%) | +0.0% (-0.0%) | -5.7% (-4.4%) | -5.7% (-4.4%) | -5.7% (-4.4%) |
+| programs/mandelbrot | 1648 / 533.3 cyc | +0.0% (-0.0%) | +0.0% (-0.0%) | +0.0% (+0.0%) | +0.0% (+0.0%) | +0.0% (-0.0%) |
+| programs/string_ops | 2866 / 1070.5 cyc | +0.0% (+0.8%) | +0.0% (+1.0%) | +0.0% (+0.4%) | +0.0% (-1.0%) | +0.0% (+1.6%) |
+| programs/fasta | 5034 / 1365.6 cyc | -0.0% (+0.1%) | -0.0% (-0.4%) | -0.0% (-0.3%) | -0.0% (-0.2%) | -0.2% (+0.1%) |
+| programs/binary_trees | 6476 / 1483.5 cyc | +0.3% (-0.9%) | +0.3% (-0.9%) | +0.3% (-0.1%) | +0.3% (-0.5%) | +0.2% (-0.7%) |
+| lib/byte | 394 / 49.9 cyc | +0.0% (+0.2%) | -4.8% (-5.3%) | -4.8% (-4.8%) | -4.8% (-4.5%) | -4.8% (-5.5%) |
+| lib/byte_multi | 303 / 40.7 cyc | +0.0% (+0.1%) | -1.9% (-1.2%) | -1.9% (-1.5%) | -1.9% (-1.3%) | -2.8% (-2.3%) |
+| apps/raytrace | 361 / 119.9 cyc | +0.0% (-0.4%) | +0.2% (-0.3%) | +0.2% (+0.3%) | +0.7% (+0.3%) | +0.7% (+0.5%) |
+| real/lua_interp | 577 / 111.0 cyc | +0.0% (-0.2%) | +0.0% (+0.1%) | +0.0% (-0.8%) | +0.0% (-0.7%) | -0.0% (+0.0%) |
+| geomean (36 programs) | - | +0.03% (-0.13%) | -0.90% (-0.48%) | -2.56% (-0.99%) | -3.22% (-1.02%) | -4.22% (-1.08%) |
+
+### 41.8 Gates and the bench-fast sample
+
+* `scripts/gate-light.sh` per commit (fmt, mutant map, clippy x3, core 5.5 / 5.4, rn-jit trace suites 5.5 / 5.4, vm_corpus, rn-cli, jit-diff 1-50, the mutant groups of the commit): OK
+  at the final state (742 s). The first run of the nidx commit failed 15 tests (the CSE bug above), fixed before the commit.
+* `JITDIFF_MODES="off tr trdef" scripts/jit-diff.sh 1 40` on the final 5.5 and 5.4 release binaries: 40 seeds done, 0 diffs, 0 timeouts, both.
+* `scripts/bench-fast.sh --matrix 55plain,54plain` over 30 programs (`PREV_COMMIT=5a064d7 FORCE_STALE=1`, cached columns of 5a064d7), once for the final build and once for a build of main 432a77d
+  (same session): against the cached column the final build has instructions 0.9345 (5.5) / 0.9466 (5.4), cycles 0.9988 / 1.0049; the control 0.9936 / 0.9969 and 1.0140 / 1.0130 (the control
+  is itself +1.4 % in cycles over the cached 5a064d7 column: heatside 12 and machine drift). Final / control: instructions -6.0 % (5.5), -5.0 % (5.4); cycles -1.5 % (5.5), -0.8 % (5.4).
