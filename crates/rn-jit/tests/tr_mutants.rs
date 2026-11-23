@@ -3854,6 +3854,26 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_coro", "co_patterns_match_the_reference")],
     },
     Row {
+        name: "coyield_yieldable_skip",
+        owner: "N2",
+        dets: &[d("tr_coro", "co_direct_yield_matches_the_reference")],
+    },
+    Row {
+        name: "coyield_nargs_wrong",
+        owner: "N2",
+        dets: &[d("tr_coro", "co_direct_yield_matches_the_reference")],
+    },
+    Row {
+        name: "coyield_status_skip",
+        owner: "N2",
+        dets: &[d("tr_coro", "co_direct_yield_matches_the_reference")],
+    },
+    Row {
+        name: "coinl_err_as_ok",
+        owner: "N2",
+        dets: &[d("tr_coro", "co_direct_yield_matches_the_reference")],
+    },
+    Row {
         name: "bv_tail_nil",
         owner: "BUNDLE-V",
         dets: &[d("tr_core", "bv_mm_programs")],

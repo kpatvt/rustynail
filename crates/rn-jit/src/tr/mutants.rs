@@ -828,6 +828,11 @@ pub const NAMES: &[&str] = &[
     "cofuse_wanted_nil_skip",
     "cofuse_results_room_skip",
     "cofuse_prev_c_ignored",
+    // N2 (`coro_noyield` / `coro_noresume`): the direct `coroutine.yield` and the inlined fused resume
+    "coyield_yieldable_skip",
+    "coyield_nargs_wrong",
+    "coyield_status_skip",
+    "coinl_err_as_ok",
     // BUNDLE-V: V1 (`t1q` bits 4 / 5: arithmetic metamethod frames, tail calls and general returns in metamethod frames), V2 (`upbar`)
     "bv_tail_nil",
     "bv_ret_first_nil",
@@ -1054,7 +1059,11 @@ pub fn apply_vm_mutants() {
             | u32::from(active("cofuse_finish_op_skip")) << 3
             | u32::from(active("cofuse_wanted_nil_skip")) << 4
             | u32::from(active("cofuse_results_room_skip")) << 5
-            | u32::from(active("cofuse_prev_c_ignored")) << 6,
+            | u32::from(active("cofuse_prev_c_ignored")) << 6
+            | u32::from(active("coyield_yieldable_skip")) << 7
+            | u32::from(active("coyield_nargs_wrong")) << 8
+            | u32::from(active("coyield_status_skip")) << 9
+            | u32::from(active("coinl_err_as_ok")) << 10,
     );
 }
 

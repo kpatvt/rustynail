@@ -7,6 +7,9 @@
 //! `cofuse_ncalls_skip` (co_14: the C level of the resumer), `cofuse_finish_op_skip` (co_11: `coroutine.yield` used as a metamethod),
 //! `cofuse_wanted_nil_skip` (co_11: `local x = yield()`), `cofuse_results_room_skip` (co_11: 5000 yielded values), `cofuse_prev_c_ignored`
 //! (co_15: `pcall(coroutine.yield)`).
+//! N2 (the direct `coroutine.yield` of the native call path, the inlined fused resume): `co_16` (yield shapes, non-yieldable contexts, hooks, introspection,
+//! close, GC); detectors of `coyield_yieldable_skip` (the main-thread / `table.sort` yields), `coyield_nargs_wrong` (the yielded values), `coyield_status_skip`
+//! (a yield that does not mark the thread suspended).
 #![cfg(feature = "trace")]
 
 use rn_core::state::{LuaState, LUA_MULTRET};
@@ -41,6 +44,14 @@ mod progs {
         "co_14_cstack_overflow.lua",
         include_str!("../../../tests/vm/co_14_cstack_overflow.lua"),
         include_str!("data/co_14_cstack_overflow.expected"),
+    );
+    pub const CO_16: (&str, &str, &str) = (
+        "co_16_direct_yield.lua",
+        include_str!("../../../tests/vm/co_16_direct_yield.lua"),
+        #[cfg(not(rustynail_lua54))]
+        include_str!("data/co_16_direct_yield.expected"),
+        #[cfg(rustynail_lua54)]
+        include_str!("data/co_16_direct_yield.expected54"),
     );
     pub const CO_15: (&str, &str, &str) = (
         "co_15_patterns.lua",
@@ -123,4 +134,9 @@ fn co_cstack_gc_and_overflow_match_the_reference() {
 #[test]
 fn co_patterns_match_the_reference() {
     check(progs::CO_15);
+}
+
+#[test]
+fn co_direct_yield_matches_the_reference() {
+    check(progs::CO_16);
 }

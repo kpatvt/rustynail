@@ -22,6 +22,8 @@ eager_hash = []
 coro_nofuse = []
 # A/B (N2 step 1): disable the direct `coroutine.yield` of the native call path (`coro::CORO_YIELD_DIRECT`).
 coro_noyield = []
+# A/B (N2 step 2): the fused coroutine resume without the inlined protected run (`coro::CORO_RESUME_INL`).
+coro_noresume = []
 # JIT hooks of the interpreter (docs/JIT_HOOK_COST.md): extra `Proto` fields, hot counters, the
 # frame-entry check. OFF by default; with it off the generated code is byte-identical to a build
 # without these features.

@@ -17,6 +17,10 @@ pub const CORO_FUSED: bool = !cfg!(feature = "coro_nofuse");
 /// N2 step 1: the direct `coroutine.yield` ([`State::yield_direct`], used by `native_fast_with`). Off with the cargo feature `coro_noyield` (A/B builds).
 pub const CORO_YIELD_DIRECT: bool = !cfg!(feature = "coro_noyield");
 
+/// N2 step 2: the fused resume runs its protected part inline and skips `resume_finish` for a status that is not an error
+/// ([`State::resume_fused`]). Off with the cargo feature `coro_noresume` (A/B builds).
+pub const CORO_RESUME_INL: bool = !cfg!(feature = "coro_noresume");
+
 /// The address of the library function `coroutine.yield` (registered by `rn_std::lib_coroutine::open`; 0 before): the native call path
 /// compares the callee with it. A process-wide static: every state of the process registers the same function.
 static YIELD_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -35,7 +39,7 @@ pub(crate) fn is_yield_fn(f: NativeFn) -> bool {
 /// Test-only mutants of the fused resume (feature `jit_trace_mut`, set by `rn_jit::tr::mutants::apply_vm_mutants`): a bit mask,
 /// `1` `cofuse_room_skip`, `2` `cofuse_hook_ignored`, `4` `cofuse_ncalls_skip`, `8` `cofuse_finish_op_skip`, `16` `cofuse_wanted_nil_skip`,
 /// `32` `cofuse_results_room_skip`, `64` `cofuse_prev_c_ignored`, `128` `coyield_yieldable_skip`, `256` `coyield_nargs_wrong`,
-/// `512` `coyield_status_skip`.
+/// `512` `coyield_status_skip`, `1024` `coinl_err_as_ok`.
 #[cfg(feature = "jit_trace_mut")]
 static MUT_COFUSE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -46,7 +50,7 @@ pub fn set_mut_cofuse(mask: u32) {
 }
 
 #[inline(always)]
-fn mut_cofuse(bit: u32) -> bool {
+pub(crate) fn mut_cofuse(bit: u32) -> bool {
     #[cfg(feature = "jit_trace_mut")]
     return MUT_COFUSE.load(std::sync::atomic::Ordering::Relaxed) & bit != 0;
     #[cfg(not(feature = "jit_trace_mut"))]
@@ -347,39 +351,24 @@ impl State {
         if !mut_cofuse(4) {
             self.set_ncalls_raw(nc + 1);
         }
-        let status = self.raw_run_protected(|s| {
-            s.tm().status = Status::Ok; // mark that it is running (again)
-                                        // `post_call(yci, nargs)` (no hook, a plain native frame): the common wanted-result counts inline
-            let fw = yci.r().callstatus & (CIST_TBC | CIST_NRESULTS);
-            if fw == 1 {
-                s.set_top(yci.r().func); // no value wanted
-                s.set_ci(prev);
-            } else if fw == 2 {
-                let v = if nargs == 0 {
-                    Value::NIL
-                } else {
-                    s.get(s.top() - nargs)
-                };
-                let f = yci.r().func;
-                if !(nargs == 0 && mut_cofuse(16)) {
-                    s.set(f, v);
-                }
-                s.set_top(f + 1);
-                s.set_ci(prev);
+        let status = if CORO_RESUME_INL {
+            self.raw_run_protected_inl(|s| Self::fused_body(s, yci, prev, nargs))
+        } else {
+            self.raw_run_protected(|s| Self::fused_body(s, yci, prev, nargs))
+        };
+        let (status, nres) = if CORO_RESUME_INL && (!is_error(status) || mut_cofuse(1024)) {
+            // `resume_finish` without the recoverable-error loop (`precover` does nothing for a status that is not an error)
+            debug_assert!(status == self.status());
+            let ci = self.ci();
+            let nres = if status == Status::Yield {
+                ci.r().u2 as usize
             } else {
-                s.post_call(yci, nargs)?; // finish the `yield` call
-            }
-            // `finish_op` of an `OP_CALL` is empty
-            // SAFETY: a Lua frame interrupted by a call has `savedpc - 1` inside its code.
-            let inst = Instruction(unsafe { *prev.r().savedpc.sub(1) });
-            if inst.opcode() != Some(OpCode::Call) && !mut_cofuse(8) {
-                crate::vm_unsafe::finish_op(s)?;
-            }
-            let ex = s.g().executor;
-            ex(s, prev)?; // execute down to the higher C boundary
-            s.unroll() // run the rest of the continuation
-        });
-        let (status, nres) = self.resume_finish(status);
+                self.top() - (ci.r().func + 1)
+            };
+            (status, nres)
+        } else {
+            self.resume_finish(status)
+        };
         if status == Status::Ok || status == Status::Yield {
             if (from.stack_size() as isize) - (from.top().0 as isize) <= (nres + 1) as isize
                 && !mut_cofuse(32)
@@ -418,6 +407,42 @@ impl State {
             self.xmove(from, 1); // move error message
             ResumeOut::Err
         }
+    }
+
+    /// The protected part of [`State::resume_fused`]: finish the interrupted `yield` call (`post_call`), the interrupted `OP_CALL`
+    /// of `prev` (`finish_op`) and run the coroutine until it yields, returns or fails.
+    #[inline(always)]
+    fn fused_body(s: &mut State, yci: Ci, prev: Ci, nargs: usize) -> LuaResult<()> {
+        s.tm().status = Status::Ok; // mark that it is running (again)
+                                    // `post_call(yci, nargs)` (no hook, a plain native frame): the common wanted-result counts inline
+        let fw = yci.r().callstatus & (CIST_TBC | CIST_NRESULTS);
+        if fw == 1 {
+            s.set_top(yci.r().func); // no value wanted
+            s.set_ci(prev);
+        } else if fw == 2 {
+            let v = if nargs == 0 {
+                Value::NIL
+            } else {
+                s.get(s.top() - nargs)
+            };
+            let f = yci.r().func;
+            if !(nargs == 0 && mut_cofuse(16)) {
+                s.set(f, v);
+            }
+            s.set_top(f + 1);
+            s.set_ci(prev);
+        } else {
+            s.post_call(yci, nargs)?; // finish the `yield` call
+        }
+        // `finish_op` of an `OP_CALL` is empty
+        // SAFETY: a Lua frame interrupted by a call has `savedpc - 1` inside its code.
+        let inst = Instruction(unsafe { *prev.r().savedpc.sub(1) });
+        if inst.opcode() != Some(OpCode::Call) && !mut_cofuse(8) {
+            crate::vm_unsafe::finish_op(s)?;
+        }
+        let ex = s.g().executor;
+        ex(s, prev)?; // execute down to the higher C boundary
+        s.unroll() // run the rest of the continuation
     }
 
     /// `lua_closethread`: reset the thread, closing its pending to-be-closed variables. Returns

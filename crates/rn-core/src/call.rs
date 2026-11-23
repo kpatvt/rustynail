@@ -640,6 +640,28 @@ impl State {
         }
     }
 
+    /// [`State::raw_run_protected`] inlined into its one caller (the fused coroutine resume, N2 step 2); keep the two in sync.
+    #[inline(always)]
+    pub(crate) fn raw_run_protected_inl<F>(&mut self, f: F) -> Status
+    where
+        F: FnOnce(&mut State) -> LuaResult<()>,
+    {
+        let old = self.ncalls_raw();
+        self.tm().prot_depth += 1;
+        let r = f(self);
+        self.tm().prot_depth -= 1;
+        self.set_ncalls_raw(old);
+        match r {
+            Ok(()) => Status::Ok,
+            Err(s) => {
+                if self.t().throw_base && self.t().prot_depth == 0 {
+                    self.tm().throw_base = false; // caught at the base level
+                }
+                s
+            }
+        }
+    }
+
     /// `luaD_throwbaselevel`: raise `status` so that only the outermost protected call of this
     /// thread catches it. The caller returns the result as `Err(..)`.
     pub fn throw_base_level(&mut self, status: Status) -> Status {

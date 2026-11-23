@@ -1,0 +1,129 @@
+false	attempt to yield from outside a coroutine
+false	attempt to yield from outside a coroutine
+false	attempt to yield from outside a coroutine
+false	attempt to yield from outside a coroutine
+false	true
+1:true
+2:true,1
+3:true,1,2
+4:true,1,2,3
+1:true
+3:true,nil,nil
+4:true,1,nil,3
+got	1:A	2:B,C	3:D,E,F	3:x,y,z	0	5:10,nil,30,nil,50
+4:true,end,s1,s2
+dead	2:false,cannot resume dead coroutine
+2:true,e1
+r	21
+2:true,e2
+2:true,e3
+args	30	40	400
+2:true,e4
+2:true,e5
+t	3	50	60
+2:true,e6
+2:true,70
+2:false,cannot resume dead coroutine
+true	1	2	3	301
+2:true,200
+dead
+251
+2:true,250
+4:true,1,2,3
+3:true,t1,t2
+dead
+2:true,m1
+2:true,5
+3:true,2,m4
+6:true,1,nil,1,nil,3
+2:true,4
+false	attempt to yield across a C-call boundary
+false	attempt to yield across a C-call boundary
+true	nil	attempt to yield across a C-call boundary
+true	bad argument #3 to 'string.rep' (string expected, got function)
+false	attempt to yield across a C-call boundary
+true	1
+2:true,inner
+2:true,back
+true	sorted
+1	2:true,in pcall
+pcall	2:false,after r2
+2	2:true,in xpcall
+xpcall	2:false,handled E
+3	2:true,direct
+pcall(yield)	2:true,r4
+4	2:true,index field
+5	2:true,add
+6	2:true,lt
+7	2:true,le
+8	2:true,eq
+9	2:true,concat
+10	2:true,len
+11	2:true,call 7
+12	2:true,unm
+mm	1:r5	1:r6	1:true	1:true	1:true	1:r10	1:r11	1:r12	1:r13
+13	2:true,newindex k
+rawk	5
+14	2:true,iter 1
+for	1	r15
+15	2:true,iter 2
+for	2	r16
+16	2:true,iter 3
+for	3	r17
+17	3:true,nil,nil
+for-yield	r18
+18	3:true,nil,r18
+for-yield	stop
+19	2:true,c8 done
+gen	1	1
+gen	2	4
+gen	3	9
+gen	4	16
+1	3	6	fin	false	cannot resume dead coroutine
+C	[C]	-1	yield	upvalue	false
+Lua	130
+nil
+tb
+stack traceback:
+	[C]: in function 'coroutine.yield'
+	co_16_direct_yield.lua:130: in function <co_16_direct_yield.lua:130>
+stack traceback:
+	[C]: in function 'coroutine.yield'
+	co_16_direct_yield.lua:130: in function <co_16_direct_yield.lua:130>
+a	lv	5
+suspended	2:true,5	dead
+nil
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | call call/C call/C
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | return/C return/C return
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | line:146 line:146
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | count count count count count count count
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | call count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 call/C return/C count line:146 count line:146 count line:146 count line:146 count line:146 call/C return/C count line:146 count line:146 return
+2:true,y1
+2:true,y2
+2:true,return,call,return,call,return,call
+2:true,2
+2:true,3
+return call return return
+close	b	nil
+close	a	nil
+1:true
+dead	2:false,cannot resume dead coroutine
+close	fa	nil
+2:false,cerr fa
+dead
+1:true
+inner sees	normal	running
+suspended	running
+suspended
+2:false,co_16_direct_yield.lua:204: attempt to index a nil value (local 't')
+dead	2:false,cannot resume dead coroutine
+false	co_16_direct_yield.lua:206: wrapped
+false	cannot resume dead coroutine
+2	string
+2:false,TS
+3:true,false,cannot resume non-suspended coroutine
+2:true,bottom
+2:true,150
+2000
+48573
+1,2,3,4,5
