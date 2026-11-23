@@ -87,6 +87,14 @@ print(pcall(wrap(function()
   return "sorted"
 end)))
 
+-- isyieldable in a non-yieldable callback and of a suspended coroutine; yield in a message handler
+print(pcall(wrap(function() local r; table.sort({2, 1}, function(a, b) r = isyieldable() return a < b end) return r, isyieldable() end)))
+local sus = create(function() yield() end)
+resume(sus)
+print(isyieldable(sus), isyieldable(create(function() end)), isyieldable(coroutine.running()))
+print(pcall(wrap(function() return xpcall(error, function(m) yield("in handler") return m end, "boom") end)))
+print(pcall(wrap(function() return select("#", pcall(error)), yield("after pcall(error)") end)))
+
 -- yield through pcall / xpcall / error handlers / metamethods / iterators (yieldable boundaries)
 local c8 = create(function()
   print("pcall", show(pcall(function() local v = yield("in pcall") error("after " .. tostring(v), 0) end)))

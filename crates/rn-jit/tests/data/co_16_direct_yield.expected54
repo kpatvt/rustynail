@@ -46,6 +46,10 @@ true	1
 2:true,inner
 2:true,back
 true	sorted
+true	false	true
+true	true	false
+true	false	error in error handling
+true	after pcall(error)
 1	2:true,in pcall
 pcall	2:false,after r2
 2	2:true,in xpcall
@@ -81,23 +85,23 @@ gen	3	9
 gen	4	16
 1	3	6	fin	false	cannot resume dead coroutine
 C	[C]	-1	yield	upvalue	false
-Lua	130
+Lua	138
 nil
 tb
 stack traceback:
 	[C]: in function 'coroutine.yield'
-	co_16_direct_yield.lua:130: in function <co_16_direct_yield.lua:130>
+	co_16_direct_yield.lua:138: in function <co_16_direct_yield.lua:138>
 stack traceback:
 	[C]: in function 'coroutine.yield'
-	co_16_direct_yield.lua:130: in function <co_16_direct_yield.lua:130>
+	co_16_direct_yield.lua:138: in function <co_16_direct_yield.lua:138>
 a	lv	5
 suspended	2:true,5	dead
 nil
 2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | call call/C call/C
 2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | return/C return/C return
-2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | line:146 line:146
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | line:154 line:154
 2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | count count count count count count count
-2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | call count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 count line:146 call/C return/C count line:146 count line:146 count line:146 count line:146 count line:146 call/C return/C count line:146 count line:146 return
+2:true,1 2:true,2 2:true,2 2:false,cannot resume dead coroutine | call count line:154 count line:154 count line:154 count line:154 count line:154 count line:154 count line:154 count line:154 count line:154 call/C return/C count line:154 count line:154 count line:154 count line:154 count line:154 call/C return/C count line:154 count line:154 return
 2:true,y1
 2:true,y2
 2:true,return,call,return,call,return,call
@@ -115,9 +119,9 @@ dead
 inner sees	normal	running
 suspended	running
 suspended
-2:false,co_16_direct_yield.lua:204: attempt to index a nil value (local 't')
+2:false,co_16_direct_yield.lua:212: attempt to index a nil value (local 't')
 dead	2:false,cannot resume dead coroutine
-false	co_16_direct_yield.lua:206: wrapped
+false	co_16_direct_yield.lua:214: wrapped
 false	cannot resume dead coroutine
 2	string
 2:false,TS
