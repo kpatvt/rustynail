@@ -131,6 +131,8 @@ pub const BYTEXT_PROCESS: u32 = 1;
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
 pub const HKADDR_PROCESS: u32 = 1;
+/// N1a: the process default of [`TrLimits::ixfuse`] (also the struct default).
+pub const IXFUSE_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
 pub const SHAPEGUARD_PROCESS: u32 = 1;
 /// R1 (`regcarry`): the process default of [`TrLimits::regcarry`] (also the struct default).
@@ -755,6 +757,10 @@ pub struct TrLimits {
     /// H1 (`hkaddr`): an `HREFK` whose users are all `HLOAD` / `HSTORE` addresses is fused into them (`ra::RaOpts::hkaddr`): the slot address is a displacement of
     /// the node register in the access, no `lea`: 0 = off, 1 = on (default [`HKADDR_PROCESS`]).
     pub hkaddr: u32,
+    /// N1a (`ixfuse`): an integer `ADD x, #c` whose users are all the index operand of fused `AREF`s (`ALOAD` / `ASTORE` addresses) is fused into
+    /// them (`ra::RaOpts::ixfuse`): the access addresses `[base + x + (tag base + c)]` / `[base + 8 * ~x - 8 * c]` and `x` stays live instead of the
+    /// sum (no `mov; add` per access): 0 = off, 1 = on (default [`IXFUSE_PROCESS`]).
+    pub ixfuse: u32,
     /// S4 (`shapeguard`): a table's `HREFK`s are covered by ONE guard on the layout id of its node vector (`HSHAPE`, `shape.rs`) and skip their
     /// key compare: 0 = off, 1 = on (default [`SHAPEGUARD_PROCESS`]).
     pub shapeguard: u32,
@@ -911,6 +917,7 @@ impl Default for TrLimits {
             midfold: MIDFOLD_PROCESS,
             guarddiet: GUARDDIET_PROCESS,
             hkaddr: HKADDR_PROCESS,
+            ixfuse: IXFUSE_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
             shapemin: SHAPE_MIN,
@@ -1111,6 +1118,7 @@ impl TrLimits {
                 "midfold" => l.midfold = v.min(2),
                 "guarddiet" => l.guarddiet = v.min(1),
                 "hkaddr" => l.hkaddr = v.min(1),
+                "ixfuse" => l.ixfuse = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,
                 "shapemin" => l.shapemin = v.min(64),

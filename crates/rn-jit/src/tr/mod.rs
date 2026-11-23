@@ -1846,6 +1846,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         xregs: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.xregs } as u8,
         // SAFETY: as above.
         hkaddr: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.hkaddr } != 0,
+        // SAFETY: as above.
+        ixfuse: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ixfuse } != 0,
         carry_at: if ir.carry.is_empty() {
             0
         } else {

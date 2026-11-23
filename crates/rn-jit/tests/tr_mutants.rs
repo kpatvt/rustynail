@@ -4483,6 +4483,21 @@ const TABLE: &[Row] = &[
         owner: "T3",
         dets: &[d("tr_policy", "t3_heatside_policy")],
     },
+    Row {
+        name: "ixfuse_tag_disp0",
+        owner: "N1",
+        dets: &[d("tr_core", "n1_programs")],
+    },
+    Row {
+        name: "ixfuse_tag_disp_neg",
+        owner: "N1",
+        dets: &[d("tr_core", "n1_programs")],
+    },
+    Row {
+        name: "ixfuse_pay_disp_pos",
+        owner: "N1",
+        dets: &[d("tr_core", "n1_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

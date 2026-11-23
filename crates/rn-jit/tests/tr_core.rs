@@ -27,6 +27,8 @@ mod h1_progs;
 mod h2_progs;
 #[path = "tr_core/k4_progs.rs"]
 mod k4_progs;
+#[path = "tr_core/n1_progs.rs"]
+mod n1_progs;
 #[path = "tr_core/nr_progs.rs"]
 mod nr_progs;
 #[path = "tr_core/progs.rs"]
@@ -42,6 +44,7 @@ use a1_progs::{A1_PROGS, G1_SLOW};
 use h1_progs::H1_PROGS;
 use h2_progs::H2_PROGS;
 use k4_progs::K4_PROGS;
+use n1_progs::N1_PROGS;
 use nr_progs::NR_PROGS;
 use progs::{Prog, PROGS, Y_PROGS};
 use r1_progs::R1_PROGS;
@@ -170,6 +173,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(H1_PROGS)
         .chain(H2_PROGS)
         .chain(K4_PROGS)
+        .chain(N1_PROGS)
         .chain(S4_PROGS)
         .chain(Y_PROGS)
         .find(|p| p.name == name)
@@ -13197,6 +13201,69 @@ fn t3_heatside_programs() {
         assert!(
             g < full,
             "{lim}: {g} grants, not fewer than the shipped {full}"
+        );
+    }
+}
+
+/// N1 (docs/JIT_TRACE.md section 41): the loop-body diet. Constant index offsets folded into the array accesses (`ixfuse`), the counted-loop back-edge
+/// (`cloop`) and the carried negated index (`nidx`), each alone, all together and all off, against the interpreter in every checking mode.
+/// Mutants `ixfuse_*`, `cloop_*`, `nidx_*`.
+#[test]
+fn n1_programs() {
+    let mut jobs = Vec::new();
+    for lim in ["ixfuse=1", "ixfuse=0"] {
+        for trace in ["always", "on2"] {
+            for p in [
+                "n1_offsets",
+                "n1_steps",
+                "n1_limits",
+                "n1_exits",
+                "n1_matrix",
+                "n1_fill",
+            ] {
+                for opts in [
+                    "",
+                    "+verify",
+                    "+exitstorm=3",
+                    "+exitstorm=1 +verify",
+                    "+randra=5 +verify",
+                    "-loop",
+                ] {
+                    let mut j = Job::new(p, trace).opts(opts);
+                    j.limits = lim.into();
+                    jobs.push(j);
+                }
+            }
+        }
+        for p in ["n1_offsets", "n1_exits", "n1_matrix"] {
+            let mut j = Job::new(p, "always")
+                .opts("+verify")
+                .env("RUSTYNAIL_GC_STRESS", "2");
+            j.limits = lim.into();
+            jobs.push(j);
+            let mut j = Job::new(p, "always").budget(17);
+            j.limits = lim.into();
+            jobs.push(j);
+        }
+    }
+    compare(jobs);
+}
+
+/// N1: the array-loop programs enter their traces with the three knobs on.
+#[test]
+fn n1_programs_enter_traces() {
+    let mut js = Vec::new();
+    for p in ["n1_offsets", "n1_matrix", "n1_fill"] {
+        let mut j = Job::new(p, "always").opts("+verify");
+        j.limits = "ixfuse=1".into();
+        js.push(j);
+    }
+    for (j, o) in &compare(js) {
+        assert!(
+            o.stats.installed >= 1 && o.stats.entered >= 1,
+            "{}: no trace ran: {}",
+            j.prog,
+            o.stats.line()
         );
     }
 }

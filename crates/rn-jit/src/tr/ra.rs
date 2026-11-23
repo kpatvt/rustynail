@@ -191,6 +191,9 @@ pub struct RaOpts {
     /// H1 (`hkaddr`): an `HREFK` whose users are all `HLOAD` / `HSTORE` addresses is *fused* into them like an `AREF`: no register and no `lea`, the
     /// users address `[node + idx * 24 + field]` and the node operand stays live up to them.
     pub hkaddr: bool,
+    /// N1a (`ixfuse`): an integer `ADD x, #c` whose users are all the index operand of fused `AREF`s is *fused* into them (no register, no instruction): the
+    /// accesses address `[base + x + c + ...]`, `x` stays live up to them.
+    pub ixfuse: bool,
     /// R1 (`regcarry`): the index of the first instruction behind the leading `SLOAD` run of a root (`exit::lead_run`): the allocator records where the
     /// run's values are before that instruction ([`Allocation::carry`]). 0: nothing is recorded.
     pub carry_at: usize,
@@ -205,6 +208,7 @@ impl Default for RaOpts {
             reserve_gpr: None,
             xregs: 0,
             hkaddr: false,
+            ixfuse: false,
             carry_at: 0,
         }
     }
@@ -419,6 +423,8 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
     };
     match ins.op {
         TOp::Phi | TOp::Loop => [NOREF; 3],
+        // N1a: a fused index `ADD` is no instruction: its operand is read by the accesses that use it
+        TOp::Add if fused[i] => [NOREF; 3],
         TOp::Tset => [a, b, ins.aux as Ref],
         TOp::Concat => [a, b, if ins.aux != 0 { ins.aux as Ref } else { NOREF }],
         TOp::Lib => [
@@ -432,13 +438,19 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
         ],
         op if is_mem(op) && TraceIr::is_ins(a) && fused[idx(a)] => {
             let ar = ir.at(a);
+            // N1a: the index of a fused `ADD x, #c` is `x` (the accesses add `c` to their displacement)
+            let ab = if ar.op == TOp::Aref && TraceIr::is_ins(ar.b) && fused[idx(ar.b)] {
+                ir.at(ar.b).a
+            } else {
+                ar.b
+            };
             if op == TOp::Aload {
                 // BUNDLE-L A: the complemented index of the address, if it has one
-                [ar.a, ar.b, ar.third().unwrap_or(NOREF)]
+                [ar.a, ab, ar.third().unwrap_or(NOREF)]
             } else if matches!(op, TOp::Uload | TOp::Uvrel | TOp::Hload) {
-                [ar.a, ar.b, NOREF]
+                [ar.a, ab, NOREF]
             } else {
-                [ar.a, ar.b, b]
+                [ar.a, ab, b]
             }
         }
         _ => [a, b, NOREF],
@@ -471,7 +483,72 @@ fn defines(op: TOp, fused: bool) -> bool {
         | TOp::Sstore
         | TOp::Loop => false,
         TOp::Aref | TOp::Uref | TOp::Hrefk => !fused,
+        // N1a: a fused index sum
+        TOp::Add => !fused,
         _ => true,
+    }
+}
+
+/// Largest `|c|` of a fused index `ADD x, #c` (the displacements `4 + c` and `8 * (c + 1)` fit 32 bits with room to spare).
+pub const IXFUSE_MAX: i64 = 1 << 20;
+
+/// N1a (`ixfuse`): marks in `fused` the integer `ADD x, #c` (`x` an instruction, `c` a small constant) whose users are all the index operand of fused
+/// `AREF`s: no snapshot, `PHI`, guard, `end_uses` entry or other operand names it. The accesses of such an `AREF` address `x` and add `c` to the
+/// displacement (`operand_refs` hands them `x`), so `x` is live up to them and the sum is neither computed nor given a register. Wrapping is the
+/// same on both sides: `x + c` (mod 2^64) in the `ADD`, base + x + (disp) (mod 2^64) in the address.
+fn fuse_index_adds(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
+    let n = ir.ins.len();
+    let mut cand: Vec<bool> = ir
+        .ins
+        .iter()
+        .map(|i| {
+            i.op == TOp::Add
+                && i.t == Ty::Int
+                && TraceIr::is_ins(i.a)
+                && ir
+                    .as_int(i.b)
+                    .is_some_and(|c| c.unsigned_abs() <= IXFUSE_MAX as u64)
+        })
+        .collect();
+    let mut users = vec![0u32; n];
+    let kill = |cand: &mut Vec<bool>, r: Ref| {
+        if TraceIr::is_ins(r) && idx(r) < n {
+            cand[idx(r)] = false;
+        }
+    };
+    for (k, ins) in ir.ins.iter().enumerate() {
+        if ins.op == TOp::Phi {
+            kill(&mut cand, ins.a);
+            kill(&mut cand, ins.b);
+            continue;
+        }
+        let (ra, rb) = ins.op.ref_operands();
+        if ra {
+            kill(&mut cand, ins.a);
+        }
+        if rb {
+            if ins.op == TOp::Aref && fused[k] && TraceIr::is_ins(ins.b) && idx(ins.b) < n {
+                if cand[idx(ins.b)] && ins.a != ins.b {
+                    users[idx(ins.b)] += 1;
+                }
+            } else {
+                kill(&mut cand, ins.b);
+            }
+        }
+        if let Some(t) = ins.third() {
+            kill(&mut cand, t);
+        }
+    }
+    for e in &ir.snapmap {
+        kill(&mut cand, e.r);
+    }
+    for &r in end_uses {
+        kill(&mut cand, r);
+    }
+    for k in 0..n {
+        if cand[k] && users[k] > 0 {
+            fused[k] = true;
+        }
     }
 }
 
@@ -796,6 +873,9 @@ pub fn allocate_hinted(
     }
     for &r in end_uses {
         unfuse(&mut fused, r);
+    }
+    if opts.ixfuse {
+        fuse_index_adds(ir, &mut fused, end_uses);
     }
     for e in &ir.snapmap {
         if e.r != NOREF && e.r < REF_BIAS && usize::from(e.r) > ir.k.len() {

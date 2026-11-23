@@ -4985,6 +4985,8 @@ impl Cx<'_> {
                 }
             }
             TOp::Sload => self.sload(i)?,
+            // N1a: a fused index sum is read by its accesses, nothing to emit
+            TOp::Add if self.al.fused[i] => {}
             TOp::Add | TOp::Sub | TOp::Mul | TOp::Band | TOp::Bor | TOp::Bxor => self.ibin(i)?,
             TOp::Neg | TOp::Bnot => {
                 let d = self.g(dst);
@@ -5919,6 +5921,42 @@ impl Cx<'_> {
     /// B2 (`b2arr`): the scaled address of the payload of element `u` of the array at `base`: `[base + 8 * ~u]` (`~u = -u - 1`, and
     /// the payload of element `u` is at `base - 8 * (u + 1)`): two instructions (`mov V7, u; not V7`) instead of four and the access
     /// itself indexed. The index sits in `V7`.
+    /// N1a (`ixfuse`): the constant `c` of the index `ADD x, #c` that is fused into the `AREF` `ar` (0 when the index is a plain value): the
+    /// accesses of the address address element `x + c` as `x` and a displacement.
+    fn ix_c(&self, ar: &Ins) -> i64 {
+        if ar.op == TOp::Aref
+            && TraceIr::is_ins(ar.b)
+            && self.al.fused[usize::from(ar.b - REF_BIAS)]
+        {
+            self.ir.as_int(self.ir.at(ar.b).b).unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
+    /// N1a: the displacement of the tag byte of element `x + c` (`mutants`: `ixfuse_tag_disp0` drops `c`, `ixfuse_tag_disp_neg` flips its sign).
+    fn ix_tag_off(&self, c: i64) -> i32 {
+        let c = if mutants::active("ixfuse_tag_disp0") {
+            0
+        } else if mutants::active("ixfuse_tag_disp_neg") {
+            -c
+        } else {
+            c
+        };
+        table::ARRAY_TAG_BASE as i32 + c as i32
+    }
+
+    /// N1a: [`Self::payload_scaled`] of element `x + c`: `~(x + c) == ~x - c`, so the displacement is `-8 * c` (`ixfuse_pay_disp_pos`: `+8 * c`).
+    fn payload_scaled_c(&mut self, base: V, idx: V, c: i64) -> Mi {
+        let mut m = self.payload_scaled(base, idx);
+        m.off -= 8 * if mutants::active("ixfuse_pay_disp_pos") {
+            -c as i32
+        } else {
+            c as i32
+        };
+        m
+    }
+
     fn payload_scaled(&mut self, base: V, idx: V) -> Mi {
         self.push(Op::MovR(7, idx));
         if !mutants::active("b2arr_no_not") {
@@ -5997,6 +6035,7 @@ impl Cx<'_> {
             Loc::G(b) => b,
             _ => return unsup("constant array base"),
         };
+        let ixc = self.ix_c(ar);
         let check =
             aux_bits(ins.aux) & 1 != 0 && !(ins.t == Ty::Nil && mutants::active("aload_nil_skip"));
         if check {
@@ -6028,13 +6067,13 @@ impl Cx<'_> {
                             base,
                             idx: u,
                             scale: 1,
-                            off: table::ARRAY_TAG_BASE as i32,
+                            off: self.ix_tag_off(ixc),
                         },
                     }),
                     Loc::G(u) => {
                         self.push(Op::MovR(7, u));
                         self.push(Op::Add(7, Src::V(base)));
-                        self.ld(7, W::B1, rm(7, table::ARRAY_TAG_BASE as i32));
+                        self.ld(7, W::B1, rm(7, self.ix_tag_off(ixc)));
                     }
                     l => panic!("operand {l:?}"),
                 }
@@ -6059,7 +6098,7 @@ impl Cx<'_> {
                             base,
                             idx: u,
                             scale: 1,
-                            off: table::ARRAY_TAG_BASE as i32,
+                            off: self.ix_tag_off(ixc),
                         },
                         imm: i32::from(tag as i8),
                         to: x,
@@ -6092,7 +6131,7 @@ impl Cx<'_> {
                     if matches!(ins.t, Ty::Nil | Ty::False | Ty::True) {
                         self.push(Op::Mov(d, 0));
                     } else {
-                        let m = pre.unwrap_or_else(|| self.payload_scaled(base, u));
+                        let m = pre.unwrap_or_else(|| self.payload_scaled_c(base, u, ixc));
                         self.push(Op::LdI {
                             dst: d,
                             w: W::B8,
@@ -6101,7 +6140,7 @@ impl Cx<'_> {
                     }
                 }
                 Loc::X(d) => {
-                    let m = pre.unwrap_or_else(|| self.payload_scaled(base, u));
+                    let m = pre.unwrap_or_else(|| self.payload_scaled_c(base, u, ixc));
                     self.push(Op::LdFi { dst: d, m });
                 }
                 _ => {}
@@ -6112,7 +6151,7 @@ impl Cx<'_> {
             Loc::Const(r) => rm(base, const_index_offsets(self.kbits_of(r))?.1),
             Loc::G(u) => {
                 self.payload_base(base, u);
-                rm(7, -8)
+                rm(7, -8 - 8 * ixc as i32)
             }
             l => panic!("operand {l:?}"),
         };
@@ -6146,6 +6185,7 @@ impl Cx<'_> {
             Some(g) => g,
             None => return unsup(format!("ASTORE of type {t:?}")),
         };
+        let ixc = self.ix_c(ar);
         match ops[1] {
             Loc::Const(r) => {
                 let (toff, _) = const_index_offsets(self.kbits_of(r))?;
@@ -6157,7 +6197,7 @@ impl Cx<'_> {
                     base,
                     idx: u,
                     scale: 1,
-                    off: table::ARRAY_TAG_BASE as i32,
+                    off: self.ix_tag_off(ixc),
                 },
                 src: Src::Imm(i32::from(tag)),
             }),
@@ -6169,7 +6209,7 @@ impl Cx<'_> {
             if self.env.nopay && matches!(t, Ty::Nil | Ty::False | Ty::True) {
                 return Ok(());
             }
-            let m = self.payload_scaled(base, u);
+            let m = self.payload_scaled_c(base, u, ixc);
             self.store_value_mi(m, ins.b, ops[2]);
             return Ok(());
         }
@@ -6177,7 +6217,7 @@ impl Cx<'_> {
             Loc::Const(r) => rm(base, const_index_offsets(self.kbits_of(r))?.1),
             Loc::G(u) => {
                 self.payload_base(base, u);
-                rm(7, -8)
+                rm(7, -8 - 8 * ixc as i32)
             }
             l => panic!("operand {l:?}"),
         };

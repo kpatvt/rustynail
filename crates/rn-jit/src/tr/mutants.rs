@@ -975,6 +975,10 @@ pub const NAMES: &[&str] = &[
     "heatwait_ignored",
     "heatdepth_ignored",
     "heatdefer_counts_la",
+    // docs/JIT_TRACE.md section 41 (N1, the loop-body diet): `ixfuse` (constant index offset in the access displacement)
+    "ixfuse_tag_disp0",
+    "ixfuse_tag_disp_neg",
+    "ixfuse_pay_disp_pos",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1051,7 +1055,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 806);
+        assert_eq!(NAMES.len(), 809);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
