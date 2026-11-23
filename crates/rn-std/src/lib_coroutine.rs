@@ -17,7 +17,19 @@ fn getco(st: &mut State) -> LuaResult<State> {
 /// message was pushed on `st`.
 #[inline(always)]
 fn auxresume(st: &mut State, co: &mut State, narg: usize) -> LuaResult<Option<usize>> {
-    match co.resume_fused(st, narg) {
+    let out = co.resume_fused(st, narg);
+    auxresume_finish(st, co, narg, out)
+}
+
+/// The part of `auxresume` after the fused attempt `out`.
+#[inline(always)]
+fn auxresume_finish(
+    st: &mut State,
+    co: &mut State,
+    narg: usize,
+    out: ResumeOut,
+) -> LuaResult<Option<usize>> {
+    match out {
         ResumeOut::Ok(n) => Ok(Some(n)),
         ResumeOut::Err => Ok(None),
         ResumeOut::TooMany => {
@@ -54,30 +66,42 @@ fn auxresume_slow(st: &mut State, co: &mut State, narg: usize) -> LuaResult<Opti
 fn co_resume(st: &mut State) -> LuaResult<usize> {
     let mut co = getco(st)?;
     let narg = st.nargs() - 1;
-    match auxresume(st, &mut co, narg)? {
+    match co.resume_fused(st, narg) {
+        ResumeOut::Ok(r) => Ok(resume_true(st, r)),
+        out => co_resume_rest(st, co, narg, out),
+    }
+}
+
+/// `true` + the `r` values that `auxresume` left on top of the stack: shift the values up by one slot (there is room for `r + 1`, checked
+/// by `auxresume`), no temporary allocation.
+#[inline(always)]
+fn resume_true(st: &mut State, r: usize) -> usize {
+    if r == 0 {
+        st.push(Value::TRUE);
+    } else {
+        let first = st.top() - r;
+        let last = st.get(st.top() - 1);
+        st.push(last);
+        for i in (0..r - 1).rev() {
+            let v = st.get(first + i);
+            st.set(first + i + 1, v);
+        }
+        st.set(first, Value::TRUE);
+    }
+    r + 1
+}
+
+/// The rest of `co_resume` (slow resume, errors), out of line (N2 step 3).
+#[inline(never)]
+fn co_resume_rest(st: &mut State, mut co: State, narg: usize, out: ResumeOut) -> LuaResult<usize> {
+    match auxresume_finish(st, &mut co, narg, out)? {
         None => {
             let msg = st.pop();
             st.push(Value::FALSE);
             st.push(msg);
             Ok(2) // false + error message
         }
-        Some(r) => {
-            // true + the values returned by `resume`: shift the `r` values up by one slot
-            // (auxresume checked that there is room for `r + 1`), no temporary allocation
-            if r == 0 {
-                st.push(Value::TRUE);
-            } else {
-                let first = st.top() - r;
-                let last = st.get(st.top() - 1);
-                st.push(last);
-                for i in (0..r - 1).rev() {
-                    let v = st.get(first + i);
-                    st.set(first + i + 1, v);
-                }
-                st.set(first, Value::TRUE);
-            }
-            Ok(r + 1)
-        }
+        Some(r) => Ok(resume_true(st, r)),
     }
 }
 
@@ -92,7 +116,18 @@ fn auxwrap(st: &mut State) -> LuaResult<usize> {
     };
     let mut co = State::from_thread(th);
     let narg = st.nargs();
-    match auxresume(st, &mut co, narg)? {
+    // the common case (N2 step 3, `coro_nowrap`): a fused resume that ends in a yield or a return, nothing else on the hot path
+    match co.resume_fused(st, narg) {
+        ResumeOut::Ok(n) => Ok(n),
+        out => auxwrap_rest(st, co, narg, out),
+    }
+}
+
+/// The rest of `auxwrap` (the slow resume, errors of the coroutine and of the resume itself), out of line so that the hot path keeps its
+/// frame small.
+#[inline(never)]
+fn auxwrap_rest(st: &mut State, mut co: State, narg: usize, out: ResumeOut) -> LuaResult<usize> {
+    match auxresume_finish(st, &mut co, narg, out)? {
         Some(r) => Ok(r),
         None => {
             let mut stat = co.status();
