@@ -13,15 +13,8 @@ fn getco(st: &mut State) -> LuaResult<State> {
     }
 }
 
-/// Resumes a coroutine. `Ok(Some(n))`: `n` results are on top of `st`; `Ok(None)`: an error
-/// message was pushed on `st`.
-#[inline(always)]
-fn auxresume(st: &mut State, co: &mut State, narg: usize) -> LuaResult<Option<usize>> {
-    let out = co.resume_fused(st, narg);
-    auxresume_finish(st, co, narg, out)
-}
-
-/// The part of `auxresume` after the fused attempt `out`.
+/// Resumes a coroutine after the fused attempt `out` (`State::resume_fused`: `co.resume_fused(st, narg)`) and finishes `auxresume` (lcorolib.c).
+/// `Ok(Some(n))`: `n` results are on top of `st`; `Ok(None)`: an error message was pushed on `st`.
 #[inline(always)]
 fn auxresume_finish(
     st: &mut State,
