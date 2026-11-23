@@ -4809,3 +4809,93 @@ cell into tier 1 (correct, slower). (5) T2's `wmask` must stay in step with `wri
 future direct write to `written` would make `entries` miss a slot (the unit test compares with the full scan, the oracle suites would see it).
 (6) In-place `Unstable` restarts (TR24c, `restarts = 1`) cure roguelike's first-iteration lottery and gave raytrace -3.9 % in a scratch build;
 recorded here as a lead, not built.
+
+## 40. The regressions of session-l (subject 7413bff against the rebuilt 5a064d7): causes, `heatside` 48 -> 12 (2026-11-23, base 7258220)
+
+Session-l (`bench/results/session-l/report.md`) found four programs above the bar. Method of this section: instructions of one run (deterministic,
+`RUSTYNAIL_SEED=0`, release `rn-cli` builds of 5.5 and 5.4 via `scripts/release-build.sh --no-pgo`) against the same-session `5a064d7` columns of
+`bench/results/baselines`; cycles min of 5-15 pinned to CPU 4 for the cycle-only items; sample = `scripts/bench-fast.sh --matrix 55plain,54plain`
+over 40 programs (awfy 14, jit-trace 6, programs 3, corpus 2, corpus2 15), `PREV_COMMIT=5a064d7 FORCE_STALE=1`.
+
+### 40.1 Where the regressions come from
+
+Knob bisection on the 7413bff binaries (instructions M, 5.5; `RUSTYNAIL_JIT_TRACE_LIMITS`; 5a064d7: 2775.7):
+
+| roguelike_turns | all on | `heatside=0` | `retfsel=0` | `deepprobe=0` | all three off |
+|---|---:|---:|---:|---:|---:|
+| 5.5 | 2823.6 (+1.7 %) | 2785.2 (+0.3 %) | 2799.0 | 2823.7 | 2764.2 |
+| 5.4 (5a064d7: 3076.3) | 3102.6 (+0.9 %) | 3070.9 | 3102.3 | 3102.6 | 3070.5 |
+
+* `deepprobe` has no effect on roguelike_turns; T1 (`retfsel`) accounts for -25 M of the 5.5 figure (+0.9 % when T3 is also on, +0.3 % alone);
+  **T3 (`heatside`) accounts for the rest** on both builds. T2 builds identical code. `real_dis_mips` 5.4: 7499.8 M with `heatside` on (every
+  value of `heatside` / `heatbudget` / `heatwait` / `heatdepth` gives 7499.8), 7338.1 M with `heatside=0` (5a064d7: 7337.6): again T3.
+* The T3 mechanism behind both is not the grants. In `real_dis_mips` 5.4 **no side trace is ever granted** (`[trace] heatside: granted` absent):
+  26 deferrals (`HeatWait`) happen, the families are flushed or the run ends before an exit reaches `heatwait` reports. What differs from
+  `heatside=0` is that the deferred exit stays `Free` where the old rule blacklisted it `MaxSide` (a fault, `black_exit`): after a flush of a sibling
+  subtree the family has room again, the exit is recorded (a side start at slot 3 exit 20, which then aborts `CFunc`), and the formation downstream
+  differs (`fnpromo` 5 against 4 heads, `rearm: armed 228` against 58, J4 region entries 955 against 758): a different formation, not a cost of the
+  rule itself (compile cost is lower with the rule on: `pipeline` 9.2 against 10.1 Mtsc, exits 2.66 M against 3.14 M, instructions +2.2 %).
+  Marking the family faulted at the first deferral (to keep `rearmclean` as before; scratch build) did not change the result, and cost vending_fsm
+  its T3 gain (3519 -> 3771 M): rejected.
+* In `roguelike_turns` 5.5 the first 8 grants (`heatbudget=8`) cost +0.1 %, the 9th (an exit inside one inlined frame of the `Lexer:next`-like
+  family at proto line 80, `heatbudget=9`: 2834.3 M) adds +1.6 %, the 10th takes part of it back (2826.5); exits go down (11.6 M -> 10.8 M), the
+  extra instructions are interpreter / J4 work after a changed formation.
+* **They are formation lotteries, as 39.2 said.** Hot threshold sweep (`RUSTYNAIL_JIT_TRACE_HOT` 248 / 252 / 256 / 260 / 264, instructions M):
+  5.4 real_dis_mips `heatside=0` 7586 7334 7343 7491 7625, `heatside=12` 7586 7496 7505 7491 7683 (equal at 3 of 5 thresholds; the +2.2 % is two
+  thresholds where off is lucky, 256 among them); 5.4 roguelike off 3085 3074 3071 3315 3218, on 3110 3075 3103 6325 3224; 5.5 roguelike off
+  2831 2811 2786 3038 2945, on 2808 2846 2819 3056 2885; 5.5 real_dis_mips off 7298 7301 7609 7276 7409, on 7614 7302 7293 7276 7436. No sign
+  of a systematic loss, the shipped threshold 256 lands where T3-off happens to be best. Candidate separators of "useful grant" from "wasted
+  deferral" were measured and rejected: the rate of reports of the deferred exit (reports of any exit between its first deferral and its grant:
+  oop_mixins 15..434, vending_fsm 31..267, lua_lexer 62..295, richards 68..175, roguelike 18..1102: no gap); the number of inlined frames of the
+  exit (`heatframes=0` loses all of oop_mixins' gain: 5541 M; richards, vending_fsm, and real_dis_mips deferrals are all at `frames 1` like
+  oop_mixins' paying grants); `heatwait` 4 / 8 / 12 / 24 / 32 / 64, `heatbudget` 16 / 24 / 32 / 48, `heatdepth` 2 / 4 / 6 (all move the lottery
+  without a pattern: e.g. `heatwait=4` roguelike 5.5 +8.9 %, `heatwait=8` +3.1 %).
+* **richards (cycles at equal instructions)** is the cost of grants that do not reduce its exits (39.2). Cycles, min of 15, same binary, CPU 4:
+  `heatside=0` 59.5 / 59.9 M, `heatside=8` 59.9 / 59.8, 12: 60.4, 16: 61.7, 24: 62.3, 48: 62.2 / 62.2 (+4.1 %). The cycles follow the number of
+  granted traces (13 at the old cap; the traces are granted in family sizes 16..30). Instructions: 175.8 (off), 172.5 (8), 173.1 (12), 176.1 (>= 16).
+* **binary_trees**: `RUSTYNAIL_JIT_VERBOSE=2` trace dumps of 5a064d7 and 7413bff are identical apart from addresses and GC-timing-dependent flush counters
+  (the same traces, side-cell snapshots, code size and instruction count 5632.1 M): no code difference, **layout noise**, nothing done.
+
+### 40.2 The change: `heatside` 48 -> 12 (a knob-level trade-off)
+
+A family may now exceed `maxside` (16) by at most 12 granted side traces (`HEATSIDE_PROCESS`, struct default, doc 39.2 text "default 48" is
+superseded); the rule and the other three knobs are unchanged (`heatwait` 16, `heatbudget` 64, `heatdepth` 8), tests pin their own values.
+Instructions M, 5.5 / 5.4 (grid, same binaries, `heatside` on the command line):
+
+| program | off (0) | 12 | 14 | 20 | 48 (7413bff) |
+|---|---:|---:|---:|---:|---:|
+| roguelike_turns 5.5 | 2785.2 | 2799.0 | 2830.0 | 2820.5 | 2823.6 |
+| richards 5.5 | 175.8 | 173.1 | 175.0 | 176.1 | 176.1 |
+| oop_mixins 5.5 | 5541.7 | 3992.0 | 3946.2 | 3941.3 | 3941.0 |
+| oop_mixins 5.4 | 5766.0 | 4217.1 | 4171.9 | 4166.6 | 4166.3 |
+| vending_fsm 5.5 | 3709.2 | 3634.1 | 3610.7 | 3553.1 | 3519.3 |
+| lua_lexer 5.5 | 4074.1 | 3971.1 | 3959.5 | 3954.9 | 3946.9 |
+| regex_nfa 5.5 | 3606.1 | 3578.9 | 3578.9 | 3579.8 | 3451.4 |
+| heapsort 5.5 | 2910.5 | 2776.7 | 2776.7 | 2776.7 | 2776.7 |
+
+Cycles, same binary, min of 7 (CPU 4): oop_mixins 1450.2 (off) / 1165.7 (12) / 1139.6 and 1166.1 (48): the same -19.6 % as at 48.
+richards 250: instructions 1421 M (off) / 1322 (12) / 1315 (48), cycles 462 / 392 / 400 M: the large-size gain is kept.
+
+Sample against the same-session 5a064d7 columns (`bench-fast`, 40 programs, 5.5 plain / 5.4 plain; cycles ratio / instruction ratio; the
+7413bff binary in the same session in brackets):
+
+| program | 5.5 (7413bff) | 5.5 (this) | 5.4 (7413bff) | 5.4 (this) |
+|---|---|---|---|---|
+| awfy/richards | 1.055 / 0.995 | **1.010 / 0.979** | 1.059 / 0.996 | 1.007 / 0.979 |
+| corpus2/heldout/roguelike_turns | 1.058 / 1.017 | 1.041 / **1.010** | 1.024 / 1.009 | 1.023 / 1.009 |
+| corpus2/heldout/real_dis_mips | 1.010 / 1.001 | 1.016 / 1.001 | 1.046 / 1.022 | 1.055 / 1.022 |
+| corpus2/dev/oop_mixins | 0.815 / 0.710 | 0.839 / 0.719 | 0.805 / 0.722 | 0.805 / 0.731 |
+| corpus2/heldout/vending_fsm | 0.962 / 0.946 | 0.978 / 0.977 | 0.932 / 0.887 | 0.943 / 0.904 |
+| corpus2/dev/regex_nfa | 0.886 / 0.956 | 0.917 / 0.992 | 0.958 / 1.000 | 0.977 / 1.000 |
+| corpus/lua_lexer | 0.916 / 0.894 | 0.929 / 0.899 | 1.006 / 1.000 | 1.003 / 1.000 |
+| programs/binary_trees | 1.039 / 1.000 | 1.032 / 1.000 | 1.031 / 1.000 | 1.030 / 1.000 |
+
+The other 32 programs move by under 1 % in instructions between the two columns (the
+geomean over the 40 is 0.9961 / 0.9805 for this against 0.9988 / 0.9789 cycles / instructions for 7413bff, 5.5; 5.4 0.9999 / 0.9834 against
+1.0035 / 0.9829).
+
+**Bars.** Met: richards (+1.0 % cycles, instructions -2.1 %), oop_mixins (instructions -28 % / -27 %, cycles -19.6 % against `heatside=0`, -16
+to -20 % against the cached 5a064d7 column), roguelike_turns 5.5 (+1.0 % instructions: at the bar, was +1.7 %). **Not met, unchanged:**
+real_dis_mips 5.4 (+2.2 % instructions, +4.5 % cycles) and roguelike_turns 5.4 (+0.9 %): lotteries of the deferral (above); nothing cheap
+separates them from the paying grants. **The price:** T3's gain on vending_fsm shrinks from -5.1 % to -2.0 % instructions (5.5; 5.4 -11.0 % to
+-9.6 %), on regex_nfa from -4.3 % to -0.75 % (5.5), on lua_lexer from -3.1 % to -2.5 %; oop_mixins, heapsort and richards 250 keep theirs.

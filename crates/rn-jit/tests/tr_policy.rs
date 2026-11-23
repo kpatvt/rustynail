@@ -2433,7 +2433,7 @@ fn t3_heatside_policy() {
             HEATBUDGET_PROCESS,
             HEATDEPTH_PROCESS
         ),
-        (48, 16, 64, 8)
+        (12, 16, 64, 8)
     );
     for (env, want) in [
         (

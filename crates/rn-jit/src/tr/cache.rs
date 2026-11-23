@@ -362,7 +362,8 @@ pub const POLYWAIT_PROCESS: u32 = 2;
 /// See [`POLYSIDE_PROCESS`].
 pub const POLYFRAMES_PROCESS: u32 = 2;
 /// Section 39.2 (T3, `heatside`): process values of [`TrLimits::heatside`] / [`TrLimits::heatwait`] / [`TrLimits::heatbudget`] (also the struct defaults).
-pub const HEATSIDE_PROCESS: u32 = 48;
+/// **12** since section 40 (48 in section 39.2: +3.8 % cycles on `awfy/richards`, +1.7 % instructions `roguelike_turns`).
+pub const HEATSIDE_PROCESS: u32 = 12;
 /// See [`HEATSIDE_PROCESS`].
 pub const HEATWAIT_PROCESS: u32 = 16;
 /// See [`HEATSIDE_PROCESS`].
