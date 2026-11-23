@@ -156,6 +156,13 @@ struct Em<'a> {
     bhoist: bool,
     hoisted_ult: HashMap<usize, (Ref, Ref, i64)>,
     aidx_memo: HashMap<usize, u32>,
+    /// N1b (`nidx`): the induction values of the loop: pre-roll ref `e` (the loop-carried value of an induction slot, `ADD x, #s` of the entry `SLOAD`
+    /// `x`) -> (the pre-roll `NEG e`, `s`). `nidx_used`: the `e` whose negation an access of the body used (they get the back-edge update).
+    nidx: bool,
+    nidx_plan: BTreeMap<Ref, (Ref, i64)>,
+    nidx_used: HashSet<Ref>,
+    /// N1b: pre-roll `NEG e` -> the body's `ADD ne, #-s` (the value its PHI takes from the body).
+    nidx_back: HashMap<Ref, Ref>,
     /// 5.4 (peeled layout): two entry `SLOAD`s whose slots hold the same final value at the end of the iteration (the control variable
     /// `R[A+3]` and the internal index `R[A]` of a numeric `for`, see [`ctl_pairs`]), keyed by the index of the later one:
     /// `src index -> (alias, canonical)`. The pre-roll guards that the two values are equal and the alias stands for the canonical one.
@@ -212,10 +219,14 @@ impl<'a> Em<'a> {
             bhoist: opts.bhoist != 0,
             hoisted_ult: HashMap::default(),
             aidx_memo: HashMap::default(),
+            nidx: opts.nidx != 0,
+            nidx_plan: BTreeMap::new(),
+            nidx_used: HashSet::default(),
+            nidx_back: HashMap::default(),
             ctl_pair: HashMap::default(),
             ctl_eq: Vec::new(),
             peeling: false,
-            aref_loaded: if opts.aidx != 0 {
+            aref_loaded: if opts.aidx != 0 || opts.nidx != 0 {
                 let mut v = vec![false; rec.ir.ins.len()];
                 for i in &rec.ir.ins {
                     if i.op == TOp::Aload && TraceIr::is_ins(i.a) {
@@ -276,6 +287,128 @@ impl<'a> Em<'a> {
             }
         }
         Ok(x)
+    }
+
+    /// N1b (`nidx`): after the pre-roll copy, finds the induction values of the loop (a slot whose loop-carried value `e` is `ADD x, #s` of the entry `SLOAD`
+    /// `x` of a slot that carries `e` itself) and emits `NEG e` for each at the end of the pre-roll: the value the negated index starts from in the body's first
+    /// iteration. The body's accesses use it (through a PHI that the back-edge updates with `ADD #-s`) when they are indexed by `e + c`.
+    fn plan_nidx(&mut self) -> Result<(), Gave> {
+        let mut cands: Vec<Ref> = self.loop_state.values().map(|&(e, _)| e).collect();
+        cands.sort_unstable();
+        cands.dedup();
+        for e in cands {
+            if !TraceIr::is_ins(e) || e >= REF_BIAS + self.b.ir.ins.len() as Ref {
+                continue;
+            }
+            let f = *self.b.ir.at(e);
+            if f.op != TOp::Add || f.t != Ty::Int || !TraceIr::is_ins(f.a) {
+                continue;
+            }
+            let Some(s) = self.b.ir.as_int(f.b) else {
+                continue;
+            };
+            if s == 0 || s.unsigned_abs() > 1 << 20 {
+                continue;
+            }
+            let x = *self.b.ir.at(f.a);
+            if x.op != TOp::Sload || x.t != Ty::Int {
+                continue;
+            }
+            if !self.loop_state.get(&x.a).is_some_and(|&(e2, _)| e2 == e) {
+                continue;
+            }
+            // (appended without the CSE chain: a `-e` of the program, in the body, is the NEXT iteration's value, never this pre-roll one)
+            if self.b.ir.ins.len() + 8 >= MAX_INS {
+                return up("too long");
+            }
+            let ne = self.b.ir.emit(Ins {
+                op: if mutants::active("nidx_entry_off1") {
+                    TOp::Bnot
+                } else {
+                    TOp::Neg
+                },
+                t: Ty::Int,
+                flags: 0,
+                a: e,
+                b: NOREF,
+                prev: NOREF,
+                aux: 0,
+            });
+            self.nidx_plan.insert(e, (ne, s));
+        }
+        Ok(())
+    }
+
+    /// N1b: the `aux` of an `AREF` (in the body) at the output index `u` when `u` is `e` or `e + c` of a planned induction value `e`: the carried negated
+    /// index `ne` (`~(e + c) == ne - c - 1`, wrapping) with the displacement `-c - 1`.
+    fn nidx_aux(&mut self, u: Ref) -> Option<u32> {
+        if !self.nidx || !self.body || !TraceIr::is_ins(u) || self.nidx_plan.is_empty() {
+            return None;
+        }
+        let (e, c) = if self.nidx_plan.contains_key(&u) {
+            (u, 0i64)
+        } else {
+            let ui = *self.b.ir.at(u);
+            if ui.op != TOp::Add || ui.t != Ty::Int || u <= self.loop_ref {
+                return None;
+            }
+            (ui.a, self.b.ir.as_int(ui.b)?)
+        };
+        let &(ne, _) = self.nidx_plan.get(&e)?;
+        let d = if mutants::active("nidx_disp_off1") {
+            c.wrapping_neg()
+        } else {
+            c.wrapping_neg().wrapping_sub(1)
+        };
+        let d = i16::try_from(d).ok()?;
+        self.nidx_used.insert(e);
+        Some(aref_aux(ne, d))
+    }
+
+    /// N1b: at the end of the body copy, the update of every carried negated index an access used: `ne' = ne - s`. The planned induction value must really be
+    /// updated by `e + s` in the body (the check that makes `ne == -e` an invariant of the loop); anything else gives the loop up to the plain layout of the
+    /// accesses (`Gave::Up("nidx ...")`, retried without `nidx`).
+    fn emit_nidx_updates(&mut self) -> Result<(), Gave> {
+        let used: Vec<Ref> = self
+            .nidx_plan
+            .keys()
+            .copied()
+            .filter(|e| self.nidx_used.contains(e))
+            .collect();
+        for e in used {
+            let (ne, s) = self.nidx_plan[&e];
+            let Some(&n) = self.creator.get(&e) else {
+                return up("nidx: no creator");
+            };
+            let back = self.sub[n];
+            let ok = TraceIr::is_ins(back) && {
+                let bi = self.b.ir.at(back);
+                bi.op == TOp::Add && bi.a == e && self.b.ir.as_int(bi.b) == Some(s)
+            };
+            if !ok {
+                return up("nidx: the induction value is not updated by `+ step`");
+            }
+            let step = if mutants::active("nidx_step_sign") {
+                s
+            } else {
+                s.wrapping_neg()
+            };
+            let k = self.b.ir.kint(step);
+            if self.b.ir.ins.len() + 8 >= MAX_INS {
+                return up("too long");
+            }
+            let r = self.b.ir.emit(Ins {
+                op: TOp::Add,
+                t: Ty::Int,
+                flags: 0,
+                a: ne,
+                b: k,
+                prev: NOREF,
+                aux: 0,
+            });
+            self.nidx_back.insert(ne, r);
+        }
+        Ok(())
     }
 
     /// BUNDLE-L B (`bhoist`): after the pre-roll copy of a counted `for` loop, emits the guards that make the body's bounds checks of the
@@ -909,7 +1042,14 @@ impl<'a> Em<'a> {
                 // again; its operands become PHIs (integers) as usual.
                 let a = self.operand(i.a);
                 let u = self.operand(i.b);
-                let aux = if self.aidx && self.aref_loaded[n] && !TraceIr::is_const(u) {
+                let nx = if self.nidx && self.aref_loaded[n] && !TraceIr::is_const(u) {
+                    self.nidx_aux(u)
+                } else {
+                    None
+                };
+                let aux = if let Some(x) = nx {
+                    x
+                } else if self.aidx && self.aref_loaded[n] && !TraceIr::is_const(u) {
                     self.aidx_aux(u, n)?
                 } else {
                     i.aux
@@ -1093,7 +1233,15 @@ fn transform(
     keep_snaps: bool,
 ) -> Result<(), Gave> {
     let out = if peel {
-        peel_loop(rec, opts)?
+        match peel_loop(rec, opts) {
+            // N1b: the induction value was not updated as planned: the same loop without `nidx`
+            Err(Gave::Up(m)) if opts.nidx != 0 && m.starts_with("nidx") => {
+                let mut o2 = opts.clone();
+                o2.nidx = 0;
+                peel_loop(rec, &o2)?
+            }
+            r => r?,
+        }
     } else {
         roll(rec, opts, keep_snaps)?
     };
@@ -1218,6 +1366,9 @@ fn peel_loop(rec: &Recorded, opts: &TraceOpts) -> Result<Out, Gave> {
     if em.bhoist {
         em.plan_bhoist()?;
     }
+    if em.nidx {
+        em.plan_nidx()?;
+    }
     let pre_end = em.b.ir.ins.len();
     em.pre_sub = em.sub.clone();
     let loop_ref = em.b.loop_marker()?;
@@ -1238,6 +1389,7 @@ fn peel_loop(rec: &Recorded, opts: &TraceOpts) -> Result<Out, Gave> {
     for n in 0..rec.ir.ins.len() {
         em.copy_one(n)?;
     }
+    em.emit_nidx_updates()?;
     for &(slot, r) in &stored {
         let a = em.operand(r);
         em.b.emit_raw(Ins {
@@ -1265,6 +1417,9 @@ fn peel_loop(rec: &Recorded, opts: &TraceOpts) -> Result<Out, Gave> {
     // break this; the recorder turns such observations into guards on the trace (`EQ step, k`), and a guard is an
     // instruction, not a fold input. See docs/JIT_TRACE_REF.md "P7b decisions".
     let bval = |em: &Em<'_>, e: Ref| -> Ref {
+        if let Some(&r) = em.nidx_back.get(&e) {
+            return r;
+        }
         match em.creator.get(&e) {
             Some(&n) => em.sub[n],
             None => e,

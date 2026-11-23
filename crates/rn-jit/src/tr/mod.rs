@@ -215,6 +215,8 @@ pub struct TraceOpts {
     pub aidx: u32,
     /// BUNDLE-L B: `TrLimits::bhoist` (set from the limits when a recording starts): array bounds checks of a counted loop hoisted into its pre-roll.
     pub bhoist: u32,
+    /// N1b: `TrLimits::nidx` (set from the limits when a recording starts): the negated index of an induction-indexed array load is a second induction variable.
+    pub nidx: u32,
 }
 
 /// H1: `RUSTYNAIL_JIT_HASHINT=0` turns the integer-key hash access (`HREFV` integer form) off; read once.
@@ -255,6 +257,7 @@ impl Default for TraceOpts {
             uvsep: 0,
             aidx: 0,
             bhoist: 0,
+            nidx: 0,
         }
     }
 }
@@ -863,6 +866,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                         o.sinkside = cfg.limits.sinkside;
                         o.uvsep = 1;
                         o.aidx = cfg.limits.aidx;
+                        o.nidx = cfg.limits.nidx;
                         o.bhoist = if pr.is_some_and(|pr| cache::head_nohoist(st, pr, pc)) {
                             0
                         } else {
@@ -1076,6 +1080,7 @@ pub fn driver_start_side(
                 o.sinkside = cfg.limits.sinkside;
                 o.uvsep = 1;
                 o.aidx = cfg.limits.aidx;
+                o.nidx = cfg.limits.nidx;
                 o.bhoist = cfg.limits.bhoist;
                 o
             },

@@ -303,4 +303,36 @@ mixed(g, 30); out[#out + 1] = table.concat(g, ",")
 print(table.concat(out, "\n"))
 "#,
     },
+    Prog {
+        name: "n1_negidx",
+        small: false,
+        src: r#"
+-- the program's own negations of the induction variable next to an array access of it (a CSE of `-i` with the carried negated index would freeze it
+-- at the pre-roll's value), bitwise not, `0 - i`, a negated index into the array, float mixes
+local function f(n, t)
+  local c, d = 0, 0.0
+  for i = 1, n do
+    local v = t[i]
+    c = c + (-i) % 7 + (~i) % 5 + (0 - i) % 3 + v
+    d = d + ((-i) % 3.5) + (i % 2.0)
+    if t[i + 1] then c = c + t[i + 1] end
+  end
+  return c, d
+end
+local function g(n, t)
+  local c = 0
+  for i = n, 1, -1 do c = c + t[i] * (-i) + t[-i + n + 1] end
+  return c
+end
+local t = {}
+for i = 1, 60 do t[i] = i % 11 end
+local out = {}
+for r = 1, 40 do f(50, t); g(50, t) end
+out[#out + 1] = table.concat({ f(50, t) }, ":")
+out[#out + 1] = table.concat({ f(59, t) }, ":")
+out[#out + 1] = tostring(g(50, t))
+out[#out + 1] = tostring(g(60, t))
+print(table.concat(out, " "))
+"#,
+    },
 ];

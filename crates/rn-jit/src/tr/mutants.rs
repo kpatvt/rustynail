@@ -982,6 +982,10 @@ pub const NAMES: &[&str] = &[
     // N1c (`cloop`): the counted-loop back-edge
     "cloop_cnt_imm2",
     "cloop_no_fixup_cnt",
+    // N1b (`nidx`): the carried negated index
+    "nidx_disp_off1",
+    "nidx_step_sign",
+    "nidx_entry_off1",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1058,7 +1062,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 811);
+        assert_eq!(NAMES.len(), 814);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
