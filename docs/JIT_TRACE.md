@@ -5239,3 +5239,102 @@ session does not accept that, `--features coro_noyield,coro_noresume` on `rn-cli
 caller's loop and a protocol (`jit_call`, `native_fast_with`, `auxwrap`, `resume_fused`, `execute`, `run_mode` entry / exit) whose every part is 20-100 instructions; the next reduction would need a
 different protocol (one fused native-call-to-resume path in rn-core with the `wrap` / `resume` library functions inside it, ~-3 %, and a tier-1 body that is re-entered at a lower cost than `enter`, which is
 more than the interpreter costs now).
+
+## 43. TR24c (in-place `Unstable` restarts, knob `restarts`) and T2b (cheaper recording at identical code) (2026-11-23, base 70c4ba8)
+
+Method (light): release `rn-cli` builds (`scripts/release-build.sh --no-pgo`, 5.5 and 5.4), `RUSTYNAIL_SEED=0`, **control = a build of main 70c4ba8 made in the same session**; instructions of one
+run (`perf stat instructions:u`, deterministic), cycles = min of 5-9 interleaved runs pinned to CPU 4 (`cycles:u`). Sample = 30 programs (awfy 14, apps 5, corpus2/heldout 6, corpus2/dev 4,
+corpus 1) plus the 128 programs of `awfy`, `apps`, `programs`, `corpus`, `corpus2/dev`, `corpus2/heldout`, `jit-trace`, `real` for the instruction sweep of 43.1. Not `bench-fast.sh`: the same
+quantities (instruction counts of the pinned run, min of interleaved pinned cycles) were taken by hand because the control had to be the same session's main build for both versions.
+
+**A fact that decides how to read every table below.** Binaries that differ only by a field or a function are not formation- or cycle-equal. With the knob at its default (`restarts` 0 = main's
+behaviour) the commit-1 build already moves 5.5 `scheme_interp` 5892.3 -> 5937.1 M (+0.8 %) and 5.4 `prototype_objects` 2977.0 -> 3818.6 M (+28 %), `expr_lang` 623.8 -> 597.8 M, `parser_combinator`
+10111.5 -> 9800.5 M; `prototype_objects` 5.4 under the hot-threshold sweep (`RUSTYNAIL_JIT_TRACE_HOT` 200 / 230 / 248 / 252 / 256 / 264 / 300 / 400) is 3189 3328 3574 3563 **2977** 4075 3589 3631 on the
+main build and 3278 3557 3765 3249 **3818** 3606 3656 3196 on this branch (means 3494 / 3515): the shipped threshold lands on the lucky end for main and on another for the branch. The formation of
+the trace tree depends on something that any struct-size change shifts (heap addresses behind hash-ordered maps; not traced to its source here). Instruction-equal cycle misses are the layout of
+the code (`regex_nfa` 5.5: instructions 3573.0 / 3573.0 / 3572.0 M on main / commit 1 / commit 2, cycles 686 / 672 / 726 M, L1 icache misses 20.7 / 3.6 / 7.2 M in one run each; two runs of main: 688 / 686).
+
+### 43.1 TR24c: in-place `Unstable` restarts (commit 1)
+
+**What was built.** The recorder already carried the prototype of section 3.3 (`RecCfg::restarts`: at the closing step of a root recording, a slot whose type at the end of the iteration
+differs from the type its first read checked restarts the recording at the head from the types the finished iteration produced, instead of aborting `Unstable` and waiting for the next
+back-edge); nothing set it. Now: knob `restarts` of `RUSTYNAIL_JIT_TRACE_LIMITS` (`restarts=N`, 0..4, `TrLimits::restarts`, **default 0** = `RESTARTS_PROCESS`), wired in `driver_start` for root
+recordings (a side recording never restarts: its `Unstable` test does not exist). `Rec::reset` was completed for the state that accumulates over an iteration and that `new` starts empty
+(`atg_tabs`, `hs_guarded`, `str_allocs`, `idfolded` / `midfolded`, `unr_started`, the pending string state); the other fields are either reset already or only set at the end of a recording.
+Counted: `[trace] restarts: N` in the statistics; `RUSTYNAIL_JIT_VERBOSE=3` prints `[trace] unstable: slot S T0 -> T1 at head H`. Tests: `tr_core::tr24c_restarts_programs`
+(`tests/vm/tr24c_01_restarts.lua`: integer accumulator that becomes a float, nil slot that becomes a table, a type that flips every iteration, a string / number slot with an error under `pcall`,
+allocation with collections; x `always` / `on2` x `restarts` 0 / 1 / 2, `+verify`, exit storm, emulator, budgets 3 / 17 / 200, GC stress 1 / 2 in both modes, stack-move stress, all against the
+interpreter; `restarts=0` restarts nothing, `restarts=1` / `2` restart), `tr_policy::tr24c_restarts_policy`, the existing `tr_record::unstable_rerecords_from_the_new_types`; mutants
+`restarts_never`, `restarts_unbounded` (both caught). Registry 819 -> 821.
+
+**Numbers (instructions M; 5.5 first, 5.4 in brackets; main / `restarts=1`):**
+
+| program | main | restarts 1 (2 and 3 equal) | cycles M (min of 5) |
+|---|---|---|---|
+| apps/raytrace | 349.5 (346.3) | **337.8 (-3.3 %)** (346.3, inert) | 112.2 -> 105.9 (-5.6 %) |
+| roguelike_turns | 2788.0 (3081.3) | 2790.8 (+0.1 %) (3081.2, inert) | |
+| real_dis_mips | 7315.2 (7506.1) | 7312.6 (7509.6, +0.05 %): **the 5.4 `heatside` formation difference is not removed** | |
+| lua_parser | 4998.4 (5921.0) | **5157.9 (+3.2 %)** (5973.9) | 1294.2 -> 1315.9 (+1.7 %) |
+
+The 128-program sweep (restarts=1 against restarts=0 of the same binary): 5.5 changes raytrace -3.3 %, lua_parser +3.2 %, real_dis_arm +0.45 %, nothing else above +-0.3 % (`astar_jumper` is
+non-deterministic); 5.4: lua_parser +0.4 %, real_dis_arm +0.55 %, nothing else. **It is a formation lottery, not a systematic gain**: with `restarts` 0 / 1 at the hot thresholds 200 / 230 / 248 / 252 / 264 /
+300 / 400 raytrace is 341.7 343.7 343.4 342.1 338.2 346.7 365.7 against 341.7 343.7 347.6 342.1 338.2 346.7 365.7 (equal at six of seven, +1.2 % at one), roguelike_turns equal at six of seven
+(+7.5 % at 400), lua_parser 5084 5063 4931 5023 5050 5047 5050 against 5181 4943 5045 4994 5024 5068 5050 (mean 5035 / 5043). The restarts that happen: raytrace 1, lua_parser 2 (slot 5 `Int` -> `ShrStr`
+at the `pairs` loop of `countNodes`, which the old rule blacklists after four `Unstable`s, and `True` -> `ShrStr`), roguelike_turns 2 (slot 5 `Nil` -> `Num`). roguelike_turns is not helped at the default
+threshold (+0.1 % either way): the "-3.9 % on raytrace, roguelike cured" lead of sections 39 / 40 was a lottery landing of the scratch build.
+
+**Default: OFF (0).** The bar (no program over +1 % instructions) is missed by lua_parser +3.2 % (5.5; +1.7 % cycles), and the gain on raytrace does not hold over thresholds. Flip
+`RESTARTS_PROCESS` to 1 to take it. Verification: `jit-diff.sh 1 40` modes `off tr trdef`, limits `lockstep=1` and `lockstep=1,restarts=2`, on the 5.5 and 5.4 release binaries: 0 diffs, 0 timeouts;
+the official suite (`vendor/lua-tests-5.5` 32 files, `-5.4` 31 files) with `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always RUSTYNAIL_JIT_TRACE_LIMITS=restarts=2`: 0 failures.
+
+### 43.2 T2b: cheaper recording at identical code (commit 2)
+
+**Profile** (`perf record -e instructions:u -c 20000 --call-graph fp --user-callchains` of a frame-pointer build in its own target directory, removed; inclusive shares of the
+program's instructions at the bench size):
+
+| program | recorder (`driver_step` -> `Rec::on_step`) | pipeline (`finish_outcome`) | of the pipeline: RA / assembler + x86 / `opt_loop::roll` / exits / sink |
+|---|---:|---:|---|
+| apps/raytrace | 16.2 % (`record_one` 9.4: `hash_get` 5.0; `guard_with` -> `snap::take` 2.7) | 17.0 % | 5.1 / 2.9 / 1.3+0.9 / 1.9 / 2.4 |
+| awfy/cd | 7.3 % | 22.1 % | 4.3 / 7.2 / 4.3 / 2.7 / 1.3 |
+| awfy/towers | 5.9 % | 16.5 % | 3.0 / 5.5 / 4.4 / 1.8 / - |
+| awfy/richards | 5.3 % | 13.9 % | 2.7 / 5.0 / 3.1 / 1.3 / - |
+
+`Vec` growth (reallocations, malloc / realloc / memcpy) is 4.9 % of raytrace and 6.5 % of cd, spread over about thirty sites (`Vec<Vec<FrameRestore>>` of the exit builder 0.8 % in cd, the
+register allocator's per-instruction `pre` / `post` / `stores` vectors 0.6 + 0.3 %, `snapmap` 0.3 %, `ins` 0.3 %). There is no single hot spot: every function of the recorder and of the
+back end is below 2 % self, which is what T2 left. What is cheap and exact was done:
+
+1. **Timers.** The `phase::now` / `add` pairs (four `rdtsc` per recorded bytecode: `rec_step` and `lockstep`) run only when the statistics that print them are on (`RUSTYNAIL_JIT_VERBOSE >= 1`);
+   a timer read while off is 0 and `add` ignores it.
+2. **`snap::take` builds the map in place** at the end of `ir.snapmap` (`SlotMap::entries_into`, `TraceIr::snapshot_built`): no temporary vector per snapshot (allocate, fill, copy, free),
+   the function-slot entries merged by `binary_search` / `insert` on the tail. Unit test `snap::tests::take_builds_the_map_in_place` against the old composition (replace, insert, no frames).
+3. **Presized recorder vectors** (`Builder::for_recording`: `ins` 512, `snaps` 64, `snapmap` 1024) and the per-snapshot `frames` / `slots` of `build_exits`.
+4. `[trace] abort` lines of `RUSTYNAIL_JIT_VERBOSE=3` carry the recorded step count (used below).
+
+**Identical code.** `RUSTYNAIL_JIT_DUMP` of the commit-1 build and the final one (`trace-N.txt` normalised, `.bin` sizes, proto sizes, the `[trace]` statistics without the entry /
+exit counters): raytrace (43 traces), cd (196), richards (33), towers (27), deltablue (47): **SAME** on all five (the harness run on one binary twice gives SAME on four).
+
+**Instructions** (M; main / this; 5.5, then 5.4): raytrace 349.5 / 346.9 (-0.74 %), 346.3 / 343.6 (-0.78 %); cd 768.4 / 764.4 (-0.52 %), 835.8 / 831.5 (-0.51 %); richards 173.5 / 172.8 (-0.40 %),
+174.4 / 173.7 (-0.40 %); towers 173.7 / 173.0 (-0.40 %), 175.7 / 175.0 (-0.40 %); deltablue 318.2 / 316.5 (-0.53 %), 341.4 / 339.6 (-0.53 %); json -0.27 %, lru_cache -0.5 %. Geomean over the 30-program
+sample 0.9987 (5.5), 0.9971 (5.4 without `prototype_objects`). Cycles (min of 7, CPU 4, 5.5): raytrace 109.8 / 108.0 (-1.6 %), cd 256.4 / 255.0 (-0.5 %), richards 60.2 / 59.7 (-0.8 %), towers 47.2 / 46.9
+(-0.6 %), deltablue 107.1 / 106.8 (-0.3 %). **This is far from the study's "halve rec_step": about 0.5 % of instructions per compile-heavy program.** The study's 1245 tsc per bytecode measured 660 (unpinned) to 1000 (pinned, timers on) at the start of this section (after T2), and the timer-on reading is no longer the shipped cost; what is left is the IR volume itself (about one guard, therefore one snapshot of 10-60 entries, per recorded bytecode), not an inefficiency
+of one function.
+
+**Wasted recordings of raytrace.** `recorded 22 installed 7` (roots; sides 48 / 36): the 15 failed roots are `TooLong` 5 (the four counted in the step-count build ended after 530 recorded steps on average: 2109 steps), `Compile(pass)` 4
+(`too many snapshots` in `split_type_snaps`, **after** the whole recording, `sink` and the loop pass), `InnerLoop` 2 (74 steps each), `MultRet` 2, `DepFreed` 1, `Unstable` 1: about 2800 of the 11344
+recorded steps (25 %, 3-4 % of the program's instructions) plus the pipeline front of the four `Compile(pass)` ones. Every `unchangeable` abort is already blacklisted at its second
+occurrence with the same reason (`on_abort_with`: `repeat`); blacklisting at the first one removes 2 `TooLong`, 1 `InnerLoop`, 2 `Compile(pass)` here (about 1.5 % of raytrace) but is a
+formation policy (the second recording is a different iteration), not a cost cut, and was **not built**. Predicting `too many snapshots` at the closing step is not exact (the loop pass
+and the sink change the snapshot count before `split_type_snaps` counts it): not built.
+
+**Bar.** Instructions: no program of either sample is over +1 % except 5.4 `prototype_objects` (+28 %, the formation lottery above: commit 1 alone moves it identically with the knob off; the
+shipped threshold is lucky for main) and 5.5 `scheme_interp` (+0.74 %, same cause, also at commit 1). Cycles (min of 5, 5.5 / 5.4): over +2 % at equal instructions: `regex_nfa` 5.5 +6.5 % (code layout:
+icache misses above), `apps/events` 5.5 +1.5 % (control run twice: 167.2 / 165.4, commit 1 168.8, this 167.4: inside the spread), 5.4 `prototype_objects` +16 %, `nbody` +4.3 %, `sieve` +1.9 %,
+`lru_cache` +1.4 % (5.4 spreads of identical-instruction runs). Cycle geomean over the sample 0.9980 (5.5), 0.9926 (5.4).
+
+### 43.3 Gates and what was not run
+
+* Commit 1: `gate-light.sh restarts_` OK after two fixes before the commit (fmt of a long assertion; the frozen registry count 819 -> 821); mutant group `restarts_` 2 / 2 caught.
+* Commit 2: fmt, clippy x3, core 5.5 / 5.4, trace suites 5.5 (172 s) / 5.4 (162 s), vm_corpus, jit-diff 1-50 PASS; `mutant-map` regenerated (line shifts); mutant group `snap_drop_last,snap_prune_dead,restarts_`
+  4 / 4 caught (425 s). The light gate's automatic group (160 mutants chosen from the diff) was stopped after the other steps had passed and replaced by that group.
+* Commit 3 (the `[trace] unstable` log line of `RUSTYNAIL_JIT_VERBOSE=3`, this section): all steps PASS (`mutant-map` failed once on the shifted lines and was regenerated and re-checked after it ran), mutant group `restarts_` 2 / 2.
+* Not run: `gate-heavy.sh`, the full mutant runner, `tr_oracle`, PGO builds, all-223 benchmarks, `bench-fast.sh` (see the method note).

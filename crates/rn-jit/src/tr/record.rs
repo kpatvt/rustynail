@@ -2095,7 +2095,12 @@ impl Rec {
             return Ok(Flow::Closed(Box::new(self.close())));
         } else if depth == 0 && at == self.head && !self.path.is_empty() {
             if let Some((slot, from, to)) = self.sm.unstable(&self.b.ir) {
-                let _ = (slot, from, to);
+                if super::cache::verbose_aborts() {
+                    eprintln!(
+                        "[trace] unstable: slot {slot} {from:?} -> {to:?} at head {} (restarts left {})",
+                        self.head, self.restarts_left
+                    );
+                }
                 if self.restarts_left == 0 || mutants::active("restarts_never") {
                     return Err(AbortReason::Unstable);
                 }
