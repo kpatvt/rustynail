@@ -16327,6 +16327,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t1_02_retfsel_recursion.lua"),
     },
+    // docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings
+    Prog {
+        name: "tr24c_01_restarts",
+        small: true,
+        src: include_str!("../../../../tests/vm/tr24c_01_restarts.lua"),
+    },
     // docs/JIT_TRACE.md section 39.2 (T3, `heatside`): side traces beyond `maxside` for exits that keep coming back
     Prog {
         name: "t3_01_heatside",

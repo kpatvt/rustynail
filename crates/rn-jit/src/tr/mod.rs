@@ -743,6 +743,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         cse: cfg.opts.cse,
         verify: cfg.opts.verify,
         lockstep: lockstep_on(&cfg),
+        restarts: cfg.limits.restarts,
         deps: Some(record::cache_hooks(id, resolve)),
         nest,
         nest_frame,

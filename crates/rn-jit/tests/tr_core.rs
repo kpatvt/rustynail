@@ -551,6 +551,8 @@ struct TStats {
     deep_probes: u64,
     /// docs/JIT_TRACE.md section 39.2 (`heatside`): side traces granted beyond `maxside`.
     heat_granted: u64,
+    /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings.
+    restarts: u64,
     /// BUNDLE-S/P: `loopany` guard firings / whole-family flushes / pruned side traces / of those the trace whose exit raised the guard.
     la_fired: u64,
     la_family: u64,
@@ -779,6 +781,8 @@ impl TStats {
                     .nth(1)
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("restarts: ") {
+                s.restarts = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("heatside: granted ") {
                 s.heat_granted = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("links: nest roots ") {
@@ -13118,6 +13122,72 @@ fn t1_retfsel_programs() {
                     "{p} [{trace} {opts}]: no RETF trace from the selector ({on} vs {off})"
                 );
             }
+        }
+    }
+}
+
+/// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): a root recording whose iteration ends with a slot of another type than its first read
+/// checked restarts in place from the new types. `tr24c_01_restarts` (an integer accumulator that becomes a float, a slot nil in the first iteration,
+/// a type that flips every iteration, a string / number slot with an error raised in a later iteration under `pcall`, an allocation with collections)
+/// x `always` / `on2` x `restarts` 0 / 1 / 2, `+verify`; for `restarts=1`: exit storm, emulator, budgets 3 / 17 / 200, GC stress 1 / 2 in both
+/// collector modes, stack-move stress; every job against the interpreter. In `always` mode `restarts=0` restarts nothing and `restarts=1` / `2` do
+/// (the count is bounded by the knob per recording). Detector of `restarts_never` and `restarts_unbounded`; `restarts_reset_partial` is caught by
+/// the recorder tests (`tr_record`).
+#[test]
+fn tr24c_restarts_programs() {
+    let p = "tr24c_01_restarts";
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["restarts=0", "restarts=1", "restarts=2"] {
+            jobs.push(Job::new(p, trace).limits_s(lim));
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+        }
+        let lim = "restarts=1";
+        jobs.push(
+            Job::new(p, trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s(lim),
+        );
+        jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        for b in [3, 17, 200] {
+            jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+        }
+        for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+            let mut j = Job::new(p, trace)
+                .env("RUSTYNAIL_GC_STRESS", gc)
+                .limits_s(lim);
+            if mode == "inc" {
+                j = j.env("RUSTYNAIL_GC_MODE", "inc");
+            }
+            jobs.push(j);
+        }
+        jobs.push(
+            Job::new(p, trace)
+                .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                .limits_s(lim),
+        );
+    }
+    let res = compare(jobs);
+    let mut n: std::collections::HashMap<(String, String), [u64; 3]> = Default::default();
+    for (j, o) in &res {
+        if j.env.is_empty() && j.budget.is_none() && j.opts.is_empty() {
+            let k = match j.limits.as_str() {
+                "restarts=0" => 0,
+                "restarts=1" => 1,
+                _ => 2,
+            };
+            n.entry((j.prog.to_string(), j.trace.to_string()))
+                .or_default()[k] = o.stats.restarts;
+        }
+    }
+    for ((p, trace), [r0, r1, r2]) in &n {
+        assert_eq!(*r0, 0, "{p} [{trace}]: restarts=0 restarted");
+        if trace == "always" {
+            assert!(*r1 > 0, "{p} [{trace}]: restarts=1 never restarted");
+            assert!(
+                *r2 >= *r1,
+                "{p} [{trace}]: restarts=2 restarted less ({r2} < {r1})"
+            );
         }
     }
 }

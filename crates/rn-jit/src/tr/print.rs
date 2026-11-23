@@ -358,6 +358,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             let _ = writeln!(o, "[trace] heatside: granted {}", s.heat_granted);
         }
     }
+    if s.restarts > 0 {
+        let _ = writeln!(o, "[trace] restarts: {}", s.restarts);
+    }
     if s.nest_installed > 0 || s.frame_links > 0 || s.stitches > 0 || s.side_frame_links > 0 {
         let _ = writeln!(
             o,

@@ -973,6 +973,9 @@ pub const NAMES: &[&str] = &[
     "retfsel_untraced_ok",
     "retfsel_recursion_ok",
     "retfsel_outer_loop",
+    // docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of a root recording
+    "restarts_never",
+    "restarts_unbounded",
     // docs/JIT_TRACE.md section 39.2 (T3, `heatside`): side traces beyond `maxside` for exits that keep coming back, within a state budget
     "heatside_never",
     "heatside_cap_ignored",
@@ -1073,7 +1076,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 819);
+        assert_eq!(NAMES.len(), 821);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

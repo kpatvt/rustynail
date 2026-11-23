@@ -2304,6 +2304,27 @@ fn e5_policy() {
     assert!(tp.midfold_on());
 }
 
+/// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): the knob (struct default = shipped, parse, cap 4).
+#[test]
+fn tr24c_restarts_policy() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, RESTARTS_PROCESS};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.restarts, RESTARTS_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (Some("restarts=0"), 0),
+        (Some("restarts=1"), 1),
+        (Some("restarts=3"), 3),
+        (Some("restarts=99"), 4),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.restarts, want, "limits env {env:?}");
+    }
+}
+
 /// docs/JIT_TRACE.md section 39.1 (T1, `retfsel`): the knob (struct default = shipped, parse, cap), the rule (caller loop traced and no recursion;
 /// an untraced head, no loop and a recursion refuse) and the innermost enclosing loop of a call site in real bytecode (nested numeric, generic and
 /// `while` loops, a call outside every loop). Detector of `retfsel_never`, `retfsel_untraced_ok`, `retfsel_recursion_ok`, `retfsel_outer_loop`.

@@ -1842,6 +1842,18 @@ impl Rec {
         self.mm_jmp = false;
         self.mm_pending = None;
         self.tail_args = None;
+        // state of the discarded iteration that `new` starts empty (a root recording at its closing step holds none of the pending ones, the
+        // accumulating ones refer to refs / handles of the discarded builder)
+        self.atg_tabs.clear();
+        self.hs_guarded.clear();
+        self.pend_str.clear();
+        self.pending_next = None;
+        self.pending_strto = None;
+        self.post_strs.clear();
+        self.str_allocs = 0;
+        self.unr_started = false;
+        self.idfolded = false;
+        self.midfolded = false;
     }
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
@@ -2083,12 +2095,15 @@ impl Rec {
         } else if depth == 0 && at == self.head && !self.path.is_empty() {
             if let Some((slot, from, to)) = self.sm.unstable(&self.b.ir) {
                 let _ = (slot, from, to);
-                if self.restarts_left == 0 {
+                if self.restarts_left == 0 || mutants::active("restarts_never") {
                     return Err(AbortReason::Unstable);
                 }
                 // TR24c: re-record in place from the types the finished iteration produced
-                self.restarts_left -= 1;
+                if !mutants::active("restarts_unbounded") {
+                    self.restarts_left -= 1;
+                }
                 self.rerec += 1;
+                super::cache::note_restart(vm.st);
                 self.reset();
                 self.cur_len = code.len();
                 self.begin(&vm)?;

@@ -110,6 +110,8 @@ pub const T1CALL_PROCESS: u32 = 0;
 pub const DEEPPROBE_PROCESS: u32 = 12;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
+/// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
+pub const RESTARTS_PROCESS: u32 = 0;
 /// Section 39.1 (T1): frames from the caller down that the `retfsel` recursion test looks at (the popped prototype among them = the pop is inside a
 /// recursion).
 pub const RETFSEL_DEPTH: usize = 16;
@@ -674,6 +676,10 @@ pub struct TrLimits {
     /// inside a recursion). Otherwise the old behaviour (the side trace ends before the `RETURN`). Never adds a form of `RETF` that `retf` bit 2
     /// does not allow. 0 = off. Default [`RETFSEL_PROCESS`].
     pub retfsel: u32,
+    /// Section 43.1 (TR24c): in-place `Unstable` restarts of a root recording. A recording that closes its iteration with a slot of another type
+    /// than its first read checked restarts at the head from the types the finished iteration produced (at most this many times) instead of aborting
+    /// `Unstable` (which re-arms the head and records again at the next back-edge). 0 = off. Default [`RESTARTS_PROCESS`].
+    pub restarts: u32,
     /// BUNDLE-V V2: record upvalue stores of collectable values (default [`UPBAR_PROCESS`]).
     pub upbar: u32,
     /// BUNDLE-H: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel) (default [`TNEXTINL_PROCESS`]).
@@ -909,6 +915,7 @@ impl Default for TrLimits {
             retf: RETF_PROCESS,
             retfmax: RETFMAX_PROCESS,
             retfsel: RETFSEL_PROCESS,
+            restarts: RESTARTS_PROCESS,
             upbar: UPBAR_PROCESS,
             tnextinl: TNEXTINL_PROCESS,
             randinl: RANDINL_PROCESS,
@@ -1113,6 +1120,7 @@ impl TrLimits {
                 "retf" => l.retf = v.min(15),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
+                "restarts" => l.restarts = v.min(4),
                 "upbar" => l.upbar = v.min(1),
                 "tnextinl" => l.tnextinl = v.min(3),
                 "randinl" => l.randinl = v.min(1),
@@ -2712,6 +2720,8 @@ pub struct TrStats {
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
     pub heat_granted: u64,
+    /// Section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings (closed or not).
+    pub restarts: u64,
     /// P3: chain checks made ([`chain_check`]).
     pub chain_checks: u64,
     /// BUNDLE-G (`chaindepth`): hot callee-guard exits at the end of a full chain that were blacklisted instead of getting another link.
@@ -5953,6 +5963,11 @@ pub fn note_nest(st: &mut State, frame: bool) {
 pub fn note_hk_fused(st: &mut State, n: u32, split: u32) {
     d_of(st).tr.stats.hk_fused += u64::from(n);
     d_of(st).tr.stats.hk_split += u64::from(split);
+}
+
+/// Section 43.1 (TR24c): counts an in-place `Unstable` restart of a root recording.
+pub fn note_restart(st: &mut State) {
+    d_of(st).tr.stats.restarts += 1;
 }
 
 /// F2b: counts an installed stitching trace.
