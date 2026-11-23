@@ -369,6 +369,12 @@ impl State {
             c.top = top + LUA_MINSTACK;
             c.k = None;
         }
+        if crate::coro::is_yield_fn(f) {
+            // N2 step 1: `coroutine.yield` of a yieldable thread (no hook is set here): the yield without the library call
+            if let Some(s) = self.yield_direct(ci) {
+                return Err(s);
+            }
+        }
         let n = f(self)?;
         debug_assert!(n <= self.top().0);
         // `post_call` (the function may have set hooks or marked to-be-closed slots)

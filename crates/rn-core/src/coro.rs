@@ -14,9 +14,28 @@ use crate::ver::active::OpCode;
 /// BUNDLE-T: the fused resume path ([`State::resume_fused`]). Off with the cargo feature `coro_nofuse` (A/B builds).
 pub const CORO_FUSED: bool = !cfg!(feature = "coro_nofuse");
 
+/// N2 step 1: the direct `coroutine.yield` ([`State::yield_direct`], used by `native_fast_with`). Off with the cargo feature `coro_noyield` (A/B builds).
+pub const CORO_YIELD_DIRECT: bool = !cfg!(feature = "coro_noyield");
+
+/// The address of the library function `coroutine.yield` (registered by `rn_std::lib_coroutine::open`; 0 before): the native call path
+/// compares the callee with it. A process-wide static: every state of the process registers the same function.
+static YIELD_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Register `f` as the `coroutine.yield` function (a plain yield: `n = nargs; return yield_k(n, 0, None)`) for [`State::yield_direct`].
+pub fn register_yield_fn(f: NativeFn) {
+    YIELD_FN.store(f as usize, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Is `f` the registered `coroutine.yield`?
+#[inline(always)]
+pub(crate) fn is_yield_fn(f: NativeFn) -> bool {
+    CORO_YIELD_DIRECT && f as usize == YIELD_FN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Test-only mutants of the fused resume (feature `jit_trace_mut`, set by `rn_jit::tr::mutants::apply_vm_mutants`): a bit mask,
 /// `1` `cofuse_room_skip`, `2` `cofuse_hook_ignored`, `4` `cofuse_ncalls_skip`, `8` `cofuse_finish_op_skip`, `16` `cofuse_wanted_nil_skip`,
-/// `32` `cofuse_results_room_skip`, `64` `cofuse_prev_c_ignored`.
+/// `32` `cofuse_results_room_skip`, `64` `cofuse_prev_c_ignored`, `128` `coyield_yieldable_skip`, `256` `coyield_nargs_wrong`,
+/// `512` `coyield_status_skip`.
 #[cfg(feature = "jit_trace_mut")]
 static MUT_COFUSE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -54,6 +73,27 @@ fn is_error(s: Status) -> bool {
 }
 
 impl State {
+    /// N2 step 1: `coroutine.yield` called from the native call path (`native_fast_with`: the C frame `ci` is pushed, no hook is
+    /// set, the arguments are the values above `ci.func`). Does what `co_yield` + `yield_k(nargs, 0, None)` do for a native frame
+    /// without a continuation, without the indirect call: `Err(Status::Yield)` with `status = Yield` and the number of yielded values
+    /// in `ci.u2`. `None`: not yieldable (main thread or inside a non-yieldable call): the caller runs the library function, which
+    /// raises the reference's error.
+    #[inline(always)]
+    pub(crate) fn yield_direct(&mut self, ci: Ci) -> Option<Status> {
+        if !self.yieldable() && !mut_cofuse(128) {
+            return None;
+        }
+        let mut n = (self.top() - (ci.r().func + 1)) as i32;
+        if mut_cofuse(256) {
+            n += 1;
+        }
+        if !mut_cofuse(512) {
+            self.tm().status = Status::Yield;
+        }
+        ci.w().u2 = n; // save number of results
+        Some(Status::Yield)
+    }
+
     /// `lua_yieldk`: yield `nresults` values from the top of the stack. A native function must
     /// `return st.yield_k(..)`. From a hook (`Ok(0)`) the caller (`hook`) notices the status.
     pub fn yield_k(&mut self, nresults: usize, ctx: isize, k: Option<KFn>) -> LuaResult<usize> {

@@ -20,6 +20,8 @@ workspace = true
 eager_hash = []
 # A/B (BUNDLE-T): disable the fused coroutine resume path (`coro::CORO_FUSED`).
 coro_nofuse = []
+# A/B (N2 step 1): disable the direct `coroutine.yield` of the native call path (`coro::CORO_YIELD_DIRECT`).
+coro_noyield = []
 # JIT hooks of the interpreter (docs/JIT_HOOK_COST.md): extra `Proto` fields, hot counters, the
 # frame-entry check. OFF by default; with it off the generated code is byte-identical to a build
 # without these features.

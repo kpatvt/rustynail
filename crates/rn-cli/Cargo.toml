@@ -28,6 +28,7 @@ path = "src/luac.rs"
 # architectures the default build is the plain interpreter). `--no-default-features` builds the interpreter without it.
 default = ["jit"]
 coro_nofuse = ["rn-core/coro_nofuse"]
+coro_noyield = ["rn-core/coro_noyield"]
 jit = ["rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "dep:rn-jit", "rn-jit/jit", "rn-jit/trace"]
 # The template JIT (J4) without the trace compiler: the baseline of scripts/jit-text-identity.sh --fast-copy (TR23.1).
 jit_j4 = ["rn-core/jit", "rn-core/jit_counter_b", "rn-core/jit_check_e", "dep:rn-jit", "rn-jit/jit"]

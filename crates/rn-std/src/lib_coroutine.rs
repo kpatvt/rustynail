@@ -247,5 +247,6 @@ pub fn open(st: &mut State) -> LuaResult<usize> {
         ("close", Some(co_close)),
     ];
     st.set_funcs(lib, funcs)?;
+    rn_core::coro::register_yield_fn(co_yield); // N2: the native call path yields without calling it
     Ok(1)
 }
