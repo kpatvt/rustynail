@@ -1049,6 +1049,7 @@ pub const NAMES: &[&str] = &[
     "slink_store_skip",
     "slink_tag_skip",
     "slink_refund_off",
+    "slink_count_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1134,7 +1135,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 862);
+        assert_eq!(NAMES.len(), 863);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -6316,3 +6316,169 @@ vectors (about 8 % of the passes, 0.4 % of cd), a bound on the tier-1 lowering's
   OK on 5.5 with `ccheck=1`; `ccheck=1` on raytrace, cd, richards, towers, fmt_s, deltablue, classic_vector, lua_parser, both versions: 3-294 compiles
   compared per program, 0 differ. GC stress 1 / 2 run in the regression test (the programs that must trace).
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle suites, PGO builds, the all-223 benchmark, `bench-fast.sh`.
+
+## 50. Direct side links for traces that are not lazy-aware, register passing, carried sunk tables (knob `slink`; 2026-11-24, base c31b7d9)
+
+Task: cause C2 (b) / (c) of docs/STUDY_WHY_GAP.md: an exit with a side trace attached runs its stub (exit counter, slot stores, budget word, cell
+load, `jmp *`), the side trace reloads the slots; sunk tables are materialised at the exit. Goal (A) register-passing side links, (B) sunk tables carried
+into the side trace. **Result: (A) is built in two forms behind the knob `slink`. The plain link (bit 1: the exit's branches jump straight into the side
+trace, which still receives the exit map through the stack; the exit stays counted) is the default (`SLINK_PROCESS = 2`): -0.50 % instructions /
+-0.81 % cycles geomean over the 30-program sample, -0.6 .. -2.7 % instructions on the exit-heavy programs, no program above +0.08 % instructions. The register-passing link (bit 0:
+the side trace takes the exit map's registers) is built, sound and tested, and loses (the side trace's snapshots become dense); it stays off. (B) is not
+built: its measured ceiling and the blocker are in 50.6. The study's estimates (-13 % classic_vector, -13 % cd, -7 % lua_lexer, -6 % raytrace) are missed
+by a wide margin: a link saves 3-7 instructions per exit; classic_vector's 1080 instructions per exit are materialisation (50.6).**
+
+### 50.1 Which exits there are (measured before building)
+
+`RUSTYNAIL_JIT_EXITDUMP=1` at c31b7d9 (release `rn-cli`, seed 0, default size): every hot exit with a side trace in lua_lexer, cd, raytrace and richards is
+an exit **inside inlined frames** (1-3 frames; lua_lexer's ten hottest: 0.24-0.75 M exits each, all with a side trace attached). R1's carry path (16, half A)
+takes only frameless exits whose family root offers a third entry, so it reached none of them: `regcarry=2` (carry without the root condition) changed
+nothing (lua_lexer 3331.3 -> 3322.0 M instructions, the others within 0.1 % or worse: raytrace +2.5 %). classic_vector's hot exits are frameful **with sunk
+tables** (`materialised 555850` for 301 k exits; metamethod frames, so the sunk-frame stub does not apply and they go through the Rust handler). Instruction
+share of the exit stubs (`TRACE-n-STUB` symbols, `instructions:u` sampling): lua_lexer 5.6 % (25.6 instructions per exit, slot stores included), cd 3.2 %,
+richards 3.7 %, classic_vector 0.75 % (its exit cost is in `materialise` / `exit_entry`).
+
+### 50.2 As built
+
+Knob `slink` (`RUSTYNAIL_JIT_TRACE_LIMITS`; `SLINK_PROCESS` = 2): 0 = off, bit 1 = plain link, bit 0 = carry link (bit 1 wins when both are set).
+
+* **Which exits** (`Cx::stubs_and_tail`, `DeferInfo::dl_ok`, now also for traces that are not lazy-aware): the exit's stub is deferred (S1) and an inline
+  stub that continues through its cell, frameless or with a frame cell (the frames stay virtual in the side trace, S1); not a pre-roll site, a chain site or
+  an entry check; no sunk tables, no `top`, no `RETF` segment pops; the budget in `ra::BUDGET_GPR`; and (new) the trace did not allocate `r14` (its stubs
+  reload the constants pointer before their jump; a link would skip that). E6 keeps the lazy-aware families; `slink` takes every other trace
+  (`cache::slink_exit_ok`).
+* **Plain link (bit 1).** The side trace attached to such an exit gets E6's link entry (36.3) unchanged: the parent's slot stores of the exit (the slot part of
+  its inline stub, same registers, same tag elision), `add vb, refund`, `jmp` behind the plain entry's budget load (`cache::dlink_source` accepts a non-lazy
+  parent under bit 1). `cache::install` re-points the exit's patchable `nop` and every branch to it or to its assembled stub (`dlink_attach`), and the flush
+  of the side trace writes the saved bytes back while the parent lives (`dl_saved`, 36.5). Per linked exit the counter's divert test, the budget word
+  store and the side trace's reload (4), the cell load and indirect jump (3) are gone; the slot stores stay. **Unlike E6 the link keeps counting the exit**
+  (`mov r7, &ctr; add dword [r7], n`, `n` = 2 for the double-counting frame-cell stubs, `DlinkIn::count`, `cache::slink_count`): the ineffective-trace rule
+  reads the body exits of a root (`n` of `cache::side_ratio_applies`: a loop whose body exits as often as its pre-roll completes iterations between the
+  hops); without the count `tr_core::mixed_string_loops_are_not_flushed_as_ineffective` flushed `n5_cliff_shape` as ineffective twice (mutant
+  `slink_count_skip`). The first version without the count measured -0.57 % instructions on the sample; the count costs about 1 instruction per linked exit.
+* **Carry link (bit 0).** The side recording starts with the exit map's register / spill values as R1 carried loads (`SLOAD_CARRIED`; `cache::slink_carry`):
+  no root third entry is needed and the frames may be virtual (`Rec::begin` defines the carried slots up to the innermost frame's extent). Entries that cannot
+  be carried (constants, function slots of the virtual frames, nil / booleans, strings of dynamic variant, `V7` / `V10`) are stored by the link entry as the
+  stub would; carried entries whose tag the stack lacks are stored (tag and payload) as by R1's stub carry path. The link entry (`DlinkIn::carry`) is: those
+  stores, `add vb, refund`, `jmp` to the carry entry (the parallel move into the side trace's allocation, hinted to the parent's registers). The exit's stub
+  has no carry path for such a side trace (`TraceIr::carry_link`, `TraceInstall::carry_link`: its carry cell is not set); before the attach, or after an
+  unlink, the stub stores the whole map and the plain entry loads the carried slots. A frameful side trace gets a carry entry also when it needs its own R2
+  room checks (they sit in the body behind both entries and save the two registers they use); the room condition of `carry_entry` stays for frameless ones.
+* `mod::carry_demote` is linear now (it scanned every snapshot per carried load: `pipeline_front` was 4.5 % of cd's instructions with bit 0), and every entry
+  of a trace with `RETF` segments stores the segment oracle's `CallInfo` (`+verify`; the link entries skipped it and `seg_oracle_entry_func` read a null slot).
+
+### 50.3 Soundness
+
+The plain link is E6's link (36.5) applied to traces outside a lazy region; the arguments carry over, with what differs:
+
+* **Same state, same destination.** A linked exit continues where the stub went: the stub of such an exit (frameless inline stub, or the attached path of
+  `mat_stub`, which is the counter, the slot stores, the budget and the cell jump) does nothing else once a side trace is attached; the link makes the same
+  stores from the same registers and hands the budget over in the register. Nothing of a lazy region applies (no `lazy_root`, no leave), and a side trace
+  books no entry (`head == 0`), so the plain entry does nothing between its start and the join point but the budget load and the segment oracle (`+verify`),
+  which the link entry now stores too.
+* **Counting.** A plain-linked exit is counted by the link exactly as by its stub (+1, or +2 for a double-counting frame-cell stub); the stub's divert at
+  `hot - 1` is not needed (the side trace exists). A carry link into a side trace that R1's stub carry path also enters is not counted (that path parks the
+  counter, as before). The sites whose counters drive other policy in the stub itself (pre-roll: Q2; chain sites: P3; entry checks) are never linked.
+  `exits` therefore keeps its meaning (classic_vector, cd, lua_lexer, raytrace, richards, towers, deltablue: identical exit counts with and without the knob).
+* **Patching lifetime, flushes, multiple parents.** Unchanged from 36.5 (install from the recorder, unpatch at the flush of the side trace before its block
+  can be released, nothing written when the parent goes first). A side trace has exactly one parent exit; a side trace of a side trace is linked to its own
+  parent's exit like any other.
+* **Carry link.** R1's argument (16, half A): behind a carry entry the stack is stale exactly for the carried slots, every snapshot of the side trace (the
+  entry snapshot included) and its writeback name them, nothing between an entry and an exit can observe the stack (TR1: no GC step, hook, error, yield or
+  stack reallocation on a trace). New: (1) the entries that are not carried are stored by the link entry (mutant `slink_store_skip`), so the stack holds them
+  as after the stub; (2) carried entries whose tag the stack does not provably hold get their tag stored (`slink_tag_skip`); (3) the refund is the exit's
+  (`slink_refund_off`); (4) frameful: the virtual frames' function slots are always stored (constants, not carried), and the recorder reads them from the stack
+  before the carried loads; the R2 room checks save `V0` / `V1`, the only registers they write; (5) GC: the carried values are live in registers across no
+  safepoint (there is none on a trace); write barriers in the side trace see the same objects. Floats travel in XMM registers (`CarrySrc::X`), integers and
+  references in GPRs, spilled values from the parent's spill slot (one per-state area; the moves read every source before writing a destination).
+
+### 50.4 Measured (release `rn-cli`, one binary, `slink=0` / `1` / `2`; `RUSTYNAIL_SEED=0`, `taskset -c 4`; instructions of one run, cycles min of 3)
+
+| program | exits | linked (bit 1) | instr M 0 / 2 | delta | cycles M 0 / 2 (min of 3) | instr saved per linked exit | bit 0 instr M (uncounted links) | bit 0 per exit |
+|---|---:|---:|---|---:|---|---:|---:|---:|
+| corpus/classic_vector | 301 297 | 52 774 | 2031.35 / 2031.00 | -0.02 % | 469.3 / 473.9 | 6.6 | 2032.02 | +24 (worse) |
+| awfy/cd | 1 589 999 | 1 030 505 | 694.74 / 690.38 | -0.63 % | 245.9 / 245.5 | 4.2 | 699.43 | +7.5 (worse) |
+| corpus/lua_lexer | 7 281 305 | 4 395 317 | 3331.34 / 3305.13 | -0.79 % | 823.0 / 821.3 | 6.0 | 3311.67 | 4.9 |
+| apps/raytrace | 255 623 | 101 768 | 295.18 / 294.87 | -0.11 % | 97.2 / 98.7 (min of 7: 94.9 / 95.3) | 3.0 | 296.95 | +17.5 (worse) |
+| awfy/richards | 278 617 | 258 446 | 168.73 / 167.22 | -0.89 % | 59.6 / 59.2 | 5.8 | 168.32 | 1.9 |
+| awfy/towers | 147 164 | 0 | 170.57 / 170.55 | -0.01 % | 47.6 / 46.7 | - (a lazy family: E6 links it already) | 170.57 | - |
+| awfy/deltablue | 138 455 | 32 898 | 310.79 / 310.79 | 0.00 % | 106.0 / 107.0 | 0.0 | 311.28 | +16 (worse) |
+
+(Linked = the exits that took the link: the exit count of the build without the count, 50.2.) Per-exit cost of the stub path before and after: lua_lexer's stub code was 25.6 instructions per exit (5.6 % of 3331 M over 7.28 M exits); a linked exit
+saves 6.0 of them (the counter's test, the budget word and the cell; 7.0 before the count was added); the slot stores (and, in the side trace, the slot
+loads) remain. Stub-code share with bit 1 (uncounted build): lua_lexer 5.6 -> 3.2 %, cd 3.2 -> 2.2 %, richards 3.7 -> 1.9 %. The remaining exits of classic_vector and cd are mostly sunk-table exits (not linkable, 50.6).
+
+**30-program sample** (the 7 above, awfy havlak / json / list / nbody / permute / queens / bounce / storage, corpus astar_jumper / class_middleclass /
+containers_lru_heap / json_rxi / markdown_conv / penlight_mix / parser_combinator, programs binary_trees / fib / heapsort / oop_methods / metamethods /
+string_ops, apps expr_lang / events; `slink=0` against `slink=2`, interleaved per program, final code): **geomean -0.50 % instructions, -0.81 %
+cycles**. Largest gains: awfy/list -2.67 %, programs/heapsort -1.83 % / -2.0 %, awfy/bounce -1.52 % / -1.7 %, class_middleclass -1.35 % / -2.1 %,
+awfy/queens -1.22 %, apps/expr_lang -1.17 %, corpus/astar_jumper -1.12 % / -2.8 %, awfy/nbody -0.95 % / -1.2 %. Worst instructions:
+corpus/containers_lru_heap +0.08 % (cycles -1.6 %); every other program at or below +0.00 %. Cycles above +2 % in the batch were at equal instructions;
+re-run min of 7 interleaved: binary_trees +4.64 -> -4.34 %, fib +2.59 -> -1.04 %, json_rxi +3.04 -> +1.04 %, raytrace +1.49 -> +0.39 %, apps/events +2.09
+-> +2.77 % (one link attached; three further rounds of min of 7 each: 168.8 / 165.2 / 166.9 against 165.4 / 166.0 / 162.9 Mcyc, min over all 21 runs
++1.4 %, at +0.004 % instructions). Bar (no program above +1 % instructions / +2 % cycles, geomean not worse): met, apps/events at +1.4 .. +2.8 %
+cycles depending on the round is the closest. The uncounted first version measured -0.57 % / -0.44 % on the same sample.
+
+**Formation lottery** (`RUSTYNAIL_JIT_TRACE_HOT` 248 / 252 / 256 / 260 / 264, instructions, `slink=0` -> `2`): classic_vector -0.02 .. -0.11 %, cd -0.55 ..
+-0.89 %, lua_lexer -0.78 .. -1.57 %, raytrace -0.13 .. -0.18 %, richards -1.07 .. -1.20 %, towers -0.01 .. +0.01 %, deltablue -0.04 .. +0.05 %. The
+thresholds move the totals by up to 17 % (lua_lexer 3331 M at 256, 3914 M at 260; richards 169 / 203 M at 256 / 248) with or without the knob; the knob's
+effect has the same sign at every threshold.
+
+### 50.5 Why register passing (bit 0) loses
+
+A carried slot is a definition of the side trace (R1): every snapshot of the side trace names it, so every exit of the side trace that is not itself linked
+stores it, where after a plain link the stack holds it and the snapshot leaves it out. What the carry link saves per exit (the stores of the carried values
+in the link, their loads in the side trace: 1-4 values in lua_lexer's side traces) is paid back at the later exits of the side trace and by the longer live
+ranges from the start of the side trace (spilled carried values: `allocation [(.., None, [6]), ..]` in the `carry-in` lines of `RUSTYNAIL_JIT_VERBOSE=2`).
+Measured against off: cd +0.68 % instructions (+1.5 % against the plain link), raytrace +0.60 %, deltablue +0.16 %; lua_lexer -0.59 % (plain link -0.93 %).
+A first version was +4.6 % on cd because `carry_demote` was quadratic (fixed above). LuaJIT pays the same dense restore at its side exits but links almost
+every one of them; ours still leave through stubs to tier 1 often (cd: 0.56 M exits remain with the plain link). Making the carry link pay would take carried
+values that the side trace's snapshots leave out (a stale flag per side trace, as R1's half B `HeadData::stale` for roots) or the plain link's stores together
+with the registers (saves only the side trace's slot loads, about one instruction per carried slot); neither was built.
+
+### 50.6 (B) Carried sunk tables: not built; the measured ceiling and the blocker
+
+* **Ceiling.** Instruction share of the exit path of exits with sunk tables (`materialise`, `jit_tr_mat`, `exit_entry`, `restore`, `restore_chain`; profiles
+  at `slink=2`): classic_vector 13.1 % (+ `setnodevector` 3.4 %, part of it tier 1), cd 13.0 % (+ 3.5 %). classic_vector: 301 k exits, 1.85 sunk tables
+  each, about 1000 instructions per exit, through the Rust handler (its frames are metamethod frames: `exit::sunk_frame_stub_ok` excludes them). With carried
+  sunk tables the side trace still allocates the tables that escape in it (in `Spring:apply`'s side traces the force vectors are stored into `self.force`;
+  `d` and the intermediate `f` do not escape), so the ceiling is an upper bound; the study's sinking-off experiment (+13.5 % classic_vector, -2.2 % cd)
+  brackets it from the other side.
+* **Blocker.** A replayed allocation must be re-emitted at the start of the side trace (LuaJIT's `snap_replay`): `TNEW` and the field stores, whose values come
+  from the parent's exit (registers and spill slots on a link; on the paths through the stub or the handler the exit area, which `exit::sunk_save_ops` and the
+  shared exit routine fill). Our `TNEW` is a class-A allocation with a guard (`NE %tnew, 0`: the helper refuses when a collector step is due or the
+  allocation would fail), and its exit re-executes the `NEWTABLE` in tier 1. At the start of a side trace there is no `NEWTABLE` to re-execute: the snapshot
+  of that guard must describe the table as *sunk* (materialise it from the field values) even when the side trace's own sinking keeps the `TNEW` because the
+  table escapes later in the side trace. Sinking decides sunk-ness per allocation, not per snapshot; and the recorder's model adopts the real table the VM
+  made at a `NEWTABLE` (`Rec::adopt_new_table`), which a replay at the trace start does not have (the handler materialised one; the replay would have to
+  adopt it as the trace's own). Both need a design of their own (per-snapshot sunk descriptions for replayed allocations, a replay mode of the recorder's
+  table model, the exit area as an entry location for field values, the double materialisation and the virtual-byte accounting on unlinked paths). Not
+  prototyped within this task's time box.
+* **A cheaper step found on the way:** classic_vector's sunk-table exits go through the generic stub and the Rust handler only because their frames are
+  metamethod frames (`sunk_frame_stub_ok`: `!f.mm`); with a side trace attached the frames stay virtual and need no rebuild. A sunk-frame stub for metamethod
+  frames that diverts to the handler only when the cell is 0 (and after a policy flush inside the helper) would remove `exit_entry` / `restore` /
+  `restore_chain` (about 6 % of classic_vector's instructions), not the materialisation. Not built.
+
+### 50.7 Tests, mutants, gates, what was not run
+
+* `tr_core::s50_slink_programs`: the programs of `tests/tr_core/s50_progs.rs` (`s50_frame_sides`: methods inlined in a loop root whose branches flip, every
+  value class live; `s50_spill_values`: more live values than registers, floats; `s50_observers`: an error raised behind a linked exit with
+  `debug.getlocal` of the frame, a count hook installed from inside, collections in the loop; `s50_coro_flush`: the loop inside a coroutine that yields
+  between batches, a callee replaced by a `load`ed function between rounds so that side traces are flushed under live parents and their links undone) and
+  `r1_nbody_pairs`, `r1_type_flip`, `r1_error_locals`, `r1_many_slots`, `s1_frame_sides`, `e6_01_dlink`, in `always` / `on2` x `slink` 0 / 1 / 2, `+verify`,
+  `+exitstorm=3 +verify`, budgets 3 / 17, GC stress 1 / 2 in both collector modes, `RUSTYNAIL_JIT_STRESS=stackmove` with `+tracemove`, `regcarry=0` / `2`,
+  `lazystub=0` (no patch sites: asserted no links), `sidemin=0`; with the oracle feature the instruction-count identity (budgets none / 3 / 17). Asserts
+  links in every `s50_*` program but `s50_spill_values` with a bit set and none with `slink=0`. Lua 5.5 and 5.4 (the gate runs the suite on both).
+  Existing tests adapted to the default: `e6_dlink_programs` runs its `dlink` jobs with `slink=0` (it asserts that the links it counts are E6's).
+* Mutants (registry 859 -> 863): `slink_store_skip`, `slink_tag_skip`, `slink_refund_off` (caught by `s50_slink_programs`), `slink_count_skip` (caught by
+  `mixed_string_loops_are_not_flushed_as_ineffective`); `s50_slink_programs` is also a detector of `dlink_store_skip` and `dlink_refund_off`.
+* Gates. Commit 9ce7ff8 (knob, default off): `GATE_CPUS=2-15 scripts/gate-light.sh slink_,dlink_ --fast --base HEAD~1`: every step PASS (fmt, mutant map,
+  clippy 5.5 / 5.5-jit / 5.4, core 5.5 / 5.4, trace suites 5.5 167 s / 5.4 156 s, `vm_corpus`, jit-diff 1-50, the mutant group); the first run failed on the
+  frozen registry count and a stale mutant map, both fixed in the commit. Commit with the default on: `gate-light.sh slink_,dlink_,lazystub,carry_ --fast
+  --base HEAD~1`: every step PASS, mutant group 24 ran, 24 caught. Its first run (default on, links not counted) failed four trace tests
+  (`e6_dlink_programs`: links with `dlink=0` that were `slink`'s; `s1_lazystub_programs` and `bf_stitch0_programs`: exit counts that compare two
+  configurations; `mixed_string_loops_are_not_flushed_as_ineffective`: the ineffective rule, 50.2): the count and the test adaptation are the answer.
+* Final binaries (5.5 and 5.4 release `rn-cli`): `JITDIFF_MODES="off tr trdef" scripts/jit-diff.sh 1 40`: 40 seeds, 0 diffs, 0 timeouts, both versions;
+  the official suite (`scripts/jit-official.sh`, `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`): OK on 5.5 and 5.4.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle-feature suites (the identity jobs of `s50_slink_programs` ran only inside
+  the mutant runner's oracle build), PGO builds, the all-223 benchmark; no 5.4 performance numbers.

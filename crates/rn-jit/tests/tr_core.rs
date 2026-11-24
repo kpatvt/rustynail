@@ -12938,17 +12938,23 @@ fn e6_dlink_programs() {
     for p in progs {
         let heavy = p.contains("deep");
         for trace in ["always", "on2"] {
-            for lim in ["dlink=0", "dlink=1", "dlink=2", "dlink=3"] {
+            // (section 50: `slink=0`, so that the links counted are E6's)
+            for lim in [
+                "dlink=0,slink=0",
+                "dlink=1,slink=0",
+                "dlink=2,slink=0",
+                "dlink=3,slink=0",
+            ] {
                 jobs.push(Job::new(p, trace).limits_s(lim));
                 jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
             }
-            let lim = "dlink=3";
+            let lim = "dlink=3,slink=0";
             jobs.push(
                 Job::new(p, trace)
                     .opts("+exitstorm=3 +verify")
                     .limits_s(lim),
             );
-            jobs.push(Job::new(p, trace).limits_s("dlink=3,lazypoison=1"));
+            jobs.push(Job::new(p, trace).limits_s("dlink=3,lazypoison=1,slink=0"));
             for b in [3, 17, 200] {
                 if heavy && b != 17 {
                     continue;
@@ -12988,7 +12994,7 @@ fn e6_dlink_programs() {
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.limits == "dlink=0" || j.limits == "dlink=2" {
+        if j.limits.starts_with("dlink=0") || j.limits.starts_with("dlink=2") {
             assert_eq!(
                 o.stats.dlink_attached,
                 0,
@@ -12997,7 +13003,7 @@ fn e6_dlink_programs() {
             );
         }
         let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
-        if j.prog == "e6_01_dlink" && plain && j.limits == "dlink=3" {
+        if j.prog == "e6_01_dlink" && plain && j.limits == "dlink=3,slink=0" {
             assert!(
                 o.stats.dlink_attached >= 2,
                 "{}: direct links {}",

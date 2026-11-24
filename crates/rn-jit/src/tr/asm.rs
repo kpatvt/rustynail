@@ -3121,6 +3121,9 @@ pub struct DlinkIn {
     /// Section 50 (`slink`): a carry link entry: `ops` store what the side trace does not carry, and the entry joins the carry entry (`Asm::entry_c`)
     /// instead of the plain entry behind its budget load.
     pub carry: bool,
+    /// Section 50 (`slink`): the exit counter of the parent's exit and the stub's increment (2 for a double-counting frame-cell stub): a link of a trace that is
+    /// not lazy-aware keeps counting its exits, because the ineffective-trace rule reads the body exits of the root (`cache::side_ratio_applies`).
+    pub count: Option<(u64, i32)>,
 }
 
 pub fn assemble(
@@ -3566,6 +3569,14 @@ pub fn assemble_dl(
             let l = cx.label();
             cx.bind(l);
             cx.seg_oracle_entry();
+            if let Some((ctr, inc)) = dl.count.filter(|_| !mutants::active("slink_count_skip")) {
+                cx.push(Op::Mov(7, ctr));
+                cx.push(Op::AddM {
+                    w: W::B4,
+                    m: rm(7, 0),
+                    imm: inc,
+                });
+            }
             for op in &dl.ops {
                 cx.push(*op);
             }
@@ -3587,6 +3598,14 @@ pub fn assemble_dl(
             let l = cx.label();
             cx.bind(l);
             cx.seg_oracle_entry();
+            if let Some((ctr, inc)) = dl.count.filter(|_| !mutants::active("slink_count_skip")) {
+                cx.push(Op::Mov(7, ctr));
+                cx.push(Op::AddM {
+                    w: W::B4,
+                    m: rm(7, 0),
+                    imm: inc,
+                });
+            }
             if !mutants::active("dlink_store_skip") {
                 for op in &dl.ops {
                     cx.push(*op);

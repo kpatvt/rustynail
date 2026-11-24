@@ -2636,9 +2636,16 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     ops: full[..full.len() - tail.len()].to_vec(),
                     refund: es.refund,
                     carry: true,
+                    // (a side trace the stub's R1 carry path enters is not counted by the stub either: its counter is parked)
+                    count: if ir.carry_link {
+                        cache::slink_count(st, act.id)
+                    } else {
+                        None
+                    },
                 }
             })
         } else {
+            let count = cache::slink_count(st, act.id);
             cache::dlink_source(st, act.id).map(|es| {
                 let full =
                     exit::inline_stub_ops_slots(&es, &es.slots, ra::Loc::G(ra::BUDGET_GPR), None);
@@ -2647,6 +2654,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     ops: full[..full.len() - tail.len()].to_vec(),
                     refund: es.refund,
                     carry: false,
+                    count,
                 }
             })
         }

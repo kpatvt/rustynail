@@ -105,7 +105,7 @@ pub const LAZYLOOP_PROCESS: u32 = 1;
 /// E6: the process default of [`TrLimits::dlink`] (also the struct default).
 pub const DLINK_PROCESS: u32 = 3;
 /// Section 50 (`slink`): the process default of [`TrLimits::slink`] (also the struct default).
-pub const SLINK_PROCESS: u32 = 0;
+pub const SLINK_PROCESS: u32 = 2;
 /// E9: the process default of [`TrLimits::t1call`] (also the struct default).
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
@@ -4532,6 +4532,38 @@ pub fn slink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
         return None;
     }
     Some(es.clone())
+}
+
+/// Section 50 (`slink`): the exit counter of the parent's exit a side trace `id` (a recording) is attached to and the increment of its stub, when the parent is
+/// not lazy-aware (E6's links of lazy-aware families do not count); `None` otherwise.
+pub fn slink_count(st: &mut State, id: TrId) -> Option<(u64, i32)> {
+    let d = d_of(st);
+    let sl = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) => r.side?,
+        _ => return None,
+    };
+    let Some(Slot {
+        body: Body::Trace(p),
+        ..
+    }) = d.tr.slot(sl.parent)
+    else {
+        return None;
+    };
+    if p.xmeta.as_ref()?.lazy {
+        return None;
+    }
+    let k = sl.exit as usize;
+    let ctr = p.exits.get(k)? as *const std::cell::Cell<u32> as u64;
+    Some((
+        ctr,
+        if p.dbl.get(k).copied().unwrap_or(false) {
+            2
+        } else {
+            1
+        },
+    ))
 }
 
 pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, InstallError> {
