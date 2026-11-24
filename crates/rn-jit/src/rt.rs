@@ -1178,7 +1178,7 @@ fn tset_bits(d: &JitData) -> u8 {
     #[cfg(feature = "trace")]
     {
         if d.tr.cfg.mode != crate::tr::cache::TrMode::Off {
-            return d.tr.cfg.limits.tset as u8;
+            return (d.tr.cfg.limits.tset as u8) | ((d.tr.cfg.limits.t6 as u8 & 3) << 5);
         }
     }
     let _ = d;

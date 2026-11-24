@@ -973,6 +973,13 @@ pub const NAMES: &[&str] = &[
     "retfsel_untraced_ok",
     "retfsel_recursion_ok",
     "retfsel_outer_loop",
+    // docs/JIT_TRACE.md section 44.1 (T6, `ctor`): the fused constructor of tier 1
+    "ctor_nil_value",
+    "ctor_flags_skip",
+    "ctor_layout_skip",
+    "ctor_mainpos_off",
+    "ctor_collide",
+    "ctor_any_reg",
     // docs/JIT_TRACE.md section 44.3 (`blfirst`): blacklist at the first unchangeable abort
     "blfirst_never",
     "blfirst_side_always",
@@ -1079,7 +1086,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 823);
+        assert_eq!(NAMES.len(), 829);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

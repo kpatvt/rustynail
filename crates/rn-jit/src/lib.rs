@@ -42,6 +42,8 @@ mod templates_alloc;
 #[cfg(feature = "jit")]
 mod templates_arith;
 #[cfg(feature = "jit")]
+mod templates_ctor;
+#[cfg(feature = "jit")]
 mod templates_loops;
 #[cfg(feature = "jit")]
 mod templates_table;

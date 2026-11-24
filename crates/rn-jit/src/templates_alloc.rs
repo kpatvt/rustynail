@@ -349,6 +349,9 @@ impl Cx<'_> {
             self.len_inline(i, done);
         }
         self.emit_hcall(pc, &call, None);
+        if op == O::Newtable {
+            self.emit_ctor(pc, i);
+        }
         if let Some(done) = len_done {
             self.op(Op::Bind(done));
         }

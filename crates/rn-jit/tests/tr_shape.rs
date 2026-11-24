@@ -253,6 +253,55 @@ fn shape_tier1_newkey_clears_the_id() {
     }
 }
 
+/// `ctor_layout_skip`: the fused constructor of tier 1 (T6) zeroes the layout id slot of an 8-node hash part like the inline insertion does. 120 generated
+/// constructors of five distinct constant keys (some of them have no main-position collision whatever the string-hash seed, so the whole group is fused);
+/// the tables are born with a nonzero marker, every kept table must end with 0.
+#[cfg(feature = "tr_mutants")]
+#[test]
+fn shape_tier1_ctor_clears_the_id() {
+    use rn_core::state::{LuaState, LUA_MULTRET};
+    use rn_core::status::Status;
+    use rn_jit::rt::set_trace;
+    use rn_jit::t15::runtime::{T15Config, T15Mode};
+    use rn_jit::tr::cache::TrConfig;
+    init();
+    let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
+    rn_jit::set_mode(&mut st, rn_jit::Mode::Always);
+    rn_jit::set_t15(&mut st, T15Config::for_mode(T15Mode::Off));
+    set_trace(
+        &mut st,
+        TrConfig::parse(Some("on"), Some("2000000000,2000000000"), None, None, None),
+    );
+    rn_jit::tr::attach_driver(&mut st);
+    let mut src = String::from("KEEP = {}\nlocal n = 0\n");
+    for i in 1..=120 {
+        src.push_str(&format!(
+            "do local function mk(a) return {{k{i}_a = a, k{i}_b = 2, k{i}_c = 3, k{i}_d = a, k{i}_e = 5}} end n = n + 1 KEEP[n] = mk(n) KEEP[n] = mk(n + 1000) end\n"
+        ));
+    }
+    rn_core::table::set_mut_born_mark(MARK);
+    let base = st.top();
+    assert_eq!(st.load_buffer(src.as_bytes(), b"=shape", None), Status::Ok);
+    let func = st.top() - 1;
+    let status = st.pcall(func, LUA_MULTRET, 0);
+    rn_core::table::set_mut_born_mark(0);
+    assert_eq!(status, Status::Ok, "script failed: {:?}", st.get(func));
+    st.set_top(base);
+    let g = st.globals();
+    let key = Value::string(st.heap().new_str(b"KEEP").unwrap());
+    let keep = g.get(&key);
+    let keep = keep.as_table().expect("KEEP");
+    for i in 1..=120 {
+        let t = keep.get_int(i).as_table().expect("kept table");
+        assert_eq!(t.hash_size(), 8, "table {i}");
+        assert_eq!(
+            t.layout_id(),
+            0,
+            "table {i}: the id survived the key insertions"
+        );
+    }
+}
+
 /// The library paths (`table.insert` / `table.remove` / `table.move`, `rawset`, `next`/`pairs`, `table.sort`) through the real
 /// interpreter: array-part moves and value writes keep a stamped id, an insertion of a new hash key clears it.
 #[test]

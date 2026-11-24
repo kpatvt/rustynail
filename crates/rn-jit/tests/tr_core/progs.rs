@@ -16327,6 +16327,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t1_02_retfsel_recursion.lua"),
     },
+    // docs/JIT_TRACE.md section 44.1 (T6, `ctor`): the fused table constructor of tier 1
+    Prog {
+        name: "t6_01_ctor",
+        small: true,
+        src: include_str!("../../../../tests/vm/t6_01_ctor.lua"),
+    },
     // docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings
     Prog {
         name: "tr24c_01_restarts",

@@ -220,6 +220,11 @@ fn trace_cfg(job: &Job) -> TrConfig {
         cfg.hot_loop = 2;
         cfg.hot_exit = 2;
     }
+    if job.trace == "t1x" {
+        // traces on (the tier-1 paths that need them) but nothing ever gets hot: every function runs in tier 1
+        cfg.hot_loop = 2_000_000_000;
+        cfg.hot_exit = 2_000_000_000;
+    }
     if job.trace == "on16" {
         // (H2: hot loops at once, the default exit threshold: the inline stubs of the frameful exits run before the handler is wanted)
         cfg.hot_loop = 2;
@@ -331,7 +336,8 @@ fn one_state(job: &Job, baseline: bool) -> (String, u64, u64) {
     if let Some(c) = job.code_cap {
         rn_jit::set_code_cap(&mut st, c);
     }
-    let traced = !baseline && matches!(job.trace.as_str(), "always" | "on2" | "on" | "on16");
+    let traced =
+        !baseline && matches!(job.trace.as_str(), "always" | "on2" | "on" | "on16" | "t1x");
     if baseline || job.trace == "off" {
         rn_jit::set_mode(&mut st, Mode::Off);
     } else {
@@ -13124,6 +13130,56 @@ fn t1_retfsel_programs() {
             }
         }
     }
+}
+
+/// docs/JIT_TRACE.md section 44.1 (T6, `t6` bit 0): the fused constructor of tier 1. `t6_01_ctor` (record, nil-valued, metatable and many generated key
+/// sets; the iteration order of every table is part of the output) in tier 1 with traces on but nothing hot (`t1x`), and in `always` / `on2`, with
+/// `ctor` 0 / 1, `+verify`; for the shipped value also the emulator, budgets 3 / 17 / 200 (the instruction count is the interpreter's), GC stress 1 / 2
+/// in both collector modes and stack-move stress; every job against the interpreter. Detector of `ctor_black_skip`, `ctor_nil_value`, `ctor_flags_skip`,
+/// `ctor_mainpos_off`, `ctor_collide`, `ctor_any_reg`, `ctor_dup_key`.
+#[test]
+fn t6_ctor_programs() {
+    let p = "t6_01_ctor";
+    let mut jobs = Vec::new();
+    for trace in ["t1x", "always", "on2"] {
+        for lim in ["t6=0", "t6=1"] {
+            jobs.push(Job::new(p, trace).limits_s(lim));
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+        }
+        let lim = "t6=1";
+        jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        for b in [3, 17, 200] {
+            jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+        }
+        for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+            let mut j = Job::new(p, trace)
+                .env("RUSTYNAIL_GC_STRESS", gc)
+                .limits_s(lim);
+            if mode == "inc" {
+                j = j.env("RUSTYNAIL_GC_MODE", "inc");
+            }
+            jobs.push(j);
+        }
+        jobs.push(
+            Job::new(p, trace)
+                .env("RUSTYNAIL_GC_STRESS", "2")
+                .env("RUSTYNAIL_GC_VERIFY", "1")
+                .limits_s(lim),
+        );
+        jobs.push(
+            Job::new(p, trace)
+                .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                .limits_s(lim),
+        );
+    }
+    // (the program prints keys in `pairs` order, which follows the string-hash seed: pinned per job; a second seed changes which keys collide)
+    let mut all: Vec<Job> = jobs.into_iter().map(|j| j.seed(0)).collect();
+    for trace in ["t1x", "always"] {
+        for seed in [5, 11, 23] {
+            all.push(Job::new("t6_01_ctor", trace).limits_s("t6=1").seed(seed));
+        }
+    }
+    compare(all);
 }
 
 /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): a root recording whose iteration ends with a slot of another type than its first read

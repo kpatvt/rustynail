@@ -114,6 +114,8 @@ pub const RETFSEL_PROCESS: u32 = 1;
 pub const RESTARTS_PROCESS: u32 = 0;
 /// Section 44.3 (`blfirst`): the process default of [`TrLimits::blfirst`] (also the struct default): **3** = `TooLong` and `Compile(..)` aborts of root recordings blacklist at the first occurrence.
 pub const BLFIRST_PROCESS: u32 = 3;
+/// Section 44.1 (T6, `t6`): the process default of [`TrLimits::t6`] (also the struct default).
+pub const T6_PROCESS: u32 = 1;
 /// Section 39.1 (T1): frames from the caller down that the `retfsel` recursion test looks at (the popped prototype among them = the pop is inside a
 /// recursion).
 pub const RETFSEL_DEPTH: usize = 16;
@@ -687,6 +689,9 @@ pub struct TrLimits {
     /// `TailCall`, `Recursion`, `Depth`, `TableHash`); 16 = also for the exits of side traces (default: root heads only). 0 = off.
     /// Default [`BLFIRST_PROCESS`].
     pub blfirst: u32,
+    /// Section 44.1 (T6): tier-1 constructor paths (with traces on only, like `tset`): bit 0 = the fused `NEWTABLE` + constant-key `SETFIELD`s
+    /// (`templates_ctor.rs`); 0 = off. Default [`T6_PROCESS`].
+    pub t6: u32,
     /// BUNDLE-V V2: record upvalue stores of collectable values (default [`UPBAR_PROCESS`]).
     pub upbar: u32,
     /// BUNDLE-H: traversal steps on trace (bit 0: `TNEXT` is header-safe, the loops of `pairs` / `next` peel) (default [`TNEXTINL_PROCESS`]).
@@ -924,6 +929,7 @@ impl Default for TrLimits {
             retfsel: RETFSEL_PROCESS,
             restarts: RESTARTS_PROCESS,
             blfirst: BLFIRST_PROCESS,
+            t6: T6_PROCESS,
             upbar: UPBAR_PROCESS,
             tnextinl: TNEXTINL_PROCESS,
             randinl: RANDINL_PROCESS,
@@ -1130,6 +1136,7 @@ impl TrLimits {
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
                 "blfirst" => l.blfirst = v.min(31),
+                "t6" => l.t6 = v.min(3),
                 "upbar" => l.upbar = v.min(1),
                 "tnextinl" => l.tnextinl = v.min(3),
                 "randinl" => l.randinl = v.min(1),

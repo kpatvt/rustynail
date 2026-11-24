@@ -4459,6 +4459,36 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_policy", "t1_retfsel_policy")],
     },
     Row {
+        name: "ctor_nil_value",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_ctor_programs")],
+    },
+    Row {
+        name: "ctor_flags_skip",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_ctor_programs")],
+    },
+    Row {
+        name: "ctor_layout_skip",
+        owner: "T6",
+        dets: &[d("tr_shape", "shape_tier1_ctor_clears_the_id")],
+    },
+    Row {
+        name: "ctor_mainpos_off",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_ctor_programs")],
+    },
+    Row {
+        name: "ctor_collide",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_ctor_programs")],
+    },
+    Row {
+        name: "ctor_any_reg",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_ctor_programs")],
+    },
+    Row {
         name: "blfirst_never",
         owner: "blfirst",
         dets: &[d("tr_policy", "blfirst_policy")],

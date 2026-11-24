@@ -3316,6 +3316,19 @@ pub(crate) fn newkey_mutants() -> u8 {
         | u8::from(mutants::active("newkey_dummy_skip")) * NK_DUMMY_SKIP
 }
 
+/// Section 44.1 (T6): the active mutants of the fused constructor of tier 1 as the bit set of `templates_ctor::CT_*`.
+pub(crate) fn ctor_mutants() -> u8 {
+    use crate::templates_ctor::{
+        CT_ANY_REG, CT_COLLIDE, CT_FLAGS_SKIP, CT_LAYOUT_SKIP, CT_MAINPOS, CT_NIL_VALUE,
+    };
+    u8::from(mutants::active("ctor_nil_value")) * CT_NIL_VALUE
+        | u8::from(mutants::active("ctor_flags_skip")) * CT_FLAGS_SKIP
+        | u8::from(mutants::active("ctor_layout_skip")) * CT_LAYOUT_SKIP
+        | u8::from(mutants::active("ctor_mainpos_off")) * CT_MAINPOS
+        | u8::from(mutants::active("ctor_collide")) * CT_COLLIDE
+        | u8::from(mutants::active("ctor_any_reg")) * CT_ANY_REG
+}
+
 /// BUNDLE-K item B: the active mutants `(strself_tag_skip, strself_mt_skip, strself_nil_hit)` of the inline string `SELF` of tier 1.
 pub(crate) fn strself_mut() -> (bool, bool, bool) {
     (
