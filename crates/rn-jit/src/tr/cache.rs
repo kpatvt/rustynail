@@ -108,6 +108,8 @@ pub const DLINK_PROCESS: u32 = 3;
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
 pub const DEEPPROBE_PROCESS: u32 = 12;
+/// T4 (`t4`, docs/JIT_TRACE.md section 46): the process default of [`TrLimits::t4`] (also the struct default).
+pub const T4_PROCESS: u32 = 0;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
@@ -837,6 +839,13 @@ pub struct TrLimits {
     /// Policy only: it decides which iteration is recorded, never how a trace runs. 0 = off (the first closed recording compiles, as before).
     /// Default [`DEEPPROBE_PROCESS`].
     pub deepprobe: u32,
+    /// T4 (`t4`, docs/JIT_TRACE.md section 46): native returns that cannot be made. Bit 0: the guards of a trace's native `RETURN` (callstatus,
+    /// the caller suspended at a continuation site that wants the result count) run at the end of the trace instead of in front of its first charge;
+    /// a failure (a call from outside the recursion: a method, `pcall`, a coroutine; a caller with another wanted count) exits through the snapshot of
+    /// the `RETURN` (the body is done, tier 1 runs only the `RETURN`) instead of through the start snapshot (tier 1 ran the whole body); that exit
+    /// never gets a side trace. Bit 1 (with bit 0): the start snapshot of such a trace, where now only the body's entry guards exit (table shapes),
+    /// may get side traces (blacklisted before: a side trace there began with the same failing guards). 0 = off, 3 = both. Default [`T4_PROCESS`].
+    pub t4: u32,
 }
 
 impl Default for TrLimits {
@@ -970,6 +979,7 @@ impl Default for TrLimits {
             dlink: DLINK_PROCESS,
             t1call: T1CALL_PROCESS,
             deepprobe: DEEPPROBE_PROCESS,
+            t4: T4_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1176,6 +1186,7 @@ impl TrLimits {
                 "lazypoison" => l.lazypoison = v.min(1),
                 "dlink" => l.dlink = v.min(3),
                 "deepprobe" => l.deepprobe = v.min(64),
+                "t4" => l.t4 = v.min(3),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 _ => bad.push(w.to_string()),
             }
@@ -2850,6 +2861,10 @@ pub struct TrStats {
     /// E6 (`dlink`): direct exit links patched in at a side trace's install / patched back at its flush.
     pub dlink_attached: u64,
     pub dlink_unlinked: u64,
+    /// T4 (`t4`, docs/JIT_TRACE.md section 46): traces installed whose native return is guarded at the end (bit 0), side traces attached at the start
+    /// snapshot of such a trace (bit 1).
+    pub ret_late: u64,
+    pub ret_start_sides: u64,
     /// R1: rearm ticks armed by a hand-off to the interpreter.
     pub rearm_arms: u64,
     /// R1: rearm ticks that entered a traced head.
@@ -2947,6 +2962,9 @@ struct Trace {
     /// budget) never get side traces (the guard fails for every call from outside the recursion; a side trace would start with
     /// the same guard).
     no_start_side: bool,
+    /// T4 (`t4` bit 0): the snapshot the late guards of a native return fail through (the state in front of the `RETURN`, see
+    /// [`TraceInstall::ret_late_snap`]): its exits never get side traces either (a side trace there would start with the same guards and end at once).
+    ret_late_snap: Option<u32>,
     /// BUNDLE-O O0 (diagnostic, `RUSTYNAIL_JIT_EXITDUMP`): guard classes per snapshot ([`exit::guard_kinds`]).
     gk: Vec<u16>,
     /// `loopany` guard: the callee loops (prototype address, head pc) this trace unrolled.
@@ -4150,6 +4168,9 @@ pub struct TraceInstall {
     pub ce_off: usize,
     /// P-M3: the trace ends with a native return.
     pub rec_ret: bool,
+    /// T4 (`t4` bit 0, docs/JIT_TRACE.md section 46): the guards of the native return run at the end of the trace and fail through this snapshot
+    /// (the placeholder guard's, in front of the `RETURN`); `None` when they sit in front of the first charge.
+    pub ret_late_snap: Option<u32>,
     /// `RUSTYNAIL_JIT_DUMP` text (IR and so on); written to `trace-<n>.txt` when a dump directory is set.
     pub text: Option<String>,
     /// Q3: [`shape_hash`] of the normalised IR / register allocation text (identifies a repeated compile).
@@ -4537,6 +4558,10 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
             .arena
             .register_range(block_addr, ti.code.len(), &format!("TRACE-{no}"));
     }
+    if ti.ret_late_snap.is_some() {
+        d.tr.stats.ret_late += 1;
+    }
+    let t4_start_sides = d.tr.cfg.limits.t4 & 2 != 0;
     let sl = d.tr.slot_mut(id).expect("checked above");
     let Body::Rec(r) = std::mem::replace(&mut sl.body, Body::Free) else {
         unreachable!("checked above")
@@ -4569,7 +4594,10 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         last: vec![None; nex],
         mark: vec![None; nex],
         nside: 0,
-        no_start_side: ti.rec_ret,
+        // T4 (`t4` bit 1): with the guards of the native return at the end (bit 0), the start snapshot is no longer where a call from outside the
+        // recursion exits; its exits (the entry guards of the body: the shape of the frame's tables) may get side traces
+        no_start_side: ti.rec_ret && !(ti.ret_late_snap.is_some() && t4_start_sides),
+        ret_late_snap: ti.ret_late_snap,
         gk: Vec::new(),
         la: Vec::new(),
         la_sides: 0,
@@ -4618,6 +4646,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         if sl.prelude {
             d.tr.stats.side_preludes += 1;
         }
+        let mut start_side = false;
         if let Some(Slot {
             body: Body::Trace(p),
             ..
@@ -4625,6 +4654,13 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         {
             p.kids.push(id);
             p.exit_st[sl.exit as usize] = SideSt::Has(id);
+            // T4 (`t4` bit 1): a side trace at the start snapshot of a native-return trace with late guards
+            start_side = p.ret_late_snap.is_some()
+                && p.xmeta.as_ref().is_some_and(|m| {
+                    m.snaps
+                        .get(sl.exit as usize)
+                        .is_some_and(|sn| sn.slots.is_empty() && sn.frames.is_empty())
+                });
             if !sl.prelude {
                 if let Some(c) = p.cells.get(sl.exit as usize) {
                     c.set(entry);
@@ -4643,6 +4679,9 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
                     }
                 }
             }
+        }
+        if start_side {
+            d.tr.stats.ret_start_sides += 1;
         }
         // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): the parent's branches to the exit (and its patchable `nop`) go to the link entry of the new side trace
         if !sl.prelude && ti.dl_off != 0 && d.tr.cfg.limits.dlink & 1 != 0 {
@@ -8402,6 +8441,13 @@ pub fn attach_exits(st: &mut State, id: TrId, meta: ExitMeta) -> Option<Arc<Exit
             if t.no_start_side {
                 for (k, sn) in meta.snaps.iter().enumerate() {
                     if sn.slots.is_empty() && sn.frames.is_empty() && k < t.exit_st.len() {
+                        black_exit(&mut t.exit_st, &t.exits, k);
+                    }
+                }
+            }
+            if let Some(ls) = t.ret_late_snap {
+                for (k, e) in meta.exits.iter().enumerate() {
+                    if e.snap == ls && k < t.exit_st.len() {
                         black_exit(&mut t.exit_st, &t.exits, k);
                     }
                 }

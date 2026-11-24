@@ -16305,6 +16305,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/e9_01_t1call.lua"),
     },
+    // T4 (docs/JIT_TRACE.md section 46): the guards of a native return at the end of the trace (`t4`)
+    Prog {
+        name: "t4_01_late_ret",
+        small: true,
+        src: include_str!("../../../../tests/vm/t4_01_late_ret.lua"),
+    },
     // docs/JIT_TRACE.md section 38 (`deepprobe`): deep sites pick the iteration their root is recorded on
     Prog {
         name: "e10_01_deep_probe",

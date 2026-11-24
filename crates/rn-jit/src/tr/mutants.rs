@@ -965,6 +965,8 @@ pub const NAMES: &[&str] = &[
     "dlink_store_skip",
     "dlink_unlink_skip",
     "dlink_vb_fb_nostore",
+    // T4 (`t4`): the guards of a native return at the end of the trace (docs/JIT_TRACE.md section 46)
+    "t4_late_start_snap",
     // E9 (`t1call`): the tier-1 call protocol (docs/JIT_TRACE.md section 37)
     "t1_jret_site_next",
     "t1_jret_ignore_mark",
@@ -1109,7 +1111,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 843);
+        assert_eq!(NAMES.len(), 844);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

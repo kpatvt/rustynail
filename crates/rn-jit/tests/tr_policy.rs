@@ -2032,6 +2032,25 @@ fn bp_rearmside_rule() {
     assert!(ok(M - 1, 1, false, 1, 0));
 }
 
+/// T4 (`t4`, docs/JIT_TRACE.md section 46): the knob's struct default is the shipped one, values are clamped to the two bits.
+#[test]
+fn t4_knob() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, T4_PROCESS};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(l.t4, T4_PROCESS, "struct default (tests) = shipped");
+    for (env, want) in [
+        (Some("t4=0"), 0),
+        (Some("t4=1"), 1),
+        (Some("t4=2"), 2),
+        (Some("t4=99"), 3),
+        (None, T4_PROCESS),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.t4, want, "limits env {env:?}");
+    }
+}
+
 /// docs/JIT_TRACE.md section 38 (`deepprobe`): a deep site's choice of the iteration its root is recorded on. The first `deepprobe` closed
 /// recordings are probes (dropped; the longest path is kept); then the first recording of at least 7/8 of that path is taken, the `deepprobe`-th
 /// try whatever its length; `DEEPPROBE_UNIFORM` probes with one path end the probing at once (the last one is taken); a recording of the site

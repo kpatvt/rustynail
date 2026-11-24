@@ -500,6 +500,9 @@ struct TStats {
     /// E6: `dlink: attached A unlinked U`.
     dlink_attached: u64,
     dlink_unlinked: u64,
+    /// T4: `t4: late returns L start sides S`.
+    ret_late: u64,
+    ret_start_sides: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -740,6 +743,10 @@ impl TStats {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.dlink_attached = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.dlink_unlinked = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("t4: late returns ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                s.ret_late = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.ret_start_sides = w.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("lazyloop: lazy-aware ") {
                 s.lazyloop_on = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
@@ -3332,11 +3339,16 @@ fn r2_recursion_programs() {
 /// slots (root cause of the old queens SEGV: they wrote `ci.previous` into a function slot through the start snapshot). The `contok`
 /// test knob records continuation heads / native returns for the loop recursion of `be_queens` (the shape of awfy `queens`), with the
 /// deterministic work gate off (`warm=0`, the failing configuration), in trace modes with lockstep, exit storms, budgets and GC
-/// stress. Mutant `rec_ret_regs_unsaved`.
+/// stress. Mutant `rec_ret_regs_unsaved`. The guards are in front of the first charge only with `t4=0` (docs/JIT_TRACE.md section 46: T4 moves
+/// them to the end of the trace, where the function slots are no longer what the registers hold): the configurations run with `t4=0`, the first
+/// one also with `t4=3`.
 #[test]
 fn be_native_return_guards_keep_registers() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
+        jobs.push(Job::new("be_queens", trace).limits_s(
+            "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,typesides=1,ineffcover=1,maxside=16,contok=1,t4=3",
+        ));
         for lim in [
             "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,typesides=1,ineffcover=1,maxside=16,contok=1",
             "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,typesides=1,ineffcover=1,maxside=16,contok=2",
@@ -3351,13 +3363,13 @@ fn be_native_return_guards_keep_registers() {
                 if budget != 0 {
                     j = j.budget(budget);
                 }
-                j.limits = lim.into();
+                j.limits = format!("{lim},t4=0");
                 jobs.push(j);
             }
         }
         for gc in ["1", "2"] {
             let mut j = Job::new("be_queens", trace).env("RUSTYNAIL_GC_STRESS", gc);
-            j.limits = "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,typesides=1,ineffcover=1,maxside=16,contok=1".into();
+            j.limits = "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,typesides=1,ineffcover=1,maxside=16,contok=1,t4=0".into();
             jobs.push(j);
         }
     }
@@ -12850,6 +12862,119 @@ fn e9_t1call_programs() {
         }
     }
     let _ = compare(jobs);
+}
+
+/// T4 (`t4`, docs/JIT_TRACE.md section 46): the guards of a native return at the end of the trace (bit 0: a failure exits in front of the `RETURN`
+/// with the body done) and side traces at the start snapshot of such traces (bit 1). `t4_01` (cd's red-black insert called by a method, entered
+/// through `pcall` and coroutine bodies, a coroutine whose body is the recursion, callers with other wanted counts, values of the body live at the
+/// exit, return / count hooks installed between rounds and from inside, errors and tracebacks, deep recursion with collections, finalizers) and the
+/// recursion programs of E1 / E4 / E5 / E6 x `t4` 0 / 1 / 3, `+verify`; for `t4=3`: exit storm, budgets 3 / 17 / 200, GC stress 1 / 2 in both
+/// collector modes, stack-move stress, `lazypoison=1`, every E-knob off; with the oracle feature the instruction-count identity (TR5: the late exit
+/// refunds the `RETURN` only). Asserts late native returns with bit 0 and none without it, start-snapshot side traces in `t4_01` with bit 1. The
+/// detector of `t4_late_start_snap` (the late guards fail through the start snapshot: tier 1 runs the body a second time).
+#[test]
+fn t4_late_ret_programs() {
+    let progs = [
+        "t4_01_late_ret",
+        "e1_01_unroll_shapes",
+        "e4_01_lazy_loop_shapes",
+        "e5_01_method_identity",
+        "e6_01_dlink",
+        "deep_recursion",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        let heavy = p.contains("deep");
+        for trace in ["always", "on2"] {
+            for lim in ["t4=0", "t4=1", "t4=3"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "t4=3";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).limits_s("t4=3,lazypoison=1"));
+            jobs.push(
+                Job::new(p, trace)
+                    .limits_s("t4=3,recunroll=0,idfold=0,lazyloop=0,midfold=0,dlink=0"),
+            );
+            for b in [3, 17, 200] {
+                if heavy && b != 17 {
+                    continue;
+                }
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                if heavy && gc == "1" {
+                    continue;
+                }
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            if !heavy {
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .limits_s(lim),
+                );
+            }
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                if heavy {
+                    continue;
+                }
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.limits == "t4=0" {
+            assert_eq!(o.stats.ret_late, 0, "{}: late returns with t4=0", j.tag());
+            assert_eq!(
+                o.stats.ret_start_sides,
+                0,
+                "{}: start-snapshot side traces with t4=0",
+                j.tag()
+            );
+        }
+        if j.limits == "t4=1" {
+            assert_eq!(
+                o.stats.ret_start_sides,
+                0,
+                "{}: start-snapshot side traces without bit 1",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if j.prog == "t4_01_late_ret" && plain && (j.limits == "t4=1" || j.limits == "t4=3") {
+            assert!(
+                o.stats.ret_late >= 4,
+                "{}: late returns {}",
+                j.tag(),
+                o.stats.ret_late
+            );
+        }
+        if j.prog == "t4_01_late_ret" && plain && j.limits == "t4=3" && j.trace == "always" {
+            assert!(
+                o.stats.ret_start_sides >= 1,
+                "{}: start-snapshot side traces {}",
+                j.tag(),
+                o.stats.ret_start_sides
+            );
+        }
+    }
 }
 
 /// docs/JIT_TRACE.md section 36.1 (the lazy-chain defect of 35.8): a side trace of a lazy-aware family entered by an exit of its parent inside the

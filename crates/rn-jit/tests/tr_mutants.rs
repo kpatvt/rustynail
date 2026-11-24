@@ -4414,6 +4414,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "e6_dlink_programs")],
     },
     Row {
+        name: "t4_late_start_snap",
+        owner: "T4",
+        dets: &[d("tr_core", "t4_late_ret_programs")],
+    },
+    Row {
         name: "t1_jret_site_next",
         owner: "E9",
         dets: &[d("tr_core", "e9_t1call_programs")],

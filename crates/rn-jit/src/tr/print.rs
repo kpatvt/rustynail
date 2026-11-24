@@ -247,6 +247,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.dlink_attached, s.dlink_unlinked
         );
     }
+    if s.ret_late + s.ret_start_sides > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] t4: late returns {} start sides {}",
+            s.ret_late, s.ret_start_sides
+        );
+    }
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,

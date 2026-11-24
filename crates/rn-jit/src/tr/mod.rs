@@ -2289,6 +2289,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             rec_link_cell = c0;
         }
     }
+    // T4 (`t4` bit 0): the guards of a native return at the end of the trace
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let rec_late = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.t4 } & 1 != 0;
     let emurun = opts.emurun;
     let emuverify = opts.emuverify && !opts.emurun;
     // S1 (`lazystub`): deferred exit stubs. Not under the emulator (it runs the program it was given, not code assembled and patched in later).
@@ -2356,6 +2359,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             && !emuverify,
         // SAFETY: as above.
         rec_vb_keep: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.dlink } & 2 != 0,
+        // SAFETY: as above.
+        rec_late,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         idfold_uv: idf_env,
@@ -2597,6 +2602,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
                     .unwrap_or(0)
             },
             rec_ret: ir.rec_ret.is_some(),
+            ret_late_snap: (ir.rec_ret.is_some() && rec_late)
+                .then(|| ir.ins.last().map(|i| ir::aux_snap(i.aux)))
+                .flatten(),
             dl_off: if emurun || emuverify {
                 0
             } else {

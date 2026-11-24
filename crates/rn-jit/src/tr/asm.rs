@@ -239,6 +239,9 @@ pub struct AsmEnv {
     /// E6 (`dlink` bit 1): a native push / return of a lazy-aware family keeps the budget in its register when it jumps through a `rec` cell (an inner
     /// entry continues with the register); the word is stored on the null-cell path, the only one that leaves.
     pub rec_vb_keep: bool,
+    /// T4 (`t4` bit 0, docs/JIT_TRACE.md section 46): the guards of a native return run at the end of the trace (failing through the snapshot of the
+    /// `RETURN`) instead of in front of the first charge (failing through the start snapshot).
+    pub rec_late: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
     pub lazy_cs: Option<u32>,
     /// BUNDLE-K L1: `numparams` of the root prototype (the end of the arguments of a frame just pushed natively).
@@ -388,6 +391,7 @@ impl Default for AsmEnv {
             lazy_poison: false,
             dlink_snaps: false,
             rec_vb_keep: false,
+            rec_late: false,
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
@@ -3281,9 +3285,24 @@ pub fn assemble_dl(
             continue;
         }
         if ir.rec_ret.is_some() && i + 1 == ir.ins.len() {
-            let Some(_) = ir.rec_ret else { unreachable!() };
+            let Some(rr) = ir.rec_ret else { unreachable!() };
             if !(ir.ins[i].op == TOp::Eq && ir.ins[i].flags & F_GUARD != 0) {
                 return incons("a native return does not end in its placeholder guard");
+            }
+            if env.rec_late {
+                // T4 (`t4` bit 0): the guards of the native return fail through the placeholder's snapshot, the state in front of the `RETURN`
+                // with the whole body done (tier 1 runs the `RETURN` alone); in front of the writeback, so the function slot still holds the
+                // callee when they fail
+                if !cx.al.ins[i].pre.is_empty() {
+                    return incons("reloads in front of a native return's placeholder guard");
+                }
+                // (mutant: they fail through the start snapshot, as in front of the first charge: tier 1 runs the body a second time)
+                let at = if mutants::active("t4_late_start_snap") {
+                    ir.ins.iter().position(|x| x.op == TOp::Budget).unwrap_or(i)
+                } else {
+                    i
+                };
+                cx.rec_ret_guards(at, rr)?;
             }
             continue;
         }
@@ -3307,7 +3326,7 @@ pub fn assemble_dl(
             cx.push(Op::Jmp(x));
             cx.bind(done);
         }
-        if let (Some(rr), TOp::Budget) = (ir.rec_ret, ir.ins[i].op) {
+        if let (Some(rr), TOp::Budget, false) = (ir.rec_ret, ir.ins[i].op, env.rec_late) {
             // (the guards depend on the frame only, which nothing in the trace changes: they sit in front of the first charge
             // and fail to the state at the start of the trace, where every register is free)
             cx.rec_ret_guards(i, rr)?;
@@ -4309,8 +4328,19 @@ impl Cx<'_> {
         // failing guards exit through restores those slots from the registers: clobbered, they write `ci.previous` (a `CallInfo`
         // address) into a function slot. Registers a value of an earlier instruction was computed into are saved around the guards.
         let mut saved: Vec<(V, u16)> = Vec::new();
+        // T4: at the end of the trace (the placeholder guard) only the values of its snapshot and of the writeback are live
+        let late = i + 1 == self.ir.ins.len();
+        let snap = aux_snap(self.ir.ins[i].aux) as usize;
         for (k, r) in [1u8, 2, 3].into_iter().enumerate() {
-            let live = self.al.ins[..i].iter().any(|a| a.dst == Loc::G(r));
+            let live = if late {
+                self.al
+                    .snap_locs
+                    .get(snap)
+                    .is_some_and(|v| v.contains(&Loc::G(r)))
+                    || self.al.end_locs.contains(&Loc::G(r))
+            } else {
+                self.al.ins[..i].iter().any(|a| a.dst == Loc::G(r))
+            };
             if live && !mutants::active("rec_ret_regs_unsaved") {
                 let slot = self.ext_slot(4 + k as u16);
                 self.st(W::B8, spill_m(slot), Src::V(r));
