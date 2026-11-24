@@ -389,3 +389,8 @@ lua_lexer gain comes from `Lexer:next`'s **loop** families (pc 1 and 99), which 
 function-entry head; the study's loop-root scratch selector should have kept them. The losers of `retf=7` are pops inside a recursion, pops into a
 caller loop without a root trace and a first-iteration `Unstable` lottery (roguelike_turns, cured in a scratch build by TR24c in-place restarts).
 T4-T9 are unchanged.
+
+T6 and T8 were built on 2026-11-23 (docs/JIT_TRACE.md section 44, on top of fdc8eda): T6 is the fused tier-1 constructor (`t6` bit 0, `vec(i, i, i)` in tier 1 935 -> 798 instructions,
+the 1700 of this study being the J4 `RUSTYNAIL_JIT_TRACE=off` figure) and the mixed integer / float `math.min` / `math.max` (`t6` bit 1); together raytrace -6.6 % instructions. T8 turned out to be the pattern `string.find` /
+`string.match` (the recorder aborted `Nyi(Call)` at them: lua_lexer -16 %, lua_parser -13 %, expr_compiler -6.5 %, expr_lang -9.6 % on 5.5), the other library calls of the handle were measured and not built. The "wasted
+recordings" of section 43 became the knob `blfirst` (raytrace -4 %).

@@ -5338,3 +5338,189 @@ icache misses above), `apps/events` 5.5 +1.5 % (control run twice: 167.2 / 165.4
   4 / 4 caught (425 s). The light gate's automatic group (160 mutants chosen from the diff) was stopped after the other steps had passed and replaced by that group.
 * Commit 3 (the `[trace] unstable` log line of `RUSTYNAIL_JIT_VERBOSE=3`, this section): all steps PASS (`mutant-map` failed once on the shifted lines and was regenerated and re-checked after it ran), mutant group `restarts_` 2 / 2.
 * Not run: `gate-heavy.sh`, the full mutant runner, `tr_oracle`, PGO builds, all-223 benchmarks, `bench-fast.sh` (see the method note).
+
+## 44. T6 (tier-1 residue paths), T8 (pattern `find` / `match` on trace) and `blfirst` (blacklist at the first unchangeable abort) (2026-11-23, base fdc8eda)
+
+Method (light): release `rn-cli` builds (`cargo build --release -p rn-cli`, 5.5; `RUSTFLAGS="--cfg rustynail_lua54"` and `LUA_VERSION=5.4`, 5.4), `RUSTYNAIL_SEED=0`, **control = a build of main fdc8eda made in this session** (5.5 from the worktree before the first
+edit, 5.4 from `git archive`), binaries in equal-length directories; instructions of one run (`perf stat instructions:u`, deterministic), cycles = min of 7 interleaved runs pinned to CPU 4 (`cycles:u`; 11 runs for the re-checks).
+Sample = the 30 programs of section 43 (awfy 14, apps 5, corpus2/heldout 6, corpus2/dev 4, corpus 1). Per-item attributions are the **same binary** under `RUSTYNAIL_JIT_TRACE_LIMITS` (the three knobs below, env of equal length) because
+binaries that differ in any struct or function are not formation-equal (section 43). Not `bench-fast.sh`, no PGO, no all-223 sweep, no `gate-heavy.sh`.
+
+Knobs (all in `RUSTYNAIL_JIT_TRACE_LIMITS`, defaults are the struct defaults of the tests and the process defaults):
+
+| knob | meaning | default |
+|---|---|---|
+| `t6=N` | bit 0 = fused `NEWTABLE` + constant-key `SETFIELD`s in tier 1 (`templates_ctor.rs`), bit 1 = `math.min` / `math.max` of one integer and one float inline in tier 1 (`t1inline.rs`); traces on only, like `tset` | 3 |
+| `libcall=N` | the BUNDLE-H / R mask, two new bits: 1024 = `string.find` with a pattern without captures (`LIB FINDP`), 2048 = `string.match` with no capture or one string capture (`LIB FINDM` + `SUB`) | 4095 (was 1023) |
+| `blfirst=N` | mask of the `unchangeable` abort reasons that blacklist a head at the first occurrence: 1 `TooLong`, 2 `Compile(..)`, 4 `InnerLoop`, 8 the other unchangeable reasons, 16 = also for the exits of side traces | 3 |
+
+### 44.1 T6: the tier-1 per-call cost of the constructor idiom (commits `t6 bit 0`, `t6 bit 1`)
+
+**Where the instructions of one `vec(i, i, i)` go in tier 1** (`mb_vec.lua`: `for i = 1, N do keep[i % 64 + 1] = vec(i, i, i) end`, `vec` = `return setmetatable({x = x, y = y, z = z}, V)`, per iteration = (N = 1.2 M minus N = 0.2 M)
+/ 1 M, tier 1 only; instruction-sampled `perf record -c 100000`, shares of the run times the per-iteration total):
+
+| | study / `RUSTYNAIL_JIT_TRACE=off` (J4 tier 1) | tier 1 inside a trace-enabled run (control) | after `t6` bit 0 |
+|---|---:|---:|---:|
+| total per iteration | 1717 | 935 | **798** |
+| code of `vec` (NEWTABLE call glue, 3 SETFIELD, GETTABUP, inline `setmetatable`, tail return) | 451 | 388 | 301 |
+| the loop and the Lua call of `vec` | 127 | 171 | 137 |
+| `jit_set` 253 + `psetshortstr_after` 125 (the three new keys through the helper) | 378 | 0 (`tset` bit 4, H2b, inline) | 0 |
+| `post_call`, `base_setmetatable`, `precall_c`, `jit_tailcall`, `pre_tail_call`, `get_metafield`, `set_metatable` (the C call) | 417 | 0 (H2a, `t1inline` bit 10, inline) | 0 |
+| `jit_newtable` + `State::new_table` + `resize` + `setnodevector` (NEWTABLE with a hash part, the pooled blocks) | 227 | 266 | 246 |
+| young collection (`list_remove_after`, `propagatemark`, `gc_step`, `reallymark`) | 100 | 105 | 107 |
+
+The 1700 instructions of the study are the J4 numbers (`RUSTYNAIL_JIT_TRACE=off` keeps tier 1 as J4: no `tset` inline paths, no `t1inline` rows); in a normal run H2a / H2b / H2c already took the `setmetatable` C call and the new-key helper out
+(935 per `vec` is the residue the handle is about). What was left was the probe-and-insert of every `SETFIELD`: a hash chain walk that misses (about 50 instructions), then `Cold::NewKey`
+(dummy / black / nil / metatable / main-position / non-empty tests, the stores, the flags and the layout id: about 60), three times.
+
+**What was built.**
+
+1. `t6` bit 0, `templates_ctor.rs`. A `NEWTABLE` with a hash size followed by `SETFIELD`s of distinct constant short-string keys into its register: the main position of every key in the presized node vector is known when the function is
+   compiled (the PUC hash of a constant is fixed, `2^(B-1)` nodes), so when no two keys of the group share a main position each key is a store into a free node of a fresh table. The fused code is emitted behind the helper call of the
+   `NEWTABLE` template and jumps over the generic templates of the group (which stay in place as the fall-through): guards before the first store: the table is not black (a collection step inside the helper marks a table that is
+   reachable from the stack), no stored value is nil (a nil store is a no-op that must not create the key). Per key: key tag, key pointer, value tag, payload at `node + pos * 24`; once: `flags &= ~MASKFLAGS`, the layout id slot
+   at `node - 16` cleared for 8 nodes or more. A key whose main position is taken ends the group (the instructions from there on are the generic templates, which find the earlier keys where the interpreter's insertions put them), as does
+   anything that is not a `SETFIELD` of the same register with a constant short-string key and a non-nil constant or a register other than the table. No barrier (the table is not black), no `__newindex` (it has no metatable).
+2. `t6` bit 1, `t1inline.rs::t1i_minmax`: raytrace's `min(1, c.x)` / `max(0, n:dot(l))` have one integer and one float operand, which the inline path (two integers or two floats) sent to `jit_call` (`math_min` + `jit_call` + `precall_c` +
+   `post_call`: about 4 % of raytrace's instructions). One integer and one float now compare as `lua_compare` does (the integer converted, exact for `|i| <= 2^53`; beyond that the generic path; NaN never wins), the result is the winning operand with its
+   own type. This is the "leaf call" of the handle; the `setmetatable` call, the Lua call protocol and the tail call were already the tier-1 inline paths of H2a / H2c / E9 (the remaining ~137 of the loop are the call of `vec`, E9's domain).
+
+Measured: **`vec(i, i, i)` in tier 1 935 -> 798 instructions (-14.6 %), 193 -> 160 Mcycles per 1.2 M iterations (-17 %)**: not the "halve" of the handle, which would need the allocation (setnodevector with its pooled block, `new_table`,
+the Lua call) as well, both of which were left alone (the allocator accounting is shared with every program; the call protocol is stage 6 of DESIGN_CALL_PROTOCOL).
+
+| instructions M (same binary, the other knobs off) | `t6=0` | `t6=1` | `t6=3` |
+|---|---:|---:|---:|
+| 5.5 apps/raytrace | 335.3 | 322.2 (-3.9 %) | 313.2 (-6.6 %) |
+| 5.5 awfy/cd | 763.8 | 757.0 (-0.9 %) | 757.0 |
+| 5.5 corpus2/dev/lua_parser | 5078.0 | 5028.0 (-1.0 %) | 5028.0 |
+| 5.5 corpus2/dev/expr_compiler | 5672.2 | 5622.0 (-0.9 %) | 5622.0 |
+| 5.4 apps/raytrace | 348.1 | 338.2 (-2.8 %) | 329.6 (-5.3 %) |
+| 5.4 awfy/cd | 833.1 | 826.8 (-0.8 %) | 826.8 |
+
+(the other programs of the sample: no change above 0.25 % under either bit.) Tests: `tr_core::t6_ctor_programs` (`tests/vm/t6_01_ctor.lua`: record constructors, nil values, metamethod-name keys,
+60 + 90 generated key sets with and without a foreign store behind them, collections, errors; every job against the interpreter, new trace mode `t1x` = traces on and nothing hot, so everything runs in tier 1; `always` / `on2`; `t6` 0 / 1;
+`+verify`, `+emurun`, budgets 3 / 17 / 200, GC stress 1 / 2 in generational and incremental mode, with the heap verifier, stack-move stress; three more string-hash seeds), `tr_core::t6_minmax_programs` (`t6_02_minmax.lua`: all pairs of 36
+edge values), `tr_shape::shape_tier1_ctor_clears_the_id`. Mutants `ctor_nil_value`, `ctor_flags_skip`, `ctor_layout_skip`, `ctor_mainpos_off`, `ctor_collide`, `ctor_any_reg`, `t6_mm_big_skip`, `t6_mm_conv_skip` (8, all caught;
+registry 823 -> 831 with them). The black-table guard has no mutant: a fresh table is black only when the collector step inside the `NEWTABLE` helper marked it (an incremental cycle's atomic phase), which no program can force;
+`ctor_black_skip` and a duplicate-key mutant were written, found not to be detectable (the first) or unreachable (the second: a repeated key is a collision at its own position) and removed. The guard is the one of `Cold::NewKey`, whose
+mutant `newkey_black_skip` is caught on old tables.
+
+### 44.2 T8: pattern `find` / `match` on trace (commits `libcall bit 10`, `libcall bit 11`)
+
+**Which library calls dominate** (`debug.sethook(.., "c")` counts, JIT off, default size; the first rows are the programs the study names):
+
+| program | C calls |
+|---|---|
+| corpus/lua_lexer | `byte` 8.05 M, `sub` 2.55 M, `char` 0.96 M, **`find` 0.53 M**, `format` 90 k, `concat` 75 k |
+| corpus2/dev/lua_parser | `sub` 1.80 M, **`find` 1.71 M**, `type` 1.07 M, **`match` 0.28 M**, `concat` 81 k |
+| apps/expr_lang | **`find` 102 k**, `insert` 27 k, `sub` 23 k |
+| corpus2/dev/text_adventure | `remove` 0.81 M, `format` 0.80 M, `gmatch` 0.80 M, `max`, `lower`, `floor` 0.80 M each, `concat` 224 k, `tostring` 36 k |
+| awfy/json | `sub` 305 k, `insert` 292 k, `concat` 24 k |
+| corpus2/heldout/stream_closures | `max` 2.8 M, `remove` 25 k, `match` 25 k |
+| apps/markdown | `gsub` 65 k, `match` 58 k, `insert` 28 k |
+
+`table.concat` (24-224 k calls, the work is the copy), `table.insert(t, pos, v)` (events: 8.5 k calls; the positional form does not occur in the hot loops of the sample), `string.char` with more than three
+arguments (none: the lexer calls it with one) and `tostring` of strings / tables (36 k in text_adventure) were **not built**: their call counts are one to three orders of magnitude below the pattern calls, and the calls that are
+recorded already (`byte`, `sub`, `char`, `gmatch`, `max`, `remove`, `lower`, `format`) are the ones the gaps of `lib/` (`byte_multi`, `str_lt_short`, `tremove_pop`, `find_plain`) are made of: their profile is the trace code and
+the helper (`byte_multi` 96 % in `TRACE-1`, `str_lt_short` 85 % in `jit_tr_lib_cmp` + libc `memcmp`), not a missing recording.
+
+The two that pay: **a `string.find` / `string.match` whose pattern has specials aborted the recording `Nyi(Call)` at the call** (`record.rs` `lib_find`: "a real pattern"), so every loop with one stayed in tier 1 (lua_lexer, lua_parser,
+expr_lang, expr_compiler, real_dis_mips).
+
+* `libcall` bit 10 (`LIB FINDP`, `ir.rs::lib::FINDP`): the recorder runs the library's matcher once at record time (`rn_std::pattern::find_with`) to learn the outcome (match / no match; a capture, a position capture or a pattern error stays
+  `Nyi`), then emits `FINDP(s, p, init)` and guards the outcome seen. The helper (`asm.rs::findp_core`) runs the same matcher on the operands (so a pattern that changes at run time is searched with the new pattern) and answers 1 (no
+  match), `end << 32 | (start + 1)` (start and end of the match, 1-based, both below 2^31), or 0 when the matcher finds a capture, a position capture or an error or a string has 2^31 bytes or more: the guard
+  then exits and the interpreter runs the real call. The IR splits the word (`BAND`, `SUB`, `SHR`); a call that wants only the start does not compute the end. The lockstep model reads the packed word from the two result slots (`pend_str` marker
+  `FINDP_PACK`).
+* `libcall` bit 11 (`LIB FINDM`): `string.match` with no capture or exactly one string capture. `FINDM` answers the same packed span of the *result* (the capture, or the whole match), the recorder follows it with the existing `SUB(s, start, end)`,
+  which makes (and interns) the result string, its own recorded-kind guard covering the short / long class. The model value of the `FINDM` result is a literal computed by the recorder (`FINDP_LIT`: the VM slot holds the matched string,
+  not the span).
+
+| instructions M, same binary, the other knobs off | `libcall=1023` | `=2047` (+ FINDP) | `=4095` (+ FINDM) |
+|---|---:|---:|---:|
+| 5.5 corpus/lua_lexer | 3968.4 | 3333.8 (-16.0 %) | 3333.8 |
+| 5.5 corpus2/dev/lua_parser | 5078.0 | 4663.6 (-8.2 %) | 4402.3 (-13.3 %) |
+| 5.5 corpus2/dev/expr_compiler | 5672.2 | 5672.3 | 5302.3 (-6.5 %) |
+| 5.5 corpus2/heldout/real_dis_mips | 7281.9 | 7281.9 | 7018.8 (-3.6 %) |
+| 5.5 apps/expr_lang | 568.0 | 513.3 (-9.6 %) | 513.3 |
+| 5.5 lib/find_pat | 1628.2 | 1289.4 (-20.8 %) | |
+| 5.4 corpus/lua_lexer | 4494.7 | 3450.3 (-23.2 %) | 3450.1 |
+| 5.4 corpus2/dev/lua_parser | 6024.7 | 5695.4 (-5.5 %) | 5425.3 (-9.9 %) |
+| 5.4 corpus2/dev/expr_compiler | 5813.5 | 5813.5 | 5571.7 (-4.2 %) |
+| 5.4 corpus2/heldout/real_dis_mips | 7513.9 | 7513.9 | 7233.9 (-3.7 %) |
+| 5.4 apps/expr_lang | 596.2 | 568.3 (-4.7 %) | 568.3 |
+
+(the rest of the 30-program sample moves by less than 0.05 % under either bit; `lib/find_cap` (a capture with `find`: the results include the captures) is unchanged: 1634.0 = 1634.0.) The study estimated -2..-4 % for lua_lexer; the real
+share was larger because the aborted recording left the whole loop (the lexer's dispatch chain, not only the call) in tier 1.
+Tests: `tr_core::t8_findp_programs` (`t8_01_findp.lua`: a lexer loop, start only, init values, empty matches, captures that stay calls, a pattern that turns into a capture after a long run of capture-free ones, malformed patterns under
+`pcall`, long strings, tail calls) and `t8_findm_programs` (`t8_02_findm.lua`): `always` / `on2` x `libcall` off / on, `+verify`, `+emurun`, exit storm, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes; every job against the
+interpreter; `always` installs more traces with the bit on. Mutants `findp_init_skip`, `findp_caps_skip`, `findp_end_off`, `findp_outcome_skip`, `findm_span_off`, `findm_caps_skip`, `findm_outcome_skip` (7 caught; two of them,
+`findp_caps_skip` and `findm_caps_skip`, survived the first versions of the programs, which asked only for the first result of the changed pattern: sections (10) of both programs were added). Registry 831 -> 838.
+
+### 44.3 `blfirst`: blacklist at the first `unchangeable` abort (commit `T2b/blfirst`)
+
+Section 43.2 left it as a policy question: an `unchangeable` abort (`TooLong`, `Compile(..)`, `InnerLoop`, `Nyi`, ...) blacklists a head at its *second* identical occurrence (`on_abort_with`: `repeat`); blacklisting at the first would
+save the second recording. Built as a knob (`TrLimits::blfirst`, mask above; `cache.rs::blfirst_applies`; roots and, with bit 16, the exits of side traces). Instructions M, 5.5, same binary (the build of the first two commits: the constructor fusion on,
+min / max and the pattern ops not yet there), `RUSTYNAIL_JIT_TRACE_LIMITS=blfirst=<mask>`:
+
+| `blfirst` | raytrace | cd | richards | towers | deltablue |
+|---|---:|---:|---:|---:|---:|
+| 0 (the old rule) | 322.2 | 757.1 | 172.6 | 172.8 | 316.6 |
+| 1 (`TooLong`) | 316.7 (-1.7 %) | 757.1 | 172.6 | 172.8 | 316.6 |
+| 2 (`Compile(..)`) | 314.7 (-2.3 %) | 757.0 | 172.6 | 172.8 | 316.6 |
+| 3 | **309.1 (-4.1 %)** | 757.1 | 172.6 | 172.8 | 316.6 |
+| 4 (`InnerLoop`) | 322.0 | 755.8 (-0.2 %) | 172.6 | 172.8 | 320.6 (**+1.3 %**) |
+| 7 | 308.8 | 755.8 | 172.6 | 172.8 | 320.7 (+1.3 %) |
+| 15 (every unchangeable reason) | 308.7 | 758.0 (+0.1 %) | 172.6 | 172.8 | 320.6 (+1.3 %) |
+| 31 (and the exits of side traces) | 305.0 (-5.4 %) | 758.7 (+0.2 %) | **219.9 (+27.4 %)** | **181.5 (+5.0 %)** | 314.6 |
+
+Bits 4, 8 and 16 cost deltablue, richards and towers (an `InnerLoop` / `Nyi` at a side exit is a property of the path of that recording, not of the exit, which the second occurrence tells: the rule exists for a reason); **bits 1 and 2 (default 3)
+are what the study's "wasted recordings" are**: `TooLong` and `Compile(pass)` recordings are about 25 % of raytrace's recorded steps, and a recording that is too long or has too many snapshots is that again every time. 30-program sample,
+`blfirst=3` against 0 (5.5): raytrace -4.1 %, expr_lang -4.3 % (its `Compile` failures), nothing else beyond +0.02 % (`bounce` ... `lua_lexer`). **Is the effect systematic?** Over the hot thresholds of sections 40 / 43
+(`RUSTYNAIL_JIT_TRACE_HOT` 200 230 248 252 **256** 264 300 400, instructions M, 5.5, `blfirst` 0 -> 3): raytrace 327.6 -> 316.8 (-3.3 %), 334.2 -> 317.7 (-5.0 %), 319.2 -> 308.8 (-3.2 %), 334.7 -> 320.5 (-4.2 %), **322.2 -> 309.1 (-4.1 %)**,
+336.2 -> 309.2 (-8.0 %), 323.8 -> 318.4 (-1.7 %), 348.6 -> 335.4 (-3.8 %): a gain at all eight, 1.7 to 8.0 %; cd, richards, towers, deltablue unchanged (+-0.02 %) at all of them; expr_lang equal at 200 / 230 / 248, -4.6 % at 252, **+3.1 % at 264**,
+-1.5 % at 300, -2.0 % at 400 (a formation landing: its second recording at that threshold is the one that compiles). 5.4 shows the same shape: raytrace -4.7 %, expr_lang -2.6 %, and one miss at the shipped threshold: **`stream_closures` +13.8 %
+instructions** (3191.7 -> 3633.0 M; cycles -2.7 %) which the threshold sweep shows to be a landing (the program's instructions at `blfirst=0` alone range 3163 .. 3686 over the eight thresholds; `blfirst=3` against 0 per
+threshold: -6.2, 0.0, -2.6, -14.4, -0.1, -0.1, -0.1 %, and +13.8 % at 256: mean -1.2 %). The bar (no program over +1 % instructions) is therefore missed once, on 5.4, and the knob is shipped on: flip `BLFIRST_PROCESS` to 0 to undo it.
+
+**"Too many snapshots" predicted earlier: not built, and why.** `split_type_snaps` fails when it needs a snapshot past `MAX_SNAPS` (500) for the type-check guards that share one. Over the 30-program sample (`blfirst=0`, 1923 compiled
+recordings and 6 failed ones) the recordings that compiled have at most **263** snapshots when they close (stream_closures; everything else <= 250), the five that failed `too many snapshots` are all raytrace's, **454 - 493** at the
+closing step (the sixth failure is `install: Refused`). A predictor "abort at the closing step when the recording holds 300 or more snapshots" would therefore be exact on this sample, and would save the pipeline front of the failing
+recordings (sink, loop pass, the part of `split_type_snaps` before it fails: about 0.2-0.3 % of raytrace after `blfirst` has removed the second attempt), but it is not sound in general: the bound is a property of the passes (the type
+check guards sharing a snapshot and the peeling of the loop add up to 2x the recorded count), not of the recorder's count, so any threshold below 499 can refuse a recording that would have compiled, and the exact count needs the passes. It
+buys little next to `blfirst` (which removes the repeat) and was left out.
+
+### 44.4 All three against main (5.5 and 5.4, 30-program sample, min of 7, CPU 4)
+
+Instructions and cycles M, control (main fdc8eda, same session) -> this branch; only the rows that moved by more than 1 % instructions or 2 % cycles, the others are within +-0.5 % instructions and +-1.5 % cycles:
+
+| program | 5.5 instructions | 5.5 cycles | 5.4 instructions | 5.4 cycles |
+|---|---|---|---|---|
+| apps/raytrace | 335.3 -> 300.0 (**-10.5 %**) | 104.2 -> 95.0 (**-8.8 %**) | 348.1 -> 313.1 (**-10.0 %**) | 113.0 -> 104.7 (**-7.4 %**) |
+| apps/expr_lang | 568.0 -> 512.7 (-9.7 %) | 147.1 -> 128.5 (-12.6 %) | 596.2 -> 552.1 (-7.4 %) | 151.3 -> 138.3 (-8.6 %) |
+| corpus/lua_lexer | 3968.4 -> 3333.8 (-16.0 %) | 987.5 -> 819.1 (-17.1 %) | 4495.4 -> 3450.1 (-23.3 %) | 1143.5 -> 852.7 (-25.4 %) |
+| corpus2/dev/lua_parser | 5078.4 -> 4360.4 (-14.1 %) | 1260.4 -> 1177.7 (-6.6 %) | 6024.6 -> 5397.3 (-10.4 %) | 1548.7 -> 1442.6 (-6.9 %) |
+| corpus2/dev/expr_compiler | 5672.2 -> 5290.9 (-6.7 %) | 1298.3 -> 1210.3 (-6.8 %) | 5813.5 -> 5560.9 (-4.3 %) | 1342.0 -> 1259.2 (-6.2 %) |
+| corpus2/heldout/real_dis_mips | 7281.9 -> 7018.8 (-3.6 %) | 2213.5 -> 2087.4 (-5.7 %) | 7514.0 -> 7233.9 (-3.7 %) | 2266.6 -> 2150.5 (-5.1 %) |
+| awfy/cd | 763.8 -> 757.1 (-0.9 %) | 257.3 -> 251.7 (-2.2 %) | 833.1 -> 826.8 (-0.8 %) | 281.7 -> 278.5 (-1.1 %) |
+| corpus2/heldout/stream_closures | 2803.9 -> 2804.9 | 739.1 -> 738.6 | 3191.7 -> 3633.0 (**+13.8 %**) | 824.7 -> 802.2 (-2.7 %) |
+| corpus2/heldout/prototype_objects | 3639.4 -> 3639.4 | 1454.3 -> 1499.4 (**+3.1 %**) | 3444.3 -> 3444.3 | 1537.3 -> 1568.3 (**+2.0 %**) |
+
+Geomean over the 30 programs: 5.5 instructions 0.9783, cycles 0.9809; 5.4 instructions 0.9830, cycles 0.9792. Per item (same binary, one knob group on at a time, instructions M): 5.5 raytrace 335.3 -> 322.2 `blfirst`, 322.2 `t6=1`, 313.2 `t6=3`, 300.0 all three; 5.5 lua_parser 5078.0 -> 5078.9 `blfirst`, 5028.0 `t6`,
+4663.6 FINDP, 4402.3 FINDP + FINDM, 4360.4 all three; 5.4 raytrace 348.1 -> 331.6 `blfirst`, 338.2 `t6=1`, 329.6 `t6=3`, 313.1 all three; 5.4 lua_lexer 4494.7 -> 3450.3 FINDP.
+
+**Bar.** Instructions: **missed once**: 5.4 `stream_closures` +13.8 % (the `blfirst` landing above; the other programs are all within +0.75 %: 5.4 `markdown` +0.75 % comes with all three knobs off, i.e. from the binary, not from a policy: all-knobs-off
+392.9 against 390.2 M). Cycles: 5.5 `prototype_objects` +3.1 % and 5.4 `prototype_objects` +2.0 % at **equal instructions**: with the control run twice (5.5: the two control runs differ by -1.9 %, this build +0.2 % against the first; 5.4: +1.1 % and
++2.6 % against the first) and with an all-knobs-off build (5.4: +2.1 %, with the default knobs +2.3 %, same binary) this is code layout of the build, as section 43 found for the same program; 5.4 `markdown` +1.8 % cycles with +0.75 % instructions
+(all-knobs-off +1.8 % / +0.7 %); `events` +1.2 / +1.5 %, `havlak` +1.4 % (5.5, 11 runs: +0.5 %), `storage` +1.2 % (5.5, 11 runs: +0.4 %), `sieve` +1.4 % (5.4, 11 runs: -0.5 %) were not repeated beyond the 11-run checks and are inside the spread
+of identical-instruction runs.
+
+### 44.5 Gates and what was not run
+
+* Per commit `scripts/gate-light.sh <group> --fast` (fmt, mutant-map, clippy x3, core 5.5 / 5.4, trace suites 5.5 (160 s) / 5.4 (154 s), vm_corpus, jit-diff 1-50, the mutant group of the commit: `blfirst_` 2 / 2 caught, `ctor_` 6 / 6,
+  `t6_mm_` 2 / 2, `findp_` 4 / 4, `findm_` 3 / 3); each commit was gated in its own final state (the first versions of `ctor` / `findp` / `findm` had survivors that the programs were extended to catch, a clippy-visible signature change of
+  `on_abort_with` was kept as `on_abort_blf`, and the `libcall` clamp test follows the new bits). `scripts/gen-mutant-map.py` regenerated with every commit; registry 821 -> 838.
+* End state: `jit-diff.sh 1 40` modes `off tr trdef`, `JITDIFF_ENTERS=1`, on the 5.5 and 5.4 release binaries: 0 diffs, 0 timeouts (5.5: 35 / 40 seeds with traces in `tr`, 1070 installed; 5.4: 1067); the official suite (`vendor/lua-tests-5.5`
+  and `-5.4`, `scripts/jit-official.sh`) with `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`: `JIT-OFFICIAL OK` on both; GC stress (1 / 2, generational and incremental, `RUSTYNAIL_GC_VERIFY=1`) is part of
+  `t6_ctor_programs` and the `t8_*` tests.
+* Not run: `gate-heavy.sh`, the full mutant runner, `tr_oracle`, PGO builds, all-223 benchmarks, `bench-fast.sh`.
