@@ -833,6 +833,12 @@ pub const NAMES: &[&str] = &[
     "coyield_nargs_wrong",
     "coyield_status_skip",
     "coinl_err_as_ok",
+    // N2b (`coro_nodirect` / `coro_nostart`): the direct `coroutine.wrap` function / `coroutine.resume`, the fused start
+    "codirect_hook_ignored",
+    "codirect_true_skip",
+    "codirect_nil_pad_skip",
+    "codirect_rest_flag",
+    "costart_func_off",
     // BUNDLE-V: V1 (`t1q` bits 4 / 5: arithmetic metamethod frames, tail calls and general returns in metamethod frames), V2 (`upbar`)
     "bv_tail_nil",
     "bv_ret_first_nil",
@@ -1088,7 +1094,12 @@ pub fn apply_vm_mutants() {
             | u32::from(active("coyield_yieldable_skip")) << 7
             | u32::from(active("coyield_nargs_wrong")) << 8
             | u32::from(active("coyield_status_skip")) << 9
-            | u32::from(active("coinl_err_as_ok")) << 10,
+            | u32::from(active("coinl_err_as_ok")) << 10
+            | u32::from(active("codirect_hook_ignored")) << 11
+            | u32::from(active("codirect_true_skip")) << 12
+            | u32::from(active("codirect_nil_pad_skip")) << 13
+            | u32::from(active("codirect_rest_flag")) << 14
+            | u32::from(active("costart_func_off")) << 15,
     );
 }
 
@@ -1098,7 +1109,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 838);
+        assert_eq!(NAMES.len(), 843);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

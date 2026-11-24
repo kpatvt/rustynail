@@ -143,6 +143,21 @@ fn auxwrap_rest(st: &mut State, mut co: State, narg: usize, out: ResumeOut) -> L
     }
 }
 
+/// The rest of `auxwrap` / `co_resume` for the direct path of rn-core (N2b, `rn_core::coro::CoroRestFn`).
+fn coro_rest(
+    st: &mut State,
+    co: State,
+    narg: usize,
+    out: ResumeOut,
+    is_resume: bool,
+) -> LuaResult<usize> {
+    if is_resume {
+        co_resume_rest(st, co, narg, out)
+    } else {
+        auxwrap_rest(st, co, narg, out)
+    }
+}
+
 fn co_create_aux(st: &mut State) -> LuaResult<Gc<rn_core::state::Thread>> {
     st.check_type(1, LuaType::Function)?;
     let nl = st.new_thread()?;
@@ -276,5 +291,6 @@ pub fn open(st: &mut State) -> LuaResult<usize> {
     ];
     st.set_funcs(lib, funcs)?;
     rn_core::coro::register_yield_fn(co_yield); // N2: the native call path yields without calling it
+    rn_core::coro::register_resume_fns(auxwrap, co_resume, coro_rest); // N2b: ... and resumes without calling these
     Ok(1)
 }

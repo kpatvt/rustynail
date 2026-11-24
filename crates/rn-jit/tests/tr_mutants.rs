@@ -3874,6 +3874,31 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_coro", "co_direct_yield_matches_the_reference")],
     },
     Row {
+        name: "codirect_hook_ignored",
+        owner: "N2b",
+        dets: &[d("tr_coro", "co_direct_resume_matches_the_reference")],
+    },
+    Row {
+        name: "codirect_true_skip",
+        owner: "N2b",
+        dets: &[d("tr_coro", "co_direct_resume_matches_the_reference")],
+    },
+    Row {
+        name: "codirect_nil_pad_skip",
+        owner: "N2b",
+        dets: &[d("tr_coro", "co_direct_resume_matches_the_reference")],
+    },
+    Row {
+        name: "codirect_rest_flag",
+        owner: "N2b",
+        dets: &[d("tr_coro", "co_direct_resume_matches_the_reference")],
+    },
+    Row {
+        name: "costart_func_off",
+        owner: "N2b",
+        dets: &[d("tr_coro", "co_direct_resume_matches_the_reference")],
+    },
+    Row {
         name: "bv_tail_nil",
         owner: "BUNDLE-V",
         dets: &[d("tr_core", "bv_mm_programs")],

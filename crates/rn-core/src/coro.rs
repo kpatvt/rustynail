@@ -28,6 +28,40 @@ static YIELD_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize
 /// Register `f` as the `coroutine.yield` function (a plain yield: `n = nargs; return yield_k(n, 0, None)`) for [`State::yield_direct`].
 pub fn register_yield_fn(f: NativeFn) {
     YIELD_FN.store(f as usize, std::sync::atomic::Ordering::Relaxed);
+    update_coro_range();
+}
+
+/// The address range `[CORO_LO, CORO_LO + CORO_SPAN]` of the registered coroutine functions (yield, `auxwrap`, resume): the native call
+/// path tests the callee against it first (one subtraction and one compare), the exact compares only inside it. Before a function
+/// is registered the range is `[0, 0]` (no function pointer is 0).
+static CORO_LO: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static CORO_SPAN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn update_coro_range() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut fns = vec![];
+    if CORO_YIELD_DIRECT {
+        fns.push(YIELD_FN.load(Relaxed));
+    }
+    if CORO_DIRECT {
+        fns.push(WRAP_FN.load(Relaxed));
+        fns.push(RESUME_FN.load(Relaxed));
+    }
+    fns.retain(|&a| a != 0);
+    let (Some(&lo), Some(&hi)) = (fns.iter().min(), fns.iter().max()) else {
+        return;
+    };
+    // (the range only gates the exact compares: a racing reader that sees a mix of old and new values is still correct)
+    CORO_LO.store(lo, Relaxed);
+    CORO_SPAN.store(hi - lo, Relaxed);
+}
+
+/// Is `f` inside the address range of the registered coroutine functions (see [`CORO_LO`])?
+#[inline(always)]
+pub(crate) fn in_coro_range(f: NativeFn) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    (CORO_YIELD_DIRECT || CORO_DIRECT)
+        && (f as usize).wrapping_sub(CORO_LO.load(Relaxed)) <= CORO_SPAN.load(Relaxed)
 }
 
 /// Is `f` the registered `coroutine.yield`?
@@ -36,10 +70,63 @@ pub(crate) fn is_yield_fn(f: NativeFn) -> bool {
     CORO_YIELD_DIRECT && f as usize == YIELD_FN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// N2b step 1: the direct `coroutine.wrap` function / `coroutine.resume` of the native call path ([`State::coro_direct`]). Off with the
+/// cargo feature `coro_nodirect` (A/B builds).
+pub const CORO_DIRECT: bool = !cfg!(feature = "coro_nodirect");
+
+/// N2b step 2: the fused resume runs the interpreter (`vm_unsafe::run`) directly instead of through `g.executor` / `vm::execute`. Off with
+/// the cargo feature `coro_norun` (A/B builds).
+pub const CORO_RUN_DIRECT: bool = !cfg!(feature = "coro_norun");
+
+/// N2b step 3: the fused resume also starts a coroutine (status `Ok`, only the base frame, a body to call). Off with the cargo feature
+/// `coro_nostart` (A/B builds).
+pub const CORO_START: bool = !cfg!(feature = "coro_nostart");
+
+/// The rest of the library's `auxwrap` / `co_resume` after a fused attempt that did not end in `ResumeOut::Ok` (errors of the coroutine
+/// and of the resume itself, the slow resume): `(st, co, narg, out, is_resume)` -> the library function's result (its results on top
+/// of `st`) or its error.
+pub type CoroRestFn = fn(&mut State, State, usize, ResumeOut, bool) -> LuaResult<usize>;
+
+/// The library functions of the direct path (registered by `rn_std::lib_coroutine::open`; 0 before): `auxwrap` (the C function of every
+/// `coroutine.wrap` closure), `coroutine.resume` and the [`CoroRestFn`]. Process-wide statics like [`YIELD_FN`].
+static WRAP_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RESUME_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static REST_FN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Register the library's `auxwrap`, `coroutine.resume` and the rest of both for [`State::coro_direct`].
+pub fn register_resume_fns(wrap: NativeFn, resume: NativeFn, rest: CoroRestFn) {
+    use std::sync::atomic::Ordering::Relaxed;
+    REST_FN.store(rest as usize, Relaxed);
+    WRAP_FN.store(wrap as usize, Relaxed);
+    RESUME_FN.store(resume as usize, Relaxed);
+    update_coro_range();
+}
+
+/// [`State::coro_direct`] moved the results to the function slot: the caller pops the frame.
+pub(crate) const PLACED: usize = usize::MAX;
+
+/// `Some(is_resume)` if `f` is the registered `auxwrap` (`false`) or `coroutine.resume` (`true`).
+#[inline(always)]
+pub(crate) fn is_resume_fn(f: NativeFn) -> Option<bool> {
+    use std::sync::atomic::Ordering::Relaxed;
+    if !CORO_DIRECT {
+        return None;
+    }
+    let a = f as usize;
+    if a == WRAP_FN.load(Relaxed) {
+        Some(false)
+    } else if a == RESUME_FN.load(Relaxed) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 /// Test-only mutants of the fused resume (feature `jit_trace_mut`, set by `rn_jit::tr::mutants::apply_vm_mutants`): a bit mask,
 /// `1` `cofuse_room_skip`, `2` `cofuse_hook_ignored`, `4` `cofuse_ncalls_skip`, `8` `cofuse_finish_op_skip`, `16` `cofuse_wanted_nil_skip`,
 /// `32` `cofuse_results_room_skip`, `64` `cofuse_prev_c_ignored`, `128` `coyield_yieldable_skip`, `256` `coyield_nargs_wrong`,
-/// `512` `coyield_status_skip`, `1024` `coinl_err_as_ok`.
+/// `512` `coyield_status_skip`, `1024` `coinl_err_as_ok`, `2048` `codirect_hook_ignored`, `4096` `codirect_true_skip`, `8192`
+/// `codirect_nil_pad_skip`, `16384` `codirect_rest_flag`, `32768` `costart_func_off`.
 #[cfg(feature = "jit_trace_mut")]
 static MUT_COFUSE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -77,6 +164,118 @@ fn is_error(s: Status) -> bool {
 }
 
 impl State {
+    /// N2b step 1: the library function `f` (`auxwrap` when `!is_resume`, `coroutine.resume` when `is_resume`) called from the native call
+    /// path (`native_fast_with`: its C frame is pushed, no hook is set). Does what the library function does, with the fused resume
+    /// inline and without the indirect call: the results are left on top and their number returned, like `f(self)`; or, for a fixed
+    /// wanted-result count of at most 3 and no hook ([`PLACED`]), the results are moved to the function slot and `top` set after them,
+    /// the caller only pops the frame (what `post_call` would do).
+    #[inline(never)]
+    pub(crate) fn coro_direct(&mut self, f: NativeFn, is_resume: bool) -> LuaResult<usize> {
+        let ci = self.ci();
+        let func = ci.r().func;
+        let th = if is_resume {
+            self.get(func + 1).as_thread()
+        } else {
+            self.get(func)
+                .as_cclosure()
+                .and_then(|cl| cl.upvalue(0).as_thread())
+        };
+        let Some(th) = th else {
+            return f(self); // the library raises the error
+        };
+        let mut co = State::from_thread(th);
+        let narg = self.top() - (func + 1 + usize::from(is_resume));
+        let out = match co.resume_fused_run(self, narg) {
+            None => ResumeOut::Slow,
+            Some((status, nres)) => {
+                let fw = ci.r().callstatus & (CIST_TBC | CIST_NRESULTS);
+                if (status == Status::Ok || status == Status::Yield)
+                    && fw != 0
+                    && fw <= 4
+                    && (self.hook_mask() == 0 || mut_cofuse(2048))
+                    && (self.stack_size() as isize) - (self.top().0 as isize) > (nres + 1) as isize
+                {
+                    // `post_call` of the C frame (`moveresults` for `fw - 1` wanted values) straight from the coroutine's stack; the room
+                    // check above is the one `auxresume` makes (`lua_checkstack(L, nres + 1)` cannot fail when no growth is needed)
+                    let wanted = fw as usize - 1;
+                    let ctop = co.top();
+                    let first = ctop - nres;
+                    // SAFETY: `nres` values below `co`'s top; `wanted <= 3` slots from `func` are inside the resumer's frame (the C
+                    // frame's `func` + `LUA_MINSTACK`).
+                    unsafe {
+                        let src = co.slot_ptr(first);
+                        let dst = self.slot_ptr(func);
+                        let val = |j: usize| {
+                            if j < nres {
+                                Value::load(src.add(j))
+                            } else {
+                                Value::NIL
+                            }
+                        };
+                        // (mutant `codirect_nil_pad_skip`: the wanted values beyond the results are not set to nil)
+                        let pad = !mut_cofuse(8192);
+                        let put = |k: usize, j: usize| {
+                            if j < nres || pad {
+                                Value::store(dst.add(k), val(j));
+                            }
+                        };
+                        // (mutant `codirect_true_skip`: the `true` of `coroutine.resume` is left out)
+                        if is_resume && !mut_cofuse(4096) {
+                            if wanted > 0 {
+                                Value::store(dst, Value::TRUE);
+                            }
+                            if wanted > 1 {
+                                put(1, 0);
+                            }
+                            if wanted > 2 {
+                                put(2, 1);
+                            }
+                        } else {
+                            if wanted > 0 {
+                                put(0, 0);
+                            }
+                            if wanted > 1 {
+                                put(1, 1);
+                            }
+                            if wanted > 2 {
+                                put(2, 2);
+                            }
+                        }
+                    }
+                    co.set_top(first);
+                    self.set_top(func + wanted);
+                    return Ok(PLACED);
+                }
+                co.resume_fused_results(self, status, nres)
+            }
+        };
+        if let ResumeOut::Ok(n) = out {
+            if !is_resume {
+                return Ok(n);
+            }
+            // `true` + the `n` values: shift them up one slot (room for `n + 1` was checked by the fused resume)
+            let t = self.top();
+            let first = t - n;
+            // SAFETY: `n` values below `top` plus the free slot at `top` (checked by `resume_fused_results`).
+            unsafe {
+                let p = self.slot_ptr(first);
+                for i in (0..n).rev() {
+                    Value::store(p.add(i + 1), Value::load(p.add(i)));
+                }
+                Value::store(p, Value::TRUE);
+            }
+            self.set_top(t + 1);
+            return Ok(n + 1);
+        }
+        // SAFETY: registered together with `WRAP_FN` / `RESUME_FN`, one of which `f` is (so it is set).
+        let rest: CoroRestFn = unsafe {
+            std::mem::transmute::<usize, CoroRestFn>(
+                REST_FN.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        };
+        rest(self, co, narg, out, is_resume != mut_cofuse(16384)) // (mutant `codirect_rest_flag`: the other library function's rest)
+    }
+
     /// N2 step 1: `coroutine.yield` called from the native call path (`native_fast_with`: the C frame `ci` is pushed, no hook is
     /// set, the arguments are the values above `ci.func`). Does what `co_yield` + `yield_k(nargs, 0, None)` do for a native frame
     /// without a continuation, without the indirect call: `Err(Status::Yield)` with `status = Yield` and the number of yielded values
@@ -304,27 +503,57 @@ impl State {
     /// `from`'s top (success or yield), `Err` = the error object moved to `from`'s top, `TooMany` = not enough room in
     /// `from` for the results (they are dropped; the caller pushes the message).
     pub fn resume_fused(&mut self, from: &mut State, nargs: usize) -> ResumeOut {
+        self.resume_fused_inl(from, nargs)
+    }
+
+    /// The body of [`State::resume_fused`].
+    #[inline(always)]
+    fn resume_fused_inl(&mut self, from: &mut State, nargs: usize) -> ResumeOut {
+        match self.resume_fused_run(from, nargs) {
+            None => ResumeOut::Slow,
+            Some((status, nres)) => self.resume_fused_results(from, status, nres),
+        }
+    }
+
+    /// The first part of [`State::resume_fused`] (inlined into it and into the direct path, [`State::coro_direct`]): the checks, the
+    /// argument move and the run. `None`: not applicable, nothing was modified; otherwise the status and the number of values on top
+    /// of `self` (the results / yielded values, or the error object).
+    #[inline(always)]
+    fn resume_fused_run(&mut self, from: &mut State, nargs: usize) -> Option<(Status, usize)> {
         if !CORO_FUSED {
-            return ResumeOut::Slow;
+            return None;
         }
         let yci = self.ci();
         let nc = get_ccalls(from.ncalls_raw());
         let top = self.top();
-        if self.status() != Status::Yield
-            || (self.hook_mask() != 0 && !mut_cofuse(2))
-            || yci.r().callstatus & CIST_C == 0
-            || yci.r().k.is_some()
+        if (self.hook_mask() != 0 && !mut_cofuse(2))
             || nc >= LUAI_MAXCCALLS
             || ((self.stack_size() as isize) - (top.0 as isize) <= nargs as isize && !mut_cofuse(1))
         {
-            return ResumeOut::Slow;
+            return None;
         }
-        let Some(prev) = yci.previous() else {
-            return ResumeOut::Slow;
+        // `prev`: the Lua frame that called the `yield` of frame `yci`; `None`: starting the coroutine (N2b step 3: the base frame,
+        // its body is the value below the arguments; with nothing above the base frame's function the coroutine is dead)
+        let prev = match self.status() {
+            Status::Yield => {
+                if yci.r().callstatus & CIST_C == 0 || yci.r().k.is_some() {
+                    return None;
+                }
+                let prev = yci.previous()?;
+                if !prev.r().is_lua() && !mut_cofuse(64) {
+                    return None;
+                }
+                Some(prev)
+            }
+            Status::Ok
+                if CORO_START
+                    && yci.as_ptr() == self.base_ci().as_ptr()
+                    && top.0 > yci.r().func.0 + 1 =>
+            {
+                None
+            }
+            _ => return None,
         };
-        if !prev.r().is_lua() && !mut_cofuse(64) {
-            return ResumeOut::Slow;
-        }
         // ---- committed: `check_stack_api(nargs)` + `xmove(from -> self, nargs)`
         let ftop = from.top();
         let first = ftop - nargs;
@@ -352,9 +581,30 @@ impl State {
             self.set_ncalls_raw(nc + 1);
         }
         let status = if CORO_RESUME_INL {
-            self.raw_run_protected_inl(|s| Self::fused_body(s, yci, prev, nargs))
+            // `raw_run_protected` written out (N2 step 2; keep the two in sync)
+            let old = self.ncalls_raw();
+            self.tm().prot_depth += 1;
+            let r = match prev {
+                Some(prev) => Self::fused_body(self, yci, prev, nargs),
+                // (`resume_body` of a coroutine that starts; mutant `costart_func_off`: the first argument is called instead)
+                None => self.ccall(top - usize::from(!mut_cofuse(32768)), LUA_MULTRET, 0),
+            };
+            self.tm().prot_depth -= 1;
+            self.set_ncalls_raw(old);
+            match r {
+                Ok(()) => Status::Ok,
+                Err(s) => {
+                    if self.t().throw_base && self.t().prot_depth == 0 {
+                        self.tm().throw_base = false; // caught at the base level
+                    }
+                    s
+                }
+            }
         } else {
-            self.raw_run_protected(|s| Self::fused_body(s, yci, prev, nargs))
+            self.raw_run_protected(|s| match prev {
+                Some(prev) => Self::fused_body(s, yci, prev, nargs),
+                None => s.ccall(top - 1, LUA_MULTRET, 0),
+            })
         };
         let (status, nres) = if CORO_RESUME_INL && (!is_error(status) || mut_cofuse(1024)) {
             // `resume_finish` without the recoverable-error loop (`precover` does nothing for a status that is not an error)
@@ -369,6 +619,13 @@ impl State {
         } else {
             self.resume_finish(status)
         };
+        Some((status, nres))
+    }
+
+    /// The second part of [`State::resume_fused`]: move the `nres` results (or the error object) of a run that ended with `status` to
+    /// `from`.
+    #[inline(always)]
+    fn resume_fused_results(&mut self, from: &mut State, status: Status, nres: usize) -> ResumeOut {
         if status == Status::Ok || status == Status::Yield {
             if (from.stack_size() as isize) - (from.top().0 as isize) <= (nres + 1) as isize
                 && !mut_cofuse(32)
@@ -441,7 +698,11 @@ impl State {
             crate::vm_unsafe::finish_op(s)?;
         }
         let ex = s.g().executor;
-        ex(s, prev)?; // execute down to the higher C boundary
+        if CORO_RUN_DIRECT && ex as usize == crate::vm::execute as ExecuteFn as usize {
+            crate::vm_unsafe::run(s, prev)?; // (N2b step 2: `vm::execute` without the indirect call)
+        } else {
+            ex(s, prev)?; // execute down to the higher C boundary
+        }
         s.unroll() // run the rest of the continuation
     }
 

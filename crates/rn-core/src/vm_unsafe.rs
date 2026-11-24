@@ -737,6 +737,7 @@ fn bad_frame(st: &mut State) -> Status {
 /// set for a reason that needs per-instruction tracing (hooks, interrupt), the fast copy ends the
 /// current instruction and hands the frame to the *hooked* copy (`HOOK = true`, the reference's
 /// `vmfetch` with its `trap` test), which hands it back at a frame transition once no hook is left.
+#[inline(always)]
 pub(crate) fn run(st: &mut State, ci0: Ci) -> LuaResult<()> {
     if st.hook_mask() != 0 {
         ci0.w().trap = 1; // `startfunc`: trap = L->hookmask
@@ -787,7 +788,9 @@ pub(crate) fn run(st: &mut State, ci0: Ci) -> LuaResult<()> {
 #[inline(always)]
 fn rec_on_err<T>(st: &mut State, r: &LuaResult<T>) {
     if let Err(e) = r {
-        if crate::jit_hooks::rec_active() {
+        // (`rec_armed`, a static load, first: no recording armed anywhere means none on this OS thread; N2b, the yield of every
+        // coroutine switch comes through here)
+        if crate::jit_hooks::rec_armed() && crate::jit_hooks::rec_active() {
             let why = if *e == Status::Yield {
                 crate::jit_hooks::Abort::Frame
             } else {

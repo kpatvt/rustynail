@@ -369,13 +369,26 @@ impl State {
             c.top = top + LUA_MINSTACK;
             c.k = None;
         }
-        if crate::coro::is_yield_fn(f) {
-            // N2 step 1: `coroutine.yield` of a yieldable thread (no hook is set here): the yield without the library call
-            if let Some(s) = self.yield_direct(ci) {
-                return Err(s);
+        let n = 'call: {
+            // (one range test for the coroutine functions on every native call; the exact tests only inside the range)
+            if crate::coro::in_coro_range(f) {
+                if crate::coro::is_yield_fn(f) {
+                    // N2 step 1: `coroutine.yield` of a yieldable thread (no hook is set here): the yield without the library call
+                    if let Some(s) = self.yield_direct(ci) {
+                        return Err(s);
+                    }
+                } else if let Some(is_resume) = crate::coro::is_resume_fn(f) {
+                    // N2b step 1: `auxwrap` / `coroutine.resume` with the fused resume inline, without the library call
+                    let n = self.coro_direct(f, is_resume)?;
+                    if n == crate::coro::PLACED {
+                        self.set_ci(caller);
+                        return Ok(true);
+                    }
+                    break 'call n;
+                }
             }
-        }
-        let n = f(self)?;
+            f(self)?
+        };
         debug_assert!(n <= self.top().0);
         // `post_call` (the function may have set hooks or marked to-be-closed slots)
         // (`fwanted` = wanted results + 1, or a value with `CIST_TBC` set)
@@ -619,30 +632,9 @@ impl State {
     // ---- protected calls ----------------------------------------------------------------------
 
     /// `luaD_rawrunprotected`: run `f`, catching its error status (`Status::Ok` on success).
-    /// Restores `nCcalls`. Does not touch the stack or the frames: use [`State::pcall_with`] for that.
+    /// Restores `nCcalls`. Does not touch the stack or the frames: use [`State::pcall_with`] for that. (Written out in the fused
+    /// coroutine resume, `State::resume_fused_run`: keep the two in sync.)
     pub fn raw_run_protected<F>(&mut self, f: F) -> Status
-    where
-        F: FnOnce(&mut State) -> LuaResult<()>,
-    {
-        let old = self.ncalls_raw();
-        self.tm().prot_depth += 1;
-        let r = f(self);
-        self.tm().prot_depth -= 1;
-        self.set_ncalls_raw(old);
-        match r {
-            Ok(()) => Status::Ok,
-            Err(s) => {
-                if self.t().throw_base && self.t().prot_depth == 0 {
-                    self.tm().throw_base = false; // caught at the base level
-                }
-                s
-            }
-        }
-    }
-
-    /// [`State::raw_run_protected`] inlined into its one caller (the fused coroutine resume, N2 step 2); keep the two in sync.
-    #[inline(always)]
-    pub(crate) fn raw_run_protected_inl<F>(&mut self, f: F) -> Status
     where
         F: FnOnce(&mut State) -> LuaResult<()>,
     {

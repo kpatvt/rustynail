@@ -10,6 +10,10 @@
 //! N2 (the direct `coroutine.yield` of the native call path, the inlined fused resume): `co_16` (yield shapes, non-yieldable contexts, hooks, introspection,
 //! close, GC); detectors of `coyield_yieldable_skip` (the main-thread / `table.sort` yields), `coyield_nargs_wrong` (the yielded values), `coyield_status_skip`
 //! (a yield that does not mark the thread suspended).
+//! N2b (the direct `coroutine.wrap` function / `coroutine.resume` of the native call path, the fused start): `co_17` (result / argument shapes, starts,
+//! errors, yields across pcall, close / tbc, tracebacks through the resumer's C frame, nested status, hooks set by the coroutine, GC); detectors of
+//! `codirect_hook_ignored` (the return hook of `resume` set while the coroutine ran), `codirect_true_skip` / `codirect_nil_pad_skip` (fixed result
+//! counts of `resume` / of a wrap function), `codirect_rest_flag` (errors through wrap), `costart_func_off` (coroutines that start).
 #![cfg(feature = "trace")]
 
 use rn_core::state::{LuaState, LUA_MULTRET};
@@ -52,6 +56,14 @@ mod progs {
         include_str!("data/co_16_direct_yield.expected"),
         #[cfg(rustynail_lua54)]
         include_str!("data/co_16_direct_yield.expected54"),
+    );
+    pub const CO_17: (&str, &str, &str) = (
+        "co_17_direct_resume.lua",
+        include_str!("../../../tests/vm/co_17_direct_resume.lua"),
+        #[cfg(not(rustynail_lua54))]
+        include_str!("data/co_17_direct_resume.expected"),
+        #[cfg(rustynail_lua54)]
+        include_str!("data/co_17_direct_resume.expected54"),
     );
     pub const CO_15: (&str, &str, &str) = (
         "co_15_patterns.lua",
@@ -139,4 +151,9 @@ fn co_patterns_match_the_reference() {
 #[test]
 fn co_direct_yield_matches_the_reference() {
     check(progs::CO_16);
+}
+
+#[test]
+fn co_direct_resume_matches_the_reference() {
+    check(progs::CO_17);
 }
