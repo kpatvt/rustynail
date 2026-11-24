@@ -114,6 +114,8 @@ pub const T4_PROCESS: u32 = 3;
 pub const INNERLINK_PROCESS: u32 = 0;
 /// T5 (`t5`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t5`] (also the struct default).
 pub const T5_PROCESS: u32 = 0;
+/// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
+pub const T7_PROCESS: u32 = 0;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
@@ -862,6 +864,11 @@ pub struct TrLimits {
     /// bit 1: stores into a present key (`HSTORE` + barrier); bit 2: insertions of an absent key (`TSET` with an object key). 0 = off.
     /// Default [`T5_PROCESS`].
     pub t5: u32,
+    /// T7 (`t7`, docs/JIT_TRACE.md section 48): leaf-function roots for `FnShort`. Bits 0-1: a function-entry head that `fnpromo` promoted to a generic function
+    /// root (its probe recordings were all too short: `FnShort` x 4) records bodies of at least 0 (1), 4 (2) or 8 (3) bytecodes instead of `fnmin`. Bit 2: such a
+    /// head waits four times as many entries (`fnpromow` + 2) before its first recording. Bit 3: only for a static leaf (no `CALL` / `TAILCALL` / `TFORCALL` in the
+    /// prototype). 0 = off. Default [`T7_PROCESS`].
+    pub t7: u32,
 }
 
 impl Default for TrLimits {
@@ -998,6 +1005,7 @@ impl Default for TrLimits {
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
             t5: T5_PROCESS,
+            t7: T7_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1207,6 +1215,7 @@ impl TrLimits {
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(15),
                 "t5" => l.t5 = v.min(7),
+                "t7" => l.t7 = v.min(15),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 _ => bad.push(w.to_string()),
             }
@@ -4110,7 +4119,10 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
                     && !tp.recursive.get()
                     && d.tr.stats.fn_promoted < u64::from(d.tr.cfg.limits.fnpromo)
                 {
-                    if let Some(w) = tp.promote_fn(r.head, d.tr.cfg.limits.fnpromow) {
+                    // T7 bit 2: a promoted leaf head waits four times as many entries before its first recording
+                    let w =
+                        d.tr.cfg.limits.fnpromow + if d.tr.cfg.limits.t7 & 4 != 0 { 2 } else { 0 };
+                    if let Some(w) = tp.promote_fn(r.head, w.min(12)) {
                         d.tr.stats.fn_promoted += 1;
                         vlog(d, || {
                             format!("--- fnpromo: function head pc {} of proto:{} (code {}) becomes a generic function root", tp.head(r.head).pc, tp.line, tp.pcs.len())

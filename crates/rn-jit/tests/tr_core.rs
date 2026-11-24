@@ -41,6 +41,8 @@ mod s4_progs;
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
 mod t5_progs;
+#[path = "tr_core/t7_progs.rs"]
+mod t7_progs;
 
 use a1_progs::{A1_PROGS, G1_SLOW};
 use h1_progs::H1_PROGS;
@@ -62,6 +64,7 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use t5_progs::T5_PROGS;
+use t7_progs::T7_PROGS;
 
 const BEGIN: &str = "<<<TR-CORE-BEGIN>>>";
 const END: &str = "<<<TR-CORE-END>>>";
@@ -175,6 +178,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(G1_SLOW)
         .chain(H1_PROGS)
         .chain(T5_PROGS)
+        .chain(T7_PROGS)
         .chain(H2_PROGS)
         .chain(K4_PROGS)
         .chain(N1_PROGS)
@@ -2005,6 +2009,72 @@ fn t5_object_keys() {
                 o.stats.line()
             );
         }
+    }
+}
+
+/// T7 (docs/JIT_TRACE.md section 48.6): function-entry roots of short functions. The limits `fnpromow=0` makes a promoted head record at once. With `t7=1` the
+/// head of a short leaf method (shorter than `fnmin`) gets a root trace (`installed` goes up; `t7=0`: none), the output is the interpreter's in every
+/// mode (`+verify`, exit storm, small budgets, stack-move stress, GC stress, all four `t7` classes, the static-leaf bit). Detector of `t7_fnmin_kept`.
+#[test]
+fn t7_leaf_roots() {
+    let mut jobs = Vec::new();
+    for p in ["t7_towers", "t7_accessors"] {
+        for trace in ["always", "on2", "on"] {
+            for lim in [
+                "fnpromow=0,t7=0",
+                "fnpromow=0,t7=1",
+                "fnpromow=0,t7=2",
+                "fnpromow=0,t7=3",
+                "fnpromow=0,t7=5",
+                "fnpromow=0,t7=9",
+                "fnpromow=0,t7=13",
+            ] {
+                let mut j = Job::new(p, trace).opts("+verify");
+                j.limits = lim.into();
+                jobs.push(j);
+            }
+            for (opts, budget) in [("+exitstorm=3 +verify", 0), ("", 17)] {
+                let mut j = Job::new(p, trace).opts(opts);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                j.limits = "fnpromow=0,t7=1".into();
+                jobs.push(j);
+            }
+            let mut j = Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
+            j.limits = "fnpromow=0,t7=1".into();
+            jobs.push(j);
+        }
+        for stress in ["1", "2"] {
+            let mut j = Job::new(p, "on2").env("RUSTYNAIL_GC_STRESS", stress);
+            j.limits = "fnpromow=0,t7=1".into();
+            jobs.push(j);
+        }
+    }
+    let res = compare(jobs);
+    let installed = |prog: &str, trace: &str, lim: &str| -> u64 {
+        res.iter()
+            .find(|(j, _)| {
+                j.prog == prog
+                    && j.trace == trace
+                    && j.limits == lim
+                    && j.opts == "+verify"
+                    && j.env.is_empty()
+            })
+            .map_or(0, |(_, o)| o.stats.installed)
+    };
+    // (the roots of the short leaf methods of `t7_towers`; the leaf-only bit changes nothing there: its methods hold `error` calls)
+    let more = ["always", "on2", "on"].iter().any(|tr| {
+        installed("t7_towers", tr, "fnpromow=0,t7=1")
+            > installed("t7_towers", tr, "fnpromow=0,t7=0")
+    });
+    assert!(more, "t7=1 installed no root of a short leaf method");
+    for tr in ["always", "on2", "on"] {
+        assert_eq!(
+            installed("t7_towers", tr, "fnpromow=0,t7=9"),
+            installed("t7_towers", tr, "fnpromow=0,t7=0"),
+            "{tr}: the leaf-only bit admits a function that holds calls"
+        );
     }
 }
 

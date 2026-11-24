@@ -974,6 +974,9 @@ pub const NAMES: &[&str] = &[
     "hrefo_abs_meta_skip",
     "hrefo_abs_lsize_skip",
     "tset_key_tag_int",
+    // T7 (`t7`): leaf-function roots (docs/JIT_TRACE.md section 48)
+    "t7_fnmin_kept",
+    "t7_leaf_any",
     // T9 (`innerlink`): nested-loop trace linking (docs/JIT_TRACE.md section 47)
     "innerlink_prep_never",
     "innerret_never",
@@ -1122,7 +1125,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 853);
+        assert_eq!(NAMES.len(), 855);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

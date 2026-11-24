@@ -526,6 +526,19 @@ fn lockstep_on(cfg: &cache::TrConfig) -> bool {
     })
 }
 
+/// T7 (`t7` bit 3): is the prototype a static leaf, a function whose code holds no call instruction (`CALL`, `TAILCALL`, `TFORCALL`)? It cannot
+/// recurse (a metamethod it triggers is another frame's business), so its short recordings are leaf samples of a function that is not worth probing.
+fn proto_is_leaf(p: &rn_core::func::Proto) -> bool {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode;
+    !p.code().iter().any(|&w| {
+        matches!(
+            Instruction(w).opcode(),
+            Some(OpCode::Call | OpCode::Tailcall | OpCode::Tforcall)
+        )
+    })
+}
+
 /// BUNDLE-C: does the closure reach itself through one of its upvalues (`local function f ... f() ... end`)? Such a function recurses: `fnpromo` leaves it to the
 /// recursion machinery (a function root of `tail` in awfy/list costs 25% instructions).
 /// K2: is the prototype of the frame `ci` already running in one of the `depth` nearest caller frames? (Direct recursion that does not go through an upvalue:
@@ -801,6 +814,13 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             && !mutants::active("centry_fnmin_kept")
         {
             0
+        } else if promoted
+            && cfg.limits.t7 & 3 != 0
+            && !mutants::active("t7_fnmin_kept")
+            && (cfg.limits.t7 & 8 == 0 || mutants::active("t7_leaf_any") || proto_is_leaf(&proto))
+        {
+            // T7: a leaf head that the policy promoted to a generic function root (after its probe recordings were all too short) records its short bodies
+            [0, 0, 4, 8][(cfg.limits.t7 & 3) as usize].min(cfg.limits.fnmin)
         } else {
             cfg.limits.fnmin
         },

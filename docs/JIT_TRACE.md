@@ -6046,3 +6046,84 @@ program by instructions (astar_jumper, +1.16 % at the min-of-9, +1.8 % mean, wit
 better on both versions. Turning it on is the one-line change of `T5_PROCESS` to 7; the case for it is havlak -7.6 .. -12.8 % instructions on both
 versions and a lower cycle count on astar_jumper, the case against the strict bar is the instruction count of one lottery program. What is not
 covered if it ships on: `jit-diff` `trdef` / `trdefon` run the shipped limits, so they test `t5` only through the explicit `t5=7` runs above.
+
+### 48.6 T7: leaf-function roots (knob `t7`, default 0)
+
+**The mechanism that exists.** A function-entry head (`fnroot=0`: a native-recursion probe) records ONE invocation of the function. A leaf invocation
+ends at the root `RETURN` before `fnmin` (16) bytecodes: `FnShort` (`Rec::fn_end`). Four such samples blacklist the head; `fnpromo` then promotes it
+ONCE per prototype to a generic function root (`promote_fn`: fresh abort budget, `64 << fnpromow` entries of waiting, not for a function that reaches
+itself through an upvalue), which records like `fnroot=1` but still ends `FnShort` below `fnmin`. So a short non-recursive function never gets a
+function trace; its callers inline it when they are traced, and the calls that stay in tier 1 / the interpreter (deltablue, richards, json) pay the
+call protocol of tier 1. `fnmin=0` is the study's ceiling (STUDY_TIER1_RESIDUE section 3 row 3: deltablue L -2.0, richards L -1.4, towers +4.4).
+
+**What was built (one decision point in `driver_start`, `fn_min`).**
+
+| bit | what |
+|---|---|
+| 0-1 (`t7 & 3`) | a PROMOTED head (`fnpromo`) records bodies of at least 0 (1), 4 (2) or 8 (3) bytecodes instead of `fnmin` (all other heads, the recursion probes, keep `fnmin`: unchanged) |
+| 2 (4) | such a head waits `fnpromow + 2` (four times as many entries) before its first recording |
+| 3 (8) | only for a STATIC leaf: a prototype with no `CALL` / `TAILCALL` / `TFORCALL` (`proto_is_leaf`) |
+
+Mutants `t7_fnmin_kept` (the promoted head keeps `fnmin`), `t7_leaf_any` (bit 3 admits a function that holds calls); detector
+`tr_core::t7_leaf_roots` (`t7_towers` / `t7_accessors`, `fnpromow=0`: `t7=1` installs more roots than `t7=0`, `t7=9` exactly as many as `t7=0` on
+towers, whose leaf methods hold `error` calls; every output equal to the interpreter's in `always` / `on2` / `on`, `+verify`, exit storm, budgets,
+stack-move, GC stress 1 / 2, all classes); `tr_policy::t7_leaf_knob`; `tests/vm/jit_t7_01_leaf_roots.lua` (vs `ref/55`, by hand with `t7=1,fnpromow=0`,
+`t7=15` under `JIT=always TRACE=always`, GC stress 1 / 2: same output). 855 mutants in the registry.
+
+**Measurements** (same method as 48.5; 5.5 unless noted). Large sizes, instructions M / cycles M, `t7=0` -> `t7=1`:
+
+| program | instructions | cycles |
+|---|---:|---:|
+| towers (450) | 1413 -> 1479 **+4.6 %** | 312 -> 337 **+8.2 %** |
+| richards (250) | 1319.6 -> 1318.8 -0.06 % | 382 -> 396 (noisy: 381-415 across runs) |
+| deltablue (200) | 2280 -> 2233 **-2.1 %** | 640 -> 634 -0.9 % |
+
+Sample of 30, default sizes, `t7=0` against `t7=1`:
+
+| | 5.5 instr | 5.5 cycles | 5.4 instr | 5.4 cycles |
+|---|---:|---:|---:|---:|
+| awfy/towers | **+4.6 %** | **+7.4 %** | **+4.6 %** | **+9.5 %** |
+| awfy/richards | **+1.04 %** | **+2.4 %** | **+1.03 %** | **+2.2 %** |
+| apps/markdown | **+1.49 %** | **+3.7 %** | **+1.48 %** | **+4.1 %** |
+| apps/events | +0.11 % | +0.6 % | **+12.2 %** | **+11.4 %** |
+| awfy/storage | 0 | **+2.8 %** | 0 | +0.5 % |
+| awfy/json | **-5.4 %** | -3.1 % | -2.2 % | -1.7 % |
+| real/json_roundtrip | **-4.9 %** | -3.6 % | -4.7 % | -2.8 % |
+| corpus/json_rxi | **-3.3 %** | -0.6 % | -3.2 % | -1.5 % |
+| awfy/deltablue | -0.67 % | +0.5 % | -0.59 % | -0.1 % |
+| geomean of 30 | 0.9977 | **1.0042** | 1.0025 | **1.0058** |
+
+Hot-threshold sweep (248 .. 264 step 2, 5.5, one run per cell), `t7=0` -> `t7=1` instructions / cycles d%: `apps/markdown` +1.4 .. +1.5 % /
++3.0 .. +4.6 % at **every** threshold (a systematic cost); `awfy/richards` +0.2 .. +1.1 % / -1.4 .. +5.1 % (outside 254) (7 of 9 thresholds +0.9 .. +1.1 % instructions;
+at 254 both columns are in a bad formation: 242.8 -> 207.5 M); `awfy/json` -1.9 .. -6.5 % / -3.6 .. +0.3 % (systematic gain); `awfy/deltablue`
+-2.2 .. +1.3 % / -2.5 .. +2.6 % (nothing); `awfy/towers` -1.8 .. +4.6 % / -2.9 .. +17.9 % (the 256 column is +4.6 % / +17.9 %: lottery, mean +0.9 % / +3 %; at the large size
+the +4.6 % is steady).
+
+**Variants measured, none meets the bar** (instructions M, towers 450 / deltablue 200 / richards 250 unless marked; base 1413 / 2280 / 1320):
+
+* Minimum length (the same as the `fnmin` knob: only promoted heads record short bodies): `fnmin=12 .. 16` identical to the base on all three;
+  `fnmin=10` towers +4.6 %, deltablue -0.3 %; `fnmin=8` towers +4.6 %, deltablue -1.0 %; `fnmin=0` towers +4.6 %, deltablue -2.1 %. The functions that
+  cost towers (`pushDisk`, `popDiskFrom`, `moveTopDisk`: 11-15 bytecodes with an `error` call) are as long as the ones that pay in deltablue, so no
+  length separates them; classes 1, 2 and 3 are the same on the programs measured (every short promoted body is below 8).
+* Longer wait (bit 2, and `fnpromow` 5 / 7 / 9 / 12 with `t7=1`): towers +2.5 % (bit 2 = `fnpromow` 5), +2.2 % (7 .. 12); deltablue -1.6 % (5), -0.5 % (7),
+  +2.2 % (9), +8 % (12: the roots arrive too late to pay); richards -0.4 .. -0.2 %. The towers cost stays at any wait.
+* Static leaf only (bit 3): **identical to the base** in all three programs (the promoted heads that gain in deltablue and lose in towers all hold calls).
+* What the towers cost is not entries and exits of the new roots: total exits 1382484 -> 1389716 (+0.5 %), `entered` +23 k of 339 k; the extra instructions
+  are in how the callers form around roots of their callees (`stitches` 6 -> 8 at the default size, richards 0 -> 5, markdown 4 -> 10, `entered`
+  2244 -> 23437 and `exits` 4686 -> 51781 in markdown): a caller recorded after the callee has a root trace stitches to it where it would have inlined it.
+  Not measured further (no per-trace attribution of the instructions was done).
+
+**Decision: default off (`T7_PROCESS = 0`).** The bar is missed on both versions by towers (+4.6 % instructions, +7.4 .. +9.5 % cycles), richards (+1.0 % /
++2.2 .. +2.4 %), markdown (+1.5 % / +3.7 .. +4.1 %) and, on 5.4, events (+12 %); the geomean of cycles is worse on both (1.0042 / 1.0058). No formulation of the three
+above keeps the json gain (-2 .. -6 % instructions, three programs, both versions) without the losses. What would be next (not done): a selector for a
+leaf root that looks at the callers (do not install a root for a function that an installed trace of a caller already inlines, or retire the root when a
+caller's recording stitches to it), or the per-trace attribution of the towers cost.
+
+### 48.7 Gates, what was not run
+
+* T5 commit: `GATE_CPUS=2-15 scripts/gate-light.sh hrefo_,tset_key_tag --fast`: all PASS (fmt, mutant map, clippy x3, core 5.5 / 5.4, trace suites 5.5 (162 s) /
+  5.4 (153 s), `vm_corpus`, jit-diff 1-50 (default limits, `off tr trdef`), mutant group 6 / 6 caught). Its first run failed two registry tests (the frozen
+  count and the TABLE order); fixed before the commit.
+* T7 commit: `GATE_CPUS=2-15 scripts/gate-light.sh t7_ --fast`: all PASS (same steps; trace suites 5.5 161 s / 5.4 153 s; mutant group 2 / 2 caught, 24 s).
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, `tr_oracle` / `oracle_options`, PGO builds, all-223 benchmarks, `bench-fast.sh`,
+  the official suite with `t7` (T5 was run through it with `t5=7`, both versions).

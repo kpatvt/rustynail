@@ -4449,6 +4449,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "t5_object_keys")],
     },
     Row {
+        name: "t7_fnmin_kept",
+        owner: "T7",
+        dets: &[d("tr_core", "t7_leaf_roots")],
+    },
+    Row {
+        name: "t7_leaf_any",
+        owner: "T7",
+        dets: &[d("tr_core", "t7_leaf_roots")],
+    },
+    Row {
         name: "innerlink_prep_never",
         owner: "T9",
         dets: &[d("tr_core", "t9_innerlink_programs")],
