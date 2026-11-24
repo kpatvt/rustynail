@@ -133,6 +133,10 @@ pub struct AsmEnv {
     /// every frameless snapshot continues through its cell (`Mov V7, &cell[k]; Ld V7, [V7]; JmpR V7`) instead of an
     /// embedded tier-1 address; `0`: the embedded address (tests, prototype shape).
     pub exit_cells: u64,
+    /// Section 52 (`resink`): the replay cells of the exits (`snaps.len()` words, `cache::alloc_exit_rcells`), or 0: the stub of a replayable exit with
+    /// a sunk table copies the field values into the replay words and skips the materialisation when the side trace its cell enters is the one its
+    /// replay cell names.
+    pub exit_rcells: u64,
     /// F2a: assemble a **side trace** (7.8): entered with the state of a tier-1 label restored, no head bookkeeping, no
     /// loop; ends with a link to another trace head through its dispatch cell.
     pub side: Option<SideEnv>,
@@ -351,6 +355,7 @@ impl Default for AsmEnv {
             count_iterations: false,
             budget_reg: None,
             exit_cells: 0,
+            exit_rcells: 0,
             side: None,
             entry_tags: [0xFD; 256],
             guarddiet: false,
@@ -5352,6 +5357,25 @@ impl Cx<'_> {
                 }
             }
             TOp::Sload => self.sload(i)?,
+            TOp::Xload => {
+                // Section 52 (`resink`): a replayed field value from the exit area's replay words
+                let m = M {
+                    base: Base::Cnt,
+                    off: super::exit_area::FROM_R15
+                        + (super::exit_area::RP + 8 * usize::from(ins.a)) as i32,
+                };
+                match dst {
+                    Loc::G(d) => {
+                        if matches!(ins.t, Ty::Nil | Ty::False | Ty::True) {
+                            self.push(Op::Mov(d, 0));
+                        } else {
+                            self.ld(d, W::B8, m);
+                        }
+                    }
+                    Loc::X(d) => self.push(Op::LdF { dst: d, m }),
+                    _ => {}
+                }
+            }
             // N1a: a fused index sum is read by its accesses, nothing to emit
             TOp::Add if self.al.fused[i] => {}
             TOp::Add | TOp::Sub | TOp::Mul | TOp::Band | TOp::Bor | TOp::Bxor => self.ibin(i)?,
@@ -10125,6 +10149,9 @@ impl Cx<'_> {
         for op in exit::sunk_save_ops(es) {
             self.push(op);
         }
+        if let Some(c) = cell {
+            self.replay_path(es, snap, c);
+        }
         let err = self.label();
         self.push(Op::CallH {
             f: self.env.mat_fn,
@@ -10216,6 +10243,31 @@ impl Cx<'_> {
         self.bind(err);
         self.push(Op::Ret(rn_core::jit_hooks::JitExit::Error as u32));
         Ok(())
+    }
+
+    /// Section 52 (`resink`): the path of a materialising stub into a side trace that keeps the exit's sunk tables sunk: after the slot stores, the budget and
+    /// the save ops, the cell is compared with the exit's replay cell (nonzero and equal: the side trace attached now is the one that replays); then the
+    /// field values go into the replay words and the stub jumps through the cell without the helper. Otherwise control continues at the helper call.
+    fn replay_path(&mut self, es: &ExitSnap, snap: u32, cell: u64) {
+        if self.env.exit_rcells == 0 || exit::replay_tabs(es).is_none() {
+            return;
+        }
+        let rc = self.env.exit_rcells + 8 * u64::from(snap);
+        let mat = self.label();
+        self.push(Op::Mov(7, cell));
+        self.ld(7, W::B8, rm(7, 0));
+        self.push(Op::Mov(6, rc));
+        self.ld(6, W::B8, rm(6, 0));
+        self.br(Cc::Eq, 6, Src::Imm(0), mat);
+        if !mutants::active("resink_flag_ignored") {
+            self.br(Cc::Ne, 7, Src::V(6), mat);
+        }
+        // (the copies use `V6` only: `V7` still holds the cell)
+        for op in exit::replay_copy_ops(es) {
+            self.push(op);
+        }
+        self.push(Op::JmpR(7));
+        self.bind(mat);
     }
 
     /// N2a: the code pointer of the root frame of `es`'s segment (`env.root_code` for segment 0).
@@ -10486,6 +10538,9 @@ impl Cx<'_> {
             }
             for op in exit::sunk_save_ops(es) {
                 self.push(op);
+            }
+            if let Some(c) = cell {
+                self.replay_path(es, snap, c);
             }
             let err = self.label();
             self.push(Op::CallH {

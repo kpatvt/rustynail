@@ -353,6 +353,7 @@ pub fn header_safe(op: TOp) -> bool {
         | TOp::Hstore
         // S0: adds to the collector's byte counters only / stack stores of the writeback
         | TOp::Tvirt
+        | TOp::Xload
         | TOp::Sstore
         | TOp::Uvrel
         // N2b: the pop touches the frame registers and `thread.ci` only

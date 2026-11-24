@@ -1054,6 +1054,12 @@ pub const NAMES: &[&str] = &[
     "callspill_no_reload",
     // docs/JIT_TRACE.md section 52 (`sinkmm`, `resink`): the sunk-frame stub for metamethod frames, sunk allocations replayed into side traces
     "sinkmm_unatt_inline",
+    "resink_copy_skip",
+    "resink_flag_ignored",
+    "resink_rcell_skip",
+    "resink_revert_slot_off",
+    "resink_setmt_guard_any",
+    "resink_handler_mat",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1139,7 +1145,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 865);
+        assert_eq!(NAMES.len(), 871);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

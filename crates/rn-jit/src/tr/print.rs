@@ -57,6 +57,9 @@ pub fn dump(ir: &TraceIr) -> String {
             TOp::Tvirt => {
                 let _ = write!(s, " {}", i.aux);
             }
+            TOp::Xload => {
+                let _ = write!(s, " rp{}", i.a);
+            }
             TOp::Sstore => {
                 let _ = write!(s, " slot{} <- {a}", i.aux);
             }
@@ -377,6 +380,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         );
         for (reason, n) in &s.side_aborted {
             let _ = writeln!(o, "[trace] side aborted {reason}: {n}");
+        }
+        if s.resink_sides > 0 {
+            let _ = writeln!(o, "[trace] resink: side traces {}", s.resink_sides);
         }
         if s.heat_granted > 0 {
             let _ = writeln!(o, "[trace] heatside: granted {}", s.heat_granted);

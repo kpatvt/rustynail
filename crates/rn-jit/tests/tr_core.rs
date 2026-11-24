@@ -537,6 +537,8 @@ struct TStats {
     /// Tables materialised by exits (`sink: ... materialised N`).
     materialised: u64,
     stub_frames: u64,
+    /// Section 52 (`resink`): side traces installed that keep their replayed tables sunk (`resink: side traces N`).
+    resink_sides: u64,
     /// BUNDLE-1: loops peeled by the compiles of the run.
     peeled: u64,
     /// BUNDLE-N: installed traces with a `RETF`.
@@ -860,6 +862,8 @@ impl TStats {
                 if let Some((k, v)) = r.rsplit_once(": ") {
                     s.aborts.insert(k.into(), v.trim().parse().unwrap_or(0));
                 }
+            } else if let Some(r) = l.strip_prefix("resink: side traces ") {
+                s.resink_sides = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("sink: tables ") {
                 s.retf = r
                     .split(" retf ")
@@ -5930,7 +5934,7 @@ fn sink_programs_run_on_traces() {
 /// is not with the knob off. Detector of the mutants `sinkstub_never`, `sinkstub_save_skip`.
 #[test]
 fn j1_sinkstub_programs() {
-    const ON: &str = "sinkmt=1,sinkside=1,sinkstub=1";
+    const ON: &str = "sinkmt=1,sinkside=1,sinkstub=1,resink=0";
     let mut jobs = Vec::new();
     for p in SINK {
         for trace in ["always", "on2"] {
@@ -12396,7 +12400,8 @@ fn s1_lazystub_programs() {
         ("p2_xregs", "xregs=3"),
         (
             "s1_dbl_chain",
-            "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64",
+            // (section 52: `resink` off: the chain of side traces this program builds is the one of the eager / deferred double-counting stubs)
+            "chainre=95,chainn=1000,ncallee=1,chaindepth=0,maxside=64,resink=0",
         ),
     ];
     let mut jobs = Vec::new();
@@ -13196,7 +13201,7 @@ fn s51_rapol_programs() {
 /// Detector of `sinkmm_unatt_inline`.
 #[test]
 fn s52_sinkmm_programs() {
-    const BASE: &str = "sinkmt=1,sinkside=2,sinkstub=1";
+    const BASE: &str = "sinkmt=1,sinkside=2,sinkstub=1,resink=0";
     let mut jobs = Vec::new();
     for p in [
         "s52_mm_frames",
@@ -13251,6 +13256,89 @@ fn s52_sinkmm_programs() {
     assert!(
         on > off,
         "s52_mm_frames: the metamethod-frame stub was never taken ({on} vs {off})"
+    );
+}
+
+/// Section 52 (`resink`, docs/JIT_TRACE.md section 52.3): side traces that start at an exit with sunk tables replay them (allocation and field stores
+/// from the exit area's replay words) and sink them again, or revert the replay when a replayed table escapes. `s52_resink_paths` (field values of every
+/// kind, aliases, two tables per exit, escapes into an array / a weak table / an upvalue, a late branch flip: side traces of side traces, `pairs` order
+/// of a materialised table) and `s52_resink_observers` (an error with the table live read by `debug.getlocal`, a hook installed from inside, a
+/// coroutine yield, `__index` / `__gc` on the metatable, collections in the loop, a callee replaced between rounds), the section-52 and SINK-F
+/// programs, knob off / on, `always` / `on2`, `+verify`, exit storms, budgets, GC stress 1 / 2 in both collector modes, the stack-move stress, the
+/// handler path only (`sinkstub=0`), without `sinkmm`; replays really are kept. Detector of `resink_copy_skip`, `resink_flag_ignored`,
+/// `resink_rcell_skip` and `resink_revert_slot_off`.
+#[test]
+fn s52_resink_programs() {
+    const ON: &str = "sinkmt=1,sinkside=2,sinkstub=1,sinkmm=1,resink=1";
+    let mut jobs = Vec::new();
+    for p in [
+        "s52_resink_paths",
+        "s52_resink_observers",
+        "s52_resink_count",
+        "s52_mm_frames",
+        "sinkf_side",
+        "j1_sinkf",
+        "sink_alias_frames",
+    ] {
+        for trace in ["always", "on2"] {
+            for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                jobs.push(Job::new(p, trace).opts(opts).limits_s(ON));
+            }
+            jobs.push(Job::new(p, trace).limits_s("sinkmt=1,sinkside=2,sinkstub=1,resink=0"));
+            jobs.push(Job::new(p, trace).budget(17).limits_s(ON));
+            jobs.push(Job::new(p, trace).budget(3).limits_s(ON));
+            jobs.push(Job::new(p, trace).limits_s(&format!("{ON},sinkstub=0")));
+            jobs.push(Job::new(p, trace).limits_s(&format!("{ON},sinkmm=0")));
+            jobs.push(Job::new(p, trace).limits_s(&format!("{ON},lazystub=0")));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(ON);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(ON),
+            );
+            jobs.push(Job::new(p, trace).limits_s(&format!("{ON},sinkroot=2")));
+            // (two pinned string-hash seeds: `s52_resink_paths` prints a materialised table in `pairs` order, which follows the seed)
+            let mut j = Job::new(p, trace).limits_s(ON);
+            j.seed = Some(2);
+            jobs.push(j);
+        }
+    }
+    for j in jobs.iter_mut().filter(|j| j.seed.is_none()) {
+        j.seed = Some(1);
+    }
+    let res = compare(jobs);
+    let mut kept = 0;
+    for (j, o) in &res {
+        if j.prog.starts_with("s52_resink")
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+            && j.limits == ON
+        {
+            kept += o.stats.resink_sides;
+        }
+        if j.limits.ends_with("resink=0") {
+            assert_eq!(
+                o.stats.resink_sides,
+                0,
+                "{}: replays with the knob off",
+                j.tag()
+            );
+        }
+    }
+    assert!(
+        kept >= 2,
+        "s52_resink_*: no side trace kept its replayed tables sunk ({kept})"
     );
 }
 

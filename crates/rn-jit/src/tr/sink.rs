@@ -519,16 +519,125 @@ fn loaded_slots(ir: &TraceIr) -> HashSet<u16> {
         .collect()
 }
 
+/// Section 52 (`resink`): side traces that kept every table they replayed sunk.
+pub static RESUNK: AtomicU64 = AtomicU64::new(0);
+/// Section 52: side traces whose replay was reverted (a replayed table did not stay sunk).
+pub static REVERTED: AtomicU64 = AtomicU64::new(0);
+
 /// The pass-list entry (`sink`): see the module documentation.
+///
+/// Section 52 (`resink`): a side trace that replays its parent's sunk tables (`TraceIr::replay`) keeps the replay only when the pass sinks every
+/// replayed table again (the trial runs on a copy); otherwise the whole replay is reverted first (each replayed `TNEW` becomes the unchecked `SLOAD` of
+/// the slot that holds the table the parent's exit materialises, the other replay instructions go) and the pass runs on that.
 pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
+    if rec.ir.replay.is_empty() {
+        return run0(rec, opts).map(|_| ());
+    }
+    let mut trial = rec.clone();
+    let all = match run0(&mut trial, opts) {
+        Ok(sunk) => rec.ir.replay.iter().all(|&(t, _)| sunk.contains(&idx(t))),
+        Err(_) => false,
+    };
+    if all {
+        *rec = trial;
+        rec.ir.replay.clear();
+        rec.ir.replay_range = (0, 0);
+        rec.ir.resink = true;
+        bump(&RESUNK, 1);
+        return Ok(());
+    }
+    bump(&REVERTED, 1);
+    revert_replay(rec)?;
+    run0(rec, opts).map(|_| ())
+}
+
+/// Section 52: undoes the replay of a side trace (see [`run`]).
+fn revert_replay(rec: &mut Recorded) -> Result<(), String> {
+    let n = rec.ir.ins.len();
+    let (lo, hi) = (
+        rec.ir.replay_range.0 as usize,
+        (rec.ir.replay_range.1 as usize).min(n),
+    );
+    let slot_of: HashMap<usize, u16> = rec.ir.replay.iter().map(|&(t, s)| (idx(t), s)).collect();
+    let mut removed = vec![false; n];
+    for (i, r) in removed.iter_mut().enumerate().take(hi).skip(lo) {
+        *r = !slot_of.contains_key(&i);
+    }
+    let mut newidx: Vec<Option<usize>> = vec![None; n];
+    let mut k = 0usize;
+    for i in 0..n {
+        if !removed[i] {
+            newidx[i] = Some(k);
+            k += 1;
+        }
+    }
+    let res = |r: Ref| -> Result<Ref, String> {
+        if r < REF_BIAS {
+            return Ok(r);
+        }
+        newidx
+            .get(idx(r))
+            .copied()
+            .flatten()
+            .map(ref_of)
+            .ok_or_else(|| "resink: a reference to a reverted replay instruction".to_string())
+    };
+    let mut heads = [NOREF; TOp::COUNT];
+    let mut out: Vec<Ins> = Vec::with_capacity(k);
+    for i in 0..n {
+        if removed[i] {
+            continue;
+        }
+        let mut ins = rec.ir.ins[i];
+        if let Some(&slot) = slot_of.get(&i) {
+            // (MUTANT `resink_revert_slot_off`: the reverted table is loaded from the next slot)
+            ins = Ins {
+                op: TOp::Sload,
+                t: Ty::Tab,
+                flags: 0,
+                a: slot + u16::from(mutants::active("resink_revert_slot_off")),
+                b: 0,
+                prev: NOREF,
+                aux: 0,
+            };
+        } else {
+            let (ra, rb) = ins.op.ref_operands();
+            if ra {
+                ins.a = res(ins.a)?;
+            }
+            if rb {
+                ins.b = res(ins.b)?;
+            }
+            if let Some(v) = ins.third() {
+                ins.aux = ins.aux_with_third(res(v)?);
+            }
+        }
+        ins.prev = heads[ins.op as usize];
+        heads[ins.op as usize] = ref_of(out.len());
+        out.push(ins);
+    }
+    for e in rec.ir.snapmap.iter_mut() {
+        e.r = res(e.r)?;
+    }
+    for e in rec.writeback.iter_mut() {
+        e.r = res(e.r)?;
+    }
+    rec.ir.ins = out;
+    rec.ir.replay.clear();
+    rec.ir.replay_range = (0, 0);
+    Ok(())
+}
+
+/// [`run`] without the replay decision: returns the indices of the `TNEW`s it sank.
+fn run0(rec: &mut Recorded, opts: &TraceOpts) -> Result<Vec<usize>, String> {
     if !opts.sink || rec.ir.loop_at.is_some() || !rec.ir.segs.is_empty() {
-        return Ok(()); // (N2b: slots of different segments are different stack cells: the dead-slot analysis is per root frame)
+        return Ok(Vec::new()); // (N2b: slots of different segments are different stack cells: the dead-slot analysis is per root frame)
     }
     let end = match (rec.side, rec.stitched) {
         // a native self-call / return continues in the frame that the writeback describes: nothing in it is dead
         _ if rec.ir.rec_call.is_some() || rec.ir.rec_ret.is_some() => EndKind::Nothing,
         (None, false) => EndKind::Loop,
-        _ if opts.sinkside == 0 => return Ok(()),
+        _ if opts.sinkside == 0 => return Ok(Vec::new()),
         (Some(sd), _) if sd.no_link => EndKind::Exit,
         (Some(sd), _) if sd.frame_link => EndKind::Nothing,
         (Some(sd), _) => EndKind::Link((sd.link_proto, sd.link_pc)),
@@ -538,7 +647,7 @@ pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
     // no-link traces and the frame-link traces gain nothing measurable and are the losers of `sinkside=1` (`awfy/json`, `stream_closures`: their
     // materialisation stubs run more often than the allocations they remove), docs/JIT_PARKED.md A8.
     if opts.sinkside == 2 && !matches!(end, EndKind::Loop | EndKind::Link(_)) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let loaded = loaded_slots(&rec.ir);
     let mut cands: Vec<Cand> = Vec::new();
@@ -551,16 +660,16 @@ pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
     }
     if cands.is_empty() {
         NOTE.with(|n| *n.borrow_mut() = "sink: no candidates".into());
-        return Ok(());
+        return Ok(Vec::new());
     }
-    rebuild(rec, &cands)?;
-    SUNK_TABLES.fetch_add(cands.len() as u64, Ordering::Relaxed);
+    let sunk = rebuild(rec, &cands)?;
+    SUNK_TABLES.fetch_add(sunk.len() as u64, Ordering::Relaxed);
     SUNK_TRACES.fetch_add(1, Ordering::Relaxed);
-    NOTE.with(|n| *n.borrow_mut() = format!("sink: {} tables sunk", cands.len()));
-    Ok(())
+    NOTE.with(|n| *n.borrow_mut() = format!("sink: {} tables sunk", sunk.len()));
+    Ok(sunk)
 }
 
-fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
+fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
     let n = rec.ir.ins.len();
     let mut removed = vec![false; n];
     let mut alias: HashMap<usize, Ref> = HashMap::default();
@@ -587,7 +696,22 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
     }
     // BUNDLE-2: the replacement guard of a `SETMT` sits at the position of the removed `LIB` with the snapshot of the removed `NE`
     let mut mt_consts: Option<(Ref, Ref)> = None;
-    for c in cands {
+    // (section 52: a replayed `setmetatable` gets no `__gc` guard: the parent's guard passed in the run that left through the exit the side trace
+    // starts at, and no Lua code runs between that exit and the side trace's start)
+    // (only the replay's own `setmetatable`: one the side trace records itself on a replayed table keeps its guard. MUTANT `resink_setmt_guard_any`:
+    // every `setmetatable` of a replayed table loses it)
+    let (rlo, rhi) = (
+        rec.ir.replay_range.0 as usize,
+        rec.ir.replay_range.1 as usize,
+    );
+    let replay_t: Vec<usize> = rec.ir.replay.iter().map(|&(t, _)| idx(t)).collect();
+    let replayed = |c: &Cand| {
+        c.setmt.is_some_and(|(at, _)| {
+            (rlo <= at && at < rhi)
+                || (mutants::active("resink_setmt_guard_any") && replay_t.contains(&c.t))
+        })
+    };
+    for c in cands.iter().filter(|c| !replayed(c)) {
         if let (Some((at, _)), Some(ne)) = (c.setmt, c.setmt_ne) {
             let s = aux_snap(ne.aux) as usize;
             first_g[s] = first_g[s].min(at);
@@ -656,7 +780,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
             .map(|(_, c)| c.clone())
             .collect();
         if keep.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         return rebuild(rec, &keep);
     }
@@ -665,6 +789,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
     let mut guards: Vec<(usize, usize)> = cands
         .iter()
         .enumerate()
+        .filter(|&(_, c)| !replayed(c))
         .filter_map(|(ci, c)| c.setmt.map(|(at, _)| (at + 1, ci)))
         .collect();
     guards.sort_unstable();
@@ -786,7 +911,10 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
                 a: NOREF,
                 b: NOREF,
                 prev: NOREF,
-                aux: if mutants::active("sink_vbytes_zero") {
+                // (section 52: a replayed table was charged by the parent's `TVIRT` already)
+                aux: if mutants::active("sink_vbytes_zero")
+                    || rec.ir.replay.iter().any(|&(t, _)| idx(t) == c.t)
+                {
                     0
                 } else {
                     c.vbytes
@@ -900,5 +1028,5 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
             ..e
         });
     }
-    Ok(())
+    Ok(cands.iter().map(|c| c.t).collect())
 }

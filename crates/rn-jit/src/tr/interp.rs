@@ -918,6 +918,8 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                 }
             }
             TOp::Loop | TOp::Tvirt | TOp::Sstore => 0,
+            // Section 52: the emulator has no exit area (`resink` is off under `+emurun` / `+emuverify`)
+            TOp::Xload => return bad("XLOAD outside a native side trace"),
             TOp::Phi => match &carried {
                 Some(c) => c[pc],
                 None => val!(i.a),

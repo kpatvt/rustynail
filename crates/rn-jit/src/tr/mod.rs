@@ -107,7 +107,13 @@ pub struct ExitArea {
     /// region whose start (a checked outer entry) wrote them.
     pub mf_recv: u64,
     pub mf_cl: u64,
+    /// Section 52 (`resink`): the replay words: the field values of the sunk tables of the exit a side trace that replays them is entered from (written by
+    /// the exit's stub or by the handler, read by the side trace's `XLOAD`s at its start).
+    pub rp: [u64; RP_MAX],
 }
+
+/// Section 52 (`resink`): most replay words (fields and metatables of the sunk tables of one exit) a side trace can take.
+pub const RP_MAX: usize = 16;
 
 /// Byte offsets inside [`ExitArea`] (frozen; asm, exit handler and tests use these, never `offset_of` directly).
 pub mod exit_area {
@@ -136,6 +142,8 @@ pub mod exit_area {
     /// `mf_recv: u64`, `mf_cl: u64` (E5).
     pub const MF_RECV: usize = offset_of!(ExitArea, mf_recv);
     pub const MF_CL: usize = offset_of!(ExitArea, mf_cl);
+    /// `rp: [u64; RP_MAX]` (section 52).
+    pub const RP: usize = offset_of!(ExitArea, rp);
     /// Size of the area.
     pub const SIZE: usize = std::mem::size_of::<ExitArea>();
 }
@@ -154,6 +162,7 @@ impl Default for ExitArea {
             shape_fills: 0,
             mf_recv: 0,
             mf_cl: 0,
+            rp: [0; RP_MAX],
         }
     }
 }
@@ -984,6 +993,7 @@ pub fn driver_start_side(
             frame_min: if start.fretry { 0 } else { cfg.limits.framemin },
             carry: start.carry.clone(),
             carry_link: start.carry_link,
+            replay: start.replay.clone(),
         }),
         loop_unroll: cfg.limits.loopunroll,
         // C38 slice 1: a side recording that reaches a callee loop head with a root trace ends with the frame-linking exit
@@ -1390,11 +1400,20 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
     // POLL and BUDGET first. A side trace entered with carried values starts with its carried loads (unchecked, position-less: they have no code); they
     // belong to the prefix too, or the checks would be moved in front of the `BUDGET` charge, and a failing check there would leave with `refund = n`
     // for a charge that was never made (the budget word grows by `n`: 5.4 `r1_live_flip [on2 budget=200]` was 168 instructions short)
+    // (section 52: in front of the `BUDGET` of a side trace stand its replay, `XLOAD`s and `TVIRT`s, or the unchecked loads a reverted replay leaves,
+    // `sink::revert_replay`: they belong to the prefix, the checks go behind the charge as above. Only in front of the charge: a `TVIRT` behind it is an
+    // allocation of the iteration, which a failing check must not have charged)
+    let mut charged = false;
     let p = ir
         .ins
         .iter()
         .take_while(|i| {
+            let pre_replay = !charged
+                && (matches!(i.op, TOp::Xload | TOp::Tvirt)
+                    || (i.op == TOp::Sload && i.flags & F_GUARD == 0 && aux_bits(i.aux) == 0));
+            charged |= i.op == TOp::Budget;
             matches!(i.op, TOp::Poll | TOp::Budget)
+                || pre_replay
                 || (i.op == TOp::Sload
                     && aux_bits(i.aux) & ir::SLOAD_CARRIED != 0
                     && !mutants::active("entry_checks_before_budget"))
@@ -1425,12 +1444,13 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
             // (a side trace entered with carried values: the stack holds nothing for them, so the entry snapshot names them like snapshot 0 does, or
             // a failing check would resume the interpreter with stale slots; the recorder's `carry_entry_snap_bare` is the same rule. The mutant
             // `entry_checks_before_budget` restores both halves of the old behaviour: the bare snapshot alone is not observable, see docs/JIT_TRACE.md section 23)
-            let ents: Vec<ir::SnapEntry> =
-                if ir.carry_in.is_empty() || mutants::active("entry_checks_before_budget") {
-                    Vec::new()
-                } else {
-                    ir.snap_entries(0).to_vec()
-                };
+            let ents: Vec<ir::SnapEntry> = if (ir.carry_in.is_empty() && !ir.resink)
+                || mutants::active("entry_checks_before_budget")
+            {
+                Vec::new()
+            } else {
+                ir.snap_entries(0).to_vec()
+            };
             let e = ir.snapshot(s, &ents);
             rec.snap_step.push(0);
             rec.entry_snap = Some(e);
@@ -2199,6 +2219,18 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         let n = init.len();
         init.extend(std::iter::repeat_n(0, n));
     }
+    // Section 52 (`resink`): the replay cells of the exits (the stubs of replayable exits copy the field values and skip the materialisation when the
+    // attached side trace keeps them sunk)
+    let rcells = if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.resink } != 0 {
+        let n = if carry_exits_on {
+            init.len() / 2
+        } else {
+            init.len()
+        };
+        cache::alloc_exit_rcells(st, act.id, n).map_or(0, |p| p as u64)
+    } else {
+        0
+    };
     let cells = cache::alloc_exit_cells(st, act.id, &init)
         .ok_or_else(|| abort_err("cells", "alloc_exit_cells"))?;
     let (head, pcl) = if act.side {
@@ -2590,6 +2622,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         sink_stub: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkstub != 0 },
         // SAFETY: as above.
         sink_mm: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkmm != 0 },
+        exit_rcells: rcells,
         mat_fn: exit::jit_tr_mat as *const () as usize as u64,
         carry_head: carry_env.0,
         carry_sig: carry_env.1,
@@ -2855,6 +2888,14 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         detail: format!("install: {e:?}"),
     })?;
     phase::add(phase::INSTALL, t_inst);
+    // Section 52 (`resink`): the parent's exit enters this side trace without materialising the tables it replays
+    if act.side {
+        cache::set_rcell(
+            st,
+            newid,
+            ir.resink && !crate::tr::mutants::active("resink_rcell_skip"),
+        );
+    }
     if link_root {
         cache::note_nest(st, side.is_some_and(|s| s.frame_link));
     }
@@ -3501,7 +3542,8 @@ mod tests {
         // (E5: the verified method pair behind `shape_fills`)
         assert_eq!(exit_area::MF_RECV, exit_area::LAZY_ROOT + 24);
         assert_eq!(exit_area::MF_CL, exit_area::LAZY_ROOT + 32);
-        assert_eq!(exit_area::SIZE, exit_area::LAZY_ROOT + 40);
+        assert_eq!(exit_area::RP, exit_area::LAZY_ROOT + 40);
+        assert_eq!(exit_area::SIZE, exit_area::RP + 8 * RP_MAX);
     }
 
     #[test]

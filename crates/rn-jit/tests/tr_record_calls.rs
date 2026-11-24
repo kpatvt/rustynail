@@ -508,6 +508,7 @@ fn n_side(st: &mut State) -> LuaResult<usize> {
     cfg.wait_head = true; // the recorder skips the steps before the start pc
     let heads: Vec<u32> = low.backedges.iter().map(|&(_, h)| h).collect();
     cfg.side = Some(record::SideCfg {
+        replay: Vec::new(),
         known: SIDE_KNOWN.with(|k| k.borrow().clone()),
         head_state: Rc::new(move |_st, pc| heads.contains(&pc).then(|| SIDE_TRACED.get())),
         min_len: SIDE_MIN.get(),

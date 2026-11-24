@@ -1930,6 +1930,117 @@ pub fn sunk_frame_stub_mm_ok(s: &ExitSnap) -> bool {
         && s.link_cell == 0
 }
 
+/// Section 52 (`resink`): one sunk table of an exit snapshot as a side trace replays it: the slot (and aliases) that hold it, the `NEWTABLE` hash
+/// operand, the field keys (interned short strings) with the static types of their values, and the type of the metatable (always a table) if it has one.
+/// The values travel in the replay words of the exit area, in [`replay_srcs`] order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayTab {
+    /// The slot that holds the table.
+    pub slot: u16,
+    /// Further slots that hold it.
+    pub aliases: Vec<u16>,
+    /// `NEWTABLE` operand `B`.
+    pub b: u32,
+    /// `(key address, value type)` in insertion order.
+    pub fields: Vec<(u64, Ty)>,
+    /// The metatable's type ([`Ty::Tab`]) when the table gets one.
+    pub mt: Option<Ty>,
+}
+
+/// Section 52 (`resink`): the tables of `s` as a side trace would replay them, or `None` when `s` cannot be replayed: a sunk table with an array part, a
+/// field whose value type is not static (a string of either variant) or not a Lua value, or more replay words than [`super::RP_MAX`].
+pub fn replay_tabs(s: &ExitSnap) -> Option<Vec<ReplayTab>> {
+    if s.sunk.is_empty() || !s.usable || s.top.is_some() || s.link_cell != 0 {
+        return None;
+    }
+    let mut n = 0usize;
+    let mut v = Vec::with_capacity(s.sunk.len());
+    for t in &s.sunk {
+        if t.c != 0 {
+            return None;
+        }
+        let mut fields = Vec::with_capacity(t.fields.len());
+        for f in &t.fields {
+            if f.tag == TAG_DYN_STR {
+                return None;
+            }
+            let ty = ty_of_tag(f.tag)?;
+            if ty == Ty::Nil {
+                return None;
+            }
+            fields.push((f.key, ty));
+        }
+        let mt = match t.mt {
+            Some((tag, _)) if ty_of_tag(tag) == Some(Ty::Tab) => Some(Ty::Tab),
+            Some(_) => return None,
+            None => None,
+        };
+        n += fields.len() + usize::from(mt.is_some());
+        v.push(ReplayTab {
+            slot: t.slot,
+            aliases: t.aliases.clone(),
+            b: t.b,
+            fields,
+            mt,
+        });
+    }
+    (n <= super::RP_MAX).then_some(v)
+}
+
+/// Section 52: where the values of the replay words of `s` are at its exit (fields of every sunk table in order, each table's metatable behind its
+/// fields): replay word `i` holds `read_src(srcs[i])`.
+pub fn replay_srcs(s: &ExitSnap) -> Vec<ValSrc> {
+    let mut v = Vec::new();
+    for t in &s.sunk {
+        v.extend(t.fields.iter().map(|f| f.src));
+        if let Some((_, src)) = t.mt {
+            v.push(src);
+        }
+    }
+    v
+}
+
+/// Section 52: the machine code that copies the replay values of `s` into the replay words, reading every register from the exit area (the stub stored
+/// them there with [`sunk_save_ops`] first); uses `V6` only.
+pub fn replay_copy_ops(s: &ExitSnap) -> Vec<Op> {
+    let mut v = Vec::new();
+    for (i, src) in replay_srcs(s).into_iter().enumerate() {
+        let from = match src {
+            ValSrc::Reg(r) => Some(area_m(exit_area::GPR + 8 * usize::from(r))),
+            ValSrc::Xmm(x) => Some(area_m(exit_area::XMM + 8 * usize::from(x))),
+            ValSrc::Spill(k) => Some(area_m(exit_area::SPILL + 8 * usize::from(k))),
+            ValSrc::Imm(c) => {
+                v.push(Op::Mov(6, c));
+                None
+            }
+        };
+        if let Some(m) = from {
+            v.push(Op::Ld {
+                dst: 6,
+                w: W::B8,
+                m,
+            });
+        }
+        // (MUTANT `resink_copy_skip`: the last replay word keeps a stale value)
+        if mutants::active("resink_copy_skip") && i + 1 == replay_srcs(s).len() {
+            continue;
+        }
+        v.push(Op::St {
+            w: W::B8,
+            m: area_m(exit_area::RP + 8 * i),
+            src: Src::V(6),
+        });
+    }
+    v
+}
+
+/// Section 52: the handler's twin of [`replay_copy_ops`] (the shared exit routine stored every register in the area).
+pub fn replay_fill(s: &ExitSnap, area: &mut ExitArea) {
+    for (i, src) in replay_srcs(s).into_iter().enumerate() {
+        area.rp[i] = read_src(area, src);
+    }
+}
+
 /// J1-2: may the inline stub of `s` materialise its sunk tables itself (through [`jit_tr_mat`])? Frameless, no `top`, no link.
 pub fn sunk_stub_ok(s: &ExitSnap) -> bool {
     !s.sunk.is_empty() && s.frames.is_empty() && s.top.is_none() && s.usable && s.link_cell == 0
@@ -2363,9 +2474,22 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
     }
     // SAFETY: contract of this function.
     let out = unsafe { exit_core_ex(meta, &ctx, area, count_it) };
+    // Section 52 (`resink`): an exit that continues in a side trace keeping its sunk tables sunk does not materialise them (the side trace takes the
+    // field values from the replay words); the decision is made again after the policy, which may flush the side trace or start a recording: then the
+    // tables are made before anything can look at the frame
+    let snap_k = meta.exits[out.exitno as usize].snap as usize;
+    let rc_now = if meta.snaps[snap_k].sunk.is_empty() || meta.cells.is_null() {
+        0
+    } else {
+        cache::rcell_of(&mut st, id, snap_k).unwrap_or(0)
+    };
+    // SAFETY: `cells` points at live cells of the trace (`exit_core_ex` read them the same way).
+    let cell_of = |k: usize| unsafe { &*meta.cells.add(k) }.get();
+    let mut mat_deferred =
+        rc_now != 0 && cell_of(snap_k) == rc_now && !mutants::active("resink_handler_mat");
     {
         let sn = &meta.snaps[meta.exits[out.exitno as usize].snap as usize];
-        if !sn.sunk.is_empty() {
+        if !sn.sunk.is_empty() && !mat_deferred {
             // SAFETY: contract of this function; the snapshot slots are written, nothing allocated since.
             let ok = unsafe { materialise(&mut st, &ctx, sn, area) };
             if !ok && !mutants::active("sink_mem_error_dropped") {
@@ -2460,6 +2584,24 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         // SAFETY: `ci` is the running Lua frame of the exiting trace (contract).
         cache::entry_fail_hot_id(&mut st, unsafe { Ci::from_raw(ci) }, id);
     }
+    if mat_deferred && (side_started || flushed || cell_of(snap_k) != rc_now) {
+        // (section 52: the side trace is not where the exit continues any more: the tables are made now, the frame is still the restored one)
+        mat_deferred = false;
+        // SAFETY: as for the materialisation above: the snapshot slots are written, the policy allocated nothing in this frame.
+        let ok = unsafe { materialise(&mut st, &ctx, &meta.snaps[snap_k], area) };
+        if !ok && !mutants::active("sink_mem_error_dropped") {
+            jit_hooks::set_error(&mut st, rn_core::status::Status::ErrMem);
+            cache::handler_leave(&mut st);
+            area.args[0] = 0;
+            return Handled {
+                id,
+                out,
+                flushed,
+                side_started: false,
+                mem_error: true,
+            };
+        }
+    }
     if let Some(p) = PROBE.with(|p| *p.borrow()) {
         p(&mut st, id);
     }
@@ -2520,6 +2662,14 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         // SAFETY: `cells` points at live cells of the trace (kept alive by the `Arc`d metadata and the deferred
         // retirement of TR18) and `ex.snap` indexed them.
         area.args[0] = unsafe { &*meta.cells.add(ex.snap as usize) }.get() as u64;
+    }
+    // Section 52 (`resink`): the exit continues in a side trace that keeps the exit's sunk tables sunk: it reads their field values from the replay words
+    if mat_deferred {
+        assert!(
+            !side_started && area.args[0] != 0 && area.args[0] == rc_now as u64,
+            "resink: a deferred materialisation without its side trace"
+        );
+        replay_fill(&meta.snaps[snap_k], area);
     }
     cache::handler_leave(&mut st);
     Handled {

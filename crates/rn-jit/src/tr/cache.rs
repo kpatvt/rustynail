@@ -369,6 +369,8 @@ pub const SINKMT_PROCESS: u32 = 1;
 pub const SINKSIDE_PROCESS: u32 = 2;
 /// J1-2: process default of [`TrLimits::sinkstub`]. SINK-F: 1.
 pub const SINKSTUB_PROCESS: u32 = 1;
+/// Section 52 (`resink`): process default of [`TrLimits::resink`] (also the struct default).
+pub const RESINK_PROCESS: u32 = 1;
 /// Section 52 (`sinkmm`): process default of [`TrLimits::sinkmm`] (also the struct default).
 pub const SINKMM_PROCESS: u32 = 1;
 /// SINK-R: process default of [`TrLimits::sinkroot`] (2: the shape is demoted for the root head only).
@@ -675,6 +677,11 @@ pub struct TrLimits {
     /// `exit::jit_tr_mat` and jumps through the cell); without a side trace such an exit still goes through the handler, which rebuilds the
     /// metamethod frames (`nCcalls`, `CIST_MMRET`). 0 = off; default [`SINKMM_PROCESS`].
     pub sinkmm: u32,
+    /// Section 52 (`resink`, docs/JIT_TRACE.md section 52.3): sunk allocations replayed into side traces. A side trace that starts at an exit whose
+    /// snapshot holds sunk tables begins with a replay of them (`TNEW`, the field stores from the exit area's replay words, `setmetatable`); the sink pass
+    /// sinks them again (the parent's exit then copies the field values instead of materialising) or reverts the replay. 0 = off; default
+    /// [`RESINK_PROCESS`].
+    pub resink: u32,
     /// J2-2: per-site deeper inlining: a loop recording that ended at the recursion or depth limit (`Recursion` / `Depth` abort) is
     /// re-recorded once, immediately, with `unroll` and `maxdepth` raised to this value (at most `exit::MAX_FRAMES`), and so are the
     /// side recordings of its family (0 = never, the struct default; process default [`DEEP_PROCESS`]).
@@ -986,6 +993,7 @@ impl Default for TrLimits {
             sinkroot: SINKROOT_PROCESS,
             sinkstub: SINKSTUB_PROCESS,
             sinkmm: SINKMM_PROCESS,
+            resink: RESINK_PROCESS,
             deep: DEEP_PROCESS,
             deepins: 300,
             deephop: 1,
@@ -1202,6 +1210,7 @@ impl TrLimits {
                 "sinkroot" => l.sinkroot = v.min(2),
                 "sinkstub" => l.sinkstub = v.min(1),
                 "sinkmm" => l.sinkmm = v.min(1),
+                "resink" => l.resink = v.min(1),
                 "deep" => l.deep = v.min(8),
                 "deepins" if v > 0 => l.deepins = v,
                 "deephop" => l.deephop = v.min(1),
@@ -2878,6 +2887,8 @@ pub struct TrStats {
     pub side_started: u64,
     /// S1: side recordings started at an exit inside inlined frames, with the frames kept virtual.
     pub side_framed: u64,
+    /// Section 52 (`resink`): side traces installed that keep every table they replay sunk.
+    pub resink_sides: u64,
     /// C38 slice 1: side traces installed that end with a frame-linking exit into a callee loop trace (`sidenest`).
     pub side_frame_links: u64,
     /// F2a: side traces installed.
@@ -3001,6 +3012,8 @@ struct Rec {
     /// F2a: the exit cells of the trace being compiled ([`alloc_exit_cells`]) and their initial values.
     cells: Option<Box<[Cell<usize>]>>,
     cells_init: Vec<usize>,
+    /// Section 52 (`resink`): the replay cells of the trace being compiled ([`alloc_exit_rcells`]).
+    rcells: Option<Box<[Cell<usize>]>>,
     /// F2a: `Some` for a side recording.
     side: Option<SideLink>,
     no: u32,
@@ -3026,6 +3039,10 @@ struct Trace {
     cells: Box<[Cell<usize>]>,
     /// F2a: the values the cells started with (what a cell goes back to when its side trace is flushed alone).
     cells_init: Vec<usize>,
+    /// Section 52 (`resink`): `rcells[k]` is the entry of the side trace attached to exit `k` when that side trace keeps the exit's sunk tables sunk
+    /// (its stub then copies their field values into the replay words and does not materialise them), else 0. Only a value equal to the cell counts: a
+    /// stale entry (the side trace was flushed, the cell holds the landing again) is never taken. Empty when the knob is off.
+    rcells: Box<[Cell<usize>]>,
     /// F2a: `Some` for a side trace.
     side: Option<SideLink>,
     /// F2a: the root trace of the family (itself for a root).
@@ -3523,6 +3540,7 @@ pub fn begin_recording(st: &mut State, pr: ProtoRef, pc: u32) -> Result<TrId, Be
         exits: None,
         cells: None,
         cells_init: Vec::new(),
+        rcells: None,
         side: None,
         no,
     }));
@@ -3586,6 +3604,7 @@ pub fn begin_side_recording_ex(
         exits: None,
         cells: None,
         cells_init: Vec::new(),
+        rcells: None,
         side: Some(SideLink {
             parent,
             exit,
@@ -3912,6 +3931,63 @@ pub fn alloc_exit_cells(st: &mut State, id: TrId, init: &[usize]) -> Option<*con
             Some(p)
         }
         _ => None,
+    }
+}
+
+/// Section 52 (`resink`): allocates the replay cells of recording `id` (`n` words, zero, address-stable); they move into the trace at [`install`].
+pub fn alloc_exit_rcells(st: &mut State, id: TrId, n: usize) -> Option<*const Cell<usize>> {
+    match d_of(st).tr.slot_mut(id) {
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) => {
+            if let Some(b) = &r.rcells {
+                return (b.len() == n).then_some(b.as_ptr());
+            }
+            let b: Box<[Cell<usize>]> = (0..n).map(|_| Cell::new(0)).collect();
+            let p = b.as_ptr();
+            r.rcells = Some(b);
+            Some(p)
+        }
+        _ => None,
+    }
+}
+
+/// Section 52 (`resink`): the replay cell of exit `k` of trace `id` (`None`: no such trace or no replay cells).
+pub fn rcell_of(st: &mut State, id: TrId, k: usize) -> Option<usize> {
+    match d_of(st).tr.slot(id) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => t.rcells.get(k).map(Cell::get),
+        _ => None,
+    }
+}
+
+/// Section 52 (`resink`): the side trace `id` was just installed: its parent's exit enters it without materialising the exit's sunk tables (`on`), or
+/// as before.
+pub fn set_rcell(st: &mut State, id: TrId, on: bool) {
+    let d = d_of(st);
+    let (link, entry) = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) => match t.side {
+            Some(sl) if !sl.prelude => (sl, t.entry),
+            _ => return,
+        },
+        _ => return,
+    };
+    if let Some(Slot {
+        body: Body::Trace(p),
+        ..
+    }) = d.tr.slot(link.parent)
+    {
+        if let Some(rc) = p.rcells.get(link.exit as usize) {
+            rc.set(if on { entry } else { 0 });
+            if on {
+                d.tr.stats.resink_sides += 1;
+            }
+        }
     }
 }
 
@@ -4748,6 +4824,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
     let exits = r.exits.unwrap_or_default();
     let cells = r.cells.unwrap_or_default();
     let cells_init = r.cells_init;
+    let rcells = r.rcells.unwrap_or_default();
     let nex = exits.len();
     sl.body = Body::Trace(Trace {
         root: r.root,
@@ -4763,6 +4840,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         entry,
         cells,
         cells_init,
+        rcells,
         side,
         family,
         kids: Vec::new(),
@@ -4840,6 +4918,10 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
                         .is_some_and(|sn| sn.slots.is_empty() && sn.frames.is_empty())
                 });
             if !sl.prelude {
+                // (section 52: `set_rcell` sets it again once the new side trace says it replays)
+                if let Some(rc) = p.rcells.get(sl.exit as usize) {
+                    rc.set(0);
+                }
                 if let Some(c) = p.cells.get(sl.exit as usize) {
                     c.set(entry);
                 }
@@ -5476,6 +5558,8 @@ pub struct SideStart {
     pub carry: Vec<(u16, super::ir::Ty, super::ir::CarrySrc, bool)>,
     /// Section 50 (`slink`): `carry` was chosen for a carry link only (the exit's stub has no carry path for it: `slink_carry`).
     pub carry_link: bool,
+    /// Section 52 (`resink`): the sunk tables of the exit the recording replays (empty: none).
+    pub replay: Vec<super::exit::ReplayTab>,
 }
 
 /// S1: one inlined frame of the exit a side recording starts in (the fields of `exit::FrameRestore` the recorder needs).
@@ -6298,6 +6382,23 @@ fn side_attempt(
         carry = slink_carry(d_of(st), id, k, snap, virt, prelude);
         carry_link = !carry.is_empty();
     }
+    // Section 52 (`resink`): the sunk tables of the exit are replayed into the side trace (the parent has replay cells: it was compiled with the knob on)
+    let replay = {
+        let d = d_of(st);
+        let has_rcells = matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.rcells.len() > k as usize);
+        if d.tr.cfg.limits.resink != 0
+            && has_rcells
+            && !prelude
+            && carry.is_empty()
+            && (snap.frames.is_empty() || virt)
+            && !d.tr.cfg.opts.emurun
+            && !d.tr.cfg.opts.emuverify
+        {
+            super::exit::replay_tabs(snap).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    };
     match start(
         st,
         ci,
@@ -6315,6 +6416,7 @@ fn side_attempt(
             inner_ret,
             carry,
             carry_link,
+            replay,
         },
     ) {
         Some(rem) => HotAction::Interp(rem),

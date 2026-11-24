@@ -4784,6 +4784,36 @@ const TABLE: &[Row] = &[
         owner: "S52",
         dets: &[d("tr_core", "s52_sinkmm_programs")],
     },
+    Row {
+        name: "resink_copy_skip",
+        owner: "S52",
+        dets: &[d("tr_core", "s52_resink_programs")],
+    },
+    Row {
+        name: "resink_flag_ignored",
+        owner: "S52",
+        dets: &[d("tr_core", "s52_resink_programs")],
+    },
+    Row {
+        name: "resink_rcell_skip",
+        owner: "S52",
+        dets: &[d("tr_core", "s52_resink_programs")],
+    },
+    Row {
+        name: "resink_revert_slot_off",
+        owner: "S52",
+        dets: &[d("tr_core", "s52_resink_programs")],
+    },
+    Row {
+        name: "resink_setmt_guard_any",
+        owner: "S52",
+        dets: &[d("tr_core", "setmt_programs")],
+    },
+    Row {
+        name: "resink_handler_mat",
+        owner: "S52",
+        dets: &[d("tr_core", "s52_resink_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

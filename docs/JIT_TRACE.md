@@ -6612,3 +6612,172 @@ richards +0.5 % instructions).
   With every lever (`rapol=7`, 5.5): jit-diff 1-40 `off tr` 0 diffs, official suite OK.
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle-feature suites (the identity jobs of `s51_rapol_programs` run
   only in oracle builds), PGO builds, the all-223 benchmark; 5.4 cycles.
+
+## 52. Sunk-frame stub for metamethod frames (knob `sinkmm`) and sunk allocations replayed into side traces (knob `resink`; 2026-11-24, base 075b9f3)
+
+Task: candidate 1 of docs/STUDY_CAUSAL_GAP.md (section 6): the steady-state gap of the allocating programs is sinking across side-trace boundaries
+(LuaJIT's `snap_replay`). (1) A sunk-frame stub for exits whose frames include metamethod frames (the "cheaper next step" of 50.6); (2) part (B) of
+50.6, which was not built: the side trace replays the sunk tables of its parent's exit and sinks them again. **Result: both are built, each behind
+its own knob, both default on (`SINKMM_PROCESS = 1`, `RESINK_PROCESS = 1`). Final binary, both knobs off -> on: classic_vector 2029.9 -> 1308.4 M
+instructions (-35.5 %), 460.3 -> 304.9 Mcyc (-33.8 %; LuaJIT 248: the ratio goes from 1.9x to 1.23x); cd 692.3 -> 648.5 M (-6.3 %), 243.1 -> 237.0 Mcyc
+(-2.5 %); raytrace, havlak, richards unchanged (within +-0.2 % instructions, +-1.2 % cycles). 30-program sample: `sinkmm` geomean -0.13 % / -0.49 %,
+`resink` geomean -1.58 % instructions / -1.33 % cycles, no program above the bar. The study's expectation (classic_vector -11 %, cd -7 %) is exceeded
+on classic_vector (3x) and missed on cd (0.4x).**
+
+### 52.1 Ceiling first (scratch build, not committed; `RNHACK` bits of a copy of 075b9f3, separate target dir, removed)
+
+Bit 1 materialises every sunk table a second time (garbage) at exactly the exits that continue in an attached side trace (in `exit_entry` and
+`jit_tr_mat`: the upper bound of what re-sinking can remove); bit 2 runs `restore` a second time (budget word and `nCcalls` saved around it) in the
+handler for frameful exits with sunk tables (the handler part a stub would remove). Counters of the same build (release `rn-cli`, seed 0):
+
+| program | exits | sunk-exit exits into a side trace / tables | into tier 1 / tables | handler materialisations | bit 1: Minstr / Mcyc | bit 2: Minstr / Mcyc |
+|---|---:|---:|---:|---:|---:|---:|
+| classic_vector | 301 311 | 235 976 / 554 797 | 521 / 1 031 | 119 873 | **+574 (+28.3 %) / +114 (+23.9 %)** | +80 (+3.9 %) / +14 (+2.9 %) |
+| cd | 1 589 999 | 135 732 / 172 953 | 7 046 / 15 115 | 79 | **+96 (+13.9 %) / +22 (+9.2 %)** | 0 / 0 |
+| raytrace | 256 018 | 4 162 / 4 162 | 295 / 298 | 96 | +2.6 (+0.9 %) / 0 | 0 / 0 |
+| havlak | 133 925 | 0 / 0 | 9 451 / 9 451 | 16 | 0 / 0 | 0 / 0 |
+| richards | 278 617 | 0 / 0 | 0 / 0 | 0 | 0 / 0 | 0 / 0 |
+
+(Instructions of one run, cycles min of 5, `taskset -c 4`, nothing else running.) What it says before building: only classic_vector and cd have
+materialisations into side traces; raytrace's +16 % and havlak's +11 % for LuaJIT's side-trace sinking come from tables our sinking does not sink at
+all in the root (array parts, non-string keys, escapes the analysis does not prove dead), which this task does not change. Ceiling of the two levers
+together: classic_vector ~128 Mcyc (27 %), cd ~22 Mcyc (9 %), the others 0.
+
+### 52.2 `sinkmm`: the sunk-frame stub for metamethod frames (commit 1)
+
+classic_vector's hot exits with sunk tables sit inside metamethod frames (`__sub` / `__mul` / `__call` constructors), which `sunk_frame_stub_ok`
+excluded: every exit went through the generic stub and the handler (`exit_entry`, `restore`, `restore_chain`, `materialise`), side trace attached or
+not. With `sinkmm` (`RUSTYNAIL_JIT_TRACE_LIMITS`, `cache::SINKMM_PROCESS = 1`, `AsmEnv::sink_mm`) the sunk-frame stub takes such an exit when it has a
+frame cell (`exit::sunk_frame_stub_mm_ok`):
+
+* attached path (cell != 0, a side trace with the frames virtual): count, slot stores, budget, save ops, `jit_tr_mat`, jump through the cell. Nothing
+  rebuilds a metamethod frame on this path: the side trace keeps them virtual, exactly as the handler path did after unwinding;
+* no side trace (cell 0): straight to the generic twin (the handler rebuilds metamethod frames: `nCcalls`, `CIST_MMRET`, `ctx`); the shared inline
+  rebuild (`frame_mat_shared_ops`) knows only plain and tail frames;
+* the side trace went away inside the helper (a flush deferred until `handler_leave`): `jit_tr_mat` reads the cell after its bookkeeping and, when it
+  is 0 or the landing, rebuilds the frames itself (`restore_chain`, metamethod frames included) and returns 2; the stub reloads `thread.ci`, the frame
+  and the constants and lands in tier 1.
+
+Measured (one binary, `sinkmm=0` / `1`): classic_vector 2023.7 -> 1898.4 M instructions (-6.19 %), 469.7 -> 429.7 Mcyc (-8.52 %); stub calls 116 624
+-> 236 187 (stub-frames 114 633 -> 234 196). cd unchanged (its sunk exits have no metamethod frames). 30-program sample geomean -0.13 % / -0.49 %;
+the only line above the bar, astar_jumper +2.48 % instructions in one run, is a nondeterministic program: seven runs each give 4332..4547 M
+(`sinkmm=0`) and 4335..4592 M (`sinkmm=1`), medians 4412 / 4421 (+0.2 %). Hot thresholds 248..264: classic_vector -5.1 .. -6.4 %, the others 0.
+
+### 52.3 `resink`: sunk allocations replayed into side traces (commit 2)
+
+The two blockers of 50.6 and how they are met:
+
+* **The allocation guard and its snapshot.** The replay is all-or-nothing per side trace. The side recording starts with the replay (below); the sink
+  pass first runs on a copy (`sink::run`): if every replayed `TNEW` is sunk again, the copy is kept and the side trace is marked `resink`; otherwise the
+  whole replay is reverted before sinking (`sink::revert_replay`): each replayed `TNEW` becomes the unchecked `SLOAD` of the slot that holds it, every
+  other replay instruction goes, and the parent's exit keeps materialising as before. A kept replay never has a live `TNEW` guard: sunk `TNEW`s become
+  `TVIRT` and lose their guards, so no snapshot ever has to describe a table the side trace allocated as sunk. The replay's own `setmetatable` gets no
+  `__gc`-absence guard: the parent's guard passed in the run that left through this exit, and no Lua code runs between the exit and the side trace's
+  start (with the guard, the snapshot's guard range would span the replay of the next table and the snapshot-ambiguity rule unsank it). A
+  `setmetatable` the side trace records itself on a replayed table keeps its guard (`n3b_setmt_gc_exit`: a `__gc` added after the loop is hot).
+* **The recorder's table model.** The recording starts in the interpreter after the handler materialised the tables (as before): the model already
+  holds those real tables (`val_of` of the slots), which have exactly the sizes, fields (insertion order) and metatable of the replay. `Rec::replay_sunk`
+  makes the replayed `TNEW` stand for that table: the slots and aliases are defined to the `TNEW` (`SlotMap::def`), the lockstep values of the replay
+  instructions are entered directly (the `TNEW`'s value is the model handle of the real table, `XLOAD`s the model values of its fields) and the replay
+  is not evaluated (`evald` moves past it); the light model gets `ls_tnew`. The insertion planner and `presize` treat a replayed `TNEW` as not fresh
+  (its layout comes from the parent's exit), the shape guard as fresh (no `HSHAPE`, like any `TNEW` of the trace).
+
+The replay at the start of the side recording, per sunk table of the parent's exit snapshot (`exit::replay_tabs`, `cache::SideStart::replay`): `XLOAD`
+of every field value and of the metatable, `TNEW` (hash operand of the `NEWTABLE`) + `NE %t, 0`, per field `NEWREF` + `NE` + `HSTORE` (+ `TBAR`),
+`LIB setmetatable` + `NE`; the guards name the start snapshot, which is taken right after with the slots defined, so its sunk group carries every field
+and the metatable. `XLOAD` (new op, `TOp::Xload`) loads replay word `a` of the exit area (`ExitArea::rp`, `RP_MAX = 16` words) with the field's static
+type. Replayable exits: no array part, no field of dynamic string variant, at most 16 words, frameless or with virtual frames, no carried slots, not a
+prelude, not under `+emurun` / `+emuverify` (the emulator has no exit area). A replayed table charges no virtual bytes (`TVIRT 0`): the parent's
+`TVIRT` charged them, and the side exit that materialises it credits them back once.
+
+The parent side: every trace compiled with the knob on gets replay cells (`cache::alloc_exit_rcells`, one word per exit, `AsmEnv::exit_rcells`).
+`install` clears the exit's replay cell before the cell points at a new side trace; right after the install the pipeline sets it to the side trace's
+entry when that side trace kept its replay (`cache::set_rcell`). The two materialising stubs (frameless `jit_tr_mat` stub, sunk-frame stub) do after
+the slot stores, the budget and the save ops (`Asm::replay_path`): load the cell and the replay cell; if the replay cell is nonzero and equal to the
+cell, copy the field values from the exit area into the replay words (`exit::replay_copy_ops`) and jump through the cell without the helper. The
+handler path (`exit_entry`) does not materialise when the exit's cell equals its replay cell; after the policy it decides again: if the policy
+flushed, started a recording or the cell changed, the tables are made then (before the probe, the frame still the restored one), otherwise the
+replay words are filled (`exit::replay_fill`) and the exit continues in the side trace. So no path materialises a table that a side trace also
+replays (the collector's byte count stays the interpreter's: `s52_resink_count`, `sink_count_stopped` under exit storms). A stale replay cell (the
+side trace was flushed, the cell holds the landing again) never equals the cell. Entry checks of a side trace at a head label stay behind the replay:
+the `XLOAD`s, `TVIRT`s and unchecked `SLOAD`s in front of the `BUDGET` belong to the prefix (only in front of it: a `TVIRT` behind the charge is an
+allocation a failing check must not have charged), and the entry snapshot names the replayed slots (`entry_checks`); `run_fwd` keeps the flag.
+
+Found by the tests on the way (all fixed before the commit): `run_fwd` rebuilt the IR without the `resink` flag (the side trace read replay words
+nobody had written: cd raised `attempt to call a nil value`); the first entry-check prefix took `TVIRT`s behind the charge (byte counts of
+`sink_count_stopped` under exit storms); guard dropping for every `setmetatable` of a replayed table instead of the replay's own (finalizers lost).
+
+**Exactness.** Identity: a kept replay is never made twice (no exit path materialises a table its side trace replays). Metatables: the replay
+sets the same metatable value (a replay word); a finalizable metatable is never sunk (the root's guard). GC: nothing allocates between the parent's
+exit and the side trace's start; the replay words hold field values only in that interval (no safepoint); a table materialised at a side exit is a new
+object (as the parent's materialisation was), with the interpreter's size and node layout (same `NEWTABLE` operand, fields in insertion order: `pairs`
+order checked under two hash seeds). Weak tables and escapes: a store anywhere in the side trace unsinks the table and reverts the replay. Restore
+from any exit, stack growth, hooks, coroutines, errors: the side trace's exits are ordinary sunk-table exits.
+
+Measured (one binary before the last fixes of this section, `resink=0` / `1`; instructions of one run, cycles min of 3, `taskset -c 4`; the final
+binary's numbers are in the summary at the top and below the table):
+
+| program | instr M 0 / 1 | delta | Mcyc 0 / 1 | delta | materialised (0 / 1) | side traces kept / reverted |
+|---|---|---:|---|---:|---|---|
+| classic_vector | 1897.9 / 1308.4 | **-31.1 %** | 427.8 / 304.4 | **-28.8 %** | 555 828 / 1 204 | 11 kept |
+| cd | 692.5 / 648.5 | **-6.3 %** | 243.2 / 236.7 | **-2.7 %** | 188 068 / 107 739 | 25 kept |
+| raytrace | 293.8 / 293.2 | -0.2 % | 92.7 / 94.2 | +1.6 % (noise: -0.2 % in the sample) | 4 460 / 1 282 | 14 kept |
+| havlak | 506.7 / 506.5 | 0.0 % | 163.4 / 157.5 | -3.6 % (lottery) | | |
+| richards | 166.2 / 166.3 | 0.0 % | 57.2 / 57.6 | +0.8 % | | |
+
+Final binary (min of 5, the three configurations interleaved): classic_vector 2029.9 / 460.3 (both off) -> 1897.9 / 422.6 (`sinkmm`) -> 1308.4 /
+304.9 (`resink`), cd 692.3 / 243.1 -> 692.3 / 242.6 -> 648.5 / 237.0, raytrace 293.8 / 93.6 -> 293.8 / 93.3 -> 293.2 / 94.6, havlak 506.9 / 153.9 ->
+506.8 / 154.0 -> 507.0 / 152.8, richards 166.2 / 57.5 -> 166.2 / 57.3 -> 166.3 / 56.9 (M instructions / Mcyc).
+
+30-program sample, final binary (`resink=0` -> `1`, interleaved, min of 3): **geomean -1.58 % instructions, -1.33 % cycles**; classic_vector -31.1 /
+-28.8, cd -6.3 / -2.6, astar_jumper -3.8 / -0.6 (nondeterministic, as above); worst instructions +0.02 % (havlak, richards), worst cycles at equal
+instructions fib +1.92 %, expr_lang +1.46 %, string_ops +1.14 % (the build before the last fixes read fib -2.4 %, string_ops -5.2 %: noise both
+ways). Bar met (no program above +1 % instructions / +2 % cycles, geomean better). Hot thresholds 248 / 252 / 256 / 260 / 264 (instructions):
+classic_vector -38.4 / -31.1 / -31.1 / -38.4 / -31.1 %, cd -9.9 / -5.8 / -6.3 / -4.2 / -8.4 %, raytrace -0.2 .. -2.2 %, havlak and richards within
++-0.1 %: the same sign at every threshold (classic_vector's totals move by 15 % with the threshold with or without the knob).
+
+**Ceiling vs achieved.** classic_vector: ceiling (bit 1 + bit 2) ~128 Mcyc; achieved `sinkmm` 40 + `resink` 123 = 163 Mcyc. Above the doubling
+ceiling because removing the materialisation also removes the stub's helper call and save ops, the GC work of the garbage tables (setnodevector,
+sweeping) and the store-to-load conflicts of 3.4 in the study, none of which a doubled materialisation counts in full. cd: ceiling 22 Mcyc, achieved
+6.5 (0.3): 80 k of its 188 k materialisations remain, at exits whose side traces let the table escape (reverted), whose snapshots are not replayable,
+or that land in tier 1.
+
+### 52.4 Tests, mutants, gates, what was not run
+
+* `tr_core::s52_sinkmm_programs`: `s52_mm_frames` (classic-style `__call` constructors and arithmetic metamethods inlined in loops, receivers of two
+  classes, an error raised and a traceback taken inside a metamethod behind such an exit, a count hook, a coroutine, a method replaced between
+  rounds) and the SINK-F programs (`sinkf_side`, `j1_sinkf`, `sink_alias_frames`), knob off / on, `always` / `on2`, `+verify`, exit storms, budgets 3 /
+  17, GC stress 1 / 2 in both modes, stack-move stress, `sinkroot=2`; asserts the stub is taken.
+* `tr_core::s52_resink_programs`: `s52_resink_paths` (field values of every kind, aliases, two tables per exit, escapes into an array, a weak table, an
+  upvalue: reverted replays; a late branch flip: side traces of side traces; `pairs` order of a materialised table), `s52_resink_observers` (an error
+  with the table live read through `debug.getlocal`, a hook installed from inside, a coroutine yield, `__index` / `__gc` on the metatable, collections
+  in the loop, a callee replaced between rounds) and the programs above, knob off / on, the handler path alone (`sinkstub=0`), without `sinkmm`,
+  `lazystub=0`, budgets, GC stress 1 / 2 in both collector modes, stack-move stress, two pinned hash seeds; asserts kept replays. With the default
+  on, every other trace test runs with `resink=1` too.
+* `tr_core::s52_resink_programs` also runs `s52_resink_count` (the collector stopped: the bytes of a loop whose temporaries are re-sunk equal the
+  interpreter's, in every mode including exit storms and the handler path). Tests whose subject is the materialising frame stub itself run with
+  `resink=0`: `s52_sinkmm_programs`, `j1_sinkstub_programs`, and `s1_dbl_chain` in `s1_lazystub_programs` (its chain re-order is built from the
+  double-counting stubs' counts).
+* Mutants (registry 864 -> 871): `sinkmm_unatt_inline` (the unattached path does not divert and the helper does not rebuild), `resink_copy_skip` (a
+  replay word keeps a stale value), `resink_flag_ignored` (the stub skips the replay-cell compare), `resink_rcell_skip` (the replay cell is never set,
+  the side trace reads stale words), `resink_revert_slot_off` (a reverted table is loaded from the wrong slot), `resink_setmt_guard_any` (a recorded
+  `setmetatable` of a replayed table loses its `__gc` guard), `resink_handler_mat` (the handler materialises the replayed tables as well).
+* Gates: commit 1 `GATE_CPUS=2-15 scripts/gate-light.sh sinkmm_,sunkframe_,sinkstub_ --fast --base HEAD` (on the uncommitted change): every step
+  PASS, mutant group 6 ran, 6 caught. Commit 2 `gate-light.sh resink_,sinkmm_,sunkframe_,sinkstub_,sinkmt_,entry_checks --fast --base HEAD`: every
+  step PASS (trace suites 5.5 169 s / 5.4 159 s, `vm_corpus`, jit-diff 1-50, mutant group 17 ran, 17 caught). Its first run with the default on failed
+  ten trace tests per version: the three bugs above, and three tests about the materialising frame stub itself, now pinned to `resink=0`.
+* Final binaries (5.5 and 5.4 release `rn-cli`, defaults `sinkmm=1`, `resink=1`): `JITDIFF_MODES="off tr trdef" scripts/jit-diff.sh 1 40` with the
+  default template set and with `JITDIFF_TSET=sink`: 40 seeds, 0 diffs, 0 timeouts each, both versions; the official suite (`scripts/jit-official.sh`,
+  `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`): OK on 5.5 and 5.4.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle-feature suites, PGO builds, the all-223 benchmark; no 5.4 timing.
+
+### 52.5 Side finding: why `cspeed=0` costs raytrace / cd 12-15 % (docs/STUDY_CAUSAL_GAP.md 2.2)
+
+Instruction profile of cd at 075b9f3 (`instructions:u`, period 100 k, `cspeed=123` vs `cspeed=0`): under `cspeed=0`, `ra::Allocation::uses_gpr` is
+11.9 % of all instructions and `uses_xmm` 1.0 % (both absent from the default profile, where `used_masks` is computed once per allocation: 0.13 %);
+the encoder's plain paths (`Assembler::rm_op_plain` 2.2 %) are the lever section 49 measured. The caller is section 50's `slink` test in the
+deferred-stub loop of `Cx::stubs_and_tail` (`!self.al.uses_gpr(10)`, once per exit): with the `MASKS` lever off, every call scans the whole
+allocation (instructions, operands, reloads, every snapshot location), so the stub loop is quadratic in the trace size. That one call is about 105 M of
+cd's ~130 M extra instructions under `cspeed=0`; the rest is the old encoder paths. The shipped default is not affected (`MASKS` is on). `cspeed=0`
+measured the section-49 "before" only up to section 50; hoisting the call out of the loop (one `uses_gpr(10)` per trace) would make it a valid
+"before" again. Not changed here.

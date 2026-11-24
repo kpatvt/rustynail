@@ -198,6 +198,8 @@ impl<'a> Em<'a> {
         b.ir.carry_in = rec.ir.carry_in.clone();
         b.ir.carry_store = rec.ir.carry_store.clone();
         b.ir.carry_link = rec.ir.carry_link;
+        // Section 52: the side trace keeps its replayed tables sunk (the parent's exit enters it without materialising them)
+        b.ir.resink = rec.ir.resink;
         b.ir.prune = rec.ir.prune.clone();
         Em {
             src: &rec.ir,

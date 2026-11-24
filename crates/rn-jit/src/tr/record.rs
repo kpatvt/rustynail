@@ -462,6 +462,8 @@ pub struct SideCfg {
     pub carry: Vec<(u16, Ty, CarrySrc, bool)>,
     /// Section 50 (`slink`): `carry` is for a carry link only (`cache::SideStart::carry_link`); frames may be virtual.
     pub carry_link: bool,
+    /// Section 52 (`resink`): the sunk tables of the parent's exit the recording replays (`cache::SideStart::replay`); empty: none.
+    pub replay: Vec<super::exit::ReplayTab>,
 }
 
 /// What a closed side recording adds to [`Recorded`].
@@ -2425,6 +2427,17 @@ impl Rec {
                 self.b.ir.carry_in.push((slot, src, tagok));
             }
         }
+        // Section 52 (`resink`): the tables the parent's exit had sunk are replayed (an allocation and the field stores from the exit area's replay words)
+        // and stand for the slots that hold them; the sink pass sinks them again or reverts the replay (`sink::run`)
+        if let Some(rp) = self
+            .cfg
+            .side
+            .as_ref()
+            .filter(|s| !s.replay.is_empty())
+            .map(|s| s.replay.clone())
+        {
+            self.replay_sunk(vm, &rp, &mut sm0)?;
+        }
         if !mutants::active("carry_entry_snap_bare") {
             self.entry_sm = sm0.clone();
         }
@@ -2448,6 +2461,169 @@ impl Rec {
             .b
             .emit_flags(TOp::Budget, Ty::I64, 0, 0, NOREF, guard_aux(s0, 0))?;
         self.phase = Phase::Rec;
+        Ok(())
+    }
+
+    /// Section 52 (`resink`): emits the replay of the parent exit's sunk tables `tabs` at the start of a side recording: per table the `XLOAD`s of its
+    /// field values (and metatable), `TNEW` with its guard, `NEWREF` + guard + `HSTORE` (+ `TBAR`) per field in insertion order, `setmetatable` with its
+    /// guard: the shape the sink pass recognises. Every guard names the start snapshot (taken right after, with the slots defined). The slot (and aliases)
+    /// get the `TNEW`; the model keeps the table the handler materialised for the recording (it has exactly these sizes, fields and metatable) as the
+    /// `TNEW`'s table. The replay is not evaluated by the lockstep: its values are entered directly.
+    fn replay_sunk(
+        &mut self,
+        vm: &Vm<'_>,
+        tabs: &[super::exit::ReplayTab],
+        sm0: &mut SlotMap,
+    ) -> R<()> {
+        // (the instructions before the replay, the loads of the virtual frames' closures and carried slots, are evaluated first: `vals` is indexed by ref)
+        if self.cfg.lockstep {
+            self.eval_new()?;
+        } else {
+            self.light_new()?;
+        }
+        let s0 = self.b.ir.snaps.len() as u32;
+        let first = self.b.ir.ins.len();
+        let z = self.kint(0);
+        let mut rp: Ref = 0;
+        let mut lvals: Vec<u64> = Vec::new();
+        for t in tabs {
+            let v = vm.root_slot(usize::from(t.slot));
+            let Some(real) = v.as_table() else {
+                return Err(AbortReason::Compile("resink: the slot holds no table"));
+            };
+            let h = self.val_of(&v).bits;
+            let mut vals: Vec<(Ref, Ref, Ty)> = Vec::with_capacity(t.fields.len());
+            for &(key, ty) in &t.fields {
+                // SAFETY: `Value` is `repr(C)` `{ tag word, payload }`; the key is a live interned short string (a constant of the parent trace).
+                let kv = unsafe {
+                    std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VSHRSTR)), key])
+                };
+                let Some(ks) = kv.as_strref() else {
+                    return Err(AbortReason::Compile("resink: key"));
+                };
+                let fv = real.get_str(ks);
+                let r = self.b.emit_raw(Ins {
+                    op: TOp::Xload,
+                    t: ty,
+                    flags: 0,
+                    a: rp,
+                    b: 0,
+                    prev: NOREF,
+                    aux: 0,
+                })?;
+                lvals.push(self.val_of(&fv).bits);
+                rp += 1;
+                let k = self.b.ir.konst(KVal::Ptr(key, PtrKind::Raw));
+                vals.push((k, r, ty));
+            }
+            let mt = match t.mt {
+                Some(ty) => {
+                    let r = self.b.emit_raw(Ins {
+                        op: TOp::Xload,
+                        t: ty,
+                        flags: 0,
+                        a: rp,
+                        b: 0,
+                        prev: NOREF,
+                        aux: 0,
+                    })?;
+                    let mv = real.metatable().map_or(0, |m| self.handle(m));
+                    lvals.push(mv);
+                    rp += 1;
+                    Some(r)
+                }
+                None => None,
+            };
+            let tn = self.b.emit_raw(Ins {
+                op: TOp::Tnew,
+                t: Ty::Tab,
+                flags: 0,
+                a: t.b as Ref,
+                b: NOREF,
+                prev: NOREF,
+                aux: 0,
+            })?;
+            lvals.push(h);
+            let guard = |b: &mut Self, a: Ref| {
+                b.b.emit_raw(Ins {
+                    op: TOp::Ne,
+                    t: Ty::I64,
+                    flags: F_GUARD,
+                    a,
+                    b: z,
+                    prev: NOREF,
+                    aux: guard_aux(s0, 0),
+                })
+            };
+            guard(self, tn)?;
+            lvals.push(0);
+            for &(k, r, ty) in &vals {
+                let n = self.b.emit_raw(Ins {
+                    op: TOp::Newref,
+                    t: Ty::P64,
+                    flags: 0,
+                    a: tn,
+                    b: k,
+                    prev: NOREF,
+                    aux: 0,
+                })?;
+                guard(self, n)?;
+                self.b.emit_raw(Ins {
+                    op: TOp::Hstore,
+                    t: Ty::I64,
+                    flags: 0,
+                    a: n,
+                    b: r,
+                    prev: NOREF,
+                    aux: 0,
+                })?;
+                lvals.extend([0, 0, 0]);
+                if collectable(ty) {
+                    self.b.emit_raw(Ins {
+                        op: TOp::Tbar,
+                        t: Ty::I64,
+                        flags: 0,
+                        a: tn,
+                        b: r,
+                        prev: NOREF,
+                        aux: 0,
+                    })?;
+                    lvals.push(0);
+                }
+            }
+            if let Some(m) = mt {
+                let l = self.b.emit_raw(Ins {
+                    op: TOp::Lib,
+                    t: Ty::Int,
+                    flags: 0,
+                    a: tn,
+                    b: m,
+                    prev: NOREF,
+                    aux: lib::SETMT,
+                })?;
+                guard(self, l)?;
+                lvals.extend([0, 0]);
+            }
+            for &s in std::iter::once(&t.slot).chain(&t.aliases) {
+                let s = usize::from(s);
+                self.need_ext(s + 1)?;
+                sm0.grow(s + 1);
+                self.sm.def(s, tn);
+                sm0.def(s, tn);
+            }
+            self.b.ir.replay.push((tn, t.slot));
+            self.ls_tnew.insert(tn, h);
+        }
+        let end = self.b.ir.ins.len();
+        self.b.ir.replay_range = (first as u32, end as u32);
+        debug_assert_eq!(lvals.len(), end - first);
+        if self.cfg.lockstep {
+            for v in lvals {
+                self.vals.push(v);
+                self.taint.push(false);
+            }
+        }
+        self.evald = end;
         Ok(())
     }
 
@@ -5647,7 +5823,11 @@ impl Rec {
     #[cold]
     #[inline(never)]
     fn nr_plan(&mut self, t: Ref, tbl: TableRef, key: StrRef) -> Option<(u32, NrImage)> {
-        if !self.cfg.nrinline || !TraceIr::is_ins(t) || self.b.ir.at(t).op != TOp::Tnew {
+        if !self.cfg.nrinline
+            || !TraceIr::is_ins(t)
+            || self.b.ir.at(t).op != TOp::Tnew
+            || self.b.ir.replay.iter().any(|&(r, _)| r == t)
+        {
             return None;
         }
         let pos = (t - REF_BIAS) as usize;
@@ -5763,6 +5943,7 @@ impl Rec {
         let fresh = self.cfg.presize
             && TraceIr::is_ins(t.0)
             && self.b.ir.at(t.0).op == TOp::Tnew
+            && !self.b.ir.replay.iter().any(|&(r, _)| r == t.0)
             && ((t.0 - REF_BIAS) as usize) >= self.last_tset;
         if fresh && plan.is_none() && !TraceIr::is_ins(key.0) && TraceIr::is_ins(n) {
             let ix = self.b.ir.presize.len();

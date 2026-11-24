@@ -337,6 +337,12 @@ pub enum TOp {
     /// recorded key bits" for every `i` of the layout, so the `HREFK`s it covers carry [`HREFK_COVERED`] and skip their key compare. A pure guard of its
     /// operands like `HREFK` (CSE'd with an identical one: the same node-vector reference cannot have changed layout between them).
     Hshape,
+    // ---- section 52 additions (appended) ----
+    /// Section 52 (`resink`): the value of field `a` (a raw index) of the tables a side trace replays from its parent's exit: the parent's exit stub (or the
+    /// handler) copied the field values of the exit's sunk tables into the exit area's replay words (`ExitArea::rp`) before it entered the side trace.
+    /// Type `t` (the field's Lua type, static in the parent's snapshot). No operands; emitted at the start of a side trace only, before anything can write
+    /// the replay words again (they are written only by exits).
+    Xload,
 }
 
 /// S4: bit of the op bits of an [`TOp::Hrefk`]: a dominating [`TOp::Hshape`] on the same node vector proves that the node holds the key (no key compare);
@@ -868,6 +874,13 @@ pub struct TraceIr {
     pub carry_link: bool,
     /// P1 (`presize`): the recorder's notes of the helper `NEWREF`s tagged [`nrplan::NOTE`] (empty when the knob is off).
     pub presize: Vec<PresizeNote>,
+    /// Section 52 (`resink`): the replayed allocations of a side trace (the `TNEW` and the slot that holds it) and the instruction range of the replay
+    /// (`XLOAD`s, `TNEW`s, their guards, field stores and `setmetatable`s); the sink pass sinks every one again or reverts the whole replay, then clears them.
+    pub replay: Vec<(Ref, u16)>,
+    /// See `replay`: `[start, end)` instruction indices.
+    pub replay_range: (u32, u32),
+    /// Section 52: every replayed allocation stayed sunk: the parent's exit enters this side trace without materialising its tables (`cache::set_rcell`).
+    pub resink: bool,
 }
 
 /// R1: where the exit map of a parent trace holds the value of a slot a side trace takes over in a register.
@@ -1060,7 +1073,7 @@ pub enum IrAbort {
 
 impl TOp {
     /// Number of operations (size of per-op tables).
-    pub const COUNT: usize = TOp::Hshape as usize + 1;
+    pub const COUNT: usize = TOp::Xload as usize + 1;
 
     /// Ops that are guards by definition (their `F_GUARD` flag is always set by the builder).
     pub const fn always_guard(self) -> bool {
@@ -1151,7 +1164,7 @@ impl TOp {
     /// Which of `a`, `b` are refs (the others are raw numbers: `Sload` slot, `Budget` charge, `Fload` field).
     pub const fn ref_operands(self) -> (bool, bool) {
         match self {
-            TOp::Sload | TOp::Budget | TOp::Tvirt => (false, false),
+            TOp::Sload | TOp::Budget | TOp::Tvirt | TOp::Xload => (false, false),
             TOp::Retf => (true, false),
             TOp::Fload
             | TOp::Uvrel
@@ -1224,6 +1237,7 @@ impl TOp {
             TOp::Hrefv => "HREFV",
             TOp::Hmiss => "HMISS",
             TOp::Hshape => "HSHAPE",
+            TOp::Xload => "XLOAD",
             TOp::Lib => "LIB",
             TOp::Hload => "HLOAD",
             TOp::Hstore => "HSTORE",
