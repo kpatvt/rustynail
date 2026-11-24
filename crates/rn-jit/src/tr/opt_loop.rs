@@ -174,6 +174,13 @@ struct Em<'a> {
 impl<'a> Em<'a> {
     fn new(rec: &'a Recorded, opts: &TraceOpts) -> Em<'a> {
         let mut b = Builder::new(opts.fold, opts.cse);
+        if crate::cspeed::on(crate::cspeed::PASSES) {
+            // Section 49 (`cspeed` lever `PASSES`): the output holds about two copies of the input (pre-roll and body)
+            b.ir.ins.reserve(2 * rec.ir.ins.len() + 8);
+            b.ir.snaps.reserve(2 * rec.ir.snaps.len() + 4);
+            b.ir.snapmap.reserve(2 * rec.ir.snapmap.len() + 16);
+            b.ir.k.reserve(rec.ir.k.len() + 8);
+        }
         // DYNMASK: every op that can rehash a table makes `copy_one` give up, so a dynamic-mask `HREFV` is stable across the trace
         b.cse_dyn_href = true;
         b.ir.head = rec.ir.head;

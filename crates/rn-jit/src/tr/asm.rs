@@ -2567,7 +2567,15 @@ impl<'a> Cx<'a> {
             al,
             snaps,
             env,
-            p: Program::default(),
+            // Section 49 (`cspeed` lever `PASSES`): about eight micro-ops per IR instruction and three per snapshot (stubs)
+            p: if crate::cspeed::on(crate::cspeed::PASSES) {
+                Program {
+                    ops: Vec::with_capacity(8 * ir.ins.len() + 3 * ir.snaps.len() + 64),
+                    nlabels: 0,
+                }
+            } else {
+                Program::default()
+            },
             stubs: Vec::new(),
             stub_ix: Default::default(),
             disp_ix: Default::default(),

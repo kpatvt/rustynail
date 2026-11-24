@@ -1218,16 +1218,19 @@ fn finish_outcome(st: &mut State) {
             {
                 return;
             }
-            if let Err(e) = pipeline(st, &act, &rec) {
+            // (what the error handling below reads of the recording, which the pipeline consumes)
+            let has_segs = !rec.ir.segs.is_empty();
+            let unrolled = rec.ir.rec_call.is_some_and(|rc| rc.ninl != 0);
+            if let Err(e) = pipeline(st, &act, *rec) {
                 if act.verbose >= 2 {
                     eprintln!("[trace] --- pipeline: {}", e.detail);
                 }
                 match e.kind {
-                    Fail::Abort(why) if act.side && !rec.ir.segs.is_empty() => {
+                    Fail::Abort(why) if act.side && has_segs => {
                         cache::abort_retf(st, act.id, abort_name(why));
                     }
                     // E1: an unrolled trace that the pipeline refuses is an unroll failure (the policy counts it; `k = 1` may compile)
-                    Fail::Abort(_) if rec.ir.rec_call.is_some_and(|rc| rc.ninl != 0) => {
+                    Fail::Abort(_) if unrolled => {
                         cache::abort_recording(st, act.id, "Unroll", false);
                     }
                     Fail::Abort(why) => {
@@ -1745,7 +1748,7 @@ fn carry_limit(st: &mut State) -> bool {
     )
 }
 
-fn pipeline(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr> {
+fn pipeline(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> {
     let t0 = phase::now();
     // Section 49: the compile-speed levers of this state
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
@@ -1755,41 +1758,31 @@ fn pipeline(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr>
     r
 }
 
-/// Section 49 (`ccheck`): compiles compared with the old paths, and those that differed.
-pub static CCHECK: [std::sync::atomic::AtomicU64; 2] = [
-    std::sync::atomic::AtomicU64::new(0),
-    std::sync::atomic::AtomicU64::new(0),
-];
-
-/// The allocation as text for the `ccheck` comparison (without the lazily built register masks).
-fn ccheck_alloc_text(a: &ra::Allocation) -> String {
-    let mut c = a.clone();
-    c.used = Default::default();
-    format!("{c:?}")
-}
-
-fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr> {
+/// The passes of [`pipeline_inner`] before register allocation (sinking, the root passes or the side-trace subset, forwarding, the carry
+/// rules, presizing), on `rec` in place.
+fn pipeline_front(
+    st: &mut State,
+    act: &Active,
+    rec: &mut Recorded,
+    link_root: bool,
+    stitched: bool,
+) -> Result<(), PipeErr> {
     let opts = &act.opts;
-    let mut rec = rec.clone();
     let side = rec.side;
-    // F2b: a root that ends with a link (a nest's outer loop): head bookkeeping and entry checks of a root, the end of a
-    // side trace
-    let link_root = side.is_some() && !act.side;
-    // (a stitched *side* trace ends like a side trace: with an exit and no link, P-E2)
-    let stitched = rec.stitched && side.is_none();
+    let rec = &mut *rec;
     // F2a: a side trace is a straight rolled segment: no entry-check hoisting, no peeling (it has no loop), no type
     // snapshot splitting (its type-guard exits keep the prototype's rule, see `cache::exit_hot`)
     if side.is_some() || stitched {
         // BUNDLE-5 (`sinkside`): allocation sinking is the one pass of the list that also runs on side and stitched traces
         let t0 = phase::now();
-        let r = sink::run(&mut rec, opts).map_err(|e| abort_err("pass", e));
+        let r = sink::run(rec, opts).map_err(|e| abort_err("pass", e));
         phase::add(phase::PASS_SINK, t0);
         r?;
     }
     if side.is_none() && !stitched {
         for (name, pass) in PASSES {
             let t0 = phase::now();
-            let r = pass(&mut rec, opts).map_err(|e| abort_err("pass", e));
+            let r = pass(rec, opts).map_err(|e| abort_err("pass", e));
             phase::add(
                 if *name == "sink" {
                     phase::PASS_SINK
@@ -1801,17 +1794,17 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
             r?;
         }
     } else if link_root || stitched {
-        entry_checks(&mut rec, opts).map_err(|e| abort_err("pass", e))?;
-        split_type_snaps(&mut rec, opts).map_err(|e| abort_err("pass", e))?;
+        entry_checks(rec, opts).map_err(|e| abort_err("pass", e))?;
+        split_type_snaps(rec, opts).map_err(|e| abort_err("pass", e))?;
     } else if side.is_some_and(|s| s.start_rem == 0 && !s.frameful) {
         // a side trace that starts at a pre-count (head) label gets its live-in type checks hoisted to the start like a
         // rolled root (the pass builds the entry snapshot at that label); one that starts mid-block keeps the checks
         // at their first use
-        entry_checks(&mut rec, opts).map_err(|e| abort_err("pass", e))?;
+        entry_checks(rec, opts).map_err(|e| abort_err("pass", e))?;
     }
     if side.is_some() || stitched {
         // H1: forwarding / load CSE on the rolled segment of a side or stitched trace
-        opt_loop::run_fwd(&mut rec, opts).map_err(|e| abort_err("pass", e))?;
+        opt_loop::run_fwd(rec, opts).map_err(|e| abort_err("pass", e))?;
     }
     // R1: dense snapshots for a root that a carrying link can enter
     let carry_on = side.is_none()
@@ -1826,7 +1819,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     }
     if side.is_some() && !rec.ir.carry_in.is_empty() {
         carry_demote(
-            &mut rec,
+            rec,
             side.filter(|si| !si.no_link && !si.frame_link)
                 .map(|si| si.link_snap),
         );
@@ -1862,6 +1855,53 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     // P1: presized insertion groups (the notes are cleared either way: a NEWREF keeps its plain helper form)
     let groups = presize::run(&mut rec.ir);
     presize::GROUPS.fetch_add(groups as u64, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Section 49 (`ccheck`): compiles compared with the old paths, and those that differed.
+pub static CCHECK: [std::sync::atomic::AtomicU64; 2] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+
+/// The allocation as text for the `ccheck` comparison (without the lazily built register masks).
+fn ccheck_alloc_text(a: &ra::Allocation) -> String {
+    let mut c = a.clone();
+    c.used = Default::default();
+    format!("{c:?}")
+}
+
+fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> {
+    let opts = &act.opts;
+    // Section 49 (`cspeed` lever `REC`): the pipeline owns the recording (it copied it before; nothing reads it after a compile)
+    let mut rec = if crate::cspeed::on(crate::cspeed::REC) {
+        rec
+    } else {
+        #[allow(clippy::redundant_clone)]
+        rec.clone()
+    };
+    let side = rec.side;
+    // F2b: a root that ends with a link (a nest's outer loop): head bookkeeping and entry checks of a root, the end of a
+    // side trace
+    let link_root = side.is_some() && !act.side;
+    // (a stitched *side* trace ends like a side trace: with an exit and no link, P-E2)
+    let stitched = rec.stitched && side.is_none();
+    // Section 49 (`ccheck`): the passes are compared too: the same front on a copy of the recording with the old paths
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let ccheck_on = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0;
+    let orig = ccheck_on.then(|| rec.clone());
+    pipeline_front(st, act, &mut rec, link_root, stitched)?;
+    if let Some(mut o) = orig {
+        let slow = crate::cspeed::with(0, || pipeline_front(st, act, &mut o, link_root, stitched));
+        if slow.is_err()
+            || print::dump(&o.ir) != print::dump(&rec.ir)
+            || format!("{:?}", o.writeback) != format!("{:?}", rec.writeback)
+        {
+            CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(abort_err("ccheck", "cspeed differs: passes"));
+        }
+    }
     let ir = &rec.ir;
     if cache::verbose_aborts() {
         eprintln!(

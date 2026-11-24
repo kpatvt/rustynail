@@ -13834,8 +13834,8 @@ fn tr24c_restarts_programs() {
 }
 
 /// docs/JIT_TRACE.md section 49 (C1, `cspeed` / `ccheck`): the compile-speed levers emit the machine code of the paths they replace. Every program
-/// of the corpus, `always` and `on2`, with `ccheck=1`: each trace compile runs its back end (allocation, exits, assembler, encoder) a second
-/// time with `cspeed=0` and compares the machine code, the label offsets and the allocation / exit structures; each tier-1 compile re-encodes
+/// of the corpus, `always` and `on2`, with `ccheck=1`: each trace compile runs its passes and its back end (allocation, exits, assembler,
+/// encoder) a second time with `cspeed=0` and compares the IR, the machine code, the label offsets and the allocation / exit structures; each tier-1 compile re-encodes
 /// its program with the old encoder. No compile may differ, the programs give the interpreter's results, and the corpus compiles something.
 /// GC stress 1 / 2 and `+verify` on the programs that must trace; the levers off (`cspeed=0`) run the same corpus as a control.
 #[test]

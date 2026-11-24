@@ -1043,6 +1043,7 @@ pub const NAMES: &[&str] = &[
     // docs/JIT_TRACE.md section 49 (C1, `cspeed`): the compile-speed levers emit the code of the old paths (`ccheck`)
     "cspeed_enc_disp32",
     "cspeed_ra_last_free",
+    "cspeed_sink_cand_miss",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1128,7 +1129,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 857);
+        assert_eq!(NAMES.len(), 858);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

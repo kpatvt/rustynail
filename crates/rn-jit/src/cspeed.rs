@@ -16,11 +16,17 @@ pub const ENC: u32 = 2;
 /// The shape hash of a compile (`cache::shape_hash_ir`) with the FxHash word mix instead of the FNV variant that mixed every byte of a
 /// slice separately (the value is only compared with other values of the same process).
 pub const FXHASH: u32 = 8;
+/// The passes and the assembler without their quadratic scans and regrowth: sinking's "store between two guards of one snapshot" check
+/// from an index of the snapshots that name each candidate (it scanned every snapshot map once per store of every candidate), its candidate
+/// lookup per instruction from the candidate map; the loop pass's output and the assembler's micro-op program presized from the input.
+pub const PASSES: u32 = 16;
 /// The register allocator's free-register choice and eviction scan without a temporary vector per query (the pool lives on the stack).
 pub const RA: u32 = 32;
+/// The pipeline takes the closed recording over instead of copying it (nothing reads the recording after its compile).
+pub const REC: u32 = 64;
 
 /// All levers.
-pub const ALL: u32 = MASKS | ENC | FXHASH | RA;
+pub const ALL: u32 = MASKS | ENC | FXHASH | PASSES | RA | REC;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

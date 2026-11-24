@@ -604,7 +604,38 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
     // a store between the first and the last guard of one snapshot would make "the contents before the snapshot"
     // ambiguous (TR3a says it cannot happen): unsink every table that has one
     let mut bad: HashSet<usize> = HashSet::default();
-    for (ci, c) in cands.iter().enumerate() {
+    if crate::cspeed::on(crate::cspeed::PASSES) {
+        // Section 49 (`cspeed` lever `PASSES`): the snapshots that name each candidate, from one scan of the snapshot maps (the check below
+        // scanned every map once per store of every candidate); a snapshot without a guard never decides (`first_g` is `MAX`)
+        let mut named: Vec<Vec<usize>> = vec![Vec::new(); cands.len()];
+        for s in 0..nsn {
+            if first_g[s] == usize::MAX {
+                continue;
+            }
+            let (st, len) = rec.ir.snaps[s].map;
+            for e in &rec.ir.snapmap[st as usize..st as usize + usize::from(len)] {
+                if let Some(&ci) = sunk_of.get(&e.r) {
+                    if named[ci].last() != Some(&s) {
+                        named[ci].push(s);
+                    }
+                }
+            }
+        }
+        for (ci, c) in cands.iter().enumerate() {
+            if c.events.iter().any(|ev| {
+                named[ci]
+                    .iter()
+                    .any(|&s| first_g[s] < ev.at && ev.at < last_g[s])
+            }) {
+                bad.insert(ci);
+            }
+        }
+    }
+    for (ci, c) in cands
+        .iter()
+        .enumerate()
+        .filter(|_| !crate::cspeed::on(crate::cspeed::PASSES))
+    {
         for ev in &c.events {
             for s in 0..nsn {
                 let (st, len) = rec.ir.snaps[s].map;
@@ -738,7 +769,16 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<(), String> {
             break;
         }
         let mut i = rec.ir.ins[o];
-        if let Some(c) = cands.iter().find(|c| c.t == o) {
+        let cand = if crate::cspeed::on(crate::cspeed::PASSES) {
+            // (the candidate allocated at `o`: `sunk_of` holds every candidate's table ref)
+            sunk_of
+                .get(&ref_of(o))
+                .filter(|_| !mutants::active("cspeed_sink_cand_miss"))
+                .map(|&ci| &cands[ci])
+        } else {
+            cands.iter().find(|c| c.t == o)
+        };
+        if let Some(c) = cand {
             i = Ins {
                 op: TOp::Tvirt,
                 t: Ty::Nil,
