@@ -5524,3 +5524,116 @@ of identical-instruction runs.
   and `-5.4`, `scripts/jit-official.sh`) with `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`: `JIT-OFFICIAL OK` on both; GC stress (1 / 2, generational and incremental, `RUSTYNAIL_GC_VERIFY=1`) is part of
   `t6_ctor_programs` and the `t8_*` tests.
 * Not run: `gate-heavy.sh`, the full mutant runner, `tr_oracle`, PGO builds, all-223 benchmarks, `bench-fast.sh`.
+
+## 45. N2b, the fused coroutine resume path: direct `wrap` / `resume` in the native call, the interpreter entered directly, fused start (2026-11-23, base ea2bbfa)
+
+Section 42.8 left the next step of the coroutine switch as "one fused native-call-to-resume path in rn-core with the `wrap` / `resume` library functions inside it,
+~-3 %". N2b builds it. Method as in section 42: instructions of one run (deterministic, `RUSTYNAIL_SEED=0`), cycles min of 5 interleaved pinned runs (CPU 4,
+`perf stat -e instructions:u,cycles:u`), plain `cargo build --release -p rn-cli` builds (5.5, and `--cfg rustynail_lua54` for 5.4; no PGO); control = a build of
+main ea2bbfa in the same session.
+
+### 45.1 What was built (one commit; the knobs are cargo features of rn-core, forwarded by rn-cli, like `coro_noresume`; no run-time knob)
+
+| step | feature that switches it off | default | what |
+|---|---|---|---|
+| 1 `codirect` | `coro_nodirect` | **on** | `native_fast_with` (the native-call sequence of `OP_CALL`, tier-1 `jit_call` / `jit_ccall`) recognises the registered `auxwrap` (the C function of every `coroutine.wrap` closure) and `coroutine.resume` (`coro::register_resume_fns`, called by `lib_coroutine::open`) and runs `State::coro_direct`: the thread lookup, the fused resume (`resume_fused_run`: the checks, the argument move, the protected run written out, the status) and, for a fixed wanted-result count of at most 3 with no hook on the resumer, the results moved **straight from the coroutine's stack to the caller's registers** (`true` first for `resume`, nil padding; `PLACED`: the caller only pops the C frame); otherwise the results are left on top as the library function leaves them. Everything else (errors of the coroutine or of the resume, too many results, a coroutine not suspended in a plain yield) goes to the library's own rest (`auxwrap_rest` / `co_resume_rest`, registered as `CoroRestFn`): error objects, the `wrap` position prefix and the close of a failed coroutine stay the library's code. The C frame of `wrap` / `resume` is pushed as before (tracebacks and `getinfo` of the resumer show it). One address-range test of the callee against the three coroutine functions per native call (`in_coro_range`: subtract, compare), the exact compares only inside the range. |
+| 2 `corun` | `coro_norun` | **on** | the fused resume calls the interpreter (`vm_unsafe::run`, now `#[inline(always)]`) directly instead of the indirect `g.executor` -> `vm::execute` (only when the executor is `vm::execute`, which it always is outside the stub-executor unit tests). With step 1 the whole resume is one function between `jit_call` and `run_mode`; before, `auxwrap`, `resume_fused`, its closure and `vm::execute` were four frames. |
+| 3 `costart` | `coro_nostart` | **on** | a coroutine that starts (status `Ok`, only the base frame, a value above its function slot) takes the fused path too: the body is `ccall`ed inside the same protected run (`resume_body`'s first branch). The dead test and the `cannot resume non-suspended coroutine` cases (a running / normal thread is not at its base frame) stay on the library path. |
+| (no knob) | - | on | `rec_on_err` (every `Err` out of the interpreter, so every yield) tests the static `REC_ARMED` before the thread-local `rec_active()` (equivalent: no context armed anywhere means none on this OS thread); `raw_run_protected_inl` removed (written out in `resume_fused_run`). |
+
+The "all three off" build is therefore **not** the control: it keeps the unconditional changes of the last row and the restructured `resume_fused` (`co_yield` -2.8 % instructions against the control).
+
+### 45.2 Prototype first (the simplest case: a Lua coroutine suspended in a Lua-called `yield`, no hooks, no tbc)
+
+| build | `co_yield` instr / pair | Mcyc (whole run) | note |
+|---|---:|---:|---|
+| control ea2bbfa | 720.7 | 219 | |
+| `auxwrap` moved into `native_fast_with`, calling the out-of-line `resume_fused` | 750.6 (+4.2 %) | 223 | **worse**: the indirect call it saves is well predicted; the extra compares on the yield path and a different register allocation of `jit_call` / `run_mode` cost more |
+| + `resume_fused` inlined into `coro_direct`, protected run written out (no closure) | 705.7 | 200 | |
+| + `vm_unsafe::run` inlined (no `execute` frame) = **prototype** | **693.7 (-3.75 %)** | **178 (-19 %)** | three frames fewer between `jit_call` and `run_mode` |
+| results placed directly, generic copy loop | 712.6 | 181 | the loop compiled badly (~60 instructions for one value); unrolled for 0 .. 3 values: 693.7 again |
+
+Where the prototype's 694 go (LBR, `perf record -j any,u -e branches:u`: branch-sampled run counts are unbiased, so run count x instructions per run gives the
+shares; micro `acc = acc + co()` from a tier-1 loop): `coro_direct` (thread lookup, checks, fused body, the `run` entry, status, result move) ~180, `run_mode`
+~220 (its frame entry ~40, the rest is the coroutine's bytecode and the `CALL` of `yield`), `jit_call` with the inlined native frame push ~100, the caller's
+tier-1 loop ~68. (perf's sampled per-function shares were useless again, section 42.2: they put 20 instructions per pair into the unchanged tier-1 code.)
+
+### 45.3 Results (instructions M / cycles Mcyc, min of 5; control = main ea2bbfa)
+
+5.5, the coroutine programs; step columns = the final tree with the named feature, i.e. that step switched off:
+
+| program | control | all off | `coro_nodirect` | `coro_norun` | `coro_nostart` | **final** |
+|---|---:|---:|---:|---:|---:|---:|
+| lib/co_yield (1.487 M pairs) | 1071.5 / 218.7 | -2.8 % / -1.5 % | -4.3 % / -3.6 % | -1.9 % / -19.7 % | -4.7 % / -20.7 % | **1029.9 / 181.6 = -3.9 % / -17.0 %** (693 instr per pair, was 721) |
+| lib/co_wrap | 1088.7 / 243.8 | -0.5 % / +2.6 % | -4.8 % / -4.4 % | -3.6 % / -5.8 % | -0.2 % / -3.6 % | **-4.1 % / -7.6 %** |
+| programs/coroutines | 8248.7 / 1714.6 | -2.3 % / -4.3 % | -4.0 % / -5.7 % | -1.8 % / -16.5 % | -2.8 % / -13.3 % | **-3.4 % / -18.2 %** |
+| corpus/coro_scheduler | 6483.2 / 1526.0 | -0.9 % / -3.8 % | -1.4 % / -4.8 % | -1.0 % / -7.5 % | -1.5 % / -8.1 % | **-1.6 % / -8.0 %** |
+| corpus2/dev/coro_generators | 3932.9 / 1234.4 | -1.5 % / -5.1 % | -2.8 % / -13.6 % | -1.7 % / -14.3 % | -2.7 % / -18.5 % | **-2.8 % / -20.1 %** |
+| luajit/coroutines | 8624.7 / 1777.6 | -2.2 % / -2.5 % | -3.8 % / -6.0 % | -1.7 % / -14.6 % | -2.7 % / -14.0 % | **-3.2 % / -16.7 %** |
+| generator loop, `for v in gen` (2 M yields) | 1596.9 / 334.5 | -2.4 % / -5.3 % | -3.8 % / -4.8 % | -1.5 % / -21.2 % | -2.6 % / -16.0 % | **-3.1 % / -17.5 %** |
+| `wrap` called directly (2 M switches) | 1503.6 / 310.0 | -2.7 % / -7.2 % | -4.1 % / -8.4 % | -1.3 % / -15.5 % | -3.6 % / -12.9 % | **-3.2 % / -18.3 %** |
+| `local ok, v = resume(co, i)` (2 M switches) | 1608.0 / 330.6 | -2.5 % / -5.0 % | -3.9 % / -8.7 % | -8.0 % / -22.2 % | -10.5 % / -20.8 % | **-9.7 % / -28.5 %** |
+| start: `wrap(f)(i)` + `resume(create(f), i)` (0.5 M each) | 1930.3 / 429.4 | +0.5 % / +3.1 % | -5.2 % / -6.4 % | -6.8 % / -12.1 % | +0.9 % / -1.8 % | **-6.6 % / -12.2 %** |
+
+5.4 (final vs control): co_yield -3.9 % / -22.1 %, co_wrap -4.6 % / -7.2 %, coroutines -3.0 % / -18.2 %, coro_scheduler -1.4 % / -4.7 %, coro_generators -2.8 % / -17.3 %,
+luajit/coroutines -2.9 % / -17.8 %, generator loop -2.2 % / -17.9 %, `wrap` loop -3.2 % / -19.2 %, `resume` loop -9.5 % / -19.7 %, start loop -6.8 % / -8.1 %.
+
+Reading: the instruction gain is small (-3 .. -4 % on the switch-bound programs; -10 % for `coroutine.resume` with a fixed result count, where step 1 also saves the `true` shift and
+the second result copy). The **cycle gain is large (-17 .. -28 %)**: what went away are four call / return pairs with their prologues, two `Result`s through memory and the indirect
+calls on the dependency chain of the pair (cycles per `co_yield` pair 147 -> 122; LuaJIT 69). The steps overlap: step 2 without step 1 (`coro_nodirect`) has fewer instructions on
+`co_yield` than the final tree but a fifth of its cycle gain, step 1 without step 2 (`coro_norun`) has most of the cycle gain; which step carries a program differs, so all three stay
+on. Against the study's 753 instructions / 167 cycles per `co_yield` pair (section 42), N2 + N2b give 693 / 122: -8 % instructions, -27 % cycles (the study's -30 % estimate was in cycles).
+
+### 45.4 The bar (30 programs: the 9 coroutine programs above and 21 others with many native calls; 5.5 and 5.4, final vs control interleaved, 5 runs)
+
+Programs: lib/co_yield, lib/co_wrap, programs/coroutines, corpus/coro_scheduler, corpus2/dev/coro_generators, corpus/serpent_ser, corpus2/heldout/stream_closures, real/wordfreq,
+luajit/coroutines, programs/{closures, json, varargs, string_ops, metamethods, oop_methods, pcall_error, binary_trees, fib, table_hash, gc_churn}, real/{template_engine,
+json_roundtrip, game_loop}, apps/{events, expr_lang, lru_cache}, lib/{fmt_s, find_pat, gsub_fn}, awfy/richards.
+Geomean final / control over the 30: instructions 0.9941 (5.5) / 0.9926 (5.4), cycles 0.9659 / 0.9703.
+
+**Instruction bar (+1 %): met on every program**; the largest increases are `programs/varargs` +0.34 % (5.5 and 5.4), `programs/closures` +0.31 % (5.5), `real/json_roundtrip` +0.28 % (5.5):
+the range test in the native-call sequence (two loads, a subtraction and a compare per native call, where N2 had one compare). With three exact compares instead of the range test (an
+intermediate build) varargs was +0.68 % and json_roundtrip +0.62 %.
+
+**Cycle bar (+2 %): one reading over it, at identical instructions**: `programs/binary_trees` 5.4 +2.16 % (instructions -0.00 %); 15 interleaved runs: +1.78 %. (`gc_churn` 5.4: +1.70 % at
+5 runs, +1.84 % at 15, instructions -0.07 %.) binary_trees on 5.5 is -0.47 % at 15 runs. Code layout of the interpreter (section 42.6); reported, not chased.
+
+### 45.5 Tests, mutants, checks
+
+* `tests/vm/co_17_direct_resume.lua` (+ `crates/rn-jit/tests/data/co_17_direct_resume.expected` / `.expected54` from `ref/55` / `ref/54`; test `tr_coro::co_direct_resume_matches_the_reference`;
+  also run by `vm_corpus` against the reference, plain and under GC stress): every wanted-result count (0, 1, 2, 3, more, multiple) of `resume` and of a wrap function for 0 .. 4 values,
+  fewer values than wanted (the registers that held the function and the arguments must become nil), results as arguments / in constructors / tail calls; argument counts 0 .. 5 with nil
+  holes and 400 (stack growth: library path), 400 / 300 results; starts of Lua bodies with arguments, C bodies (`string.upper`, `select`, `yield`, `error`), bodies that return / fail at
+  once, `isyieldable` / `running` in a started body; errors in the coroutine (strings, tables, `__tostring` objects, level 0, no error object, a runtime error) through `resume` and `wrap`
+  (position prefix), wrap of a dead coroutine, pending `<close>` variables on error (closed by `wrap`, left for `close` by `resume`); yields across `pcall` / `xpcall`, errors after the
+  yield caught inside the coroutine (the recover path), nested pcalls; `close` of suspended coroutines with tbc (and an erroring `__close`); `debug.traceback` inside the resumed
+  coroutine and of the main thread from inside it (the `[C]: in local 'resume'` / `in local 'w'` frame), `getinfo(main, 0 / 1)`, a suspended coroutine seen from outside; the status of
+  three nested resumers from each of them, resume of itself / of the main thread / of a normal coroutine, wrap of itself, resume dead, bad arguments; hooks set on the resumer *by the
+  coroutine* while it runs (the return hook of `resume` must fire: no direct placement then), a count hook on the coroutine; wrap functions as `__index` / `__call` / `for` iterators;
+  3000 switches; 50 coroutines with garbage and `collectgarbage` between resumes.
+* `tests/vm/co_01 .. co_17` on the 5.5 and 5.4 release binaries against `ref/55` / `ref/54`: equal under default, `RUSTYNAIL_GC_STRESS=1`, `=2`, `GC_MODE=inc GC_STRESS=2`, `JIT=always`,
+  `JIT=always TRACE=always`, `JIT=off`.
+* Mutants (registry 838 -> 843; bits 11 .. 15 of `coro::set_mut_cofuse`): `codirect_hook_ignored` (direct placement although the coroutine set a hook on the resumer: the return hook of
+  `resume` is lost), `codirect_true_skip` (the `true` of `resume` left out of the placed results), `codirect_nil_pad_skip` (no nil for wanted values beyond the results),
+  `codirect_rest_flag` (the other library function's rest: wrap errors returned as `false, msg`), `costart_func_off` (a start calls the first argument instead of the body); all caught by
+  `co_direct_resume_matches_the_reference` (`gate-mutants.sh --only codirect_,costart_,coyield_,coinl_,cofuse_`: 16 ran, 16 caught, with the 11 of BUNDLE-T / N2). Not made mutants: the
+  room test before placement (at most 3 values need no room: equivalent unless the resumer's stack is within `nres + 1` of `LUAI_MAXSTACK`) and the start path's dead test (the mutant
+  calls a garbage slot: a crash, not a detection).
+* The official suite (every file but `all.lua` / `heavy.lua`, `-e "_port=true;_soft=true"`) with `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always` on the 5.5 and 5.4 release binaries:
+  63 files, 0 failures.
+
+### 45.6 Gates
+
+* `GATE_CPUS=2-15 scripts/gate-light.sh codirect_,costart_,coyield_,coinl_,cofuse_ --fast` on the code commit: OK (546 s: fmt, mutant map, clippy x3, core 5.5 / 5.4, rn-jit trace suites
+  5.5 / 5.4, vm_corpus, jit-diff 1-50, the mutant group).
+* `JITDIFF_MODES="off tr trdef" JITDIFF_ENTERS=1 scripts/jit-diff.sh 1 40` on the final release binaries, 5.5 and 5.4: 40 seeds done, 0 diffs, 0 timeouts, both.
+* Not run: the heavy gate, the full mutant runner, `tr_oracle`, PGO builds, all-223 benchmarks, `bench-fast.sh` (the bar sample is this session's 30-program set). `cargo test -p rn-capi`
+  (C API differential sections, layouts, the official suite through `lua.c`): 4 passed.
+
+### 45.7 Decision
+
+Default: all three steps on. The instruction bar is met on all 30 programs (max +0.34 %), the geomean is better in instructions and cycles on both versions, and the one cycle reading
+over +2 % is a layout effect at identical instructions that is under the bar at 15 runs. A/B build: `--features coro_nodirect,coro_norun,coro_nostart` on `rn-cli` (not the control: 45.1).
+What is left in a `co_yield` pair (693 instructions): the coroutine's bytecode and its `CALL` of `yield` in the interpreter (~220), the resume function (~180), `jit_call`'s native frame
+push and the tier-1 loop (~170). A further step needs the switch inside the interpreter loop (no Rust frame for the resume; errors of the coroutine caught at the coroutine boundary
+inside `run_mode`) or a cheaper tier-1 re-entry of the coroutine body (section 42.4: `enter` costs more than the interpreted body); neither was attempted here.
