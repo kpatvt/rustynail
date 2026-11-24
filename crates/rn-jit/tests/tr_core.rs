@@ -574,6 +574,8 @@ struct TStats {
     heat_granted: u64,
     /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings.
     restarts: u64,
+    /// docs/JIT_TRACE.md section 49 (`ccheck`): compiles compared with the old paths of `cspeed`, and those that differed.
+    ccheck: [u64; 2],
     /// BUNDLE-S/P: `loopany` guard firings / whole-family flushes / pruned side traces / of those the trace whose exit raised the guard.
     la_fired: u64,
     la_family: u64,
@@ -813,6 +815,15 @@ impl TStats {
                     .unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("restarts: ") {
                 s.restarts = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("ccheck: compared ") {
+                let w: Vec<u64> = r
+                    .split_whitespace()
+                    .filter_map(|v| v.parse().ok())
+                    .collect();
+                s.ccheck = [
+                    w.first().copied().unwrap_or(0),
+                    w.get(1).copied().unwrap_or(0),
+                ];
             } else if let Some(r) = l.strip_prefix("heatside: granted ") {
                 s.heat_granted = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("links: nest roots ") {
@@ -13820,6 +13831,57 @@ fn tr24c_restarts_programs() {
             );
         }
     }
+}
+
+/// docs/JIT_TRACE.md section 49 (C1, `cspeed` / `ccheck`): the compile-speed levers emit the machine code of the paths they replace. Every program
+/// of the corpus, `always` and `on2`, with `ccheck=1`: each trace compile runs its back end (allocation, exits, assembler, encoder) a second
+/// time with `cspeed=0` and compares the machine code, the label offsets and the allocation / exit structures; each tier-1 compile re-encodes
+/// its program with the old encoder. No compile may differ, the programs give the interpreter's results, and the corpus compiles something.
+/// GC stress 1 / 2 and `+verify` on the programs that must trace; the levers off (`cspeed=0`) run the same corpus as a control.
+#[test]
+fn c1_cspeed_identical_code() {
+    let mut jobs = Vec::new();
+    for p in selected(false) {
+        for trace in ["always", "on2"] {
+            jobs.push(Job::new(p.name, trace).limits_s("ccheck=1"));
+        }
+        jobs.push(Job::new(p.name, "always").limits_s("cspeed=0"));
+    }
+    for p in MUST_TRACE {
+        jobs.push(Job::new(p, "always").opts("+verify").limits_s("ccheck=1"));
+        for gc in ["1", "2"] {
+            jobs.push(
+                Job::new(p, "always")
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s("ccheck=1"),
+            );
+        }
+    }
+    let res = compare(jobs);
+    let mut compared = 0;
+    for (j, o) in &res {
+        assert_eq!(
+            o.stats.ccheck[1], 0,
+            "{} [{} {}]: {} compiles differ from the old paths",
+            j.prog, j.trace, j.limits, o.stats.ccheck[1]
+        );
+        assert!(
+            !o.stats.aborts.contains_key("ccheck"),
+            "{} [{} {}]: a compile was aborted by ccheck",
+            j.prog,
+            j.trace,
+            j.limits
+        );
+        if j.limits == "ccheck=1" {
+            compared += o.stats.ccheck[0];
+        } else {
+            assert_eq!(o.stats.ccheck[0], 0, "{}: compared without ccheck", j.prog);
+        }
+    }
+    assert!(
+        compared > 100,
+        "the corpus compared only {compared} compiles"
+    );
 }
 
 /// docs/JIT_TRACE.md section 39.2 (T3, `heatside`): exits of a full family that keep coming back get side traces beyond `maxside`. `t3_01_heatside`

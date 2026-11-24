@@ -13,6 +13,7 @@
 //! block (`rem`), so an exit never counts an instruction the interpreter will execute again. RETURN0/1 count
 //! themselves after their guards instead (kind `Guarded`).
 
+use crate::fx::HashMap;
 use crate::ir::{Base, Cc, Op, Program, Src, L, M, V, W};
 use crate::t15::runtime::Warmup;
 use crate::templates_alloc as talloc;
@@ -24,7 +25,6 @@ use rn_core::jit_hooks::{thread as thr, JitExit};
 use rn_core::jit_layout::callinfo as ci;
 use rn_core::value::{Value, LUA_VFALSE, LUA_VNIL, LUA_VTRUE};
 use rn_core::ver::active::OpCode;
-use std::collections::HashMap;
 
 #[path = "calls.rs"]
 pub mod calls;
@@ -1068,10 +1068,10 @@ pub(crate) fn lower_ex(
     let be_head: HashMap<u32, u32> = if warm.is_some() {
         backedges.iter().copied().collect()
     } else {
-        HashMap::new()
+        HashMap::default()
     };
-    let mut warm_lbl: HashMap<(usize, u32), L> = HashMap::new();
-    let mut warm_by_head: HashMap<u32, L> = HashMap::new();
+    let mut warm_lbl: HashMap<(usize, u32), L> = HashMap::default();
+    let mut warm_by_head: HashMap<u32, L> = HashMap::default();
     // (J5/F5) back-edges whose promote counter is reached through the dispatch cell: if the hook does not dispatch the
     // head after all, the edge goes through the counter directly, as without traces
     let mut warm_deferred: Vec<(std::ops::Range<usize>, L, L, u32)> = Vec::new();
@@ -1121,8 +1121,8 @@ pub(crate) fn lower_ex(
         cfg,
         pcl: Vec::new(),
         code,
-        exit_at: HashMap::new(),
-        exit_trap: HashMap::new(),
+        exit_at: HashMap::default(),
+        exit_trap: HashMap::default(),
         sh: calls::Shared::default(),
         ty: [Ty::Unk; 256],
         rem,
@@ -1133,7 +1133,7 @@ pub(crate) fn lower_ex(
         s1_resume: Vec::new(),
         is_head: head[..n].to_vec(),
         armm_next,
-        land_of: HashMap::new(),
+        land_of: HashMap::default(),
         call_ord: Vec::new(),
     };
     if cfg.calls.is_some_and(|e| e.jret != 0) {

@@ -218,6 +218,10 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         let _ = writeln!(o, "[trace] aborted {reason}: {n}");
     }
     let _ = writeln!(o, "{}", super::phase::report());
+    let cc = |k: usize| super::CCHECK[k].load(std::sync::atomic::Ordering::Relaxed);
+    if cc(0) > 0 {
+        let _ = writeln!(o, "[trace] ccheck: compared {} differ {}", cc(0), cc(1));
+    }
     let _ = writeln!(o, "{}", super::sink::report());
     let _ = writeln!(
         o,

@@ -258,6 +258,11 @@ pub struct Allocation {
     pub calls: Vec<CallSite>,
     /// Spill slots used (`0..nspill`), not counting [`SCRATCH_SPILL`].
     pub nspill: u16,
+    /// Section 49 (C1): the registers [`Allocation::uses_gpr`] / [`Allocation::uses_xmm`] answer for, computed by one scan at the first query
+    /// (bit `r` of `[0]`: `V<r>`, of `[1]`: `X<r>`). The assembler asks for single registers many times per trace (a constant float compare
+    /// scanned the whole allocation up to 16 times); the allocation is not changed once it is built (a test that builds one by hand leaves this
+    /// empty and gets the same answers).
+    pub used: std::cell::OnceCell<[u32; 2]>,
 }
 
 impl Allocation {
@@ -277,8 +282,35 @@ impl Allocation {
             .count()
     }
 
+    /// The register masks of [`Allocation::used`] (one scan of everything the old per-register scans looked at).
+    fn used_masks(&self) -> [u32; 2] {
+        *self.used.get_or_init(|| {
+            let mut m = [0u32; 2];
+            let mut add = |l: &Loc| match *l {
+                Loc::G(r) => m[0] |= 1u32 << (r & 31),
+                Loc::X(r) => m[1] |= 1u32 << (r & 31),
+                _ => {}
+            };
+            for a in &self.ins {
+                add(&a.dst);
+                a.ops.iter().for_each(&mut add);
+                a.pre.iter().chain(&a.post).for_each(|x| add(&x.reg));
+            }
+            self.snap_locs.iter().flatten().for_each(&mut add);
+            self.end_locs.iter().for_each(&mut add);
+            for mv in self.entry_moves.iter().chain(&self.backedge_moves) {
+                add(&mv.src);
+                add(&mv.dst);
+            }
+            m
+        })
+    }
+
     /// Does any instruction destination, operand, reload or snapshot location use general register `V<r>`?
     pub fn uses_gpr(&self, r: u8) -> bool {
+        if r < 32 && crate::cspeed::on(crate::cspeed::MASKS) {
+            return self.used_masks()[0] & (1u32 << r) != 0;
+        }
         let is = |l: &Loc| *l == Loc::G(r);
         self.ins.iter().any(|a| {
             is(&a.dst) || a.ops.iter().any(is) || a.pre.iter().chain(&a.post).any(|x| is(&x.reg))
@@ -293,6 +325,9 @@ impl Allocation {
 
     /// Does any instruction destination, operand, reload or snapshot location use double register `X<r>`?
     pub fn uses_xmm(&self, r: u8) -> bool {
+        if r < 32 && crate::cspeed::on(crate::cspeed::MASKS) {
+            return self.used_masks()[1] & (1u32 << r) != 0;
+        }
         let is = |l: &Loc| *l == Loc::X(r);
         self.ins.iter().any(|a| {
             is(&a.dst) || a.ops.iter().any(is) || a.pre.iter().chain(&a.post).any(|x| is(&x.reg))
@@ -1072,6 +1107,20 @@ impl Ra<'_> {
         }
     }
 
+    /// [`Ra::pool`] as an array on the stack and its length.
+    fn pool_arr(x: bool) -> ([u8; 16], usize) {
+        let mut a = [0u8; 16];
+        if x {
+            for (k, r) in a.iter_mut().enumerate().take(NXMM) {
+                *r = k as u8;
+            }
+            (a, NXMM)
+        } else {
+            a[..GPR_POOL.len()].copy_from_slice(&GPR_POOL);
+            (a, GPR_POOL.len())
+        }
+    }
+
     fn holder(&self, x: bool, r: u8) -> u32 {
         if x {
             self.xmm[usize::from(r)]
@@ -1151,6 +1200,39 @@ impl Ra<'_> {
 
     /// A free register of the class (not excluded), preferring `hint`.
     fn pick_free(&mut self, x: bool, excl: Mask, hint: u8) -> Option<u8> {
+        if crate::cspeed::on(crate::cspeed::RA) {
+            // Section 49 (`cspeed` lever `RA`): the same choice from a list on the stack (the pool is at most 16 registers)
+            let (pool, np) = Self::pool_arr(x);
+            let mut free = [0u8; 16];
+            let mut nf = 0usize;
+            for &r in &pool[..np] {
+                if self.avail.has(x, r)
+                    && self.holder(x, r) == NONE
+                    && !excl.has(x, r)
+                    && !self.cur.has(x, r)
+                {
+                    free[nf] = r;
+                    nf += 1;
+                }
+            }
+            if nf == 0 {
+                return None;
+            }
+            let free = &free[..nf];
+            let use_hint = !(self.rnd(1, 3));
+            if hint != NOREG && use_hint && free.contains(&hint) {
+                return Some(hint);
+            }
+            if self.rng.is_some() {
+                let k = self.rbelow(free.len());
+                return Some(free[k]);
+            }
+            if mutants::active("cspeed_ra_last_free") {
+                // MUTANT: the last free register instead of the first
+                return Some(free[free.len() - 1]);
+            }
+            return Some(free[0]);
+        }
         let free: Vec<u8> = Self::pool(x)
             .into_iter()
             .filter(|&r| {
@@ -1190,7 +1272,15 @@ impl Ra<'_> {
         let ignore_pins = mutants::active("exit_rename_ignored");
         let mut best: Option<(i64, u8)> = None;
         let mut best_pinned: Option<(i64, u8)> = None;
-        for r in Self::pool(x) {
+        let (pool, np) = if crate::cspeed::on(crate::cspeed::RA) {
+            Self::pool_arr(x)
+        } else {
+            let v = Self::pool(x);
+            let mut a = [0u8; 16];
+            a[..v.len()].copy_from_slice(&v);
+            (a, v.len())
+        };
+        for &r in &pool[..np] {
             if !self.avail.has(x, r) || excl.has(x, r) || self.cur.has(x, r) {
                 continue;
             }
@@ -1438,6 +1528,7 @@ impl Ra<'_> {
             carry: std::mem::take(&mut self.carry),
             calls: self.calls,
             nspill: self.next_slot as u16,
+            used: std::cell::OnceCell::new(),
         })
     }
 

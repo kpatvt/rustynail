@@ -1532,7 +1532,7 @@ fn split_type_snaps(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String>
 }
 
 struct Res {
-    protos: HashMap<usize, (ProtoInfoR, Vec<Option<u64>>)>,
+    protos: crate::fx::HashMap<usize, (ProtoInfoR, Vec<Option<u64>>)>,
 }
 
 impl Resolver for Res {
@@ -1747,9 +1747,25 @@ fn carry_limit(st: &mut State) -> bool {
 
 fn pipeline(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr> {
     let t0 = phase::now();
+    // Section 49: the compile-speed levers of this state
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    crate::cspeed::set(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cspeed });
     let r = pipeline_inner(st, act, rec);
     phase::add(phase::PIPELINE, t0);
     r
+}
+
+/// Section 49 (`ccheck`): compiles compared with the old paths, and those that differed.
+pub static CCHECK: [std::sync::atomic::AtomicU64; 2] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+
+/// The allocation as text for the `ccheck` comparison (without the lazily built register masks).
+fn ccheck_alloc_text(a: &ra::Allocation) -> String {
+    let mut c = a.clone();
+    c.used = Default::default();
+    format!("{c:?}")
 }
 
 fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), PipeErr> {
@@ -1970,7 +1986,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     }
     // tier-1 label addresses of the root and every inlined prototype (TR4: the code version installed now)
     let mut res = Res {
-        protos: HashMap::new(),
+        protos: crate::fx::HashMap::default(),
     };
     for k in ir.deps.iter().map(|k| k.0).chain([act.root]) {
         if res.protos.contains_key(&k) {
@@ -2000,14 +2016,46 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
         );
     }
     let t_ex = phase::now();
-    let (mut snaps, mut descs) = exit::build_exits_ex(
-        ir,
-        &al,
-        &res,
-        (act.guarddiet && side.is_some()).then(|| side.map_or([0xFD; 256], |si| si.entry_tags)),
-    )
-    .map_err(|e| abort_err("exits", e))?;
+    let exit_tags =
+        (act.guarddiet && side.is_some()).then(|| side.map_or([0xFD; 256], |si| si.entry_tags));
+    let (mut snaps, mut descs) =
+        exit::build_exits_ex(ir, &al, &res, exit_tags).map_err(|e| abort_err("exits", e))?;
     phase::add(phase::EXITS, t_ex);
+    // Section 49 (`ccheck`): the allocation and the exits of the old paths, compared now (the snapshots are completed below)
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let ccheck = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0
+        && !opts.emurun
+        && !opts.emuverify;
+    if ccheck {
+        let slow = crate::cspeed::with(0, || -> Result<(), String> {
+            let mut a2 = ra::allocate_hinted(ir, &end, &end_hints, &ropts)
+                .map_err(|e| format!("slow allocation failed: {e:?}"))?;
+            if ropts.xregs & 2 != 0 && a2.uses_gpr(10) && !mutants::active("xregs_rec_r14") {
+                let without = RaOpts {
+                    xregs: ropts.xregs & !2,
+                    ..ropts.clone()
+                };
+                if let Ok(a3) = ra::allocate_hinted(ir, &end, &end_hints, &without) {
+                    if a3.carried_spills(ir) <= a2.carried_spills(ir) {
+                        a2 = a3;
+                    }
+                }
+            }
+            if ccheck_alloc_text(&a2) != ccheck_alloc_text(&al) {
+                return Err("allocation".into());
+            }
+            let (s2, d2) = exit::build_exits_ex(ir, &a2, &res, exit_tags)?;
+            if format!("{s2:?}{d2:?}") != format!("{snaps:?}{descs:?}") {
+                return Err("exits".into());
+            }
+            Ok(())
+        });
+        CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Err(what) = slow {
+            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(abort_err("ccheck", format!("cspeed differs: {what}")));
+        }
+    }
     // The entry snapshot's exits are entry-check failures: the entry-failure rule of 3.3 (`entry_fail` / free peel)
     // decides about them, not the hot type-guard rule, so they never flush.
     if let Some(e) = rec.entry_snap {
@@ -2533,6 +2581,30 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     }
     let em = x86::emit_ex(&a.prog, &want).map_err(|e| abort_err("x86", format!("x86: {e:?}")))?;
     phase::add(phase::X86, t_x86);
+    if ccheck && !emurun && !emuverify {
+        // Section 49 (`ccheck`): the assembler and the encoder of the old paths on the same (checked) allocation and exits
+        let same = crate::cspeed::with(0, || {
+            asm::assemble_dl(ir, &al, &snaps, &rec.writeback, &env, dlink_in.as_ref())
+                .ok()
+                .and_then(|a2| {
+                    let mut want2: Vec<bool> = Vec::new();
+                    for &(_, l) in &a2.defer_g {
+                        if want2.len() <= l as usize {
+                            want2.resize(l as usize + 1, false);
+                        }
+                        want2[l as usize] = true;
+                    }
+                    x86::emit_ex(&a2.prog, &want2).ok()
+                })
+                .is_some_and(|e2| {
+                    e2.code == em.code && e2.label_off == em.label_off && e2.refs == em.refs
+                })
+        });
+        if !same {
+            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(abort_err("ccheck", "cspeed differs: machine code"));
+        }
+    }
     let entry_off =
         em.label_off[entry as usize].ok_or_else(|| abort_err("x86", "entry unbound"))?;
     // S1: the offsets of the patchable `nop`s of the deferred snapshots and of the shared exit routine

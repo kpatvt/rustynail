@@ -838,6 +838,13 @@ pub struct TrLimits {
     /// of looking the caller's resume entry up. Bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`, like
     /// `t1q`). Default [`T1CALL_PROCESS`].
     pub t1call: u32,
+    /// Section 49 (C1, `cspeed`): the compile-speed levers of the back end and the x86 encoder (bits of [`crate::cspeed`]; every lever
+    /// emits the code of the path it replaces). Default [`crate::cspeed::DEFAULT`] (all on); 0 = the old paths.
+    pub cspeed: u32,
+    /// Section 49 (`ccheck`): every trace compile runs its back end (register allocation, exits, assembler, encoder) a second time with
+    /// `cspeed=0` and compares the machine code and the label offsets byte for byte; a difference aborts the compile and is counted
+    /// (`[trace] ccheck:` line of the statistics). 0 = off (default).
+    pub ccheck: u32,
     /// Section 38 (`deepprobe`, docs/JIT_TRACE.md): a deep site (J2-2: a loop head whose recording ended at the recursion / depth limit) picks the
     /// iteration its root trace is recorded on: its first `deepprobe` closed root recordings are probes (dropped, the longest recorded path is
     /// kept), the next ones are dropped while their path is shorter than 7/8 of that, for at most `deepprobe` more recordings (the last one is
@@ -1001,6 +1008,8 @@ impl Default for TrLimits {
             lazypoison: 0,
             dlink: DLINK_PROCESS,
             t1call: T1CALL_PROCESS,
+            cspeed: crate::cspeed::DEFAULT,
+            ccheck: 0,
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
@@ -1217,6 +1226,8 @@ impl TrLimits {
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
+                "cspeed" => l.cspeed = v & crate::cspeed::ALL,
+                "ccheck" => l.ccheck = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }
@@ -4300,39 +4311,52 @@ impl std::hash::Hasher for Fnv {
 /// without formatting the text (which cost about as much as the rest of the pipeline on a short trace). Equal shapes hash
 /// equal; never 0.
 pub fn shape_hash_ir(ir: &super::ir::TraceIr, al: &super::ra::Allocation) -> u64 {
+    // Section 49 (`cspeed` lever `FXHASH`): the same walk with the FxHash word mix (one multiply per word; the FNV variant here mixes every byte
+    // of a `Vec` / slice separately). The value is only compared with hashes of the same process (`Q3`), never stored or printed.
+    if crate::cspeed::on(crate::cspeed::FXHASH) {
+        return shape_hash_walk(ir, al, crate::fx::FxHasher::default());
+    }
+    shape_hash_walk(ir, al, Fnv(0xcbf2_9ce4_8422_2325))
+}
+
+/// [`shape_hash_ir`] with the hasher `h`.
+fn shape_hash_walk<H: std::hash::Hasher>(
+    ir: &super::ir::TraceIr,
+    al: &super::ra::Allocation,
+    mut h: H,
+) -> u64 {
     use std::hash::Hash;
-    let mut h = Fnv(0xcbf2_9ce4_8422_2325);
     ir.ins.len().hash(&mut h);
     for (i, ins) in ir.ins.iter().enumerate() {
         ins.op.hash(&mut h);
         ins.t.hash(&mut h);
-        h.word(
+        h.write_u64(
             u64::from(ins.flags)
                 | u64::from(ins.a) << 8
                 | u64::from(ins.b) << 24
                 | u64::from(ins.aux) << 40,
         );
-        h.word(u64::from(ins.aux >> 24));
+        h.write_u64(u64::from(ins.aux >> 24));
         let ia = &al.ins[i];
         ia.dst.hash(&mut h);
         ia.ops.hash(&mut h);
         ia.stores.hash(&mut h);
         for r in ia.pre.iter().chain(&ia.post) {
             r.reg.hash(&mut h);
-            h.word(u64::from(r.slot));
+            h.write_u64(u64::from(r.slot));
         }
-        h.word(ia.pre.len() as u64);
-        h.word(u64::from(al.fused[i]));
+        h.write_u64(ia.pre.len() as u64);
+        h.write_u64(u64::from(al.fused[i]));
     }
     ir.k.hash(&mut h);
     ir.loop_at.hash(&mut h);
     for (n, sn) in ir.snaps.iter().enumerate() {
-        h.word(u64::from(sn.pc) | u64::from(sn.frame) << 32);
-        h.word(sn.refund as u32 as u64);
+        h.write_u64(u64::from(sn.pc) | u64::from(sn.frame) << 32);
+        h.write_u64(sn.refund as u32 as u64);
         for e in ir.snap_entries(n as u32) {
-            h.word(u64::from(e.slot) | u64::from(e.r) << 16 | u64::from(e.flags) << 32);
+            h.write_u64(u64::from(e.slot) | u64::from(e.r) << 16 | u64::from(e.flags) << 32);
         }
-        h.word(u64::MAX);
+        h.write_u64(u64::MAX);
     }
     al.backedge_after.hash(&mut h);
     for l in &al.snap_locs {
@@ -4343,7 +4367,6 @@ pub fn shape_hash_ir(ir: &super::ir::TraceIr, al: &super::ra::Allocation) -> u64
         m.src.hash(&mut h);
     }
     al.entry_seq.len().hash(&mut h);
-    use std::hash::Hasher;
     h.finish() | 1
 }
 

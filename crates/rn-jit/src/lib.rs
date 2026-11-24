@@ -20,6 +20,7 @@
 )]
 
 pub mod arch;
+pub mod cspeed;
 #[cfg(feature = "jit")]
 #[doc(hidden)]
 pub mod fx;

@@ -2280,6 +2280,7 @@ mod slice {
             carry: vec![],
             calls: vec![],
             nspill: 0,
+            used: Default::default(),
         }
     }
 
