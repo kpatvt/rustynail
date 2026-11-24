@@ -4419,6 +4419,36 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "t4_late_ret_programs")],
     },
     Row {
+        name: "hrefo_lsize_skip",
+        owner: "T5",
+        dets: &[d("tr_record_calls", "t5_object_keys_record_their_guards"), d("tr_core", "t5_object_keys")],
+    },
+    Row {
+        name: "hrefo_hash_64",
+        owner: "T5",
+        dets: &[d("tr_core", "t5_object_keys_do_not_exit_per_key")],
+    },
+    Row {
+        name: "hrefo_nil_meta_skip",
+        owner: "T5",
+        dets: &[d("tr_record_calls", "t5_object_keys_record_their_guards"), d("tr_core", "t5_object_keys")],
+    },
+    Row {
+        name: "hrefo_abs_meta_skip",
+        owner: "T5",
+        dets: &[d("tr_record_calls", "t5_object_keys_record_their_guards"), d("tr_core", "t5_object_keys")],
+    },
+    Row {
+        name: "hrefo_abs_lsize_skip",
+        owner: "T5",
+        dets: &[d("tr_record_calls", "t5_object_keys_record_their_guards"), d("tr_core", "t5_object_keys")],
+    },
+    Row {
+        name: "tset_key_tag_int",
+        owner: "T5",
+        dets: &[d("tr_core", "t5_object_keys")],
+    },
+    Row {
         name: "innerlink_prep_never",
         owner: "T9",
         dets: &[d("tr_core", "t9_innerlink_programs")],

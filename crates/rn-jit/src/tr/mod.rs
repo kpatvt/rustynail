@@ -751,6 +751,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         nest_frame_sides: cfg.limits.sidenest != 0,
         inner_link: cfg.limits.innerlink & 1 != 0,
         inner_deep: cfg.limits.innerlink & 4 != 0,
+        objkey: cfg.limits.t5,
         // T9: the `RETF` caller rule (`Rec::pop_into_ok`) decides where a link may be made (see `driver_start_side`)
         retf_nolazy: if cfg.limits.lazyci != 0 && cfg.limits.lazyloop != 0 {
             cfg.limits.lazyci | 4
@@ -990,6 +991,7 @@ pub fn driver_start_side(
         inner_ret: start.inner_ret,
         inner_link_sides: cfg.limits.innerlink & 8 != 0,
         inner_deep: cfg.limits.innerlink & 4 != 0,
+        objkey: cfg.limits.t5,
         // P-E2: a side trace of a function-entry root ends before the root frame's `RETURN` (exit, no link)
         pack: true,
         gfor: true,

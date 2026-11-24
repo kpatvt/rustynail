@@ -320,7 +320,9 @@ pub fn op_clobbers(i: &Ins, ir: &TraceIr) -> CallClobber {
             xmm: 0,
         },
         // H1: the integer form of `HREFV` divides by the node-count modulus (`div` destroys `rdx` = V8) unless the modulus is 1
-        TOp::Hrefv if aux_bits(i.aux) & HREF_INT != 0 && (aux_bits(i.aux) & 0xFF) >= 2 => {
+        TOp::Hrefv
+            if aux_bits(i.aux) & (HREF_INT | HREF_OBJ) != 0 && (aux_bits(i.aux) & 0xFF) >= 2 =>
+        {
             CallClobber {
                 gpr: 1 << 8,
                 xmm: 0,

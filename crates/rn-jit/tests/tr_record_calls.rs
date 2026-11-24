@@ -3261,6 +3261,86 @@ fn h1_int_hash_keys_record_the_integer_hrefv() {
     }
 }
 
+/// T5: object keys record the object `HREFV` (pointer hash, `HREF_OBJ`) behind the node-count guard for a present key (`HLOAD` / `HSTORE`) and the
+/// absence walk (`HREF_OBJ | HREF_ABS`) behind the metatable and node-count guards for an absent one. Mutants `hrefo_lsize_skip`,
+/// `hrefo_nil_meta_skip`, `hrefo_abs_meta_skip`, `hrefo_abs_lsize_skip`.
+#[test]
+fn t5_object_keys_record_their_guards() {
+    let src = "local k1, k2, k3 = {}, {}, {} local t = { [k1] = 5, [k3] = false } t[k3] = nil local e = {}
+         function f(n) local s = 0 arm() for i = 1, n do s = s + t[k1] + (e[k2] or 0) t[k1] = i if t[k3] == nil then s = s + 1 end end return s end return f(40)";
+    let rc = record_src(
+        src,
+        RecCfg {
+            nil_store: true,
+            objkey: 7,
+            ..strict()
+        },
+    );
+    let r = closed(&rc);
+    let hv: Vec<(usize, &Ins)> =
+        r.ir.ins
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.op == TOp::Hrefv && aux_bits(i.aux) & HREF_OBJ != 0)
+            .collect();
+    assert!(
+        hv.iter().any(|(_, i)| aux_bits(i.aux) & HREF_ABS == 0)
+            && hv.iter().any(|(_, i)| aux_bits(i.aux) & HREF_ABS != 0),
+        "object HREFV for the present and the absent keys\n{}",
+        dump(&r.ir)
+    );
+    for (n, h) in &hv {
+        let node = r.ir.at(h.a);
+        assert!(
+            node.op == TOp::Fload && node.b == Field::Node as Ref,
+            "{}",
+            dump(&r.ir)
+        );
+        let fl = |f: Field| {
+            move |g: &&Ins| {
+                TraceIr::is_ins(g.a)
+                    && r.ir.at(g.a).op == TOp::Fload
+                    && r.ir.at(g.a).b == f as Ref
+                    && r.ir.at(g.a).a == node.a
+            }
+        };
+        let before = &r.ir.ins[..*n];
+        assert!(
+            before
+                .iter()
+                .any(|g| g.op == TOp::Eq && fl(Field::Lsizenode)(&g)),
+            "HREFV {n} without the node-count guard\n{}",
+            dump(&r.ir)
+        );
+        if aux_bits(h.aux) & HREF_ABS != 0 {
+            assert!(
+                before
+                    .iter()
+                    .any(|g| g.op == TOp::Eq && fl(Field::Metatable)(&g)),
+                "the absence walk without the metatable guard\n{}",
+                dump(&r.ir)
+            );
+        }
+    }
+    assert!(
+        r.ir.ins.iter().any(|i| i.op == TOp::Hstore) && r.ir.ins.iter().any(|i| i.op == TOp::Hload),
+        "{}",
+        dump(&r.ir)
+    );
+    // the nil-valued node `t[k3]` needs the `__index` guard of the table (`metatable == 0`) as well as the absent `e[k2]`
+    let mt_guards =
+        r.ir.ins
+            .iter()
+            .filter(|g| {
+                g.op == TOp::Eq
+                    && TraceIr::is_ins(g.a)
+                    && r.ir.at(g.a).op == TOp::Fload
+                    && r.ir.at(g.a).b == Field::Metatable as Ref
+            })
+            .count();
+    assert!(mt_guards >= 2, "{}", dump(&r.ir));
+}
+
 /// H1b (CP5): an integer key outside the array part and absent from the hash part of a table without a metatable records the absence
 /// proof: the metatable guard (`metatable == 0`), `UGE key - 1, asize`, the node-count guard and the integer `HREFV` with `HREF_ABS`
 /// (the walk exits when it FINDS the key). Mutants `iabs_meta_skip`, `iabs_array_guard_skip`, `iabs_lsize_skip`.

@@ -753,7 +753,8 @@ pub const ALLOC_TNEW: u32 = 0;
 pub const ALLOC_NEWREF: u32 = 1;
 /// `TLEN`: `args[0]` = table (second immediate 0) or string (1).
 pub const ALLOC_TLEN: u32 = 2;
-/// `TSET`: `args[0]` = table, `args[1]` = integer key, `args[2]` = payload of the value whose tag is `a >> 8`.
+/// `TSET`: `args[0]` = table, `args[1]` = integer key (or, T5, the address of an object key whose tag byte is `a >> 16`; 0 = integer),
+/// `args[2]` = payload of the value whose tag is `a >> 8` (low byte).
 pub const ALLOC_TSET: u32 = 3;
 /// `TNEXT`: `args[0]` = table, `args[1]` = payload of the control value whose tag is `a >> 8`; the result is the address of
 /// the pseudo node `args[1..4]` (node layout: value payload, value tag byte, key tag byte, key payload) or 0.
@@ -951,8 +952,28 @@ pub unsafe extern "C" fn jit_tr_tset(
             ]),
         )
     };
-    area.args[0] = u64::from(t.set_int(st.heap(), area.args[1] as i64, &v).is_ok());
+    area.args[0] = u64::from(tset_core(&mut st, t, a >> 16, area.args[1], &v));
     0
+}
+
+/// `TSET`: the table's own raw set of the integer key `key` (`ktag == 0`) or of the object whose tag byte is `ktag` and whose address is `key`
+/// (T5; rehash, key write barrier and metamethod-cache invalidation included). `true` when it succeeded.
+fn tset_core(
+    st: &mut rn_core::state::State,
+    t: rn_core::table::TableRef,
+    ktag: u32,
+    key: u64,
+    v: &rn_core::value::Value,
+) -> bool {
+    if ktag as u8 == 0 {
+        return t.set_int(st.heap(), key as i64, v).is_ok();
+    }
+    // SAFETY: `Value` is `repr(C)` `{ tag word, payload }` and the pair is an object the trace holds (live: it is a key of a store the
+    // interpreter just made a step before).
+    let kv = unsafe {
+        std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(ktag as u8), key])
+    };
+    t.set(st.heap(), &kv, v).is_ok()
 }
 
 /// # Safety
@@ -1073,7 +1094,7 @@ pub unsafe extern "C" fn jit_tr_alloc(
                     ]),
                 )
             };
-            u64::from(t.set_int(st.heap(), area.args[1] as i64, &v).is_ok())
+            u64::from(tset_core(&mut st, t, x >> 8, area.args[1], &v))
         }
         ALLOC_TNEXT => {
             // (generated code calls `jit_tr_tnext` directly; this is the route of test doubles that only know `alloc`)
@@ -6837,6 +6858,17 @@ impl Cx<'_> {
         let ibits = aux_bits(ins.aux);
         // H1: bit 8 = integer key (`HREFI` form: main position `key % ((size - 1) | 1)`, key tag `LUA_VNUMINT`)
         let int_key = ibits & super::ir::HREF_INT != 0;
+        // T5: bit 12 = object key (pointer hash: `(address as u32) % ((size - 1) | 1)`, key tag = the tag of the key operand's type)
+        let obj_key = ibits & super::ir::HREF_OBJ != 0;
+        let obj_tag = if obj_key {
+            match tag_of(self.ir.ty_of(ins.b)) {
+                Some(t) if t != 0 && !int_key => t,
+                _ => return unsup("HREFV object key of this type"),
+            }
+        } else {
+            0
+        };
+        let int_key = int_key || obj_key;
         // DYNMASK: `HREF_DYN` = operand `a` is the table; node count and node vector are read when the instruction runs. `HREF_NIL` = no exit: a
         // walk that finds nothing yields the static nil node (loads only)
         let dynm = ibits & super::ir::HREF_DYN != 0;
@@ -6888,12 +6920,21 @@ impl Cx<'_> {
         } else {
             None
         };
+        // (T5: the 32-bit key of the pointer hash)
+        let t4 = if obj_key && lsize >= 2 {
+            Some(pick(self))
+        } else {
+            None
+        };
         self.saved.clear();
         self.save(Loc::G(t1));
         if let Some(t) = t2 {
             self.save(Loc::G(t));
         }
         if let Some(t) = t3 {
+            self.save(Loc::G(t));
+        }
+        if let Some(t) = t4 {
             self.save(Loc::G(t));
         }
         let k = match (ops[1], t2) {
@@ -6916,15 +6957,26 @@ impl Cx<'_> {
                 c
             };
             if let Some(td) = t3 {
+                // T5: the object hash takes the low 32 bits of the address (`hashmod(t, addr as u32)`)
+                let kk = if let Some(tk) = t4 {
+                    self.push(Op::MovR(tk, k));
+                    if !mutants::active("hrefo_hash_64") {
+                        self.push(Op::Shl(tk, 32));
+                        self.push(Op::ShrI(tk, 32));
+                    }
+                    tk
+                } else {
+                    k
+                };
                 self.push(Op::Mov(td, c));
                 // (the emulator poisons `rax` / `rdx` after a division: the remainder is `key - quotient * modulus`)
                 self.push(Op::UDiv {
                     dst: t1,
-                    a: k,
+                    a: kk,
                     b: td,
                 });
                 self.push(Op::Mul(t1, Src::V(td)));
-                self.push(Op::MovR(7, k));
+                self.push(Op::MovR(7, kk));
                 self.push(Op::Sub(7, Src::V(t1)));
                 self.push(Op::Mul(7, Src::Imm(node::SIZE as i32)));
                 self.push(Op::Add(7, Src::V(n)));
@@ -6978,7 +7030,9 @@ impl Cx<'_> {
             cc: Cc::Ne,
             w: W::B1,
             m: rm(7, node::KEY_TT as i32),
-            imm: if int_key {
+            imm: if obj_key {
+                i32::from(obj_tag as i8)
+            } else if int_key {
                 i32::from(LUA_VNUMINT as i8)
             } else {
                 i32::from(ctb(LUA_VSHRSTR) as i8)
@@ -7718,7 +7772,24 @@ impl Cx<'_> {
                 let Some(tag) = tag_of(vt) else {
                     return unsup(format!("TSET of type {vt:?}"));
                 };
-                (ALLOC_TSET | u32::from(tag) << 8, 0, 3)
+                // T5: the key is an integer (tag byte 0) or an object whose tag byte is `a >> 16`
+                let ktag = match self.ir.ty_of(ins.b) {
+                    Ty::Int => 0,
+                    kt => match tag_of(kt) {
+                        Some(t) if t != 0 => t,
+                        _ => return unsup(format!("TSET with a key of type {kt:?}")),
+                    },
+                };
+                let ktag = if mutants::active("tset_key_tag_int") {
+                    0
+                } else {
+                    ktag
+                };
+                (
+                    ALLOC_TSET | u32::from(tag) << 8 | u32::from(ktag) << 16,
+                    0,
+                    3,
+                )
             }
             _ => {
                 let y = match self.ir.ty_of(ins.a) {

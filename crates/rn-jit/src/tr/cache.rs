@@ -112,6 +112,8 @@ pub const DEEPPROBE_PROCESS: u32 = 12;
 pub const T4_PROCESS: u32 = 3;
 /// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the process default of [`TrLimits::innerlink`] (also the struct default).
 pub const INNERLINK_PROCESS: u32 = 0;
+/// T5 (`t5`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t5`] (also the struct default).
+pub const T5_PROCESS: u32 = 0;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
@@ -855,6 +857,11 @@ pub struct TrLimits {
     /// also for loops of frames deeper than the root frame's callee. Bit 3: bit 0 in side recordings too (after their `RETF`, or into a head a
     /// root trace links into). 0 = off. Default [`INNERLINK_PROCESS`].
     pub innerlink: u32,
+    /// T5 (`t5`, docs/JIT_TRACE.md section 48): `GETTABLE` / `SETTABLE` with an object key (a table, function, userdata or thread) on trace as an
+    /// `HREFV` of the object form (pointer hash, chain walk). Bit 0: reads (a present key: typed `HLOAD`; an absent key: the `HREF_ABS` proof);
+    /// bit 1: stores into a present key (`HSTORE` + barrier); bit 2: insertions of an absent key (`TSET` with an object key). 0 = off.
+    /// Default [`T5_PROCESS`].
+    pub t5: u32,
 }
 
 impl Default for TrLimits {
@@ -990,6 +997,7 @@ impl Default for TrLimits {
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
+            t5: T5_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1198,6 +1206,7 @@ impl TrLimits {
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(15),
+                "t5" => l.t5 = v.min(7),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 _ => bad.push(w.to_string()),
             }

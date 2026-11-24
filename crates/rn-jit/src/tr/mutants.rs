@@ -967,6 +967,13 @@ pub const NAMES: &[&str] = &[
     "dlink_vb_fb_nostore",
     // T4 (`t4`): the guards of a native return at the end of the trace (docs/JIT_TRACE.md section 46)
     "t4_late_start_snap",
+    // T5 (`t5`): object keys on trace (docs/JIT_TRACE.md section 48)
+    "hrefo_lsize_skip",
+    "hrefo_hash_64",
+    "hrefo_nil_meta_skip",
+    "hrefo_abs_meta_skip",
+    "hrefo_abs_lsize_skip",
+    "tset_key_tag_int",
     // T9 (`innerlink`): nested-loop trace linking (docs/JIT_TRACE.md section 47)
     "innerlink_prep_never",
     "innerret_never",
@@ -1115,7 +1122,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 847);
+        assert_eq!(NAMES.len(), 853);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

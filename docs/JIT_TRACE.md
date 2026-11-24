@@ -5947,3 +5947,102 @@ bigint_rsa, nbody, storage, raytrace -1 .. -3.5 % instructions on both versions,
   (160 s) / 5.4 (152 s), `vm_corpus`, jit-diff 1-50, mutant group 3 / 3 caught). Its first run failed on test constructors of `HeadData` / `Recorded`
   and an unused counter in the new test; fixed before the commit.
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, `tr_oracle` / `oracle_options`, PGO builds, all-223 benchmarks, `bench-fast.sh`.
+
+## 48. T5 (object keys on trace, knob `t5`) and T7 (leaf-function roots, knob `t7`) (2026-11-23, base 202cfe7)
+
+Two handles of docs/STUDY_TIER1_RESIDUE.md section 5, built knob-gated in two commit series (T5 first). 48.1-48.5 are T5, 48.6 on T7.
+
+### 48.1 T5: what was missing
+
+`t[k]` / `t[k] = v` with a table, function, userdata or thread as the key aborted the recording `TableHash` (`Rec::int_key`: not a number), so every loop
+of the havlak shape (`number[node] = n`, `if number[target] == nil`, `inPool[s] = true`) was either untraced or ended its trace at the access
+(`awfy/havlak` records 8 `TableHash` aborts, plus the regions behind them). LuaJIT has `HREF` for any key type. The integer form of `HREFV`
+(H1, `hashint`) and the short-string form (N6) already walk the chain of a node vector at run time; the object form is the third.
+
+### 48.2 What was built (knob `t5`, `RUSTYNAIL_JIT_TRACE_LIMITS=t5=N`, default 0)
+
+| bit | what |
+|---|---|
+| 0 (1) | `GETTABLE` with an object key. Present non-nil value: guarded node-count (`FLOAD lsizenode == k`), `FLOAD node`, `HREFV ... HREF_OBJ` (walk of the chain from the main position `(address as u32) % ((size - 1) | 1)`, `hashmod` of `mainposition`; a node matches when its key tag is the tag of the IR type of the key operand and its key word the address; no match exits), typed `HLOAD`. The `__index` metatable is irrelevant for a present non-nil value. Nil-valued node: the same, with the TR14 `__index` guard of the table (a metatable with `__index` aborts `Metamethod`). Absent key: the TR14 `__index` guard, the node-count guard and `HREFV ... HREF_OBJ | HREF_ABS` (exits when the walk finds the key, so a key inserted later is found), result `nil`. |
+| 1 (2) | `SETTABLE` over a present object key: `hash_int_set_k` (the H1 integer-key store with the object form of `HREFV`): `HSTORE` guarded against a nil old value, or, for a nil-valued node, the `__newindex` guard and an unconditional store; the `TBAR` of a collectable value. The key needs no barrier (it is not stored). |
+| 2 (4) | Insertion of an absent object key: the generic `TSET` helper (`jit_tr_tset`) with the key's tag in `a >> 16` (tag 0 = integer, the old meaning): `TableRef::set` (rehash, key write barrier `barrier_back(t, key)` in `newkey`, tm-cache invalidation), then the `NE` guard of its result and the `TBAR` of a collectable value. `__newindex` guard as for integer keys. Needs bit 1 (the store dispatch). |
+
+Key types: table, Lua closure, C closure, full userdata, thread (`obj_key_ty`; light userdata and light C functions hash the same way but are not
+traced). A nil key, NaN, float and boolean keys are not objects: they take the old paths (`int_key` aborts), so key normalisation is untouched.
+
+Pieces: `ir::HREF_OBJ` (op bit 12); `asm.rs` `hrefv` (the integer-hash code with the key truncated to its low 32 bits: `Shl 32; ShrI 32`, the key tag
+from `tag_of(ty_of(key))`, one more scratch register; `ra.rs` clobber of `rdx` for lsize >= 2 as for the integer form); `interp.rs` needs no change
+(its `HREFV` already finds a node by key word; the model's `fill_node` now gives an object key node its model word: the handle of a table or Lua
+closure (`val_of`), the address otherwise); `TableRef::obj_node` (rn-core, read-only `getgeneric`); `Rec::obj_get` / `obj_set` /
+`hash_ref_int_k` / `hash_int_set_k`; the `TSET` key tag (`tset_core`). Aliasing: `opt_mem` already treats a variable-key `HREFV` as `May` against
+everything but the same key on the same node vector (an object key is an SSA value like a variable string). Loop optimiser: unchanged (an
+insertion is a `TSET`, which is not `header_safe`, so no `FLOAD` of the node vector or of `lsizenode` survives it and no `HREFV` is hoisted over
+it).
+
+### 48.3 Soundness notes
+
+* **Identity.** A passing `HREFV` means that a node of this table holds a key with this tag and this address; a dead key has the dead tag, so a
+  collected key whose address was reused is no match. The key operand is a live register value of the recorded type (`SLOAD` type guard / typed
+  `ALOAD` / `HLOAD`), so the address is that object's.
+* **Rehash / resize.** The node-count guard precedes every walk (the mask / modulus is an immediate), the `FLOAD` of the node vector follows the
+  guard; an insertion between two accesses (`TSET`) kills the `FLOAD` forwarding, so the second access re-guards. A key moved by a rehash is found
+  at its new position or, if the table shrank, the node-count guard exits.
+* **GC.** The store of a collectable value keeps its `TBAR`; the inserted key's barrier is `newkey`'s (`heap.barrier_back(t, key)`), the helper is the
+  table's own `set`. Weak-keyed tables: a cleared entry is a dead key (no match: exit for a read of a present key, the absence walk passes). GC stress
+  1 and 2, generational and incremental, `GC_VERIFY` (`tr_core::t5_gc_stress`).
+* **Metamethods.** `__index` / `__newindex` are consulted exactly where the interpreter consults them: a raw hit of a non-nil value never, a nil-valued
+  or absent key by the TR14 flag guards (which exit when a metatable gains the field), an insertion by the `__newindex` guard. A table with
+  `__index` / `__newindex` already present aborts `Metamethod` (the integer-key `mm` paths are not extended).
+* **Not objects.** `t[nil]` (read: nil; write: error), `t[0/0]` (read: nil; write: error), float keys with an integer value and booleans never reach
+  `obj_*` (their register type is not an object type); a loop whose key changes type exits its type guard.
+
+### 48.4 Tests
+
+* `tests/vm/jit_t5_01_object_keys.lua` (all the programs below in one file; `vm_corpus` runs it against `ref/55` and `ref/54`; checked by hand with
+  `t5=7`, `JIT=always TRACE=always`, GC stress 1 and 2: same output).
+* `tr_core`: programs `t5_get_present`, `t5_get_absent`, `t5_nilvalue_meta`, `t5_set_present`, `t5_insert`, `t5_havlak_shape`, `t5_gc_small`,
+  `t5_many_keys` (`tests/tr_core/t5_progs.rs`); `t5_object_keys` (3 trace modes x {plain, `+verify`, exit storm, budget 17, `-loop`, `-fwd`} x {`t5=7`,
+  process limits + `t5=7`} + stack-move stress + `t5=1`, `t5=3`, `t5=0`), `t5_gc_stress` (stress 1 / 2, both collector modes, `GC_VERIFY`),
+  `t5_object_keys_do_not_exit_per_key` (200 keys, a wrong modulus is an exit per key); `tr_record_calls::t5_object_keys_record_their_guards`;
+  `tr_policy::t5_objkey_knob`.
+* Mutants (registry 847 -> 853): `hrefo_lsize_skip`, `hrefo_hash_64` (the key is not truncated to 32 bits), `hrefo_nil_meta_skip`,
+  `hrefo_abs_meta_skip`, `hrefo_abs_lsize_skip`, `tset_key_tag_int` (the helper takes the key for an integer): 6 / 6 caught.
+* `JITDIFF_TSET=t5` (new, two templates: a mutating object-key set, the havlak numbering): seeds 1..40 `off tr trdef` and 41..200 `off tr tron`
+  with `lockstep=1,t5=7`, 5.5 and 5.4 (the 5.4 run 1..40): 0 diffs; the default set 1..40 `off tr trdef` with `t5=7` on both versions: 0 diffs;
+  `scripts/jit-official.sh` `JIT=always TRACE=always` `t5=7`, 5.5 and 5.4: `JIT-OFFICIAL OK`.
+
+### 48.5 Measurements and decision (T5)
+
+Method: `perf stat` instructions:u / cycles:u, `RUSTYNAIL_SEED=0`, CPU 4, one binary with `RUSTYNAIL_JIT_TRACE_LIMITS=t5=0` against `t5=7` (equal
+length strings), min of 3 per column over a 30-program sample (14 awfy, 5 apps, 5 real, `corpus/` astar_jumper, classic_vector, lua_lexer,
+json_rxi, `corpus2/dev` event_promise, memo_cache).
+
+| program | 5.5 instr | 5.5 cycles | 5.4 instr | 5.4 cycles |
+|---|---:|---:|---:|---:|
+| awfy/havlak (default size) | 508.0 -> 469.3 M **-7.6 %** | 148.0 -> 146.9 M -0.8 % | 572.9 -> 535.4 M **-6.5 %** | -1.8 % |
+| awfy/havlak (30) | 2068 -> 1804 M **-12.8 %** | 657.5 -> 600.0 M **-8.8 %** | - | - |
+| corpus/astar_jumper | **+1.16 %** (lottery, below) | +0.9 % (min of 9: -1.1 %) | -4.4 % | -0.9 % |
+| any other program | max +0.03 % (json_rxi) | max +1.33 % (queens, at +0.01 % instructions: noise) | max +0.01 % | max +1.52 % (lua_lexer, +0.01 % instructions) |
+| geomean of 30 | 0.9978 | 0.9993 | 0.9963 | 0.9992 |
+
+Hot-threshold sweep (`RUSTYNAIL_JIT_TRACE_HOT` 248 .. 264 step 2, 5.5, one run per cell, instructions M):
+
+```
+havlak        A (t5=0) 504.9 505.4 506.6 509.8 508.2 506.0 515.4 508.9 504.0
+              B (t5=7) 462.4 454.5 459.8 463.0 469.3 465.7 470.6 461.8 457.6     d% -8.4 -10.1 -9.2 -9.2 -7.7 -8.0 -8.7 -9.3 -9.2
+              cycles d% -2.5 -3.0 -5.1 -2.0 -1.2 -1.0 -4.9 -2.4 -4.0
+astar_jumper  A (t5=0) 4525 4360 4634 4541 4422 4555 4868 4586 4503
+              B (t5=7) 4501 4618 4722 4755 4485 4617 4593 4599 4429     d% -0.5 +5.9 +1.9 +4.7 +1.4 +1.4 -5.7 +0.3 -1.7 (mean +0.9)
+```
+
+**astar_jumper is a formation lottery, not a systematic cost.** The same binary and knobs give 4367 .. 4693 M instructions over 22 runs at the
+default threshold (cycles 1599 .. 1741 M) with `t5=0`; with `t5=7` the runs fall into two groups (4481 .. 4498 M in 6 of 10 runs, 4650 .. 4661 M in
+the other 4, a root trace entered 2.74 M against 3.26 M times) and the cycles are lower in every run (1579 .. 1701 M against 1599 .. 1741 M, mean
+-3.3 %). The program inserts into `toClear[neighbour]` and runs `pairs` over it, so it takes the new `TSET` path in both groups. Instructions over
+20 runs each: mean +1.8 %; cycles -3.3 %.
+
+**Decision: default off (`T5_PROCESS = 0`).** The bar (max +1 % instructions / +2 % cycles on any program, geomean not worse) is missed on 5.5 by one
+program by instructions (astar_jumper, +1.16 % at the min-of-9, +1.8 % mean, with cycles 3 % better), met on 5.4 and everywhere else; the geomean is
+better on both versions. Turning it on is the one-line change of `T5_PROCESS` to 7; the case for it is havlak -7.6 .. -12.8 % instructions on both
+versions and a lower cycle count on astar_jumper, the case against the strict bar is the instruction count of one lottery program. What is not
+covered if it ships on: `jit-diff` `trdef` / `trdefon` run the shipped limits, so they test `t5` only through the explicit `t5=7` runs above.

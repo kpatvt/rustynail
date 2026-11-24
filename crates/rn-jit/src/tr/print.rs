@@ -86,7 +86,13 @@ pub fn dump(ir: &TraceIr) -> String {
                         s,
                         " lsize={}{}",
                         b & 0xFF,
-                        if b & HREF_INT != 0 { " int" } else { "" }
+                        if b & HREF_INT != 0 {
+                            " int"
+                        } else if b & HREF_OBJ != 0 {
+                            " obj"
+                        } else {
+                            ""
+                        }
                     );
                 }
                 if b & HREF_ABS != 0 {

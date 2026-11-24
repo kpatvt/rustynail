@@ -8693,6 +8693,91 @@ run("nrr$id", run$id, $N)
 ]==], { id = id, N = N(60, 400), T = nr_trip():gsub("%$M", tostring(rnd(3, 9))) })
 end
 
+-- T5 (`t5` knob; JITDIFF_TSET=t5 draws only these; not part of TT / T, so the other sets reproduce their old seeds): object keys (tables, functions,
+-- threads, userdata) of a set that changes under the trace: present / absent / nil-valued keys, insertions with a rehash, a late `__index` / `__newindex`.
+local T5T = {}
+T5T[#T5T + 1] = function(id)
+  return tpl([==[
+local function f$id(set, keys, n, seed, m)
+  local s, c = 0, seed
+  for i = 1, n do
+    c = (c * 1103 + 12345) % 65521
+    local k = keys[c % m + 1]
+    local v = set[k]
+    if v then s = s + v; set[k] = v + $INC else set[k] = i; s = s + 1 end
+    if i % $EV == 0 then
+      local k2 = keys[(c + 7) % m + 1]
+      $MUT
+    end
+    s = s + (set[keys[(c + i) % m + 1]] or 0)
+  end
+  return s
+end
+local function r$id()
+  local keys = {}
+  for i = 1, $NK do keys[i] = $MK end
+  local set = {}
+  for r = 1, $R do
+    mix(f$id(set, keys, $N, r * 31, $M1))
+    mix(f$id(set, keys, $N, r * 17, $M2))
+    if r == 2 then
+      $MUT2
+    end
+    if r == 3 then set = {} end
+  end
+  local cnt = 0
+  for _ in pairs(set) do cnt = cnt + 1 end
+  mix(cnt)
+end
+run("tk1$id", r$id)
+]==], { id = id, NK = rnd(1, 330), INC = pick{ "1", "2", "0.5", "-1" }, EV = rnd(3, 40), N = N(80, 500), R = rnd(3, 6),
+    M1 = rnd(1, 330), M2 = rnd(1, 330),
+    MK = pick{ "{}", "{}", "function() return i end", "coroutine.create(function() end)", "(i % 2 == 0) and {} or function() return i end",
+      "(i <= 3) and io.stdout or {}" },
+    MUT = tpl(pick{ "set[k2] = nil", "set[k2] = i", "if i % 2 == 0 then set[k2] = nil else set[k2] = 1 end", "for j = 1, 40 do set[keys[(c + j) % m + 1]] = j end",
+      "local _ = collectgarbage and (i % 5 == 0) and collectgarbage('step')", "rawset(set, k2, i)", "set[{}] = i", "set[k2] = { i }" }, {}),
+    MUT2 = tpl(pick{ "setmetatable(set, { __index = function(_, k) return 3 end })", "setmetatable(set, { __newindex = function(tt, k, v) rawset(tt, k, v) end })",
+      "setmetatable(set, { __index = { [keys[1] ] = 5, [keys[2] ] = 6 } })", "for j = 1, 200 do set[{}] = j end", "collectgarbage()",
+      "setmetatable(set, { __newindex = {} })", "for kk in pairs(set) do set[kk] = nil end" }, {}) })
+end
+-- a depth-first numbering with `number[node] = n` / `number[node] == nil` and a pool set (the havlak shape), over a graph whose edges change between rounds
+T5T[#T5T + 1] = function(id)
+  return tpl([==[
+local function dfs$id(cur, number, cnt)
+  number[cur] = cnt
+  local last = cnt
+  local outs = cur.out
+  for i = 1, #outs do
+    local t = outs[i]
+    if number[t] == nil then last = dfs$id(t, number, last + 1) end
+  end
+  return last
+end
+local function r$id()
+  local nodes = {}
+  for i = 1, $NK do nodes[i] = { id = i, out = {} } end
+  local acc = 0
+  for r = 1, $R do
+    for i = 1, $NK do
+      local o = nodes[i].out
+      for e = #o, 1, -1 do o[e] = nil end
+      for e = 1, $DEG do o[e] = nodes[(i * (e + r) + $OFF) % $NK + 1] end
+    end
+    local number = {}
+    acc = acc + dfs$id(nodes[1], number, 0)
+    local pool, list = {}, {}
+    for i = 1, $NK * 2 do
+      local x = nodes[(i * $STEP) % $NK + 1]
+      if not pool[x] then pool[x] = true; list[#list + 1] = x end
+    end
+    mix(acc + #list)
+    if r == 2 then number[nodes[1] ] = nil; setmetatable(number, { __index = function() return -1 end }); mix(number[nodes[1] ] or 0) end
+  end
+end
+run("tk2$id", r$id)
+]==], { id = id, NK = rnd(2, 80), R = rnd(3, 30), DEG = rnd(1, 4), OFF = rnd(0, 20), STEP = rnd(1, 9) })
+end
+
 local nsnip = rnd(5, 9)
 local used = {}
 emit("-- snippets: " .. nsnip .. "\n")
@@ -8751,6 +8836,10 @@ for si = 1, nsnip do
     -- BUNDLE-H: only the library-call / traversal templates (JITDIFF_TSET=bh)
     id = newid()
     text = BHT[rnd(#BHT)](id)
+  elseif tset == "t5" then
+    -- T5: only the object-key templates (JITDIFF_TSET=t5)
+    id = newid()
+    text = T5T[rnd(#T5T)](id)
   elseif tset == "bj" then
     -- BUNDLE-J: only the C-entered function templates (JITDIFF_TSET=bj)
     id = newid()

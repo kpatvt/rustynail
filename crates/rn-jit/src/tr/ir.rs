@@ -21,6 +21,10 @@ pub const MAX_SNAPS: usize = 500;
 /// H1: bit of the op bits (`aux_bits`) of a [`TOp::Hrefv`] that selects the integer-key form (`hashint` main position, `LUA_VNUMINT` key
 /// tag); the low byte is the node count's log, as for the string form.
 pub const HREF_INT: u32 = 0x100;
+/// T5: bit of the op bits of a [`TOp::Hrefv`] that selects the object-key form (a table, function, userdata or thread as the key): the main position is
+/// `(address as u32) % ((sizenode - 1) | 1)` (`hashmod` of `mainposition`), a node matches when its key tag equals the tag of the type of the key operand and its
+/// key word the address. Exclusive with [`HREF_INT`] and [`HREF_DYN`]; the low byte is the node count's log.
+pub const HREF_OBJ: u32 = 0x1000;
 /// BUNDLE-L D1b: bit of the op bits of a [`TOp::Hrefv`]: the absence proof of a dynamic key (exits when the walk FINDS the key; no result).
 pub const HREF_ABS: u32 = 0x200;
 /// DYNMASK: bit of the op bits of a [`TOp::Hrefv`] (string key): operand `a` is the TABLE (not its node vector); the node count and the node vector are read

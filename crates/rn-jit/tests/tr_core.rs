@@ -39,6 +39,8 @@ mod r1_progs;
 mod s4_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
+#[path = "tr_core/t5_progs.rs"]
+mod t5_progs;
 
 use a1_progs::{A1_PROGS, G1_SLOW};
 use h1_progs::H1_PROGS;
@@ -59,6 +61,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use t5_progs::T5_PROGS;
 
 const BEGIN: &str = "<<<TR-CORE-BEGIN>>>";
 const END: &str = "<<<TR-CORE-END>>>";
@@ -171,6 +174,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(R1_PROGS)
         .chain(G1_SLOW)
         .chain(H1_PROGS)
+        .chain(T5_PROGS)
         .chain(H2_PROGS)
         .chain(K4_PROGS)
         .chain(N1_PROGS)
@@ -1944,6 +1948,121 @@ fn g2_pcall_depth() {
 /// BUNDLE-H1: the limits a process (`rnlua`) runs with that matter for recursion and frame side traces (the struct defaults of the tests
 /// have none of them).
 const H1_PROC: &str = "recnat=1,recany=1,siderooms=1,nilstore=1,siderooms=1,typesides=1,ineffcover=1,sidemin=4,fnroot=1";
+
+/// T5 (docs/JIT_TRACE.md section 48): the limits the T5 programs run with (`t5=7`: reads, stores into present keys, insertions of object keys).
+const T5_LIM: &str = "t5=7";
+
+/// T5: object keys (`HREFV` object form, the absence proof, `HSTORE`, `TSET` with an object key) in every trace mode with `+verify`, exit storms,
+/// small budgets, the stack-move stress, the optimiser off, each bit of the knob alone and with the knob off. Detector of the mutants
+/// `hrefo_lsize_skip`, `hrefo_hash_64`, `hrefo_nil_meta_skip`, `hrefo_abs_meta_skip`, `hrefo_abs_lsize_skip`, `tset_key_tag_int`.
+#[test]
+fn t5_object_keys() {
+    let progs = [
+        "t5_get_present",
+        "t5_get_absent",
+        "t5_nilvalue_meta",
+        "t5_set_present",
+        "t5_insert",
+        "t5_havlak_shape",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2", "on"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("-loop", 0),
+                ("-fwd", 0),
+            ] {
+                let mut j = Job::new(p, trace).opts(opts);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                j.limits = T5_LIM.into();
+                jobs.push(j.clone());
+                j.limits = format!("{H1_PROC},{T5_LIM}");
+                jobs.push(j);
+            }
+            let mut j = Job::new(p, trace).env("RUSTYNAIL_JIT_STRESS", "stackmove");
+            j.limits = T5_LIM.into();
+            jobs.push(j);
+        }
+        for lim in ["t5=1", "t5=3", "t5=0"] {
+            let mut j = Job::new(p, "always").opts("+verify");
+            j.limits = lim.into();
+            jobs.push(j);
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.limits == T5_LIM && j.env.is_empty() {
+            assert!(
+                o.stats.entered >= 1,
+                "{}: traces did not run: {}",
+                j.prog,
+                o.stats.line()
+            );
+        }
+    }
+}
+
+/// T5: object keys under GC stress 1 and 2 (the key barrier of the `TSET` insertion, the value barrier of the `HSTORE`, weak-keyed tables).
+#[test]
+fn t5_gc_stress() {
+    let mut jobs = Vec::new();
+    for stress in ["1", "2"] {
+        for trace in ["always", "on2"] {
+            let mut j = Job::new("t5_gc_small", trace).env("RUSTYNAIL_GC_STRESS", stress);
+            j.limits = T5_LIM.into();
+            jobs.push(j);
+        }
+        for mode in ["gen", "inc"] {
+            let mut j = Job::new("t5_gc_small", "always")
+                .env("RUSTYNAIL_GC_STRESS", stress)
+                .env("TR_CORE_GCMODE", mode);
+            j.limits = T5_LIM.into();
+            jobs.push(j);
+        }
+    }
+    let mut j = Job::new("t5_gc_small", "always")
+        .env("RUSTYNAIL_GC_STRESS", "2")
+        .env("RUSTYNAIL_GC_VERIFY", "1");
+    j.limits = T5_LIM.into();
+    jobs.push(j);
+    compare(jobs);
+}
+
+/// T5: one trace serves every object key of a big hash part: the exits of a loop over 200 present keys stay a handful (a wrong main position or
+/// a walk that stops early is a miss, an exit per key). Detector of `hrefo_hash_64`.
+#[test]
+fn t5_object_keys_do_not_exit_per_key() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        let mut j = Job::new("t5_many_keys", trace).opts("+verify");
+        j.limits = T5_LIM.into();
+        jobs.push(j);
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        assert!(
+            o.stats.installed >= 1,
+            "{} {}: {}",
+            j.prog,
+            j.trace,
+            o.stats.line()
+        );
+        assert!(
+            o.stats.exits < 400,
+            "{} {} {}: too many exits: {}",
+            j.prog,
+            j.trace,
+            j.opts,
+            o.stats.line()
+        );
+    }
+}
 
 /// BUNDLE-H1: integer keys in the hash part on traces (`HREFV` integer form) in every trace mode with `+verify`, exit storms, small budgets,
 /// the stack-move stress, the optimiser off, and with the feature off (`RUSTYNAIL_JIT_HASHINT=0`). Detector of the mutants `hrefi_mod_size`,

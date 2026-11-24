@@ -241,6 +241,8 @@ pub struct RecCfg {
     pub inner_link: bool,
     /// T9 (`TrLimits::innerlink` bit 2): `inner_link` also for a loop of a frame deeper than the root frame's callee.
     pub inner_deep: bool,
+    /// T5 (`TrLimits::t5`): bit 0 = `GETTABLE` with an object key, bit 1 = `SETTABLE` over a present object key, bit 2 = insertion of an object key.
+    pub objkey: u32,
     /// T9 (`TrLimits::innerlink` bit 3): `inner_link` in side recordings after their `RETF` or into a head a root trace links into (the side trace
     /// ends with the frame-linking exit behind the prep).
     pub inner_link_sides: bool,
@@ -548,6 +550,7 @@ impl Default for RecCfg {
             nest_frame_roots: false,
             inner_link: false,
             inner_deep: false,
+            objkey: 0,
             inner_link_sides: false,
             inner_ret: false,
             retf_head: None,
@@ -2878,8 +2881,17 @@ impl Rec {
         let t = self.tabs[h as usize - 1];
         let (ktt, kbits) = t.node_key(ix);
         let int = ktt == LUA_VNUMINT;
+        // T5: an object key (table, function, userdata, thread) is identified by its model word, as a value of that type is (`val_of`: a model handle
+        // for a table or a Lua closure, the address otherwise)
+        let obj = [LUA_VTABLE, LUA_VLCL, LUA_VCCL, LUA_VUSERDATA, LUA_VTHREAD]
+            .iter()
+            .any(|&k| ktt == ctb(k));
         let key = if ktt == ctb(LUA_VSHRSTR) || int {
             kbits
+        } else if obj {
+            // SAFETY: `Value` is `repr(C)` `{ tag word, payload }`; the node holds a live object of this tag (a dead key has the dead tag).
+            let kv = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(ktt), kbits]) };
+            self.val_of(&kv).bits
         } else {
             0
         };
@@ -4392,9 +4404,14 @@ impl Rec {
     /// H1: the node of the integer key `key` (value `k` at record time) at node index `idx` of `tbl` (reference `t`): the node-vector
     /// size guard, the node vector and the integer `HREFV` (a `hashint` chain walk at run time; exits when the key is not in the chain).
     fn hash_ref_int(&mut self, t: Ref, tbl: TableRef, key: Ref, idx: usize) -> R<Ref> {
+        self.hash_ref_int_k(t, tbl, key, idx, false)
+    }
+
+    /// [`Rec::hash_ref_int`]; `obj` (T5): the key is an object (a table, function, userdata or thread: `HREF_OBJ`, the pointer hash).
+    fn hash_ref_int_k(&mut self, t: Ref, tbl: TableRef, key: Ref, idx: usize, obj: bool) -> R<Ref> {
         let h = self.handle(tbl);
         self.fill_node(h, idx);
-        if !mutants::active("hrefi_lsize_skip") {
+        if !mutants::active("hrefi_lsize_skip") && !(obj && mutants::active("hrefo_lsize_skip")) {
             let ls = self.fload(t, Field::Lsizenode, Ty::U32)?;
             let kl = self.kint(i64::from(tbl.lsizenode()));
             self.guard(TOp::Eq, Ty::I64, ls, kl, 0)?;
@@ -4405,7 +4422,7 @@ impl Rec {
             Ty::P64,
             node,
             key,
-            u32::from(tbl.lsizenode()) | HREF_INT,
+            u32::from(tbl.lsizenode()) | if obj { HREF_OBJ } else { HREF_INT },
         )
     }
 
@@ -4450,11 +4467,24 @@ impl Rec {
         idx: usize,
         val: (Ref, Ty),
     ) -> R<()> {
+        self.hash_int_set_k(t, tbl, key, idx, val, false)
+    }
+
+    /// [`Rec::hash_int_set`]; `obj` (T5): an object key.
+    fn hash_int_set_k(
+        &mut self,
+        t: (Ref, Ty),
+        tbl: TableRef,
+        key: Ref,
+        idx: usize,
+        val: (Ref, Ty),
+        obj: bool,
+    ) -> R<()> {
         let nil_old = tbl.node_value(idx).tag() & 0x0F == LUA_TNIL;
         if nil_old && !self.cfg.nil_store {
             return Err(AbortReason::Insert);
         }
-        let hr = self.hash_ref_int(t.0, tbl, key, idx)?;
+        let hr = self.hash_ref_int_k(t.0, tbl, key, idx, obj)?;
         if nil_old {
             if !mutants::active("hashint_newindex_skip") {
                 self.meta_guard(t.0, tbl, Tm::NewIndex)?;
@@ -4477,6 +4507,83 @@ impl Rec {
             self.ins(TOp::Tbar, Ty::I64, t.0, val.0)?;
         }
         Ok(())
+    }
+
+    /// T5: may a register of this type be the key of an object-key access on trace? A table, a Lua or C closure, a full userdata or a thread:
+    /// the collectable kinds whose key word is the object's address (a light function or light userdata hash the same way but are not traced).
+    fn obj_key_ty(ty: Ty) -> bool {
+        matches!(ty, Ty::Tab | Ty::Lcf | Ty::Ccl | Ty::Udata | Ty::Thread)
+    }
+
+    /// T5: `t[k]` for an object key `k` (SSA `key`, value `kv` at record time). A key present with a non-nil value is a raw hit whatever the metatable
+    /// (`HREFV` object form + typed `HLOAD`); a nil-valued or absent key reads `nil` when the metatable has no `__index` (TR14 guard of the table;
+    /// an absent key also the `HREF_OBJ | HREF_ABS` walk, which exits when the chain holds the key), else the access aborts `Metamethod`.
+    fn obj_get(&mut self, tv: &Value, t: (Ref, Ty), key: Ref, kv: &Value) -> R<Ref> {
+        if t.1 != Ty::Tab {
+            return Err(AbortReason::Metamethod);
+        }
+        let tbl = tv.as_table().ok_or(AbortReason::Diverge)?;
+        match tbl.obj_node(kv) {
+            Some(idx) => {
+                let nv = tbl.node_value(idx);
+                let nil_valued = nv.tag() & 0x0F == LUA_TNIL;
+                let ety = if nil_valued {
+                    Ty::Nil
+                } else {
+                    ty_of_value(&nv).ok_or_else(|| self.nyi())?
+                };
+                if nil_valued {
+                    if !mutants::active("hrefo_nil_meta_skip") {
+                        self.meta_guard(t.0, tbl, Tm::Index)?;
+                    }
+                } else {
+                    self.touch(&nv)?;
+                }
+                let hr = self.hash_ref_int_k(t.0, tbl, key, idx, true)?;
+                self.guard(TOp::Hload, ety, hr, NOREF, 1)
+            }
+            None => {
+                if tbl.lsizenode() > 30 {
+                    return Err(AbortReason::TableHash);
+                }
+                self.handle(tbl);
+                if !mutants::active("hrefo_abs_meta_skip") {
+                    self.meta_guard(t.0, tbl, Tm::Index)?;
+                }
+                if !mutants::active("hrefo_abs_lsize_skip") {
+                    let ls = self.fload(t.0, Field::Lsizenode, Ty::U32)?;
+                    let kl = self.kint(i64::from(tbl.lsizenode()));
+                    self.guard(TOp::Eq, Ty::I64, ls, kl, 0)?;
+                }
+                let node = self.fload(t.0, Field::Node, Ty::P64)?;
+                self.guard(
+                    TOp::Hrefv,
+                    Ty::P64,
+                    node,
+                    key,
+                    u32::from(tbl.lsizenode()) | HREF_OBJ | HREF_ABS,
+                )?;
+                Ok(self.b.ir.konst(KVal::Pri(Ty::Nil)))
+            }
+        }
+    }
+
+    /// T5: `t[k] = val` for an object key: a present key is an `HSTORE` into its node (`hash_int_set_k`), an absent one the generic insertion (`TSET`
+    /// with the key's tag: the table's own `set`, rehash and key barrier included).
+    fn obj_set(&mut self, tv: &Value, t: (Ref, Ty), key: Ref, kv: &Value, val: (Ref, Ty)) -> R<()> {
+        if t.1 != Ty::Tab {
+            return Err(AbortReason::Metamethod);
+        }
+        let tbl = tv.as_table().ok_or(AbortReason::Diverge)?;
+        match tbl.obj_node(kv) {
+            Some(idx) => self.hash_int_set_k(t, tbl, key, idx, val, true),
+            None => {
+                if self.cfg.objkey & 4 == 0 {
+                    return Err(AbortReason::Insert);
+                }
+                self.int_insert(tbl, t, key, val)
+            }
+        }
     }
 
     fn array_get(&mut self, vm: &Vm<'_>, t: (Ref, Ty), tslot: usize, key: Ref, k: i64) -> R<Ref> {
@@ -6239,6 +6346,8 @@ impl Rec {
                 let r = if kty == Ty::ShrStr {
                     let key = self.reg_key_any(vm, c, kref, &vm.slot(b), t.1)?;
                     self.hash_get(vm, &vm.slot(b), t, key)?
+                } else if self.cfg.objkey & 1 != 0 && Self::obj_key_ty(kty) {
+                    self.obj_get(&vm.slot(b), t, kref, &vm.slot(c))?
                 } else {
                     let (kr, key) = self.int_key(vm, c)?;
                     self.array_get_k(vm, t, b, kr, key, kref)?
@@ -6260,6 +6369,14 @@ impl Rec {
                         return self.mm_push_pending(vm, idx, a, false);
                     }
                     return Ok(next);
+                }
+                if op == O::Settable && self.cfg.objkey & 2 != 0 {
+                    let (kref, kty) = self.rd(vm, b)?;
+                    if Self::obj_key_ty(kty) {
+                        let val = self.rk_value(vm, i)?;
+                        self.obj_set(&vm.slot(a), t, kref, &vm.slot(b), val)?;
+                        return Ok(next);
+                    }
                 }
                 let (kr, key) = if op == O::Seti {
                     (self.kint(i64::from(i.b())), i64::from(i.b()))

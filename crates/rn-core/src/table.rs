@@ -2157,6 +2157,20 @@ impl TableRef {
             }
         }
     }
+    /// T5: index of the node that holds the collectable-object key `key` (a table, function, userdata or thread value: compared by tag and address,
+    /// `getgeneric`) in the hash part, `None` when it is absent. Read-only (the trace compiler's `HREFV` object form).
+    pub fn obj_node(self, key: &Value) -> Option<usize> {
+        // SAFETY: handle invariants; `key` is a live value (its address is only compared); the node found lies in the node vector.
+        unsafe {
+            let t = self.as_ptr();
+            let n = getgeneric(t, key, false);
+            if n.is_null() {
+                None
+            } else {
+                Some(n.offset_from((*t).node) as usize)
+            }
+        }
+    }
     /// Index of the main position of the short-string key `key` (a live interned string): where `luaH_getshortstr`
     /// starts its chain walk. Read-only (P-A `HMISS` absent-key proof).
     pub fn short_str_mainpos(self, key: StrRef) -> usize {
