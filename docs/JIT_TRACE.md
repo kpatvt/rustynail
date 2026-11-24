@@ -5637,3 +5637,152 @@ over +2 % is a layout effect at identical instructions that is under the bar at 
 What is left in a `co_yield` pair (693 instructions): the coroutine's bytecode and its `CALL` of `yield` in the interpreter (~220), the resume function (~180), `jit_call`'s native frame
 push and the tier-1 loop (~170). A further step needs the switch inside the interpreter loop (no Rust frame for the resume; errors of the coroutine caught at the coroutine boundary
 inside `run_mode`) or a cheaper tier-1 re-entry of the coroutine body (section 42.4: `enter` costs more than the interpreted body); neither was attempted here.
+
+## 46. T4: native returns that cannot be made, guarded at the end of the trace (`t4`; 2026-11-23, base f942cc1)
+
+T4 of docs/STUDY_TIER1_RESIDUE.md (and of docs/STUDY_LUAJIT_GAP_2.md) read awfy cd's residue as "down-recursion": the two `rec_ret` traces of `put` (red-black
+insert) exit at their start snapshot "when the next return goes to the other site (left / right alternation)", and proposed to link that exit to the sibling
+return trace. Method of this section as in section 45: plain `cargo build --release -p rn-cli` builds (5.5; 5.4 with `--cfg rustynail_lua54`, own target
+directory), instructions of one run (`RUSTYNAIL_SEED=0`), cycles min of interleaved runs pinned to CPU 4 (`perf stat -e instructions:u,cycles:u`), one binary
+with the knob as the only difference (`RUSTYNAIL_JIT_TRACE_LIMITS=t4=0` / `t4=3`, strings of equal length).
+
+### 46.1 What the start exits of cd's return traces really are
+
+* The study's two traces are trace 16 (head pc 35) and trace 19 (head pc 43) of `put` (`cd 10`, seed 0; the same exit counts as the study: 210 k / 137 k and
+  328 k / 137 k). pc 35 is the continuation of `h.right = put(..)`; pc 43 is **not** the left return: it is the continuation after `isRed(h.right)` (a
+  continuation head because R2 `recany` makes every call of an upvalue a candidate site). The left return is pc 25 (trace 71, 105 k + 12.5 k start exits).
+* The sibling is already linked. Every native-return trace of `put` carries all six continuation sites of the prototype (`MAX_CONT_SITES`: pcs 17, 25, 35, 43,
+  48, 53; `[trace] native sites` in the verbose log) and its `rec_ret_tail` jumps through the `rec` cell of whichever site the caller is suspended at. A return
+  into the other side of the tree is an inner entry of the other return trace, not an exit.
+* Exit 0 of these traces (gk 32: the poll, the budget and the **native-return guards**, which sat in front of the first charge and failed through the empty
+  start snapshot) is the return of the **bottom frame of each insert** into `RBT:put`, a method of another prototype that is never a continuation site:
+  `RBT:put` is called 457 240 times, `put` runs 1 645 220 frames (3.6 per insert) and the three start exits add up to 643 k (one or two per insert: the
+  pc-25 / pc-35 trace, then the pc-43 trace that tier 1 enters after `isRed` returns). Each of them made tier 1 run the whole rest of `put` at that level
+  (about 45 bytecodes and four to six `isRed` calls), which is where most of `put`'s 11.0 % tier-1 share of the instructions came from (plus the descent:
+  `put`'s function-entry head ends `Black` by `FnShort` at this seed).
+* Exit 1 (gk 10) is the shape guard of `h` (nodes built in different key orders); start-snapshot exits were blacklisted for native-return traces
+  (`no_start_side`), so those levels ran in tier 1 as well.
+
+So the handle as written (link the start exit to the sibling trace) has nothing to link: the sibling is linked, and what fails is the return into a caller
+outside the recursion. What T4 builds instead:
+
+### 46.2 What was built (knob `t4`, `RUSTYNAIL_JIT_TRACE_LIMITS=t4=N`, default 0)
+
+| bit | what |
+|---|---|
+| 0 | The native-return guards of a trace (`rec_ret_guards`: the returning frame's callstatus, its caller a Lua frame, the caller suspended at a continuation site that wants the result count) are emitted at the trace's placeholder guard (the always-failing `EQ` that ends a native-return recording and assembled to nothing) instead of in front of the first `BUDGET`, i.e. after the body and in front of the writeback of the result into the function slot. A failure exits through the placeholder's snapshot: the state in front of the `RETURN` with the body done (refund 1: tier 1 runs only the `RETURN`). That exit never gets a side trace (`Trace::ret_late_snap`, blacklisted in `attach_exits`: a side trace there would start with the same guards and end at once; the first prototype without the blacklist attached such side traces in cd, one with 68 k entries that did nothing). The registers saved around the guards are, at that point, only those that hold a value of the snapshot or of the writeback (`snap_locs`, `end_locs`). |
+| 1 | With bit 0, the start snapshot of a native-return trace is no longer where calls from outside the recursion exit (only the body's entry guards, the poll and the budget use it): its exits may get side traces (`no_start_side` off for such traces). In cd those are the shape guards of `h`. |
+
+Counters (`RUSTYNAIL_JIT_VERBOSE=1`): `[trace] t4: late returns L start sides S` (traces installed with late guards, side traces attached at the start
+snapshot of such a trace). Mutant (registry 843 -> 844): `t4_late_start_snap` (the late guards fail through the start snapshot: tier 1 runs the body a second
+time), caught by `tr_core::t4_late_ret_programs`.
+
+### 46.3 Soundness
+
+* **Same frame facts, later.** The guards read only the returning frame (`ci`, `ci.previous`, their `callstatus`, the caller's `savedpc`) and `lazy_root`;
+  nothing in a native-return trace changes them (no frame is pushed or popped before `rec_ret_tail`; inlined frames are virtual), so the guards decide the
+  same at the end as at the start.
+* **The exit is an ordinary exit of the placeholder's snapshot.** The register allocator already treats the placeholder as a guard (its snapshot's values are
+  kept live and located up to it); the guard sequence is emitted where the placeholder stands, with the placeholder's reloads (none; `incons` if there were
+  any) and in front of the writeback, so the function slot still holds the callee when it fails (the frame is complete for tracebacks, `getinfo`, hooks and the
+  collector). The exit restores every slot the snapshot names, completes the lazy chain (the exit paths of section 36.1) and lands in tier 1 at the `RETURN`.
+  Effects of the body that the caller sees (table and upvalue stores) were made by the trace exactly once (`t4_late_start_snap` models doing them twice).
+* **TR5.** The trace charges its whole recorded path at the start; the late exit refunds the placeholder snapshot's count (1, the `RETURN`), which tier 1 then
+  charges: equal to the interpreter (the `ident` jobs of `t4_late_ret_programs` with the oracle feature; budgets 3 / 17 / 200 and count hooks in `t4_01`).
+* **Bit 1** only lifts a policy: a side trace of a start-snapshot exit is the S1 / CP2 side trace of any other exit of a lazy family (entered inside the
+  region, its own entry failure leaves through the leave block, 36.1; `dlink` may link it, 36.3); it ends with its own native return, guarded late as well.
+* Hooks, coroutines (a coroutine whose body is the recursion: its base frame's caller is `resume`, a C function), `pcall` callers (the callstatus test fails),
+  callers with another wanted count, errors and tracebacks from depth and at the late exit's level, stack growth during the descent, collections and
+  finalizers in the return path: `tests/vm/t4_01_late_ret.lua`.
+
+### 46.4 Measured
+
+**cd** (5.5; instructions M, one binary, `t4=0` -> `t4=3`; `RUSTYNAIL_JIT_TRACE_HOT` = 248 .. 264 to show the formation lottery):
+
+| hot | cd 1 (default size) | cd 10 |
+|---|---|---|
+| 248 | 791.2 -> 735.6 (-7.0 %) | 5607.2 -> 4935.6 (-12.0 %) |
+| 250 | 753.3 -> 704.9 (-6.4 %) | 5490.6 -> 4954.9 (-9.8 %) |
+| 252 | 739.7 -> 717.1 (-3.1 %) | 5365.1 -> 4869.1 (-9.3 %) |
+| 254 | 811.5 -> 716.9 (-11.7 %) | 5569.3 -> 4578.8 (-17.8 %) |
+| 256 (default) | 757.1 -> 714.2 (-5.7 %) | 5574.1 -> 4839.7 (**-13.2 %**) |
+| 258 | 737.9 -> 694.9 (-5.8 %) | 5432.7 -> 4798.6 (-11.7 %) |
+| 260 | 741.7 -> 706.1 (-4.8 %) | 5400.6 -> 4954.5 (-8.3 %) |
+| 262 | 780.5 -> 714.9 (-8.4 %) | 5332.5 -> 4692.3 (-12.0 %) |
+| 264 | 730.7 -> 719.7 (-1.5 %) | 5364.2 -> 5110.8 (-4.7 %) |
+
+Bit 0 alone at the default threshold: cd 10 -10.9 % (4967.9 M), cd 1 -3.3 %; bit 1 adds -2.5 .. -7.7 % on cd 10 at every threshold. Cycles (min of 5): cd 10
+1546.5 -> 1356.7 Mcyc (**-12.3 %**), cd 1 250.6 -> 246.3 (-1.7 %). Part of the cd 10 gain is formation: at the default threshold with `t4=3` `put`'s
+function-entry head ends `Traced` (502 k entries) where it ends `Black` (`FnShort`) without the knob; with the knob `put`'s tier-1 share of the instructions
+is 5.4 % instead of 11.0 %. The study's estimate was "up to -15 %" of cd's instructions at the large size: -4.7 .. -17.8 % measured, -13.2 % at the default
+threshold.
+
+Other programs that gain, across the same nine thresholds (5.5, instructions): `corpus/astar_jumper` -1.9 .. -16.5 % (default -7.2 %), `corpus2/dev/memo_cache`
+-3.4 .. -5.5 % (default -5.2 %), a scratch unbalanced-BST insert called by a method (`bst`, 3000 inserts x 40) -10.6 .. -24.6 % (default -13.6 %).
+
+**The bar** (30 programs: fib, binary_trees, cd, richards, deltablue, towers, raytrace, permute, three scratch recursions (`ack`: Ackermann (2, 50..56) and (3,
+5..7); `tak`; `sumrec`: a linear recursion of depth 80..119 called 30 000 times), `bst`, list, queens, havlak, json, storage, programs/queens, heapsort,
+lua_lexer, lua_parser, expr_compiler, expr_lang, json_rxi, inspect_lua, serpent_ser, jit-trace/rec_loop, memo_cache, astar_jumper, real/lua_interp; plus
+cd 10 outside the geomean; `t4=0` -> `t4=3`, 5 interleaved runs, CPU 4; the rows that moved by more than 0.5 % instructions or 1.5 % cycles):
+
+| program | 5.5 instructions | 5.5 cycles | 5.4 instructions | 5.4 cycles |
+|---|---|---|---|---|
+| awfy/cd | 757.2 -> 712.8 (**-5.9 %**) | 250.6 -> 246.3 (-1.7 %) | 807.7 -> 782.9 (-3.1 %) | 269.3 -> 281.5 (+4.5 %; 15 runs: +0.8 %) |
+| cd 10 | 5574.1 -> 4839.7 (**-13.2 %**) | 1546.5 -> 1356.7 (**-12.3 %**) | 6326.8 -> 5410.7 (**-14.5 %**) | 1748.5 -> 1548.0 (**-11.5 %**) |
+| bst | 674.8 -> 583.4 (-13.6 %) | 233.4 -> 221.4 (-5.2 %) | 744.6 -> 652.5 (-12.4 %) | 254.3 -> 245.1 (-3.6 %) |
+| corpus/astar_jumper | 4780.5 -> 4415.8 (-7.6 %) | 1716.1 -> 1597.0 (-6.9 %) | 5663.5 -> 4804.4 (-15.2 %) | 2075.1 -> 1780.3 (-14.2 %) |
+| corpus2/dev/memo_cache | 4967.9 -> 4709.2 (-5.2 %) | 1633.6 -> 1557.3 (-4.7 %) | 4913.7 -> 4791.8 (-2.5 %) | -0.4 % |
+| programs/queens | 5231.0 -> 5147.5 (-1.6 %) | -1.0 % | 5739.8 -> 5656.2 (-1.5 %) | -0.7 % |
+| awfy/json | -1.0 % | -1.3 % | -0.9 % | -0.9 % |
+| fib | 3896.1 -> 3864.5 (-0.8 %) | +1.3 % (15 runs: +0.05 %) | -0.8 % | -0.4 % |
+| corpus2/dev/expr_compiler | -0.7 % | -1.2 % | -0.9 % | -6.2 % |
+| apps/expr_lang | 514.9 -> 509.4 (-1.1 %) | -0.2 % | 553.0 -> 567.3 (**+2.6 %**) | 137.1 -> 151.4 (**+10.4 %**; 15 runs +10.7 %) |
+| awfy/list | -0.3 % | 92.5 -> 94.5 (**+2.1 %**; 15 runs **+2.3 %**) | -0.9 % | -0.1 % |
+| sumrec | -0.05 % | +0.8 % | -0.04 % | 37.8 -> 38.8 (**+2.7 %**; 15 runs **+2.9 %**) |
+| permute / towers | -0.2 % / -0.2 % | -2.0 % / 0.0 % | -0.2 % / -0.2 % | -1.5 % / -2.5 % |
+| apps/raytrace | 299.8 -> 301.5 (+0.5 %) | +0.7 % | 317.4 -> 319.0 (+0.5 %) | +1.2 % |
+
+Every other program: within +-0.3 % instructions (binary_trees +0.27 / +0.24 %, lua_interp +0.25 / +0.26 %; richards, deltablue, ack, tak, queens, storage,
+heapsort, lua_lexer, lua_parser, json_rxi, serpent_ser, rec_loop: 0.00 %) and +-1.3 % cycles. Geomean over the 30: **5.5 instructions 0.9870, cycles 0.9922;
+5.4 instructions 0.9877, cycles 0.9953.**
+
+**Bar: missed on three readings.**
+
+* 5.4 `expr_lang` **+2.6 % instructions / +10.4 % cycles**. A formation lottery that depends on the environment: the same binary and knob strings run under
+  `systemd-run` directly (not from the measuring script) give 556.5 -> 559.7 M (+0.57 %; `t4=1` +0.41 %), with `RUSTYNAIL_JIT_VERBOSE=2` 561.0 -> 564.4 M; under
+  `perf record` with the perf map the two runs are equal; across the nine thresholds 248 .. 264 (both bits) -0.2, -1.5, -0.7, -1.6, **+2.6**, -0.2, +0.6, -0.2,
+  -1.5 %: the default threshold in the script's environment is the worst case. The exit profiles of the two runs agree to 0.1 % (the run's late exits: 12
+  traces, at most 5.7 k exits per exit); one side trace forms differently.
+* 5.5 `list` **+2.3 % cycles** (15 runs) at -0.3 % instructions (bit 0 alone +2.6 %); the A/A spread of one configuration over 15 runs is 0.1 %, but its L1i
+  misses vary by 2x between single runs of one configuration (274 k .. 640 k): placement of the trace code (one more trace, one start-snapshot side trace),
+  not executed work.
+* 5.4 `sumrec` **+2.9 % cycles** (15 runs; bit 0 alone +3.05 %) at equal instructions (-0.04 %); A/A spread 0.8 .. 1.3 %. 30 000 late exits (one per call
+  from the loop) replace 30 000 start exits: the late exit stores the one slot of its snapshot and tier 1 runs only the `RETURN`, the start exit stored
+  nothing and tier 1 ran the `ADD` and the `RETURN`; equal instruction counts, ~37 cycles more per exit, not explained (a micro version with depth 20 and
+  10^6 calls: +0.24 %).
+
+### 46.5 Decision
+
+**Default off** (`T4_PROCESS = 0`), because the bar is missed; `RUSTYNAIL_JIT_TRACE_LIMITS=t4=3` turns both bits on, and shipping it is the one-line change of
+`T4_PROCESS` to 3. The case for turning it on: geomean -1.3 % instructions on both versions and -0.8 % (5.5) / -0.5 % (5.4) cycles, cd 10 -12 % cycles on both
+versions, astar_jumper -7 / -14 %, gains at every threshold measured on the programs that gain; against that, one environment-dependent formation lottery
+(+2.6 % instructions) and two cycle readings at equal instructions.
+
+### 46.6 Tests, gates, what was not run
+
+* `tests/vm/t4_01_late_ret.lua` (also in `vm_corpus` against `ref/55` and `ref/54`; the traceback case counts only the recursion's frames, the host's frames
+  below the main chunk differ between the test host and the reference `lua`), registered in `tr_core`'s programs; `tr_core::t4_late_ret_programs` (`t4_01`,
+  `e1_01`, `e4_01`, `e5_01`, `e6_01`, `deep_recursion` x `always` / `on2` x `t4` 0 / 1 / 3, `+verify`; for 3: exit storm, `lazypoison=1`, every E-knob off,
+  budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress; with the oracle feature the identity at budgets none / 3 / 17; asserts late
+  returns with bit 0 and none without, start-snapshot side traces in `t4_01` with bit 1); `tr_policy::t4_knob`. `tr_core::be_native_return_guards_keep_registers`
+  (the detector of `rec_ret_regs_unsaved`, written for guards in front of the first charge) runs its configurations with `t4=0` and one more with `t4=3`: with
+  the late guards on by default (an intermediate state of this work) that mutant survived it.
+* `gate-mutants.sh --only t4_late,rec_ret_,lazy_ret,lazy_rec,idfold_rootret,midfold_rootret,dlink_ --fast`: 18 ran, 18 caught.
+* Code commit: `GATE_CPUS=2-15 scripts/gate-light.sh t4_late,rec_ret_,lazy_ret --fast`: all PASS (fmt, mutant map, clippy x3, core 5.5 / 5.4, trace suites 5.5
+  (169 s) / 5.4 (158 s), `vm_corpus`, jit-diff 1-50, mutant group 9 / 9 caught). Its first run failed on the frozen registry count (843 -> 844) and on
+  `vm_corpus` (the first traceback case of `t4_01` counted the host's frames); both fixed before the commit.
+* `JITDIFF_MODES="off tr trdef" JITDIFF_ENTERS=1 scripts/jit-diff.sh 1 40` on the 5.5 and 5.4 release binaries: 0 diffs, 0 timeouts (35 / 40 seeds with traces in
+  `tr`); again with `RUSTYNAIL_JIT_TRACE_LIMITS=lockstep=1,t4=3` and modes `off tr tron`: 0 diffs on both. `scripts/jit-official.sh` with
+  `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`, default and `t4=3`, 5.5 and 5.4: `JIT-OFFICIAL OK` (4 runs). The 235 `tests/vm` programs, JIT off against
+  `always` + `TRACE=always` + `t4=3`, release binaries: 0 diffs on 5.5 under GC stress 2, on 5.4 plain and under incremental GC stress 2.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, `tr_oracle` / `oracle_options`, PGO builds, all-223 benchmarks, `bench-fast.sh`.

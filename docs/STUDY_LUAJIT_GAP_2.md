@@ -128,7 +128,7 @@ Gain = instruction gain of the programs named, geomean column = ln-sum over the 
 | T2b | Compile cost: recorder per-step (1245 tsc), abort-heavy recordings (28 of 67 wasted in raytrace), pipeline | halve rec_step + 25 % of the wasted recordings: raytrace -6 %, cd -4 %, richards -5 % [E from the shares above] | -0.3 % | low | M | raytrace, cd, richards, towers, json, game_loop |
 | T6 | Tier-1 per-call cost (+ new_str, string helpers) | tier 1 + helpers is 23-56 % of events / lua_interp / text_adventure / lua_parser / astar: -10 % of that = -3..-5 % each [E] | -0.3 % | low-medium | M | events, lua_interp, text_adventure, lua_parser, astar |
 | T8 | Library calls in traces (`string.find` pattern, `tostring`, `table.insert(t,pos,v)`, `string.char` n>3, `table.concat`) | lua_lexer -2..-4 % [E earlier]; lib micros are helper cost, not coverage | -0.2 % | low each | M | lua_lexer, json, lua_parser |
-| T4 | Down-recursion links | cd up to -12 % [E: L97 tier-1 share 12.25 %]; naive form +9.8 % [M] | -0.15 % | medium-high | M-L | cd |
+| T4 | Down-recursion links (built as late native-return guards, `t4`, default off: docs/JIT_TRACE.md section 46; cd -5.9 % / cd 10 -13.2 % instructions) | cd up to -12 % [E: L97 tier-1 share 12.25 %]; naive form +9.8 % [M] | -0.15 % | medium-high | M-L | cd |
 | N3 (new) | Exit materialisation cost (cd 12 %, classic_vector 16-18 % of instructions) | halving: cd -6 %, classic_vector -8 % [E] | -0.1 % | medium | M-L | cd, classic_vector |
 | T5 | `TableHash` keys | havlak -4..-8 % [E]; havlak is 1.32x, not in the tail | -0.03 % | medium | M | havlak |
 | T7 | `FnShort` probes for leaves | deltablue / richards L -2 %, towers def +4.4 % [M] | ~0 | low-medium | S | - |
