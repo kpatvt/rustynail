@@ -206,6 +206,18 @@ impl Assembler {
         }
     }
 
+    /// An empty assembler whose buffers hold `code` bytes and `labels` labels before they grow (section 49, `cspeed` lever `ENC`: the
+    /// encoder of a whole program knows its size roughly; the code is the same as with [`Assembler::new`]).
+    pub fn with_capacity(code: usize, labels: usize) -> Assembler {
+        Assembler {
+            id: NEXT_ASM_ID.fetch_add(1, Ordering::Relaxed),
+            buf: Vec::with_capacity(code),
+            labels: Vec::with_capacity(labels),
+            fixups: Vec::with_capacity(labels + labels / 2),
+            error: None,
+        }
+    }
+
     /// Current code offset (the offset of the next emitted byte).
     pub fn offset(&self) -> usize {
         self.buf.len()
@@ -320,7 +332,42 @@ impl Assembler {
     /// Emits `[prefix] [REX] opcode... modrm [sib] [disp]` for `reg` (register number or `/digit`)
     /// and `rm`. `trail` is the number of immediate bytes the caller will append afterwards.
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     fn rm_op(
+        &mut self,
+        prefix: Option<u8>,
+        w: bool,
+        opc: &[u8],
+        reg: u8,
+        rm: Rm,
+        force_rex: bool,
+        trail: usize,
+    ) {
+        if crate::cspeed::on(crate::cspeed::ENC) && !matches!(rm, Rm::Mem(m) if m.rip.is_some()) {
+            // (inlined into every emitter, so that the operand stays in registers; the bytes are written in place into 16 zeroed bytes at
+            // the end, then the buffer is cut back to the instruction: no `memcpy` call of a variable length, no wide reload of bytes just
+            // stored)
+            let at = self.buf.len();
+            self.buf.resize(at + 16, 0);
+            let n = Self::rm_bytes(
+                &mut self.buf[at..at + 16],
+                prefix,
+                w,
+                opc,
+                reg,
+                rm,
+                force_rex,
+            );
+            self.buf.truncate(at + n);
+            return;
+        }
+        self.rm_op_plain(prefix, w, opc, reg, rm, force_rex, trail);
+    }
+
+    /// [`Assembler::rm_op`] without the `ENC` lever (and for RIP-relative operands).
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn rm_op_plain(
         &mut self,
         prefix: Option<u8>,
         w: bool,
@@ -351,6 +398,101 @@ impl Assembler {
             Rm::Reg(n) => self.b(0xC0 | reg3 | (n & 7)),
             Rm::Mem(m) => self.modrm_mem(reg3, &m, trail),
         }
+    }
+
+    /// Section 49 (`cspeed` lever `ENC`): the bytes [`Assembler::rm_op`] appends, written into `t` (at least 16 bytes); returns their number. Not for a
+    /// RIP-relative operand (it records a label fix-up: the plain path handles it). Same bytes, same panics.
+    #[inline(always)]
+    fn rm_bytes(
+        t: &mut [u8],
+        prefix: Option<u8>,
+        w: bool,
+        opc: &[u8],
+        reg: u8,
+        rm: Rm,
+        force_rex: bool,
+    ) -> usize {
+        let mut n = 0usize;
+        let (x, b) = match rm {
+            Rm::Reg(r) => (0, r >> 3),
+            Rm::Mem(m) => (
+                m.index.map_or(0, |(i, _)| i.index() >> 3),
+                m.base.index() >> 3,
+            ),
+        };
+        let rex = 0x40 | (u8::from(w) << 3) | ((reg >> 3) << 2) | (x << 1) | b;
+        if let Some(p) = prefix {
+            t[n] = p;
+            n += 1;
+        }
+        if rex != 0x40 || force_rex {
+            t[n] = rex;
+            n += 1;
+        }
+        for &o in opc {
+            t[n] = o;
+            n += 1;
+        }
+        let reg3 = (reg & 7) << 3;
+        match rm {
+            Rm::Reg(r) => {
+                t[n] = 0xC0 | reg3 | (r & 7);
+                n += 1;
+            }
+            Rm::Mem(m) => {
+                let base3 = m.base.index() & 7;
+                #[cfg(feature = "trace")]
+                let short = !crate::tr::mutants::active("cspeed_enc_disp32");
+                #[cfg(not(feature = "trace"))]
+                let short = true;
+                let (md, disp_len) = if m.disp == 0 && base3 != 5 {
+                    (0u8, 0)
+                } else if fits_i8(m.disp) && short {
+                    (1, 1)
+                } else {
+                    // (MUTANT `cspeed_enc_disp32`: a displacement that fits a byte encoded in four)
+                    (2, 4)
+                };
+                match m.index {
+                    None if base3 != 4 => {
+                        t[n] = (md << 6) | reg3 | base3;
+                        n += 1;
+                    }
+                    _ => {
+                        t[n] = (md << 6) | reg3 | 0b100;
+                        n += 1;
+                        let (ss, idx3) = match m.index {
+                            None => (0, 4),
+                            Some((i, scale)) => {
+                                assert!(i != RSP, "rsp cannot be an index register");
+                                let ss = match scale {
+                                    1 => 0,
+                                    2 => 1,
+                                    4 => 2,
+                                    8 => 3,
+                                    _ => panic!("invalid scale {scale}"),
+                                };
+                                (ss, i.index() & 7)
+                            }
+                        };
+                        t[n] = (ss << 6) | (idx3 << 3) | base3;
+                        n += 1;
+                    }
+                }
+                match disp_len {
+                    1 => {
+                        t[n] = m.disp as i8 as u8;
+                        n += 1;
+                    }
+                    4 => {
+                        t[n..n + 4].copy_from_slice(&m.disp.to_le_bytes());
+                        n += 4;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        n
     }
 
     fn modrm_mem(&mut self, reg3: u8, m: &Mem, trail: usize) {
@@ -396,6 +538,7 @@ impl Assembler {
     }
 
     /// Integer `op r/m, reg`-style helper with no legacy prefix.
+    #[inline(always)]
     fn int_op(&mut self, size: Size, opc: &[u8], reg: u8, rm: Rm, trail: usize) {
         self.rm_op(None, size == Size::S64, opc, reg, rm, false, trail);
     }

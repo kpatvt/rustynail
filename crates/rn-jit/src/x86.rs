@@ -91,7 +91,12 @@ pub fn emit(prog: &Program) -> Result<Emitted, AsmError> {
 /// Assemble `prog`; [`Emitted::refs`] lists the references to the labels `l` with `refs[l]` (S1: the branches to a deferred exit stub are patched to
 /// the stub once it exists; a deferred stub's jumps to absolute addresses are retargeted once it is placed).
 pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
-    let mut a = Assembler::new();
+    // Section 49 (`cspeed` lever `ENC`): buffers sized from the program (about 4-5 bytes per op; the label count is known)
+    let mut a = if crate::cspeed::on(crate::cspeed::ENC) {
+        Assembler::with_capacity(prog.ops.len() * 6 + 64, prog.nlabels as usize)
+    } else {
+        Assembler::new()
+    };
     let labels: Vec<Label> = (0..prog.nlabels).map(|_| a.new_label()).collect();
     let lab = |l: L| labels[l as usize];
     let mut skip_pad = false;

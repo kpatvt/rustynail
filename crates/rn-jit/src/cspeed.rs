@@ -2,13 +2,17 @@
 //!
 //! Every lever produces the same machine code as the path it replaces (the knob exists so that a lever can be switched off and so that
 //! `ccheck` can compare the two paths in one process). The bits come from the `cspeed` knob of `RUSTYNAIL_JIT_TRACE_LIMITS`
-//! (`TrLimits::cspeed`); the trace pipeline stores them in a thread-local cell before it compiles, the code that has a lever reads the
-//! cell. Code compiled outside it sees [`DEFAULT`].
+//! (`TrLimits::cspeed`); the trace pipeline and the tier-1 compile store them in a thread-local cell before they compile, the code that
+//! has a lever reads the cell. Code compiled outside both (unit tests of the encoder, the thunk) sees [`DEFAULT`].
 
 use std::cell::Cell;
 
 /// `Allocation::uses_gpr` / `uses_xmm` from register masks built by one scan (instead of one scan of the allocation per query).
 pub const MASKS: u32 = 1;
+/// The x86 encoder (traces and tier 1): its buffers presized from the program, the `[REX] opcode ModRM [SIB] [disp]` bytes of an
+/// instruction written in place (the encoding routine inlined into every emitter, so the operand stays in registers) instead of one
+/// checked push per byte.
+pub const ENC: u32 = 2;
 /// The shape hash of a compile (`cache::shape_hash_ir`) with the FxHash word mix instead of the FNV variant that mixed every byte of a
 /// slice separately (the value is only compared with other values of the same process).
 pub const FXHASH: u32 = 8;
@@ -16,7 +20,7 @@ pub const FXHASH: u32 = 8;
 pub const RA: u32 = 32;
 
 /// All levers.
-pub const ALL: u32 = MASKS | FXHASH | RA;
+pub const ALL: u32 = MASKS | ENC | FXHASH | RA;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

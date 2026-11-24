@@ -140,9 +140,9 @@ site	crates/rn-jit/src/tr/record.rs	on_step	1951	rec_no_validate
 site	crates/rn-jit/src/tr/ra.rs	run	1481	phi_before_guard
 det	crates/rn-jit/tests/tr_ra.rs	loop_slice	1108	phi_before_guard
 det	crates/rn-jit/tests/tr_ra.rs	allocation_matches_interpreter	1435	phi_before_guard
-site	crates/rn-jit/src/rt.rs	recompile_with	1766	vbytes_no_credit
+site	crates/rn-jit/src/rt.rs	recompile_with	1780	vbytes_no_credit
 det	crates/rn-jit/tests/t15_runtime.rs	a_failed_recompile_refunds_its_version_bytes	648	vbytes_no_credit
-site	crates/rn-jit/src/rt.rs	recompile_with	1758	vbytes_no_limit_guard
+site	crates/rn-jit/src/rt.rs	recompile_with	1772	vbytes_no_limit_guard
 det	crates/rn-jit/tests/t15_runtime.rs	memory_limit_refuses_a_promotion_and_the_nest_retries_later	534	vbytes_no_limit_guard
 site	crates/rn-jit/src/tr/record.rs	array_guards_raw	4306	atouch_skip
 site	crates/rn-jit/src/tr/record.rs	setlist	5583	atouch_skip
@@ -1259,14 +1259,14 @@ site	crates/rn-jit/src/tr/mod.rs	pipeline_inner	1969	xregs_rec_r14
 site	crates/rn-jit/src/tr/mod.rs	pipeline_inner	2033	xregs_rec_r14
 site	crates/rn-jit/src/tr/ra.rs	allocate_hinted	962	xregs_rec_r14
 det	crates/rn-jit/tests/tr_core.rs	p2_xregs_programs	4292	xregs_rec_r14
-site	crates/rn-jit/src/rt.rs	rearm_loop	2167	rearm_never
-site	crates/rn-jit/src/rt.rs	rearm_after_exit	2241	rearm_never
+site	crates/rn-jit/src/rt.rs	rearm_loop	2181	rearm_never
+site	crates/rn-jit/src/rt.rs	rearm_after_exit	2255	rearm_never
 det	crates/rn-jit/tests/tr_core.rs	r1_rearm_programs	7436	rearm_never
-site	crates/rn-jit/src/rt.rs	hot_loop	2290	rearm_warm_credit
+site	crates/rn-jit/src/rt.rs	hot_loop	2304	rearm_warm_credit
 det	crates/rn-jit/tests/tr_core.rs	r1_rearm_programs	7436	rearm_warm_credit
-site	crates/rn-jit/src/rt.rs	rearm_loop	2185	rearm_any_head
+site	crates/rn-jit/src/rt.rs	rearm_loop	2199	rearm_any_head
 det	crates/rn-jit/tests/tr_core.rs	r1_rearm_programs	7436	rearm_any_head
-site	crates/rn-jit/src/rt.rs	hot_loop	2287	rearm_tick_reset
+site	crates/rn-jit/src/rt.rs	hot_loop	2301	rearm_tick_reset
 det	crates/rn-jit/tests/tr_core.rs	r1_rearm_programs	7436	rearm_tick_reset
 site	crates/rn-jit/src/tr/cache.rs	default	1076	rearm_default_ignored
 det	crates/rn-jit/tests/tr_policy.rs	r1_rearm_process_default	1412	rearm_default_ignored
@@ -1524,7 +1524,7 @@ site	crates/rn-jit/src/tr/cache.rs	emit_dispatch	8416	centry_not_promoted
 det	crates/rn-jit/tests/tr_core.rs	centry_small_comparator_is_a_root	11103	centry_not_promoted
 site	crates/rn-jit/src/tr/cache.rs	note_black	3737	centry_black_keeps_entering
 det	crates/rn-jit/tests/tr_core.rs	centry_blacklisted_comparator_leaves_c_entry	11158	centry_black_keeps_entering
-site	crates/rn-jit/src/rt.rs	hot_call	2073	centry_wait_ignored
+site	crates/rn-jit/src/rt.rs	hot_call	2087	centry_wait_ignored
 det	crates/rn-jit/tests/tr_core.rs	centry_registration_waits_for_hot_calls	11197	centry_wait_ignored
 site	crates/rn-jit/src/tr/exit.rs	lazy_leave	2691	lazy_fill_skip
 det	crates/rn-jit/tests/tr_core.rs	bk_lazy_programs	5387	lazy_fill_skip
@@ -2004,4 +2004,6 @@ site	crates/rn-jit/src/tr/opt_loop.rs	plan_nidx	333	nidx_entry_off1
 det	crates/rn-jit/tests/tr_core.rs	n1_programs	13974	nidx_entry_off1
 site	crates/rn-jit/src/tr/asm.rs	ibin	5597	leaadd_disp_off1
 det	crates/rn-jit/tests/tr_core.rs	n1_programs	13974	leaadd_disp_off1
+site	crates/rn-jit/src/arch/x86_64/asm.rs	rm_bytes	445	cspeed_enc_disp32
+det	crates/rn-jit/tests/tr_core.rs	c1_cspeed_identical_code	13842	cspeed_enc_disp32
 site	crates/rn-jit/src/tr/ra.rs	pick_free	1230	cspeed_ra_last_free

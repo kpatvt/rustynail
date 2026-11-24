@@ -4732,6 +4732,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "n1_programs")],
     },
     Row {
+        name: "cspeed_enc_disp32",
+        owner: "C1",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
+    Row {
         name: "cspeed_ra_last_free",
         owner: "C1",
         dets: &[d("tr_core", "c1_cspeed_identical_code")],

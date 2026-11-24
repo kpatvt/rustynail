@@ -1529,6 +1529,9 @@ fn compile_inner(
     };
     #[cfg(feature = "trace")]
     let t_tier1 = crate::tr::phase::now();
+    // Section 49: the encoder levers of this state (`cspeed`)
+    #[cfg(feature = "trace")]
+    crate::cspeed::set(d.tr.cfg.limits.cspeed);
     // J5: with traces on, the tier-1 lowering gets the dispatch hook (TR20); otherwise the plain `lower`, whose
     // output is byte-identical to the build without the feature.
     #[cfg(feature = "trace")]
@@ -1575,6 +1578,17 @@ fn compile_inner(
     let em = x86::emit(&low.prog).map_err(|_| Fail::Permanent)?;
     #[cfg(feature = "trace")]
     crate::tr::phase::add(crate::tr::phase::TIER1, t_tier1);
+    // Section 49 (`ccheck`): the encoder of the old paths gives the same bytes and label offsets
+    #[cfg(feature = "trace")]
+    if d.tr.cfg.limits.ccheck != 0 {
+        let same = crate::cspeed::with(0, || x86::emit(&low.prog))
+            .is_ok_and(|e2| e2.code == em.code && e2.label_off == em.label_off);
+        crate::tr::CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !same {
+            crate::tr::CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(Fail::Permanent);
+        }
+    }
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
         // debugging aid: raw machine code per prototype (`objdump -D -b binary -mi386:x86-64`)
         let _ = std::fs::write(
