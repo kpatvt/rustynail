@@ -16311,6 +16311,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t4_01_late_ret.lua"),
     },
+    // T9 (docs/JIT_TRACE.md section 47): nested-loop trace linking (`innerlink`)
+    Prog {
+        name: "t9_01_innerlink",
+        small: true,
+        src: include_str!("../../../../tests/vm/t9_01_innerlink.lua"),
+    },
     // docs/JIT_TRACE.md section 38 (`deepprobe`): deep sites pick the iteration their root is recorded on
     Prog {
         name: "e10_01_deep_probe",

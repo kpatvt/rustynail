@@ -729,7 +729,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         None
     };
     let nest_frame: Option<record::FrameHeadQuery> =
-        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 {
+        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 || cfg.limits.innerlink & 1 != 0 {
             Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
                 cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
             }))
@@ -749,6 +749,14 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         nest_frame,
         nest_frame_roots: cfg.limits.nest >= 2,
         nest_frame_sides: cfg.limits.sidenest != 0,
+        inner_link: cfg.limits.innerlink & 1 != 0,
+        inner_deep: cfg.limits.innerlink & 4 != 0,
+        // T9: the `RETF` caller rule (`Rec::pop_into_ok`) decides where a link may be made (see `driver_start_side`)
+        retf_nolazy: if cfg.limits.lazyci != 0 && cfg.limits.lazyloop != 0 {
+            cfg.limits.lazyci | 4
+        } else {
+            cfg.limits.lazyci
+        },
         stitch_min: cfg.limits.stitchmin,
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)
@@ -979,6 +987,9 @@ pub fn driver_start_side(
             None
         },
         nest_frame_sides: cfg.limits.sidenest != 0,
+        inner_ret: start.inner_ret,
+        inner_link_sides: cfg.limits.innerlink & 8 != 0,
+        inner_deep: cfg.limits.innerlink & 4 != 0,
         // P-E2: a side trace of a function-entry root ends before the root frame's `RETURN` (exit, no link)
         pack: true,
         gfor: true,
@@ -2627,6 +2638,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: &Recorded) -> Result<(), Pi
     phase::add(phase::INSTALL, t_inst);
     if link_root {
         cache::note_nest(st, side.is_some_and(|s| s.frame_link));
+    }
+    cache::note_inner(st, rec.inner_link && !act.side, rec.inner_ret);
+    // T9 (`innerlink`): the head this root's frame-linking exit enters (the return half reads it)
+    if let Some(si) = side.filter(|s| s.frame_link && !act.side) {
+        // SAFETY: an inlined callee of the trace, registered as a dependency (TR32) and live.
+        let p = unsafe { &*(si.link_proto.0 as *const rn_core::func::Proto) };
+        if let Some(lpr) = cache::proto_ref(p) {
+            cache::mark_linked_in(st, lpr, si.link_pc);
+        }
     }
     if act.side && side.is_some_and(|s| s.frame_link) {
         cache::note_side_frame_link(st);

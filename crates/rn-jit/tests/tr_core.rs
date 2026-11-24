@@ -503,6 +503,10 @@ struct TStats {
     /// T4: `t4: late returns L start sides S`.
     ret_late: u64,
     ret_start_sides: u64,
+    /// T9: `innerlink: links L rets R linked heads H exits woken W`.
+    inner_links: u64,
+    inner_rets: u64,
+    inner_woken: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -747,6 +751,11 @@ impl TStats {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.ret_late = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.ret_start_sides = w.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("innerlink: links ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                s.inner_links = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.inner_rets = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.inner_woken = w.get(8).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("lazyloop: lazy-aware ") {
                 s.lazyloop_on = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("barrier helper calls: table ") {
@@ -12975,6 +12984,122 @@ fn t4_late_ret_programs() {
             );
         }
     }
+}
+
+/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): nested-loop trace linking. Bit 0: a root recording links into the root trace of a callee's counted
+/// loop (data-dependent bounds) behind its recorded `FORPREP`; bit 1: the side traces of that loop's exits pop into the caller (`RETF`, on 5.4 too)
+/// where the caller's loop around the call has a root trace, at any length, and the exits blacklisted before the link existed try again; bit 2:
+/// also for loops of deeper frames; bit 3: in side recordings (after their `RETF`, or into a head a root trace links into). `t9_01` (the deltablue shape, a function outer, steps
+/// other than 1 and zero-trip loops, errors inside the linked loop and in the caller after the pop, a coroutine yielding from the inner loop, count
+/// hooks installed between rounds and from inside, stack growth inside the inner loop, collections, a recursive builder, metamethod and vararg
+/// loops, a traceback from inside, exits blacklisted before the link, a function-entry outer, the shortest continuation), `t1_01` and `k3_01`
+/// (loop-return shapes of earlier handles) x `innerlink` 0 / 1 / 3 / 11 / 15, `+verify`; for 15: exit storm, budgets 3 / 17 / 200, GC stress 1 / 2
+/// in both collector modes, stack-move stress; with the oracle feature the instruction-count identity. Asserts links with bit 0 and none without,
+/// return-half traces and woken exits with bit 1 and none without. The detector of `innerlink_prep_never`, `innerret_never`, `innerret_no_wake`.
+#[test]
+fn t9_innerlink_programs() {
+    let mut jobs = Vec::new();
+    for p in ["t9_01_innerlink", "t1_01_retfsel", "k3_01_frame_loop_exits"] {
+        for trace in ["always", "on2"] {
+            for lim in [
+                "innerlink=0",
+                "innerlink=1",
+                "innerlink=3",
+                "innerlink=11",
+                "innerlink=15",
+            ] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+            }
+            let lim = "innerlink=15";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            for b in [3, 17, 200] {
+                jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+            }
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .limits_s(lim),
+            );
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    let (mut woken, mut rets) = (0, 0);
+    for (j, o) in &res {
+        if j.limits == "innerlink=0" {
+            assert_eq!(
+                o.stats.inner_links,
+                0,
+                "{}: links with innerlink=0",
+                j.tag()
+            );
+        }
+        if j.limits == "innerlink=0" || j.limits == "innerlink=1" {
+            assert_eq!(
+                o.stats.inner_rets,
+                0,
+                "{}: return-half traces without bit 1",
+                j.tag()
+            );
+            assert_eq!(
+                o.stats.inner_woken,
+                0,
+                "{}: woken exits without bit 1",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if j.prog == "t9_01_innerlink" && plain && j.limits != "innerlink=0" {
+            assert!(
+                o.stats.inner_links >= 4,
+                "{}: links {}",
+                j.tag(),
+                o.stats.inner_links
+            );
+        }
+        if j.prog == "t9_01_innerlink"
+            && plain
+            && j.limits != "innerlink=0"
+            && j.limits != "innerlink=1"
+        {
+            assert!(
+                o.stats.inner_rets >= 1,
+                "{}: return-half traces {}",
+                j.tag(),
+                o.stats.inner_rets
+            );
+            rets += o.stats.inner_rets;
+            woken += o.stats.inner_woken;
+        }
+    }
+    assert!(
+        woken >= 4,
+        "t9_01_innerlink: woken exits {woken} over the plain jobs with bit 1"
+    );
+    assert!(
+        rets >= 8,
+        "t9_01_innerlink: return-half traces {rets} over the plain jobs with bit 1"
+    );
 }
 
 /// docs/JIT_TRACE.md section 36.1 (the lazy-chain defect of 35.8): a side trace of a lazy-aware family entered by an exit of its parent inside the

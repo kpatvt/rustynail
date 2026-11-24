@@ -318,6 +318,8 @@ impl Rb {
             rerec: 0,
             side: None,
             stitched: false,
+            inner_link: false,
+            inner_ret: false,
         }
     }
 }

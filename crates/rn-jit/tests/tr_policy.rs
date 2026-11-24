@@ -2051,6 +2051,28 @@ fn t4_knob() {
     }
 }
 
+/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the knob (struct default = shipped, parse, cap at the four bits).
+#[test]
+fn t9_innerlink_knob() {
+    use rn_jit::tr::cache::{TrConfig, TrMode, INNERLINK_PROCESS};
+    let l = TrConfig::for_mode(TrMode::On).limits;
+    assert_eq!(
+        l.innerlink, INNERLINK_PROCESS,
+        "struct default (tests) = shipped"
+    );
+    for (env, want) in [
+        (Some("innerlink=0"), 0),
+        (Some("innerlink=3"), 3),
+        (Some("innerlink=11"), 11),
+        (Some("innerlink=99"), 15),
+        (None, INNERLINK_PROCESS),
+    ] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.innerlink, want, "limits env {env:?}");
+    }
+}
+
 /// docs/JIT_TRACE.md section 38 (`deepprobe`): a deep site's choice of the iteration its root is recorded on. The first `deepprobe` closed
 /// recordings are probes (dropped; the longest path is kept); then the first recording of at least 7/8 of that path is taken, the `deepprobe`-th
 /// try whatever its length; `DEEPPROBE_UNIFORM` probes with one path end the probing at once (the last one is taken); a recording of the site

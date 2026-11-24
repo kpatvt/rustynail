@@ -110,6 +110,8 @@ pub const T1CALL_PROCESS: u32 = 0;
 pub const DEEPPROBE_PROCESS: u32 = 12;
 /// T4 (`t4`, docs/JIT_TRACE.md section 46): the process default of [`TrLimits::t4`] (also the struct default).
 pub const T4_PROCESS: u32 = 3;
+/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the process default of [`TrLimits::innerlink`] (also the struct default).
+pub const INNERLINK_PROCESS: u32 = 0;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
@@ -846,6 +848,13 @@ pub struct TrLimits {
     /// never gets a side trace. Bit 1 (with bit 0): the start snapshot of such a trace, where now only the body's entry guards exit (table shapes),
     /// may get side traces (blacklisted before: a side trace there began with the same failing guards). 0 = off, 3 = both. Default [`T4_PROCESS`].
     pub t4: u32,
+    /// T9 (`innerlink`, docs/JIT_TRACE.md section 47): nested-loop trace linking. Bit 0: a root recording that reaches the `FORPREP` of a counted
+    /// loop with data-dependent bounds inside an inlined frame, whose loop head has an installed root trace, records the prep and ends with the
+    /// frame-linking exit into that trace (instead of aborting `InnerLoop`). Bit 1: a side recording of a function-entry family pops its root frame
+    /// (`RETF`) also when the caller's prototype has an installed trace that links into the popped prototype (the return half of bit 0). Bit 2: bit 0
+    /// also for loops of frames deeper than the root frame's callee. Bit 3: bit 0 in side recordings too (after their `RETF`, or into a head a
+    /// root trace links into). 0 = off. Default [`INNERLINK_PROCESS`].
+    pub innerlink: u32,
 }
 
 impl Default for TrLimits {
@@ -980,6 +989,7 @@ impl Default for TrLimits {
             t1call: T1CALL_PROCESS,
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
+            innerlink: INNERLINK_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1187,6 +1197,7 @@ impl TrLimits {
                 "dlink" => l.dlink = v.min(3),
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
+                "innerlink" => l.innerlink = v.min(15),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 _ => bad.push(w.to_string()),
             }
@@ -1480,6 +1491,9 @@ pub struct HeadData {
     pub ncallee: Cell<bool>,
     /// BUNDLE-L B (`bhoist`): the head is recorded without hoisted bounds guards (set when a root with hoisted guards was flushed as ineffective; never reset).
     pub nohoist: Cell<bool>,
+    /// T9 (`innerlink`): a root trace that ends with a frame-linking exit into this head was installed (set at install; never reset: a hint for the
+    /// return half, `innerlink` bit 1).
+    pub linked_in: Cell<bool>,
     /// R1 (`rearm`): rearm entries still allowed before a short stay refunds nothing ([`REARM_BUDGET`] consecutive short ones end them for a while).
     pub rearm_budget: Cell<u8>,
     /// R1: refused rearm attempts since the budget ran out.
@@ -1615,6 +1629,7 @@ impl HeadData {
             ineff: Cell::new(0),
             second: Cell::new(false),
             inner_n: Cell::new(0),
+            linked_in: Cell::new(false),
             ident_kept: Cell::new(false),
             dom_done: Cell::new(false),
             ncallee: Cell::new(false),
@@ -2875,6 +2890,15 @@ pub struct TrStats {
     pub rearm_restored: u64,
     /// C45: rearmed ticks that met a young head with enough side traces whose family was refused for a failed side recording / for an unrolled callee loop (`rearmclean`).
     pub rearm_unclean: [u64; 2],
+    /// T9 (`innerlink`): heads that became the target of a root trace's frame-linking exit; exits woken by the return half.
+    pub inner_heads: u64,
+    /// See `inner_heads`.
+    pub inner_woken: u64,
+    /// T9: root traces installed that end with the frame link behind a data-dependent `FORPREP` (bit 0); side traces installed that took a `RETF`
+    /// of the return half (bit 1).
+    pub inner_links: u64,
+    /// See `inner_links`.
+    pub inner_rets: u64,
 }
 
 /// F2a: a side recording or trace hangs off exit `exit` (a snapshot index) of trace `parent` (7.8).
@@ -5284,6 +5308,8 @@ pub struct SideStart {
     pub fretry: bool,
     /// N3a: record without `RETF` (an earlier recording from this exit that used it failed).
     pub no_retf: bool,
+    /// T9 (`innerlink` bit 1): the family root's head is the target of a root trace's frame-linking exit ([`HeadData::linked_in`]).
+    pub inner_ret: bool,
     /// R1 (`regcarry`): the slots the exit's inline stub hands over in registers when a carry entry is attached (slot, type, where the exit map has the value);
     /// empty when the exit does not carry.
     pub carry: Vec<(u16, super::ir::Ty, super::ir::CarrySrc, bool)>,
@@ -6017,6 +6043,7 @@ fn side_attempt(
         base + sbump2_extra(d.tr.cfg.limits.sbump2, last, fails, !frames.is_empty())
     };
     let no_retf = matches!(d_of(st).tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.noretf.get(k as usize).copied().unwrap_or(false));
+    let inner_ret = d_of(st).tr.cfg.limits.innerlink & 2 != 0 && family_linked_in(d_of(st), id);
     let carry = carry_slots(d_of(st), id, k, snap, virt, prelude);
     match start(
         st,
@@ -6032,6 +6059,7 @@ fn side_attempt(
             ubump,
             fretry,
             no_retf,
+            inner_ret,
             carry,
         },
     ) {
@@ -6047,6 +6075,83 @@ fn side_attempt(
             HotAction::None
         }
     }
+}
+
+/// T9 (`innerlink` bit 1): is the head of the family root of trace `id` the target of a root trace's frame-linking exit?
+fn family_linked_in(d: &JitData, id: TrId) -> bool {
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(id)
+    else {
+        return false;
+    };
+    let fam = t.family;
+    match d.tr.slot(fam) {
+        Some(Slot {
+            body: Body::Trace(f),
+            ..
+        }) if f.side.is_none() => tr_of(d, f.root)
+            .is_some_and(|tp| f.head < tp.heads().len() && tp.head(f.head).linked_in.get()),
+        _ => false,
+    }
+}
+
+/// T9 (`innerlink` bit 3): is head `pc` of `pr` the target of a root trace's frame-linking exit ([`HeadData::linked_in`])?
+pub fn head_linked_in(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    with_tr(st, pr, |tp| {
+        tp.head_index(pc)
+            .is_some_and(|i| tp.head(i).linked_in.get())
+    })
+    .unwrap_or(false)
+}
+
+/// T9 (`innerlink`): counts an installed trace of bit 0 (`link`) / bit 1 (`ret`).
+pub fn note_inner(st: &mut State, link: bool, ret: bool) {
+    let d = d_of(st);
+    d.tr.stats.inner_links += u64::from(link);
+    d.tr.stats.inner_rets += u64::from(ret);
+}
+
+/// T9 (`innerlink`): a root trace that ends with a frame-linking exit into head `pc` of `pr` was installed.
+/// The first time (bit 1 on): the exits of that head's family that were blacklisted after side recordings ended at the root `RETURN`
+/// (`LeaveFrame`: the pop the return half now allows was refused) try again with fresh counters.
+pub fn mark_linked_in(st: &mut State, pr: ProtoRef, pc: u32) {
+    let fam = with_tr(st, pr, |tp| {
+        tp.head_index(pc).and_then(|i| {
+            let h = tp.head(i);
+            let first = !h.linked_in.replace(true);
+            first.then(|| h.trace.get())
+        })
+    })
+    .flatten();
+    let d = d_of(st);
+    d.tr.stats.inner_heads += u64::from(fam.is_some());
+    let fam = fam.flatten();
+    let Some(fam) = fam.filter(|_| d.tr.cfg.limits.innerlink & 2 != 0) else {
+        return;
+    };
+    if mutants::active("innerret_no_wake") {
+        return;
+    }
+    let mut woken = 0u64;
+    for sl in d.tr.slots.iter_mut() {
+        if let Body::Trace(t) = &mut sl.body {
+            if t.family != fam {
+                continue;
+            }
+            for k in 0..t.exit_st.len() {
+                if t.exit_st[k] == SideSt::Black && t.last[k] == Some("LeaveFrame") {
+                    t.exit_st[k] = SideSt::Free;
+                    t.fails[k] = 0;
+                    t.last[k] = None;
+                    t.exits[k].set(0);
+                    woken += 1;
+                }
+            }
+        }
+    }
+    d.tr.stats.inner_woken += woken;
 }
 
 /// F2b: counts an installed nest root (a root trace that ends with a link).

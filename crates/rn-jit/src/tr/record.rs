@@ -235,6 +235,19 @@ pub struct RecCfg {
     pub nest_frame_sides: bool,
     /// See `nest_frame_sides`.
     pub nest_frame_roots: bool,
+    /// T9 (`TrLimits::innerlink` bit 0, docs/JIT_TRACE.md section 47): a root recording that reaches, inside an inlined frame, the `FORPREP` of a counted
+    /// loop with data-dependent bounds whose loop head (the instruction behind the `FORPREP`) has an installed root trace records the prep and links
+    /// into that trace at the next step with the frame-linking exit of `nest_frame` (which must be set), instead of aborting `InnerLoop`.
+    pub inner_link: bool,
+    /// T9 (`TrLimits::innerlink` bit 2): `inner_link` also for a loop of a frame deeper than the root frame's callee.
+    pub inner_deep: bool,
+    /// T9 (`TrLimits::innerlink` bit 3): `inner_link` in side recordings after their `RETF` or into a head a root trace links into (the side trace
+    /// ends with the frame-linking exit behind the prep).
+    pub inner_link_sides: bool,
+    /// T9 (`TrLimits::innerlink` bit 1): the side recording belongs to a family whose root head is entered by a root trace's frame-linking exit
+    /// (`HeadData::linked_in`): at its root `RETURN` it pops into the caller (`RETF`, also on 5.4, also inside a recursion and in a function-entry
+    /// family) when the caller's innermost loop around the call has an installed root trace (the return half of `inner_link`), at any length.
+    pub inner_ret: bool,
     /// F2b: stitching at a C function call: a root recording that has executed at least this many bytecodes when it
     /// reaches a `CALL` of a C function it cannot record ends with an always-taken exit at the `CALL` (tier 1 performs
     /// the call and runs on to the next dispatch of the head). 0: off (the call aborts the recording, `CFunc`).
@@ -533,6 +546,10 @@ impl Default for RecCfg {
             nest_frame: None,
             nest_frame_sides: false,
             nest_frame_roots: false,
+            inner_link: false,
+            inner_deep: false,
+            inner_link_sides: false,
+            inner_ret: false,
             retf_head: None,
             retf_nolazy: 0,
             stitch_min: 0,
@@ -645,6 +662,10 @@ pub struct Recorded {
     pub side: Option<SideInfo>,
     /// F2b: the recording ends with an always-taken exit at a `CALL` of a C function (stitching): no loop, no back-edge.
     pub stitched: bool,
+    /// T9 (`innerlink`): the recording ends with the frame-linking exit behind a data-dependent `FORPREP` of an inlined frame (bit 0).
+    pub inner_link: bool,
+    /// T9: the recording took a `RETF` the return half allows (bit 1).
+    pub inner_ret: bool,
 }
 
 /// The result of a recording.
@@ -1354,6 +1375,17 @@ struct Rec {
     /// Section 39.1 (T1, `retfsel`): the selector allows the pop at the root `RETURN` this step executes (computed in `on_step`, where the
     /// state is at hand; false at every other step).
     retf_sel_ok: bool,
+    /// T9 (`inner_link`): the `FORPREP` this step executes may record a data-dependent prep inside an inlined frame (its loop head has an installed root
+    /// trace; computed in `on_step`, false at every other step).
+    prep_link_ok: bool,
+    /// T9: `(depth, pc)` of the loop head the recorded `FORPREP` of `prep_link_ok` entered: the next step, at that head, ends with the frame-linking exit.
+    prep_link: Option<(usize, u32)>,
+    /// T9 (`inner_ret`): the return half allows the pop at the root `RETURN` this step executes (computed in `on_step`; false at every other step).
+    inner_ret_ok: bool,
+    /// T9: a `RETF` of this recording was taken where the return half allows it.
+    inner_ret_used: bool,
+    /// T9: the recording ended with the frame link behind a recorded data-dependent `FORPREP`.
+    inner_linked: bool,
     /// N2c: slots between the current root frame and the entry root (the sum of the `A + 1` of the `RETF`s).
     shift: usize,
     /// N2c: the path index of the first step of each segment after a `RETF` (snapshots of those steps belong to segment `k`).
@@ -1655,6 +1687,11 @@ impl Rec {
             midfolded: false,
             segs: Vec::new(),
             retf_sel_ok: false,
+            prep_link_ok: false,
+            prep_link: None,
+            inner_ret_ok: false,
+            inner_ret_used: false,
+            inner_linked: false,
             retf_below: Default::default(),
             retf_funcs: Default::default(),
             model_func: 1,
@@ -1863,6 +1900,8 @@ impl Rec {
         self.unr_started = false;
         self.idfolded = false;
         self.midfolded = false;
+        self.prep_link_ok = false;
+        self.prep_link = None;
     }
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
@@ -2001,6 +2040,56 @@ impl Rec {
             }
             _ => false,
         };
+        // T9 (`inner_link`): the step behind a recorded data-dependent `FORPREP` of an inlined frame is its loop head: it links (or, the head lost its
+        // trace meanwhile, aborts as the prep used to)
+        let prep_hit = self.prep_link.take() == Some((depth, idx as u32));
+        let frame_head = if prep_hit {
+            let traced = self
+                .cfg
+                .nest_frame
+                .clone()
+                .is_some_and(|q| q(st, &p, idx as u32) == Some(true));
+            if !traced {
+                return Err(AbortReason::InnerLoop);
+            }
+            self.inner_linked = true;
+            true
+        } else {
+            frame_head
+        };
+        // (only where the return half can follow: the loop's frame is called by the root frame (`inner_deep`: or by any inlined frame) with a plain
+        // `CALL` (no metamethod, tail, protected or vararg frame), its prototype may pop natively and its caller may be popped into (`RETF`
+        // refuses lazy-aware prototypes and callers that may be lazy-aware))
+        self.prep_link_ok = (if self.cfg.side.is_none() {
+            self.cfg.inner_link
+        } else {
+            // (a side recording: after its `RETF` (the caller calls the callee again and the side trace closes the nest), or into a head a root
+            // trace links into already (the nest exists, its exits have the return half))
+            self.cfg.inner_link_sides
+                && (!self.segs.is_empty()
+                    || super::cache::proto_ref(&p)
+                        .is_some_and(|pr| super::cache::head_linked_in(st, pr, idx as u32 + 1)))
+        }) && !mutants::active("innerlink_prep_never")
+            && (depth == 1 || (self.cfg.inner_deep && depth > 1))
+            && Instruction(code[idx]).opcode() == Some(OpCode::Forprep)
+            && self.frames[depth].mm.is_none()
+            && !self.frames[depth].tail
+            && self.frames[depth].pc_shift == 0
+            && self.frames[depth].tfor.is_none()
+            && !p.is_vararg()
+            && super::cache::proto_ref(&p).is_some_and(|pr| {
+                !super::cache::proto_lazy(st, pr) && !super::cache::proto_lazy_cand(st, pr)
+            })
+            && {
+                // SAFETY: the caller frame's prototype is alive for the whole recording (its closure is on the stack below the callee).
+                let cp = unsafe { &*(self.frames[depth - 1].proto as *const Proto) };
+                self.pop_into_ok(cp)
+            }
+            && self
+                .cfg
+                .nest_frame
+                .clone()
+                .is_some_and(|q| q(st, &p, idx as u32 + 1) == Some(true));
         // F8: a table the recording holds a handle to was freed by a collector step since the last step
         if st.heap().watch_hit() {
             return Err(AbortReason::DepFreed);
@@ -2029,6 +2118,17 @@ impl Rec {
                 Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
             )
             && self.retf_sel_check(st, ci);
+        // T9 (`inner_ret`): the same question without the recursion test, for any family whose root head a root trace links into
+        self.inner_ret_ok = self.cfg.inner_ret
+            && self.cfg.side.is_some()
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && !mutants::active("innerret_never")
+            && self.caller_loop_traced(st, ci);
         let vm = Vm {
             base: ci.r().func.0 + 1,
             root_base: self.root_func + 1,
@@ -2062,13 +2162,18 @@ impl Rec {
         let mut retf_stop = false;
         if self.cfg.side.is_some() {
             match reached_head {
-                None if frame_head && !self.frame_link_short() => {
+                // (T9: the head behind a recorded data-dependent `FORPREP` always links: the loop cannot be unrolled)
+                None if frame_head && (prep_hit || !self.frame_link_short()) => {
                     // C38 slice 1 (`sidenest`): a callee loop head with a root trace ends the side trace with the linking exit
                     if self.pcall.is_some() {
                         return Err(AbortReason::CFunc);
                     }
                     let n: u32 = self.cost.iter().sum();
-                    let min = self.cfg.side.as_ref().map_or(0, |s| s.min_len);
+                    let min = if self.inner_ret_used {
+                        0
+                    } else {
+                        self.cfg.side.as_ref().map_or(0, |s| s.min_len)
+                    };
                     if n < min && !mutants::active("side_short_ignored") {
                         return Err(AbortReason::SideShort);
                     }
@@ -2085,7 +2190,12 @@ impl Rec {
                 Some(false) => return Err(AbortReason::SideUntraced),
                 Some(true) => {
                     let n: u32 = self.cost.iter().sum();
-                    let min = self.cfg.side.as_ref().map_or(0, |s| s.min_len);
+                    // (T9: a side trace that popped into a linking caller and reaches its loop head closes the nest at any length)
+                    let min = if self.inner_ret_used {
+                        0
+                    } else {
+                        self.cfg.side.as_ref().map_or(0, |s| s.min_len)
+                    };
                     if n < min && !mutants::active("side_short_ignored") {
                         return Err(AbortReason::SideShort);
                     }
@@ -2523,6 +2633,8 @@ impl Rec {
             rerec: self.rerec,
             side,
             stitched: self.stitched,
+            inner_link: self.inner_linked,
+            inner_ret: self.inner_ret_used,
         }
     }
 
@@ -7308,9 +7420,13 @@ impl Rec {
             // caller; anything that makes the pop unsound or unprofitable keeps the old behaviour (`None`)
             if self.cfg.retf & 1 != 0
                 && self.cfg.side.is_some()
-                && (!self.cfg.fn_root || self.cfg.retf & 4 != 0 || self.retf_sel_ok)
+                && (!self.cfg.fn_root
+                    || self.cfg.retf & 4 != 0
+                    || self.retf_sel_ok
+                    || self.inner_ret_ok)
             {
                 if let Some(r) = self.retf(vm, i, op)? {
+                    self.inner_ret_used |= self.inner_ret_ok;
                     return Ok(r);
                 }
             }
@@ -7353,6 +7469,44 @@ impl Rec {
             }
         };
         self.ret_from(vm, a, nret)
+    }
+
+    /// T9 (`inner_ret`): does the innermost loop of the caller of frame `ci` around its `CALL` have an installed root trace (asked through
+    /// `retf_head`, so false where `RETF` is off for the family)?
+    fn caller_loop_traced(&self, st: &mut State, ci: Ci) -> bool {
+        let Some(q) = self.cfg.retf_head.clone() else {
+            return false;
+        };
+        let Some(c_ci) = ci.previous() else {
+            return false;
+        };
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return false;
+        }
+        let Some(ccl) = st.ci_lclosure(c_ci) else {
+            return false;
+        };
+        let cp = ccl.proto();
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let Some(call_pc) = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1) else {
+            return false;
+        };
+        if call_pc >= ccode.len() {
+            return false;
+        }
+        super::cache::enclosing_loop_head(ccode, call_pc).and_then(|h| q(st, &cp, h)) == Some(true)
+    }
+
+    /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?
+    fn pop_into_ok(&self, cp: &Proto) -> bool {
+        !(self.cfg.retf_nolazy != 0
+            && !mutants::active("retf_lazy_caller_ok")
+            && (maybe_lazy_proto(cp, self.cfg.retf_nolazy & 3 >= 2, false)
+                || (self.cfg.retf_nolazy & 4 != 0
+                    && maybe_lazy_proto(cp, self.cfg.retf_nolazy & 3 >= 2, true)
+                    && !mutants::active("lazyloop_retf_ok")
+                    && !super::cache::retf_into_loop_proto(cp))))
     }
 
     /// Section 39.1 (T1, `retfsel`): the selector's question for the root frame `ci` about to return: the state of the head of the caller's innermost
@@ -7406,7 +7560,7 @@ impl Rec {
     fn retf(&mut self, vm: &Vm<'_>, i: Instruction, op: OpCode) -> R<Option<usize>> {
         // (see `maybe_lazy_proto` at the end of the file)
         const NO: R<Option<usize>> = Ok(None);
-        if cfg!(rustynail_lua54)
+        if (cfg!(rustynail_lua54) && !self.inner_ret_ok)
             || self.cfg.retfmax == 0
             || self.segs.len() > self.cfg.retfmax as usize
         {
@@ -7434,14 +7588,7 @@ impl Rec {
         let cp = ccl.proto();
         // BUNDLE-K L1: never pop into a caller that may be lazy-aware (loop-free, non-vararg): its frames can be lazy, and the continuation after the pop
         // would run in a trace that is not part of its region (`lazyci` is on by default)
-        if self.cfg.retf_nolazy != 0
-            && !mutants::active("retf_lazy_caller_ok")
-            && (maybe_lazy_proto(&cp, self.cfg.retf_nolazy & 3 >= 2, false)
-                || (self.cfg.retf_nolazy & 4 != 0
-                    && maybe_lazy_proto(&cp, self.cfg.retf_nolazy & 3 >= 2, true)
-                    && !mutants::active("lazyloop_retf_ok")
-                    && !super::cache::retf_into_loop_proto(&cp)))
-        {
+        if !self.pop_into_ok(&cp) {
             return NO;
         }
         let ccode = cp.code();
@@ -9210,7 +9357,9 @@ impl Rec {
         }
         // P-E: a loop of an inlined callee is unrolled only when its trip count is a trace constant (e.g. `select('#', ...)`
         // of an inlined vararg frame); a data-dependent count keeps the prototype's `InnerLoop` abort
-        if self.cur_depth > 0 && (init >= REF_BIAS || lim >= REF_BIAS) {
+        // (T9, `inner_link`: unless its loop head has a root trace: the prep is recorded and the next step links into that trace)
+        let prep_link = self.cur_depth > 0 && (init >= REF_BIAS || lim >= REF_BIAS);
+        if prep_link && !self.prep_link_ok {
             return Err(AbortReason::InnerLoop);
         }
         let (vi, vl, vs) = (
@@ -9256,6 +9405,9 @@ impl Rec {
             self.def(a + 3, init);
         }
         if skip {
+            if prep_link {
+                return Err(AbortReason::InnerLoop); // (T9: only an entered loop links)
+            }
             let op = if vs > 0 { TOp::Gt } else { TOp::Lt };
             self.guard(op, Ty::I64, init, lim, 0)?;
             return Ok(idx + i.bx() as usize + 2);
@@ -9294,6 +9446,9 @@ impl Rec {
             self.def(a, count);
             self.def(a + 1, step);
             self.def(a + 2, init);
+        }
+        if prep_link {
+            self.prep_link = Some((self.cur_depth, idx as u32 + 1));
         }
         Ok(idx + 1)
     }

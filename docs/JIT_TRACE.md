@@ -5786,3 +5786,164 @@ versions, astar_jumper -7 / -14 %, gains at every threshold measured on the prog
   `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`, default and `t4=3`, 5.5 and 5.4: `JIT-OFFICIAL OK` (4 runs). The 235 `tests/vm` programs, JIT off against
   `always` + `TRACE=always` + `t4=3`, release binaries: 0 diffs on 5.5 under GC stress 2, on 5.4 plain and under incremental GC stress 2.
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, `tr_oracle` / `oracle_options`, PGO builds, all-223 benchmarks, `bench-fast.sh`.
+
+## 47. T9: nested-loop trace linking (`innerlink`; 2026-11-23, base b65827f)
+
+T9 of docs/STUDY_TIER1_RESIDUE.md / docs/STUDY_LUAJIT_GAP_2.md: a root recording of an outer loop (or function) that reaches an inner loop which
+already has a root trace aborted `InnerLoop`; the two earlier attempts each built one half and measured 0 (section 27.4: K4 `preplink`, `nest=2`).
+This section is the design note written before the code (47.1), what was built (47.2), its soundness (47.3), the measurements (47.4) and the
+decision (47.5).
+
+### 47.1 Design note (why the earlier halves gave 0, what the two halves are)
+
+* **Why `nest=2` linked nothing.** The `InnerLoop` aborts of the target programs are at the **`FORPREP`** of a callee's counted loop
+  (`InnerLoop@L303:5:Forprep` in deltablue, `L216:4`, `L58:13` in bignum_arith, `L16:17` in storage): `Rec::forprep` refuses a data-dependent prep
+  inside an inlined frame (`P-E`: callee loops are unrolled only with constant trip counts) before the recording ever reaches the loop head, so the
+  frame-linking query of `nest=2` (asked at the head) is never asked. `[trace] links: ... frame links 1` with `nest=2` on deltablue 400, against 0.
+* **Why K4 `preplink` gave 0.** It recorded the prep and linked, but only in side recordings, and the inner loop's exits still ended in tier 1:
+  every exit of the inner root's loop (`FORLOOP` falls through) lands in tier 1 in the callee, which returns in tier 1, and the outer loop's next
+  iteration starts in tier 1 again. With an outer root that links into the inner root and no way back, a nest iteration costs an extra hop instead of
+  saving one (bit 0 alone: deltablue +7.7 %, storage +9.6 % at the default sizes).
+* **Half 1 (outer -> inner, bit 0).** At a `FORPREP` with data-dependent bounds in an inlined frame whose loop head (the instruction behind the
+  `FORPREP`) has an installed root trace, record the prep exactly as the root frame does (types, step guard, direction, the iteration count into
+  the loop registers: `Rec::forprep`, 5.4 and 5.5 layouts), and end the recording at the next step, the loop head, with the existing frame-linking
+  exit (`Rec::close_frame_link`: the snapshot materialises the inlined frames, the exit continues at the head's dispatch cell; N3b's inline stub
+  `LinkMat` rebuilds plain frames natively). A loop the interpreter skips (count 0) keeps the old abort; the head losing its trace between the two
+  steps aborts as before. Only where the return half can follow: the loop's frame is called by the root frame with a plain `CALL` (no metamethod,
+  tail, protected, `TFORCALL` or vararg frame; bit 2 lifts the depth limit), the callee's prototype is not lazy-aware (`RETF` refuses those) and the
+  caller may be popped into (`RETF`'s I9: never into a prototype that may be lazy-aware).
+* **Half 2 (inner -> outer, bit 1).** The installed linking root marks the target head (`HeadData::linked_in`). A side recording of that head's
+  family (its exits: the loop end, guards of the body) that reaches the root `RETURN` pops it (`RETF`, N2c) when the caller's innermost loop around
+  the `CALL` has an installed root trace, and then runs on in the caller up to that loop's head, where it links. This is `retfsel` (section 39.1)
+  without its recursion test and for every family, also on 5.4 (where `RETF` is otherwise off, C63), and the side trace closes the nest at any
+  length (a `RETURN` + `ADD` + `FORLOOP` continuation is below `sidemin` but replaces a tier-1 return and a loop iteration). The exits of the
+  family that were blacklisted because their recordings ended at that `RETURN` (`LeaveFrame`, before any outer trace existed) try again once, with
+  fresh counters, when the first link into the head is installed.
+* **Bit 3 (side recordings).** The same prep link in side recordings after their `RETF` (the caller calls the callee again: the side trace closes
+  the nest from the other end) or into a head a root trace links into already. Unrestricted, sudoku_solver +16 % instructions (side links into
+  the loops of a recursion that no root trace links into: no return half); restricted to "after a `RETF`" alone, deltablue 400 keeps -3.5 % of its
+  -12.3 % (most of its side links come from other exits of the outer family).
+
+### 47.2 What was built (knob `innerlink`, `RUSTYNAIL_JIT_TRACE_LIMITS=innerlink=N`, default 0; one commit)
+
+| bit | what |
+|---|---|
+| 0 (1) | Half 1: `Rec::forprep` records a data-dependent prep in an inlined frame when `Rec::prep_link_ok` holds (computed in `on_step` at that `FORPREP`: the head behind it traced, the frame conditions of 47.1, `Rec::pop_into_ok` for the caller); the next step is the head and links (`Rec::prep_link`, the `frame_head` path of `on_step`, `close_frame_link`). The installed root marks the head (`cache::mark_linked_in`, `HeadData::linked_in`). |
+| 1 (2) | Half 2: `SideStart::inner_ret` (the family root's head is `linked_in`) -> `RecCfg::inner_ret`; at a root `RETURN`, `Rec::inner_ret_ok` = the caller's innermost loop around the `CALL` has a root trace (`Rec::caller_loop_traced`); `Rec::ret` pops with it (also where `fn_root` and the recursion test of `retfsel` refuse, and on 5.4: `Rec::retf` lifts its 5.4 gate for these pops only); `inner_ret_used` drops `sidemin` for the link that closes the nest; `mark_linked_in` wakes the family's `LeaveFrame`-blacklisted exits once. |
+| 2 (4) | Bit 0 at any inline depth (the loop's frame called by an inlined frame, not only by the root frame). |
+| 3 (8) | Bit 0 in side recordings, after their `RETF` or into a `linked_in` head (`cache::head_linked_in`); at such a head the K3a `frame_link_short` unrolling is not taken (a data-dependent loop is never unrolled). |
+
+Counters (`RUSTYNAIL_JIT_VERBOSE=1`): `[trace] innerlink: links L rets R linked heads H exits woken W` (root traces installed that link behind a prep;
+traces installed that took a return-half pop; heads that became link targets; exits woken). Mutants (registry 844 -> **847**): `innerlink_prep_never`
+(no prep link), `innerret_never` (no return-half pop), `innerret_no_wake` (no wake-up), all caught by `tr_core::t9_innerlink_programs`. Three
+policy mutants of a first draft (the I9 caller test of bit 0, the bit-3 side condition, the `sidemin` exemption) were caught by no test program and
+were dropped from the registry rather than left as survivors; their effect is measured instead (47.1: sudoku_solver, storage, deltablue).
+
+Not built: a `FORPREP`-less form for `while` / `repeat` loops of callees (their heads are reached forward, so `nest=2`'s query covers them; not
+measured here), generic `for` loops of callees (`TFORPREP`), the return half through more than one frame (`retfmax` 1: a pop into an intermediate
+inlined frame ends at its `RETURN` with the stitching exit), and the return half into a loop-free caller (a function-entry outer such as deltablue's
+`Constraint:satisfy`: `RETF`'s I9 never pops into a prototype that may be lazy-aware, and every loop-free one may be; bit 0 therefore does not link
+from such roots). A scratch bit 4 that linked only at a head's second attempt (its last recording aborted `InnerLoop`) was measured and removed:
+deltablue +1.6 % instructions instead of +0.8 %, expr_compiler -2.6 % instead of -3.5 %.
+
+### 47.3 Soundness
+
+* **The prep.** The recorded prep is the root-frame `FORPREP` of F2b (types and step guarded, the direction guarded in the observed sense, the
+  count computed exactly as `forprep` does, 5.4 / 5.5 register layouts); only the frame differs, and the slot map is frame-relative already. The
+  data-dependent count never meets a recorded `FORLOOP`: the step after the prep is the head and either links or aborts (`InnerLoop` when the head lost
+  its trace; the K3a unrolling path is skipped at that head), so the P-E rule "callee loops are unrolled only with constant trip counts" still holds
+  for every recorded `FORLOOP`. A skipped loop (count 0) keeps the old abort.
+* **The link.** The linking exit is the existing one of `nest=2` / `sidenest` (frames materialised by the handler or by N3b's `LinkMat` stub; the
+  target re-checks its entry types through the dispatch cell; a flushed head's cell holds the tier-1 label). A root that ends with a link stores
+  `lazy_root` at its entry (the `nest=2` hole fixed earlier, section "lazy_root"); bit 0 refuses lazy-aware callees and callers that may be
+  lazy-aware, so these links never materialise a frame into a lazy region.
+* **The pop.** Every return-half pop goes through `Rec::retf` with all of N2c / N3a's conditions unchanged (the caller a Lua frame suspended at an
+  `OP_CALL`, the wanted count, `RETURN` operands, upvalues / to-be-closed variables, I9, aliasing); only the selector differs. The recursion test of
+  `retfsel` is a profitability rule (section 39.1), not a soundness condition. On 5.4, C63 found `RETF` correct (the `callstatus` layout is the same)
+  and turned it off for `programs/heapsort` (+11.6 %); these pops are its first use on 5.4: `t9_01` (all modes, GC stress), the official suite and
+  jit-diff run them.
+* **Waking exits** changes only when a side recording is attempted (state `Black` -> `Free`, counter 0, failure count 0); the exit cell leads to tier 1
+  until a side trace is attached.
+* Hooks (a hook aborts a recording; at run time the link exit and the pops are the existing mechanisms with their hook fallback), errors inside the
+  linked loop and in the caller after the pop, tracebacks from inside, coroutines yielding from the inner loop, stack growth inside it, collections,
+  a recursion whose loop calls itself, metamethod and vararg loops (refused): `tests/vm/t9_01_innerlink.lua`.
+
+### 47.4 Measured
+
+Method of sections 45 / 46: plain `cargo build --release -p rn-cli` (5.5; 5.4 with `--cfg rustynail_lua54`, own target directory), one binary, the
+knob as the only difference with strings of equal length (`innerlink=00` / `innerlink=03` / `innerlink=11`), `RUSTYNAIL_SEED=0`, instructions of the
+first run, cycles min of 5 interleaved runs pinned to CPU 4 (`perf stat -e instructions:u,cycles:u`).
+
+**Before the return half** (bit 0 alone, 5.5, instructions): deltablue 400 -10.2 % (cycles -11.5 %), but deltablue default +7.7 %, storage +9.6 %,
+bignum_arith +3.8 % (the inner exits ended in tier 1, 47.1). `nest=2` alone: deltablue 400 4397.1 -> 4395.3 M (0.0 %).
+
+**The bar** (30 programs: deltablue, richards, havlak, list, cd, raytrace, awfy nbody, json, storage, queens, towers, permute, mandelbrot, sieve,
+spectral_norm, matmul, heapsort, fannkuch, programs/nbody, lua_lexer, astar_jumper, expr_compiler, bignum_arith, bigint_rsa, sudoku_solver,
+diff_levenshtein, expr_lang, lua_interp, lua_parser, jit-trace/short_inner; plus deltablue 400 outside the geomean). Rows that moved by more than
+0.5 % instructions or 1.5 % cycles (instructions M, cycles in %):
+
+| program | 5.5 `11` instructions | 5.5 `11` cycles | 5.4 `11` instructions | 5.4 `11` cycles | 5.5 `03` instr / cycles | 5.4 `03` instr / cycles |
+|---|---|---|---|---|---|---|
+| awfy/deltablue | 316.8 -> 319.3 (+0.8 %) | **+6.6 %** (15 runs **+6.7 %**) | 339.2 -> 334.8 (-1.3 %) | **+6.4 %** (15 runs **+7.4 %**) | **+3.5 %** / **+4.9 %** | **+2.1 %** / **+3.6 %** |
+| deltablue 400 | 4397.4 -> 3856.2 (**-12.3 %**) | **-13.0 %** | 4828.5 -> 4300.7 (**-10.9 %**) | **-11.5 %** | -2.7 % / -4.8 % | -2.6 % / -4.8 % |
+| corpus2/dev/expr_compiler | 5287.3 -> 5104.2 (-3.5 %) | -3.5 % | 5434.0 -> 5299.6 (-2.5 %) | -2.5 % | -5.4 % / -5.1 % | -3.6 % / -3.1 % |
+| corpus2/heldout/bigint_rsa | 5657.7 -> 5512.7 (-2.6 %) | -2.0 % | 7072.9 -> 6897.7 (-2.5 %) | -1.8 % | -2.4 % / -2.3 % | -2.2 % / -1.8 % |
+| awfy/storage | 487.3 -> 477.5 (-2.0 %) | -1.4 % | 674.3 -> 664.2 (-1.5 %) | +0.3 % | -2.0 % / 0.0 % | -1.5 % / +1.2 % |
+| awfy/nbody | 548.5 -> 539.2 (-1.7 %) | -1.3 % | 562.6 -> 553.2 (-1.7 %) | -0.5 % | -1.7 % / -0.6 % | -1.7 % / -0.3 % |
+| programs/nbody | 1966.4 -> 1934.4 (-1.6 %) | -1.1 % | 2021.7 -> 1989.6 (-1.6 %) | -0.9 % | -1.6 % / -0.8 % | -1.6 % / -0.8 % |
+| apps/raytrace | 299.9 -> 296.4 (-1.2 %) | -0.5 % | 315.0 -> 311.9 (-1.0 %) | -0.6 % | -2.7 % / -3.2 % | -2.6 % / -2.5 % |
+| awfy/json | +0.3 % | +1.5 % | +0.3 % | +1.4 % | +0.3 % / +0.4 % | +0.3 % / +1.1 % |
+| programs/matmul | 0.00 % | +4.0 % (15 runs +0.1 %) | 0.00 % | -1.1 % | 0.00 % / +3.1 % | 0.00 % / -1.4 % |
+| corpus/astar_jumper | +3.0 % (not deterministic, section 39.1) | -7.8 % | 0.0 % | -0.6 % | -0.1 % / -6.8 % | 0.0 % / -1.2 % |
+
+Every other program: within +-0.3 % instructions (identical where no link forms) and +-1.5 % cycles (5.5 `03` havlak -6.3 % cycles at equal
+instructions: noise). **Geomean over the 30**: `innerlink=11` 5.5 instructions **0.9971**, cycles **0.9977**; 5.4 instructions **0.9963**, cycles
+**1.0002**. `innerlink=03`: 5.5 0.9957 / 0.9941; 5.4 0.9965 / 0.9985.
+
+**Formation lottery** (5.5, instructions, `innerlink=00` -> `11` in %, `RUSTYNAIL_JIT_TRACE_HOT` = 248 .. 264):
+
+| program | 248 | 250 | 252 | 254 | 256 | 258 | 260 | 262 | 264 |
+|---|---|---|---|---|---|---|---|---|---|
+| awfy/deltablue (default size) | -2.8 | +1.8 | +1.6 | -6.2 | +0.8 | -1.2 | -5.0 | -4.1 | -1.6 |
+| deltablue 400 | -11.6 | -8.2 | -9.5 | -13.7 | -12.3 | -12.7 | -13.1 | -12.6 | -10.4 |
+| corpus2/dev/expr_compiler | -2.9 | -2.8 | -3.3 | -2.4 | -3.5 | -3.0 | -2.7 | -3.5 | -6.0 |
+| corpus2/heldout/bigint_rsa | -0.7 | -1.7 | -3.3 | -2.5 | -2.6 | -3.0 | -2.2 | -3.4 | -1.8 |
+| apps/raytrace | +0.4 | -1.4 | -2.1 | -3.2 | -1.2 | -1.1 | -4.2 | +1.3 | -0.3 |
+| awfy/nbody | -1.7 | -1.7 | -1.7 | -1.7 | -1.7 | -1.7 | -1.7 | -1.7 | -1.7 |
+| awfy/storage | -2.0 | -0.5 | -3.8 | +0.1 | -2.0 | -2.4 | 0.0 | 0.0 | -6.3 |
+
+The gains of the longer runs (deltablue 400, expr_compiler, bigint_rsa, nbody) hold at every threshold; deltablue at its default size is a lottery
+(-6.2 .. +1.8 % instructions, +0.8 % at the shipped threshold), and its cycle regression there is the compile cost of the bigger recordings
+(`[trace] phases` pipeline 8.9 -> 17.6 M TSC, 47 -> 61 compiles, three outer roots of about 10 KB each in a 0.1 s run), not executed trace code: at
+size 400 the same traces save 13 % of the cycles.
+
+### 47.5 Decision
+
+**Default off** (`INNERLINK_PROCESS = 0`): the bar is missed by one program on both versions, deltablue at its default size, by cycles (+6.6 % /
++6.4 %; 15 runs +6.7 % / +7.4 %) at +0.8 % / -1.3 % instructions; `innerlink=03` (without the side links) also misses it by instructions (+3.5 % /
++2.1 %). The geomean is better on 5.5 (0.997 instructions / 0.998 cycles) and level on 5.4 (0.996 / 1.000). The recommended setting is
+`innerlink=11` (bits 0, 1, 3; bit 2's deep links cost deltablue default instructions: +7.4 % with bits 0-2 against +3.5 % without bit 2, +2.6 %
+with all four against +0.6 % without bit 2, in scans of an intermediate build):
+turning it on is the one-line change of `INNERLINK_PROCESS` to 11, and the case for it is deltablue -11 .. -13 % on longer runs and expr_compiler,
+bigint_rsa, nbody, storage, raytrace -1 .. -3.5 % instructions on both versions, against the compile cost of one short run.
+
+### 47.6 Tests, gates, what was not run
+
+* `tests/vm/t9_01_innerlink.lua` (13 sections, 47.3; also in `vm_corpus` against `ref/55` and `ref/54`), registered in `tr_core`'s programs;
+  `tr_core::t9_innerlink_programs` (`t9_01`, `t1_01`, `k3_01` x `always` / `on2` x `innerlink` 0 / 1 / 3 / 11 / 15, `+verify`; for 15: exit storm,
+  budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress; with the oracle feature the identity at budgets none / 3 / 17;
+  asserts links with bit 0 and none without, return-half traces and woken exits with bit 1 and none without); `tr_policy::t9_innerlink_knob`. Each of
+  the three mutants checked by hand (`RUSTYNAIL_JIT_MUT`) against the detector: caught.
+* `t9_01` by hand against the references, 5.5 and 5.4, `TRACE=always` / `on`, `innerlink` 0 / 1 / 3 / 7 / 11 / 15, also under GC stress 2 (both
+  collector modes) and stack-move stress: same output everywhere.
+* `JITDIFF_MODES="off tr trdef" JITDIFF_ENTERS=1 scripts/jit-diff.sh 1 40` on the 5.5 and 5.4 release binaries with `RUSTYNAIL_JIT_TRACE_LIMITS`
+  `lockstep=1` and `lockstep=1,innerlink=15`: 0 diffs, 0 timeouts (35 / 40 seeds with traces in `tr`) in all four runs. `scripts/jit-official.sh` with
+  `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`, `innerlink=0` and `innerlink=15`, 5.5 and 5.4: `JIT-OFFICIAL OK` (4 runs). The 236 `tests/vm`
+  programs, JIT off against `always` + `TRACE=always` + `innerlink=15`, release binaries: 5.5 plain and under GC stress 2, 5.4 plain and under
+  incremental GC stress 2: no difference except `t6_01_ctor` (its `pairs` order differs between JIT off and on with `innerlink=0` too) and, under
+  5.5 GC stress 2, `tables_15_alimit_big_moves` (its printed hash depends on the string-hash seed, which this sweep did not pin; `innerlink=0`
+  gives the same two values depending on the environment; no link forms in it).
+* Code commit: `GATE_CPUS=2-15 scripts/gate-light.sh innerlink_,innerret_ --fast`: all PASS (fmt, mutant map, clippy x3, core 5.5 / 5.4, trace suites 5.5
+  (160 s) / 5.4 (152 s), `vm_corpus`, jit-diff 1-50, mutant group 3 / 3 caught). Its first run failed on test constructors of `HeadData` / `Recorded`
+  and an unused counter in the new test; fixed before the commit.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, `tr_oracle` / `oracle_options`, PGO builds, all-223 benchmarks, `bench-fast.sh`.

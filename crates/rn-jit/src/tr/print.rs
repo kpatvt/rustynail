@@ -254,6 +254,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.ret_late, s.ret_start_sides
         );
     }
+    if s.inner_heads + s.inner_woken + s.inner_links + s.inner_rets > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] innerlink: links {} rets {} linked heads {} exits woken {}",
+            s.inner_links, s.inner_rets, s.inner_heads, s.inner_woken
+        );
+    }
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,

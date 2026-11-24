@@ -132,7 +132,7 @@ Gain = instruction gain of the programs named, geomean column = ln-sum over the 
 | N3 (new) | Exit materialisation cost (cd 12 %, classic_vector 16-18 % of instructions) | halving: cd -6 %, classic_vector -8 % [E] | -0.1 % | medium | M-L | cd, classic_vector |
 | T5 | `TableHash` keys | havlak -4..-8 % [E]; havlak is 1.32x, not in the tail | -0.03 % | medium | M | havlak |
 | T7 | `FnShort` probes for leaves | deltablue / richards L -2 %, towers def +4.4 % [M] | ~0 | low-medium | S | - |
-| T9 | `InnerLoop` | tried: `preplink`, `nest=2` 0; L | ? | high | L | deltablue, raytrace |
+| T9 | `InnerLoop` | tried: `preplink`, `nest=2` 0; L; built both halves (JIT_TRACE.md section 47, `innerlink`, default off: deltablue 400 -12 %, default size +6.6 % cycles) | ? | high | L | deltablue, raytrace |
 
 Status: T1, T2 (partly), T3 built; the heavy-gate state of those is still open (report.md). TR24c is a recorded lead only.
 N1 built (docs/JIT_TRACE.md section 41). **N2 built, and measured at -4.4 % instructions per `co_yield` pair, not -30 %** (docs/JIT_TRACE.md section 42: the protocol is ~500 of 753 instructions spread over eight tight functions; the estimate above counted pieces that are shared with every native call or that observable behaviour needs). **N2b built** (docs/JIT_TRACE.md section 45: direct `wrap` / `resume` in the native call, the interpreter entered directly, fused start): `co_yield` 721 -> 693 instructions and 147 -> 122 cycles per pair; with N2, 753 -> 693 instructions (-8 %) and 167 -> 122 cycles (-27 %) against this study's measurement.
