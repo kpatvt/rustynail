@@ -6127,3 +6127,192 @@ caller's recording stitches to it), or the per-trace attribution of the towers c
 * T7 commit: `GATE_CPUS=2-15 scripts/gate-light.sh t7_ --fast`: all PASS (same steps; trace suites 5.5 161 s / 5.4 153 s; mutant group 2 / 2 caught, 24 s).
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, `tr_oracle` / `oracle_options`, PGO builds, all-223 benchmarks, `bench-fast.sh`,
   the official suite with `t7` (T5 was run through it with `t5=7`, both versions).
+
+## 49. C1: compile-speed levers of the trace back end and the encoder (knob `cspeed`, check `ccheck`; 2026-11-24, base b12bba7)
+
+Task: the C1 cause of docs/STUDY_WHY_GAP.md (compile + record cost is 36-56 % of the cycle gap to LuaJIT on richards, raytrace, cd, towers,
+fmt_s; each trace costs 3.7-8.9x LuaJIT's). Goal: 2-3x cheaper compiles at identical generated code. **Result: identical code, 7-11 % cheaper
+compiles, -0.8 % instructions / -1.0 % cycles over the 30-program sample (5.5), -1.1 .. -3.8 % instructions and -1.5 .. -4.2 % cycles on the five
+compile-heavy programs.
+The 2-3x goal and the double-digit cycle target are missed by a wide margin; section 49.5 says why and what it would take.**
+
+### 49.1 Method and the measured compile profile
+
+* Builds: plain `cargo build --release -p rn-cli` (5.5; 5.4 with `--cfg rustynail_lua54`, `LUA_VERSION=5.4`), base b12bba7 and the final commit
+  built from `git archive` trees of equal path length (`wsb` / `wsn`), staged in equal-length directories (`b/bas`, `b/new`, `b/b54`, `b/n54`).
+* Totals: `perf stat -e instructions:u` (one run, deterministic) and `cycles:u` (min of 5 interleaved runs, CPU 4, 300 ms spin before each run),
+  `RUSTYNAIL_SEED=0`, default bench size.
+* Compile cost, exact: two ways. (1) The same binary with the levers off and on (`RUSTYNAIL_JIT_TRACE_LIMITS=cspeed=0` against the default): the
+  generated code is identical (49.3), so the instruction difference is the compile pipeline alone. (2) Per phase: a scratch build (not committed)
+  that runs one phase a second time on the same inputs (`black_box`) under an environment variable; the instruction delta of a run is the exact
+  cost of that phase in that program (`TWICE`: the encoder, traces and tier 1; `ASM2`: `asm::assemble_dl`; `RA2`: `ra::allocate_hinted`; `EX2`:
+  `exit::build_exits_ex`; `FRONT2`: the passes before allocation, on a copy of the recording; `CLONE`: that copy alone).
+* Profiles: `perf record -e instructions:u --call-graph fp --user-callchains` of a frame-pointer build (`-C force-frame-pointers=yes`, its own
+  target directory, removed), attributed by call chain to recorder / pipeline / tier 1 / lazy stubs and their sub-phases; AMD IBS op sampling
+  (`ibs_op/cnt_ctl=1,swfilt=1/u`, precise IP) where the skid of `instructions:u` sampling (samples pile up behind store-forwarding stalls and
+  mispredicted indirect branches) made the line-level picture unreliable.
+
+**Baseline profile (b12bba7, IBS / fp call chains, share of all instructions):** raytrace: compile 35 % (recorder 10, pipeline 18, tier 1 6);
+cd: 35 % (recorder 8, pipeline 23, tier 1 4); richards: 29 % (recorder 7, pipeline 16, tier 1 6). Inside the compile instructions (cd /
+raytrace / richards): x86 encoder (traces and tier 1) 15 / 14 / 28 %; register allocation 12 / 12 / 11 %; assembler 15 / 8 / 9 %; loop pass
+13 / 8 / 13 %; recorder steps 20 / 32 / 28 %; exits 8 / 5 / 3 %; sinking 4 / 10 / 0.2 %; tier-1 lowering 3 / 5 / 12 %; malloc / free / realloc
+about 5 % (the study's 16-22 % counted the libc internals of a stripped libc as well). Exact per-phase costs of the old paths (instructions M, `cspeed=0`
+of the final binary, which runs every old path except the FxHash maps of 49.2):
+
+| program | total | encoder (twice) | assembler | allocator | exits | passes | recording copy |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| apps/raytrace | 302.1 | 13.49 | 7.53 | 10.51 | 5.89 | 13.68 | 0.22 |
+| awfy/cd | 715.1 | 35.80 | 28.09 | 26.40 | 14.03 | 37.72 | 0.66 |
+| awfy/richards | 173.1 | 10.84 | 4.11 | 5.46 | 1.45 | 6.18 | 0.11 |
+| awfy/towers | 172.8 | 4.42 | 2.38 | 3.21 | 1.23 | 3.88 | 0.07 |
+| lib/fmt_s | 26.3 | 1.11 | 0.09 | 0.13 | 0.03 | 0.15 | 0.00 |
+
+Three findings the study's breakdown did not have: (1) the encoder ran at 156-172 instructions per micro-op (`Assembler::rm_op` pushed every
+byte through a checked `Vec::push`, took the operand through memory and re-read it at a stall); (2) `Allocation::uses_gpr` / `uses_xmm` scanned
+the whole allocation for every query, up to 16 times per constant float compare: 5.7 % of cd's compile instructions; (3) sinking's "store between
+two guards of one snapshot" check scanned every snapshot map once per store of every candidate (quadratic; `sink::rebuild` 84 % self on raytrace).
+Everything else is linear in the snapshot volume (one snapshot of 10-60 entries per guard-bearing bytecode, scanned by the recorder, the loop
+pass, sinking, the allocator, the exit builder and the shape hash): no single function above 5 % of the compile after the fixes.
+
+### 49.2 The levers (knob `cspeed` of `RUSTYNAIL_JIT_TRACE_LIMITS`, bits of `crate::cspeed`, default all on = 123; `cspeed=127` is the same)
+
+| bit | lever | what changed | commit |
+|---|---|---|---|
+| 1 `MASKS` | allocator register masks | `uses_gpr` / `uses_xmm` from masks built by one scan at the first query (`Allocation::used`, `OnceCell`) | 1 |
+| 2 `ENC` | x86 encoder | `[prefix][REX] opcode ModRM [SIB] [disp]` written in place into 16 zeroed bytes and cut back (no per-byte push, no variable-length `memcpy`); the encoding inlined into every emitter (operand in registers); buffers presized from the program (`Assembler::with_capacity`) | 2 |
+| 8 `FXHASH` | shape hash | `cache::shape_hash_ir` with the Fx word mix (the FNV variant mixed every byte of a slice); the value is compared only within the process (Q3) | 1 |
+| 16 `PASSES` | passes / assembler | sinking's check from an index of the snapshots naming each candidate, its per-instruction candidate lookup from the candidate map; the loop pass's output builder and the assembler's micro-op program presized | 3 |
+| 32 `RA` | allocator | free-register choice and eviction scan without a vector per query; the per-snapshot set-up (unfuse, validity check, snapshot-only marks) once per snapshot, not once per guard (TR27: the guards of a snapshot share its map) | 1, 4 |
+| 64 `REC` | pipeline front | the pipeline takes the closed recording over instead of copying it | 3 |
+
+Also exact and not knob-gated (commit 1): the tier-1 lowering's label maps (`exit_at`, `exit_trap`, `land_of`, warm-up maps) and the pipeline's
+resolver map on FxHash instead of SipHash; every iteration over them is sorted first, so the order cannot reach the code.
+
+`cspeed=0` restores every old path (the hash maps above excepted). The levers are read from a thread-local cell that the trace pipeline and the
+tier-1 compile set from the state's limits (`crate::cspeed::set`).
+
+### 49.3 Identical code: `ccheck` and the regression test
+
+`RUSTYNAIL_JIT_TRACE_LIMITS=ccheck=1`: every trace compile runs (a) its passes a second time on a copy of the recording with `cspeed=0` and compares
+the IR text (`print::dump`) and the writeback, (b) its allocator and exit builder again with `cspeed=0` and compares the allocation and the exit
+structures, (c) its assembler and encoder again with `cspeed=0` on the checked allocation and exits and compares the machine code, the label
+offsets and the stub references byte for byte; every tier-1 compile re-encodes its program with the old encoder and compares. A difference aborts
+the compile (`aborted ccheck`) and is counted: `[trace] ccheck: compared N differ M` in the `RUSTYNAIL_JIT_VERBOSE=1` statistics.
+
+* Regression test `tr_core::c1_cspeed_identical_code`: the whole `tr_core` corpus (`selected(false)`) x `always` / `on2` with `ccheck=1`, the
+  programs that must trace with `+verify` and with GC stress 1 and 2, plus a `cspeed=0` control run; every program must give the interpreter's
+  results, no compile may differ, more than 100 compiles must be compared. Runs in both versions' trace suites (5.5 and 5.4), 12 s.
+* Mutants (each detected by that test; registry 855 -> 859): `cspeed_ra_last_free` (the fast free-register choice takes the last free register),
+  `cspeed_enc_disp32` (the fast encoder writes a byte-sized displacement in four bytes), `cspeed_sink_cand_miss` (the fast candidate lookup misses),
+  `cspeed_ra_unfuse_skip` (the once-per-snapshot set-up skips every snapshot). Each mutant sits on the fast path only, so the old path of `ccheck`
+  shows the difference.
+* `ccheck=1` on the final release builds: raytrace 56 / 61 compiles compared (5.5 / 5.4), cd 270 / 294, richards 51 / 51, towers 32 / 32, fmt_s
+  3 / 3, deltablue 95 / 95, classic_vector 34 / 32, lua_parser 155 / 138: 0 differ.
+
+### 49.4 Numbers
+
+**Compile cost (same binary, levers off -> on, instructions; the code is identical, so the difference is the compile pipeline):**
+
+| program | total M, levers off / on | saved M | compile M (IBS share x total), off / on | compile instructions | compile `Mtsc` (phase timers, min of 7), off / on |
+|---|---|---:|---|---:|---|
+| apps/raytrace | 302.2 / 294.9 | 7.3 | 102.8 / 95.5 (32.4 %) | **-7.1 %** | 23.67 / 22.06 (-6.8 %) |
+| awfy/cd | 714.4 / 685.9 | 28.5 | 259.6 / 231.1 (33.7 %) | **-11.0 %** | 46.59 / 42.30 (-9.2 %) |
+| awfy/richards | 173.0 / 168.5 | 4.5 | 53.5 / 49.0 (29.1 %) | **-8.4 %** | 9.25 / 8.47 (-8.4 %) |
+| awfy/towers | 172.7 / 170.3 | 2.4 | 33.7 / 31.3 (18.4 %) | **-7.1 %** | 5.25 / 4.86 (-7.4 %) |
+| lib/fmt_s | 26.2 / 25.9 | 0.33 | 4.3 / 3.9 (15.2 %) | **-7.7 %** | 0.74 / 0.75 (0 %, tier 1 only) |
+
+(The compile share is the IBS share of the samples whose call chain is inside the recorder, the pipeline, a tier-1 compile or a lazy stub, at the
+final code; the "off" compile cost adds the saved instructions back. `Mtsc` = `rec_step + pipeline + tier1 + lazystub` of `[trace] phases`.)
+
+Per phase (exact, same binary; instructions M, levers off -> on): encoder raytrace 13.49 -> 9.88 (-27 %), cd 35.71 -> 25.93 (-27 %), richards
+10.84 -> 7.90 (-27 %), towers 4.41 -> 3.20, fmt_s 1.11 -> 0.81; assembler raytrace 7.55 -> 5.34, cd 27.97 -> 16.46 (-41 %, the register-mask scans),
+richards 4.10 -> 3.53; allocator raytrace 10.67 -> 9.94, cd 26.94 -> 25.29, richards 5.57 -> 5.18 (-6 .. -7 %); exits unchanged (5.8 / 14.0 / 1.4);
+passes raytrace 13.64 -> 13.21, cd 37.60 -> 36.00, richards 6.22 -> 5.97 (-3 .. -4 %). The recorder and the tier-1 lowering were not changed.
+Same-binary instruction deltas over the 30-program sample (5.5 / 5.4): no program worse; the largest gains cd -3.98 / -3.97 %, richards -2.59 /
+-2.60 %, lru_cache -2.47 / -1.98 %, raytrace -2.42 / -2.66 %, deltablue -2.25 / -2.09 %, json -1.52 / -1.35 %, expr_lang -1.51 / -1.46 %, towers
+-1.38 / -1.39 %, fmt_s -1.26 / -1.29 %, havlak -1.00 / -0.96 %; the long corpus programs -0.05 .. -0.8 %.
+
+**Whole programs, base b12bba7 against the final commit (30-program sample of section 43 plus `lib/fmt_s`; instructions of one run, cycles min of
+5 interleaved runs, CPU 4; first-pass outliers re-run with 11 runs in brackets):**
+
+| program | 5.5 instr M base / new | 5.5 instr | 5.5 cycles M base / new | 5.5 cycles | 5.4 instr | 5.4 cycles |
+|---|---|---:|---|---:|---:|---:|
+| awfy/bounce | 306.5 / 305.1 | -0.46 % | 60.6 / 60.2 | -0.63 % | -0.45 % | -1.43 % |
+| awfy/cd | 713.2 / 686.0 | **-3.81 %** | 247.2 / 236.9 | **-4.18 %** | -3.81 % | -4.44 % |
+| awfy/deltablue | 317.2 / 310.7 | -2.04 % | 105.7 / 102.8 | -2.81 % | -1.90 % | -2.09 % |
+| awfy/havlak | 508.5 / 503.4 | -1.00 % | 146.6 / 147.8 | +0.84 % (-0.42 %) | -0.87 % | +0.21 % |
+| awfy/json | 445.2 / 439.1 | -1.37 % | 138.3 / 136.3 | -1.48 % | -1.20 % | -1.77 % |
+| awfy/list | 393.5 / 391.5 | -0.51 % | 96.2 / 94.8 | -1.38 % | -0.47 % | -0.73 % |
+| awfy/mandelbrot | 519.9 / 519.5 | -0.08 % | 272.3 / 272.4 | +0.02 % | -0.07 % | -0.03 % |
+| awfy/nbody | 548.5 / 547.7 | -0.15 % | 92.8 / 93.6 | +0.85 % | -0.15 % | +1.18 % |
+| awfy/permute | 193.1 / 192.7 | -0.21 % | 36.0 / 35.8 | -0.65 % | -0.20 % | -1.83 % |
+| awfy/queens | 507.7 / 506.4 | -0.25 % | 95.4 / 95.8 | +0.44 % | -0.39 % | -1.29 % |
+| awfy/richards | 172.6 / 168.5 | **-2.37 %** | 59.7 / 58.3 | **-2.32 %** | -2.39 % | -0.74 % |
+| awfy/sieve | 780.7 / 780.4 | -0.05 % | 113.6 / 114.0 | +0.30 % | -0.04 % | -2.87 % |
+| awfy/storage | 499.9 / 499.5 | -0.08 % | 101.7 / 102.1 | +0.47 % | -0.06 % | +2.00 % (-0.02 %) |
+| awfy/towers | 172.5 / 170.3 | **-1.24 %** | 46.9 / 45.7 | **-2.38 %** | -1.25 % | -2.36 % |
+| apps/events | 691.0 / 689.2 | -0.25 % | 164.3 / 160.8 | -2.14 % | -0.24 % | -1.16 % |
+| apps/expr_lang | 510.3 / 503.3 | -1.37 % | 130.8 / 128.6 | -1.66 % | -1.33 % | -2.48 % |
+| apps/lru_cache | 317.6 / 310.5 | -2.24 % | 142.4 / 137.0 | -3.83 % | -1.80 % | -2.10 % |
+| apps/markdown | 382.3 / 380.0 | -0.59 % | 119.8 / 117.1 | -2.27 % | -0.45 % | -1.07 % |
+| apps/raytrace | 301.7 / 294.8 | **-2.28 %** | 95.4 / 93.8 | **-1.76 %** | -2.49 % | -1.68 % |
+| heldout/bigint_rsa | 5737.5 / 5732.2 | -0.09 % | 1124.1 / 1118.1 | -0.53 % | -0.06 % | -0.46 % |
+| heldout/dijkstra_routes | 2980.8 / 2970.6 | -0.34 % | 1190.4 / 1235.3 | +3.77 % (+0.57 %) | -0.19 % | -0.36 % |
+| heldout/forth_vm | 3843.7 / 3841.0 | -0.07 % | 813.5 / 801.1 | -1.52 % | -0.06 % | +1.63 % (+0.20 %) |
+| heldout/prototype_objects | 3645.5 / 3631.8 | -0.37 % | 2434.1 / 2373.7 | -2.48 % | -0.49 % | +1.39 % |
+| heldout/roguelike_turns | 2781.8 / 2761.9 | -0.72 % | 851.1 / 837.5 | -1.60 % | -0.41 % | -0.44 % |
+| heldout/scheme_interp | 5879.5 / 5872.5 | -0.12 % | 1502.3 / 1487.7 | -0.98 % | -0.05 % | -0.89 % |
+| dev/lua_parser | 4603.3 / 4587.1 | -0.35 % | 1295.4 / 1278.9 | -1.27 % | -0.32 % | -1.80 % |
+| dev/oop_mixins | 3995.1 / 3980.3 | -0.37 % | 1449.7 / 1470.2 | +1.42 % (-1.34 %) | -0.36 % | +3.21 % (-0.03 %) |
+| dev/particles_physics | 1360.9 / 1352.7 | -0.60 % | 408.6 / 404.5 | -1.00 % | -0.55 % | -1.48 % |
+| dev/regex_nfa | 3599.3 / 3595.8 | -0.10 % | 694.4 / 674.1 | -2.93 % | -0.03 % | +0.31 % |
+| corpus/classic_vector | 2037.7 / 2031.5 | -0.31 % | 475.9 / 479.9 | +0.84 % | -0.22 % | **+4.68 % (+5.06 %)** |
+| lib/fmt_s | 26.2 / 25.9 | -1.13 % | 7.0 / 7.2 | +1.92 % (-1.52 %) | -1.14 % | +1.81 % (-1.86 %) |
+| **geomean (31)** | | **-0.81 %** | | **-0.95 %** | **-0.76 %** | **-0.57 %** |
+
+The trace code is the same in both binaries: `RUSTYNAIL_JIT_DUMP` of base and final (every `trace-N.txt` with addresses normalised, every trace and
+tier-1 code size), 5.5: raytrace (41 traces), cd (231), richards (33), towers (27), fmt_s (2), deltablue (47), json (57), lru_cache (81), classic_vector
+(17), havlak (28): **SAME** on all ten.
+
+### 49.5 Bar, misses, and why the goal was not reached
+
+**Bar.** Instructions: no program worse in either version (every program -0.03 .. -3.8 %). Geomean better in both versions, instructions and cycles.
+Cycles: **one miss**, 5.4 `corpus/classic_vector` +5.1 % (min of 11) at -0.22 % instructions. It is code layout, not a lever: the final 5.4 binary
+runs it at 671-675 Mcyc with the levers **off** (`cspeed=0`) as well as on, against 638-641 for the base binary in either setting, with the same
+trace dumps; L1 instruction-cache misses 4.0 -> 7.3 M (the same kind of effect as `regex_nfa` in section 43). The other first-pass outliers (5.5
+dijkstra_routes +3.8 %, 5.4 oop_mixins +3.2 %, storage +2.0 %, fmt_s +1.8 / +1.9 %) were noise: min of 11 gives +0.6 %, -0.0 %, -0.0 %, -1.5 / -1.9 %.
+
+**Goal missed: 2-3x cheaper compiles and double-digit total cycles on raytrace / cd / richards / towers / fmt_s.** Measured: compiles 7-11 % cheaper
+(instructions; 7-9 % in compile time), total cycles cd -4.2 %, deltablue -2.8 %, towers -2.4 %, richards -2.3 %, raytrace -1.8 %, fmt_s about -1.5 %.
+Why, from the numbers above:
+
+1. **The planned structural levers change the code.** A single backward pass that allocates while it emits (LuaJIT's `lj_asm`) makes different
+   allocation decisions than the current allocator, so its code cannot be byte-identical; the same holds for dropping or lazily building tier-1 code
+   for traced prototypes (the exit cells start at tier-1 landing addresses, the dispatch goes through tier 1) and for delta-encoded or deduplicated
+   snapshots (exit numbering, stubs and counters follow the snapshot table; the recorder already shares one snapshot between the guards of a bytecode).
+   Under the identical-code rule those are out of scope; they are the next step, each as its own knob-gated change with its own soundness argument
+   and the ordinary code-changing bar. Upper bounds from the profile: tier-1 compiles are 3.5 / 3.6 / 6.2 / 2.0 / 10.1 % of all instructions (raytrace
+   / cd / richards / towers / fmt_s); the allocator 3.4 / 3.7 / 3.1 / 1.8 / 0.5 %.
+2. **What is left is linear in the IR volume.** After the three non-linear costs were removed (register-mask scans, sinking's snapshot scan, the
+   per-byte encoder), the profile has no function above 5 % of the compile; every phase walks the snapshot maps (one snapshot of 10-60 entries per
+   guard-bearing bytecode) and the instructions. Halving that needs fewer or smaller snapshots, i.e. item 1.
+3. **Allocation was a smaller bucket than estimated.** malloc / free / realloc / `finish_grow` are about 5 % of the compile instructions with frame-
+   pointer call chains (the study's 16-22 % came from skidded samples and counted the internals of a stripped libc); presizing the large vectors and
+   dropping the recording copy took the visible part. A per-trace arena would save at most that 5 %.
+4. **Compile instructions are a third of the total at most** (32-34 % on raytrace / cd, 29 % richards, 18 % towers, 15 % fmt_s, IBS). Even a 2x
+   cheaper compile would give about -15 % instructions on cd and -9 % on towers.
+
+Not built (measured or reasoned above, no prototype): the per-trace arena (bounded by about 5 % of the compile), a table-driven one-pass encoder
+(the remaining encoder cost is about 100 instructions per micro-op, a third of it the dispatch), scratch buffers for the loop pass's per-snapshot
+vectors (about 8 % of the passes, 0.4 % of cd), a bound on the tier-1 lowering's 256-slot type scan per pc (0.1 % of richards).
+
+### 49.6 Gates and what was not run
+
+* Each of the four code commits: `GATE_CPUS=2-15 scripts/gate-light.sh cspeed_ --fast --base HEAD~1`: all steps PASS (fmt, mutant map, clippy 5.5 /
+  5.5-jit / 5.4, core 5.5 / 5.4, trace suites 5.5 169-187 s / 5.4 161-172 s, `vm_corpus`, jit-diff 1-50, the `cspeed_` mutant group: 1, 2, 3, 4
+  mutants caught). This documentation commit: the same gate.
+* Final binaries (5.5 and 5.4): `JITDIFF_MODES="off tr trdef" scripts/jit-diff.sh 1 40`, default limits and `lockstep=1,ccheck=1`: 40 seeds, 0 diffs,
+  0 timeouts, both versions; the official suite (`scripts/jit-official.sh`, `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`): OK on 5.5 and 5.4, and
+  OK on 5.5 with `ccheck=1`; `ccheck=1` on raytrace, cd, richards, towers, fmt_s, deltablue, classic_vector, lua_parser, both versions: 3-294 compiles
+  compared per program, 0 differ. GC stress 1 / 2 run in the regression test (the programs that must trace).
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle suites, PGO builds, the all-223 benchmark, `bench-fast.sh`.
