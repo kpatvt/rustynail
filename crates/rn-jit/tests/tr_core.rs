@@ -37,6 +37,8 @@ mod progs;
 mod r1_progs;
 #[path = "tr_core/s4_progs.rs"]
 mod s4_progs;
+#[path = "tr_core/s50_progs.rs"]
+mod s50_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -58,6 +60,7 @@ use rn_jit::tr::cache::{TrConfig, TrLimits, TrMode};
 use rn_jit::tr::TraceOpts;
 use rn_jit::{Config, Mode};
 use s4_progs::S4_PROGS;
+use s50_progs::S50_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -184,6 +187,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(N1_PROGS)
         .chain(S4_PROGS)
         .chain(Y_PROGS)
+        .chain(S50_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -13005,6 +13009,100 @@ fn e6_dlink_programs() {
                 "{}: no direct link was undone",
                 j.tag()
             );
+        }
+    }
+}
+
+/// Section 50 (`slink`, docs/JIT_TRACE.md section 50): register-passing side links for traces that are not lazy-aware. Bit 0 records the side trace with
+/// the exit map's registers as carried loads and re-points the parent's branches at a carry link entry (it stores what is not carried and joins the carry
+/// entry); bit 1 re-points them at a plain link entry (the exit map's stores, the refund, behind the side trace's budget load). The `s50_*` programs (frameful
+/// and frameless exits, spill slots, every value class, errors / hooks / collections / yields behind links, a side trace flushed under a live parent) and
+/// the R1 / S1 / E6 programs whose exits link, in `always` / `on2` x `slink` 0 / 1 / 2, `+verify`, exit storms, budgets, GC stress 1 / 2 in both collector
+/// modes, stack-move stress (`+tracemove`), `regcarry=0` / `regcarry=2` and `lazystub=0` (no patch sites: no links); with the oracle feature the
+/// instruction-count identity. Asserts links with a bit set and none without. Detector of `slink_store_skip`, `slink_tag_skip`, `slink_refund_off`.
+#[test]
+fn s50_slink_programs() {
+    let progs = [
+        "s50_frame_sides",
+        "s50_spill_values",
+        "s50_observers",
+        "s50_coro_flush",
+        "r1_nbody_pairs",
+        "r1_type_flip",
+        "r1_error_locals",
+        "r1_many_slots",
+        "s1_frame_sides",
+        "e6_01_dlink",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["slink=0", "slink=1", "slink=2"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+exitstorm=3 +verify")
+                        .limits_s(lim),
+                );
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            }
+            for lim in ["slink=1", "slink=2"] {
+                jobs.push(Job::new(p, trace).budget(3).limits_s(lim));
+                for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                    let mut j = Job::new(p, trace)
+                        .env("RUSTYNAIL_GC_STRESS", gc)
+                        .limits_s(lim);
+                    if mode == "inc" {
+                        j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                    }
+                    jobs.push(j);
+                }
+                jobs.push(
+                    Job::new(p, trace)
+                        .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                        .opts("+tracemove")
+                        .limits_s(lim),
+                );
+                for extra in ["regcarry=0", "regcarry=2", "lazystub=0", "sidemin=0"] {
+                    jobs.push(Job::new(p, trace).limits_s(&format!("{lim},{extra}")));
+                }
+                #[cfg(feature = "t15_oracle")]
+                for b in [None, Some(3), Some(17)] {
+                    let mut j = Job::new(p, trace).limits_s(lim);
+                    j.budget = b;
+                    j.ident = true;
+                    jobs.push(j);
+                }
+            }
+        }
+    }
+    let res = compare(jobs);
+    let mut linked = std::collections::BTreeMap::<String, u64>::new();
+    for (j, o) in &res {
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if plain && j.prog.starts_with("s50_") && j.prog != "s50_spill_values" {
+            *linked
+                .entry(format!("{} {}", j.prog, j.limits))
+                .or_default() += o.stats.dlink_attached;
+        }
+        if j.limits.contains("lazystub=0") {
+            assert_eq!(
+                o.stats.dlink_attached,
+                0,
+                "{}: links without patch sites",
+                j.tag()
+            );
+        }
+    }
+    for (k, n) in &linked {
+        if k.ends_with("slink=0") {
+            assert_eq!(
+                *n, 0,
+                "{k}: links with slink=0 (no lazy-aware family in the s50 programs)"
+            );
+        } else if k.ends_with("slink=1") || k.ends_with("slink=2") {
+            assert!(*n > 0, "{k}: no side link was attached");
         }
     }
 }

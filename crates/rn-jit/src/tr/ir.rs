@@ -863,6 +863,9 @@ pub struct TraceIr {
     /// R1: the slots of the parent's exit map the side trace never reads (its carried loads were dropped by `mod::carry_demote`): the carry entry stores
     /// them to the stack (slot, type, where the parent's exit map has the value, the stack already holds the tag).
     pub carry_store: Vec<(u16, Ty, CarrySrc, bool)>,
+    /// Section 50 (`slink`): the carried loads are for a carry link only: the parent's exit stub has no carry path for this side trace (its carry cell is never
+    /// set), the link entry stores what the stub would have stored beyond them.
+    pub carry_link: bool,
     /// P1 (`presize`): the recorder's notes of the helper `NEWREF`s tagged [`nrplan::NOTE`] (empty when the knob is off).
     pub presize: Vec<PresizeNote>,
 }

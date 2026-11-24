@@ -197,6 +197,7 @@ impl<'a> Em<'a> {
         // R1: the carried loads of a side trace and where the parent's exit has their values; the pruning info of the recording
         b.ir.carry_in = rec.ir.carry_in.clone();
         b.ir.carry_store = rec.ir.carry_store.clone();
+        b.ir.carry_link = rec.ir.carry_link;
         b.ir.prune = rec.ir.prune.clone();
         Em {
             src: &rec.ir,

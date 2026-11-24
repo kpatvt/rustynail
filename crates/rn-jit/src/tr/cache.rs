@@ -104,6 +104,8 @@ pub const IDFOLD_PROCESS: u32 = 1;
 pub const LAZYLOOP_PROCESS: u32 = 1;
 /// E6: the process default of [`TrLimits::dlink`] (also the struct default).
 pub const DLINK_PROCESS: u32 = 3;
+/// Section 50 (`slink`): the process default of [`TrLimits::slink`] (also the struct default).
+pub const SLINK_PROCESS: u32 = 0;
 /// E9: the process default of [`TrLimits::t1call`] (also the struct default).
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
@@ -833,6 +835,14 @@ pub struct TrLimits {
     /// counter, no budget store / reload, no cell). Bit 1: a native push / return keeps the budget in its register when it jumps to an inner entry (the word is
     /// stored only on the paths that leave). 0 = off, 3 = both (default [`DLINK_PROCESS`]).
     pub dlink: u32,
+    /// Section 50 (`slink`, docs/JIT_TRACE.md section 50): direct side links for traces that are not lazy-aware (E6 `dlink` links those). An exit whose
+    /// stub is an inline stub that continues through its cell (frameless or a frame cell, counted only for the hot count, no sunk tables) is marked
+    /// linkable, and the side trace attached to it re-points the parent's branches to the exit at its link entry (E6's patching, undone at its flush).
+    /// Bit 0 (carry link, register passing): the side trace is recorded with the exit map's register / spill values as carried loads (R1's
+    /// `SLOAD_CARRIED`, no root third entry needed, frames virtual); its link entry stores only what it does not take in registers (constants, function
+    /// slots, tags the stack lacks), adds the refund and joins the carry entry. Bit 1 (plain link, overrides bit 0): no carried loads; the link entry
+    /// stores the exit map, adds the refund and joins the plain entry behind its budget load (E6's link entry). 0 = off; default [`SLINK_PROCESS`].
+    pub slink: u32,
     /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Bit 0 (`jret`): the tier-1 `CALL` marks the frame it pushes
     /// (`CIST_T1RET`) and stores the address of its per-site resume cell in it; the tier-1 return of such a frame jumps through the cell instead
     /// of looking the caller's resume entry up. Bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`, like
@@ -1007,6 +1017,7 @@ impl Default for TrLimits {
             regcarry: REGCARRY_PROCESS,
             lazypoison: 0,
             dlink: DLINK_PROCESS,
+            slink: SLINK_PROCESS,
             t1call: T1CALL_PROCESS,
             cspeed: crate::cspeed::DEFAULT,
             ccheck: 0,
@@ -1220,6 +1231,7 @@ impl TrLimits {
                 "regcarry" => l.regcarry = v.min(3),
                 "lazypoison" => l.lazypoison = v.min(1),
                 "dlink" => l.dlink = v.min(3),
+                "slink" => l.slink = v.min(15),
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(15),
@@ -4239,8 +4251,11 @@ pub struct TraceInstall {
     pub idfold: bool,
     /// E5: the trace folded a method `SELF` of the family.
     pub midfold: bool,
-    /// E6 (`dlink`): offset of the link entry of a side trace (see `asm::Asm::entry_dl`), 0 if none.
+    /// E6 (`dlink`): offset of the link entry of a side trace (see `asm::Asm::entry_dl`), 0 if none. Section 50: with `ce_off != 0` it is a carry link entry
+    /// (`slink`), which joins the carry entry.
     pub dl_off: usize,
+    /// Section 50 (`slink`): the carried loads of the side trace are for its carry link only (`TraceIr::carry_link`): the exit's carry cell is not set.
+    pub carry_link: bool,
 }
 
 /// Why [`install`] did not install.
@@ -4437,7 +4452,7 @@ fn dlink_attach(d: &mut JitData, parent: TrId, k: usize, target: usize) -> Vec<(
 /// stores its map), else `None` (prelude, frameful exit, an exit its parent's assembly did not mark linkable, a parent without the budget in `BUDGET_GPR`).
 pub fn dlink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
     let d = d_of(st);
-    if d.tr.cfg.limits.dlink & 1 == 0 {
+    if d.tr.cfg.limits.dlink & 1 == 0 && d.tr.cfg.limits.slink & 2 == 0 {
         return None;
     }
     let sl = match d.tr.slot(id) {
@@ -4459,11 +4474,52 @@ pub fn dlink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
     let m = p.xmeta.as_ref()?;
     let df = m.defer.as_deref()?;
     let k = sl.exit as usize;
-    if !m.lazy
+    // (section 50, `slink` bit 1: the same plain link for an exit of a trace that is not lazy-aware)
+    let lz_ok = m.lazy && d.tr.cfg.limits.dlink & 1 != 0;
+    let sl_ok =
+        !m.lazy && d.tr.cfg.limits.slink & 2 != 0 && slink_exit_ok(d.tr.cfg.limits.slink, m, k);
+    if !(lz_ok || sl_ok)
         || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR)
         || !df.dl_ok.get(k).copied().unwrap_or(false)
         || df.patch_at.get(k).copied().unwrap_or(0) == 0
     {
+        return None;
+    }
+    let es = m.snaps.get(k)?;
+    if !(es.frames.is_empty() || es.frame_side_ok())
+        || !es.sunk.is_empty()
+        || es.top.is_some()
+        || !es.usable
+        || es.seg_pops != 0
+    {
+        return None;
+    }
+    Some(es.clone())
+}
+
+/// Section 50 (`slink`): the parent's exit a side trace `id` (a recording) with carried loads would be attached to, when that exit can take a carry link: its
+/// snapshot (the link entry stores what the side trace does not carry), else `None`.
+pub fn slink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
+    let d = d_of(st);
+    let sl = match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) => r.side?,
+        _ => return None,
+    };
+    if sl.prelude {
+        return None;
+    }
+    let Some(Slot {
+        body: Body::Trace(p),
+        ..
+    }) = d.tr.slot(sl.parent)
+    else {
+        return None;
+    };
+    let m = p.xmeta.as_ref()?;
+    let k = sl.exit as usize;
+    if !slink_exit_ok(d.tr.cfg.limits.slink, m, k) {
         return None;
     }
     let es = m.snaps.get(k)?;
@@ -4735,7 +4791,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
                 }
                 // R1: the carry cell of the exit (behind the exit cells, `Cx::inline_stub`)
                 let ns = p.xmeta.as_ref().map_or(0, |m| m.snaps.len());
-                if ti.ce_off != 0 && ns != 0 && p.cells.len() == 2 * ns {
+                if ti.ce_off != 0 && !ti.carry_link && ns != 0 && p.cells.len() == 2 * ns {
                     if let Some(c) = p.cells.get(ns + sl.exit as usize) {
                         c.set(block_addr + ti.ce_off);
                         // the stub of the exit tests its carry cell only when the counter equals the divert value (`Cx::inline_stub`): park it there
@@ -4752,7 +4808,14 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
             d.tr.stats.ret_start_sides += 1;
         }
         // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): the parent's branches to the exit (and its patchable `nop`) go to the link entry of the new side trace
-        if !sl.prelude && ti.dl_off != 0 && d.tr.cfg.limits.dlink & 1 != 0 {
+        if !sl.prelude
+            && ti.dl_off != 0
+            && if ti.ce_off == 0 {
+                d.tr.cfg.limits.dlink & 1 != 0 || d.tr.cfg.limits.slink & 2 != 0
+            } else {
+                d.tr.cfg.limits.slink & 3 != 0
+            }
+        {
             let saved = dlink_attach(d, sl.parent, sl.exit as usize, block_addr + ti.dl_off);
             if !saved.is_empty() {
                 d.tr.stats.dlink_attached += 1;
@@ -5357,6 +5420,8 @@ pub struct SideStart {
     /// R1 (`regcarry`): the slots the exit's inline stub hands over in registers when a carry entry is attached (slot, type, where the exit map has the value);
     /// empty when the exit does not carry.
     pub carry: Vec<(u16, super::ir::Ty, super::ir::CarrySrc, bool)>,
+    /// Section 50 (`slink`): `carry` was chosen for a carry link only (the exit's stub has no carry path for it: `slink_carry`).
+    pub carry_link: bool,
 }
 
 /// S1: one inlined frame of the exit a side recording starts in (the fields of `exit::FrameRestore` the recorder needs).
@@ -5586,6 +5651,88 @@ pub fn child_room(extent: u16, depth: u8, seg_shift: u16, seg_pops: u8) -> (u16,
     )
 }
 
+/// Section 50 (`slink` bit 0): may exit `k` of a trace with metadata `m` take a carry link? The trace is not lazy-aware (E6 links those), keeps the budget
+/// in `ra::BUDGET_GPR`, and its assembly marked the exit linkable (`DeferInfo::dl_ok`: a deferred inline stub that continues through its cell, counted only
+/// for the hot count) with a patchable `nop` that was not given up.
+fn slink_exit_ok(slink: u32, m: &super::exit::ExitMeta, k: usize) -> bool {
+    if slink & 3 == 0
+        || m.lazy
+        || m.vb != super::ra::Loc::G(super::ra::BUDGET_GPR)
+        || m.cells.is_null()
+    {
+        return false;
+    }
+    let Some(df) = m.defer.as_deref() else {
+        return false;
+    };
+    df.dl_ok.get(k).copied().unwrap_or(false)
+        && df.patch_at.get(k).copied().unwrap_or(0) != 0
+        && !df.failed.get(k).is_none_or(|f| f.get())
+}
+
+/// Section 50 (`slink` bit 0): the slots of exit `k` of trace `id` that a side trace attached through a carry link takes over in the registers / spill slots
+/// of the exit map: every entry with a static non-constant type whose payload is in a register (not `V7` / `V10`) or a spill slot; the other entries (constants,
+/// function slots of virtual frames, booleans and nil, strings of dynamic variant) are stored by the link entry as the stub would. Frames may stay virtual
+/// (`ExitSnap::frame_side_ok`). Empty when the exit cannot take a carry link or nothing would be carried. The result is "link only": the exit's stub
+/// has no carry path for it (`TraceIr::carry_link`).
+fn slink_carry(
+    d: &mut JitData,
+    id: TrId,
+    k: u32,
+    snap: &super::exit::ExitSnap,
+    virt: bool,
+    prelude: bool,
+) -> Vec<(u16, super::ir::Ty, super::ir::CarrySrc, bool)> {
+    use super::exit::ValSrc;
+    use super::ir::{CarrySrc, Ty};
+    if d.tr.cfg.limits.slink & 3 != 1
+        || prelude
+        || !snap.sunk.is_empty()
+        || snap.top.is_some()
+        || !snap.usable
+        || snap.seg_pops != 0
+        || snap.slots.is_empty()
+        || (!snap.frames.is_empty() && !(virt && snap.frame_side_ok()))
+    {
+        return Vec::new();
+    }
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(id)
+    else {
+        return Vec::new();
+    };
+    let Some(m) = t.xmeta.as_ref() else {
+        return Vec::new();
+    };
+    if !slink_exit_ok(d.tr.cfg.limits.slink, m, k as usize) {
+        return Vec::new();
+    }
+    let mut out: Vec<(u16, Ty, CarrySrc, bool)> = Vec::new();
+    for s in &snap.slots {
+        if snap.slots.iter().filter(|o| o.slot == s.slot).count() != 1 {
+            return Vec::new();
+        }
+        let Some(ty) =
+            super::exit::ty_of_tag(s.tag).filter(|t| !matches!(t, Ty::Nil | Ty::False | Ty::True))
+        else {
+            continue;
+        };
+        if s.tag == super::exit::TAG_DYN_STR || s.slot >= super::ir::SNAP_PSEUDO || s.func {
+            continue;
+        }
+        let src = match s.src {
+            ValSrc::Reg(r) if r != 10 && r != 7 && ty != Ty::Num => CarrySrc::G(r),
+            ValSrc::Xmm(x) if ty == Ty::Num => CarrySrc::X(x),
+            ValSrc::Spill(n) => CarrySrc::Spill(n),
+            _ => continue,
+        };
+        out.push((s.slot, ty, src, !super::exit::tag_store_redundant(snap, s)));
+    }
+    out
+}
+
 /// R1 (`regcarry`): the slots of exit `k` of trace `id` (snapshot `snap`) a side trace may take over in the registers of the exit map, with their types and
 /// locations; empty when the exit cannot carry. The parent must have carry cells (`asm::AsmEnv::carry_exits`), the stub must not touch anything the side
 /// trace would find changed (no frames, sunk tables, `top`, constants as sources), and every slot needs a static type.
@@ -5621,9 +5768,11 @@ fn carry_slots(
     let Some(m) = t.xmeta.as_ref() else {
         return Vec::new();
     };
-    // (`regcarry=1`: the side trace is only worth a carry entry if the family's root has a third entry for its link to carry into)
+    // (`regcarry=1`: the side trace is only worth a carry entry if the family's root has a third entry for its link to carry into; section 50: or when
+    // the exit takes a carry link, which saves the stub's stores and the side trace's loads whatever the side trace links to)
     if d.tr.cfg.limits.regcarry == 1
         && !tr_of(d, t.root).is_some_and(|tp| tp.head(t.head).e3_sig_inst.get() != 0)
+        && !(d.tr.cfg.limits.slink & 3 == 1 && slink_exit_ok(d.tr.cfg.limits.slink, m, _k as usize))
     {
         return Vec::new();
     }
@@ -6088,7 +6237,13 @@ fn side_attempt(
     };
     let no_retf = matches!(d_of(st).tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.noretf.get(k as usize).copied().unwrap_or(false));
     let inner_ret = d_of(st).tr.cfg.limits.innerlink & 2 != 0 && family_linked_in(d_of(st), id);
-    let carry = carry_slots(d_of(st), id, k, snap, virt, prelude);
+    let mut carry = carry_slots(d_of(st), id, k, snap, virt, prelude);
+    // Section 50: an exit that cannot carry through its stub may still carry through a link
+    let mut carry_link = false;
+    if carry.is_empty() {
+        carry = slink_carry(d_of(st), id, k, snap, virt, prelude);
+        carry_link = !carry.is_empty();
+    }
     match start(
         st,
         ci,
@@ -6105,6 +6260,7 @@ fn side_attempt(
             no_retf,
             inner_ret,
             carry,
+            carry_link,
         },
     ) {
         Some(rem) => HotAction::Interp(rem),

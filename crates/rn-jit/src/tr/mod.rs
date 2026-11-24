@@ -983,6 +983,7 @@ pub fn driver_start_side(
             max_ci: start.max_ci,
             frame_min: if start.fretry { 0 } else { cfg.limits.framemin },
             carry: start.carry.clone(),
+            carry_link: start.carry_link,
         }),
         loop_unroll: cfg.limits.loopunroll,
         // C38 slice 1: a side recording that reaches a callee loop head with a root trace ends with the frame-linking exit
@@ -1680,16 +1681,32 @@ fn carry_demote(rec: &mut Recorded, link_snap: Option<u32>) {
         }
     }
     let mut dropped: Vec<(ir::Ref, u16)> = Vec::new();
+    // (section 50: one pass over the snapshot entries and the writeback marks the refs named in a slot other than their own; the per-load scan of every
+    // snapshot was quadratic in long side traces, which carry links made common)
+    let mut copied_in = vec![false; n];
+    {
+        let mut mark = |e: &ir::SnapEntry| {
+            if TraceIr::is_ins(e.r) {
+                let k = usize::from(e.r - ir::REF_BIAS);
+                if k < n && rec.ir.ins[k].a != e.slot {
+                    copied_in[k] = true;
+                }
+            }
+        };
+        for s in 0..rec.ir.snaps.len() {
+            for e in rec.ir.snap_entries(s as u32) {
+                mark(e);
+            }
+        }
+        for e in &rec.writeback {
+            mark(e);
+        }
+    }
     for k in 0..n {
         let i = rec.ir.ins[k];
         let r = ir::REF_BIAS + k as u16;
         // (a copy of the slot's value in another slot (`MOVE`) names the same ref: the load stays)
-        let copied = (0..rec.ir.snaps.len()).any(|s| {
-            rec.ir
-                .snap_entries(s as u32)
-                .iter()
-                .any(|e| e.r == r && e.slot != i.a)
-        }) || rec.writeback.iter().any(|e| e.r == r && e.slot != i.a);
+        let copied = copied_in[k];
         // (a dead numeric temporary at the link's pc stays carried: it is left out of the writeback like F4 leaves it out of a snapshot, so it costs nothing on
         // the hot path, while storing it at the entry would)
         let dead_at_link = link_snap.is_some_and(|ls| {
@@ -1714,9 +1731,14 @@ fn carry_demote(rec: &mut Recorded, link_snap: Option<u32>) {
     if dropped.is_empty() {
         return;
     }
+    let mut named_in = vec![false; n];
+    for e in rec.ir.snapmap.iter().chain(rec.writeback.iter()) {
+        if TraceIr::is_ins(e.r) && usize::from(e.r - ir::REF_BIAS) < n {
+            named_in[usize::from(e.r - ir::REF_BIAS)] = true;
+        }
+    }
     for &(r, slot) in &dropped {
-        let named =
-            rec.ir.snapmap.iter().any(|e| e.r == r) || rec.writeback.iter().any(|e| e.r == r);
+        let named = named_in[usize::from(r - ir::REF_BIAS)];
         let Some(p) = rec.ir.carry_in.iter().position(|c| c.0 == slot) else {
             continue;
         };
@@ -1726,17 +1748,25 @@ fn carry_demote(rec: &mut Recorded, link_snap: Option<u32>) {
             rec.ir.carry_store.push((slot, ty, src, tagok));
         }
     }
-    let gone: Vec<ir::Ref> = dropped.iter().map(|d| d.0).collect();
+    let mut gone_m = vec![false; n];
+    for d in &dropped {
+        gone_m[usize::from(d.0 - ir::REF_BIAS)] = true;
+    }
+    let gone = |r: &ir::Ref| {
+        TraceIr::is_ins(*r)
+            && usize::from(*r - ir::REF_BIAS) < n
+            && gone_m[usize::from(*r - ir::REF_BIAS)]
+    };
     for s in 0..rec.ir.snaps.len() {
-        let old = rec.ir.snap_entries(s as u32).to_vec();
-        if !old.iter().any(|e| gone.contains(&e.r)) {
+        if !rec.ir.snap_entries(s as u32).iter().any(|e| gone(&e.r)) {
             continue;
         }
-        let new: Vec<ir::SnapEntry> = old.into_iter().filter(|e| !gone.contains(&e.r)).collect();
+        let old = rec.ir.snap_entries(s as u32).to_vec();
+        let new: Vec<ir::SnapEntry> = old.into_iter().filter(|e| !gone(&e.r)).collect();
         rec.ir.snaps[s].map = (rec.ir.snapmap.len() as u32, new.len() as u16);
         rec.ir.snapmap.extend(new);
     }
-    rec.writeback.retain(|e| !gone.contains(&e.r));
+    rec.writeback.retain(|e| !gone(&e.r));
 }
 
 /// R1: is `regcarry` on for this state?
@@ -2481,6 +2511,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // SAFETY: as above.
         rec_vb_keep: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.dlink } & 2 != 0,
         // SAFETY: as above.
+        slink_snaps: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.slink } & 3 != 0
+            && !emurun
+            && !emuverify,
+        // SAFETY: as above.
         rec_late,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
@@ -2562,22 +2596,60 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         },
         carry_exits: carry_exits_on,
         // R1 (half A): the carry entry skips the room checks of the plain entry: the trace may not need more than the parent's checks guarantee
-        carry_entry: rec.ir.extent <= act.max_extent && rec.ir.depth <= act.max_ci,
+        // (section 50: a frameful side trace has no entry checks on either path; its R2 room checks, when it needs them, are in the body behind both
+        // entries and save the two registers they use)
+        carry_entry: (rec.ir.extent <= act.max_extent && rec.ir.depth <= act.max_ci)
+            || side.is_some_and(|s| s.frameful),
         defer: defer_on,
     };
     let t_asm = phase::now();
     // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): a side trace attached to an exit that can take a direct link gets a link entry: the parent's exit map
     // stores (the slot part of the parent's inline stub) and the exit's refund
+    let carried = !ir.carry_in.is_empty() || !ir.carry_store.is_empty();
     let dlink_in = if act.side && !act.prelude && side.is_some() && !emurun && !emuverify {
-        cache::dlink_source(st, act.id).map(|es| {
-            let full =
-                exit::inline_stub_ops_slots(&es, &es.slots, ra::Loc::G(ra::BUDGET_GPR), None);
-            let tail = exit::inline_stub_ops_slots(&es, &[], ra::Loc::G(ra::BUDGET_GPR), None);
-            asm::DlinkIn {
-                ops: full[..full.len() - tail.len()].to_vec(),
-                refund: es.refund,
-            }
-        })
+        if carried {
+            // Section 50 (`slink`): the carry link entry stores what the side trace does not take in registers (every entry of the exit map it does not
+            // carry, and the carried ones whose tag the stack lacks: the stub's carry path stores those, tag and payload) and joins the carry entry
+            cache::slink_source(st, act.id).map(|es| {
+                let carried_slot = |slot: u16| -> Option<bool> {
+                    ir.carry_in
+                        .iter()
+                        .find(|c| c.0 == slot)
+                        .map(|c| c.2)
+                        .or_else(|| ir.carry_store.iter().find(|c| c.0 == slot).map(|c| c.3))
+                };
+                let stores: Vec<exit::SlotRestore> = es
+                    .slots
+                    .iter()
+                    .filter(|e| match carried_slot(e.slot) {
+                        // (MUTANT `slink_store_skip`: the entries the side trace does not carry are not stored)
+                        None => !mutants::active("slink_store_skip"),
+                        // (MUTANT `slink_tag_skip`: the tags the stack lacks are not stored)
+                        Some(stubbed) => stubbed && !mutants::active("slink_tag_skip"),
+                    })
+                    .copied()
+                    .collect();
+                let full =
+                    exit::inline_stub_ops_slots(&es, &stores, ra::Loc::G(ra::BUDGET_GPR), None);
+                let tail = exit::inline_stub_ops_slots(&es, &[], ra::Loc::G(ra::BUDGET_GPR), None);
+                asm::DlinkIn {
+                    ops: full[..full.len() - tail.len()].to_vec(),
+                    refund: es.refund,
+                    carry: true,
+                }
+            })
+        } else {
+            cache::dlink_source(st, act.id).map(|es| {
+                let full =
+                    exit::inline_stub_ops_slots(&es, &es.slots, ra::Loc::G(ra::BUDGET_GPR), None);
+                let tail = exit::inline_stub_ops_slots(&es, &[], ra::Loc::G(ra::BUDGET_GPR), None);
+                asm::DlinkIn {
+                    ops: full[..full.len() - tail.len()].to_vec(),
+                    refund: es.refund,
+                    carry: false,
+                }
+            })
+        }
     } else {
         None
     };
@@ -2757,6 +2829,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     .and_then(|l| em.label_off[l as usize])
                     .unwrap_or(0)
             },
+            carry_link: ir.carry_link,
             text,
             hash,
             weight: ir.ins.len() as u32,

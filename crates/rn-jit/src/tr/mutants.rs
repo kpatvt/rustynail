@@ -1045,6 +1045,10 @@ pub const NAMES: &[&str] = &[
     "cspeed_ra_last_free",
     "cspeed_ra_unfuse_skip",
     "cspeed_sink_cand_miss",
+    // docs/JIT_TRACE.md section 50 (`slink`): register-passing side links (the carry link entry)
+    "slink_store_skip",
+    "slink_tag_skip",
+    "slink_refund_off",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1130,7 +1134,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 859);
+        assert_eq!(NAMES.len(), 862);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

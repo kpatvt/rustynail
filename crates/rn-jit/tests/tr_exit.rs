@@ -2974,6 +2974,7 @@ mod handler {
             idfold: false,
             midfold: false,
             dl_off: 0,
+            carry_link: false,
         };
         let tid = c::install(st, id, ti).expect("install");
         let meta = ExitMeta {
@@ -3156,6 +3157,7 @@ mod handler {
             idfold: false,
             midfold: false,
             dl_off: 0,
+            carry_link: false,
         };
         let tid = c::install(st, id, ti).expect("install");
         let snaps = (0..n)
@@ -3233,6 +3235,7 @@ mod handler {
             idfold: false,
             midfold: false,
             dl_off: 0,
+            carry_link: false,
         };
         let tid = c::install(st, id, ti).expect("install side");
         let meta = ExitMeta {

@@ -4396,12 +4396,12 @@ const TABLE: &[Row] = &[
     Row {
         name: "dlink_refund_off",
         owner: "E6",
-        dets: &[d("tr_core", "e6_dlink_programs")],
+        dets: &[d("tr_core", "e6_dlink_programs"), d("tr_core", "s50_slink_programs")],
     },
     Row {
         name: "dlink_store_skip",
         owner: "E6",
-        dets: &[d("tr_core", "e6_dlink_programs")],
+        dets: &[d("tr_core", "e6_dlink_programs"), d("tr_core", "s50_slink_programs")],
     },
     Row {
         name: "dlink_unlink_skip",
@@ -4750,6 +4750,21 @@ const TABLE: &[Row] = &[
         name: "cspeed_sink_cand_miss",
         owner: "C1",
         dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
+    Row {
+        name: "slink_store_skip",
+        owner: "S50",
+        dets: &[d("tr_core", "s50_slink_programs")],
+    },
+    Row {
+        name: "slink_tag_skip",
+        owner: "S50",
+        dets: &[d("tr_core", "s50_slink_programs")],
+    },
+    Row {
+        name: "slink_refund_off",
+        owner: "S50",
+        dets: &[d("tr_core", "s50_slink_programs")],
     },
 ];
 

@@ -190,6 +190,7 @@ fn fake(counter: &AtomicU64, land: usize, handler: Option<(u64, u32, u32)>) -> T
         idfold: false,
         midfold: false,
         dl_off: 0,
+        carry_link: false,
     }
 }
 
@@ -1456,6 +1457,7 @@ fn code_cap_flushes_all_traces_and_sets_a_global_penalty() {
         idfold: false,
         midfold: false,
         dl_off: 0,
+        carry_link: false,
     };
     assert_eq!(
         c::install(&mut st, id, big).err(),

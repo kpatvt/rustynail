@@ -460,6 +460,8 @@ pub struct SideCfg {
     pub frame_min: u32,
     /// R1 (`regcarry`): the slots the parent's exit hands over in registers (`SideStart::carry`): slot, type, where the exit map has the value. Empty: none.
     pub carry: Vec<(u16, Ty, CarrySrc, bool)>,
+    /// Section 50 (`slink`): `carry` is for a carry link only (`cache::SideStart::carry_link`); frames may be virtual.
+    pub carry_link: bool,
 }
 
 /// What a closed side recording adds to [`Recorded`].
@@ -2393,10 +2395,13 @@ impl Rec {
         // R1: the slots the parent's exit hands over in registers are defined first (unchecked, position-less loads): every snapshot, snapshot 0 included,
         // and the writeback name them, as the stack holds nothing for them
         let mut sm0 = SlotMap::new(if d0 == 0 { self.nslots } else { self.sm.len() });
-        if let Some(sd) = self.cfg.side.as_ref().filter(|_| d0 == 0) {
+        // (section 50: a carry link may also enter a side trace whose frames are virtual; its slots are root-relative and reach to the innermost frame)
+        if let Some(sd) = self.cfg.side.as_ref().filter(|s| d0 == 0 || s.carry_link) {
             let carry = sd.carry.clone();
+            self.b.ir.carry_link = sd.carry_link && !carry.is_empty();
+            let lim = if d0 == 0 { self.nslots } else { self.sm.len() };
             for (slot, ty, src, tagok) in carry {
-                if usize::from(slot) >= self.nslots {
+                if usize::from(slot) >= lim {
                     // (a register of a frame the parent popped: it may hold a dead object and nothing reads it: the carry entry stores it)
                     self.b.ir.carry_store.push((slot, ty, src, tagok));
                     continue;

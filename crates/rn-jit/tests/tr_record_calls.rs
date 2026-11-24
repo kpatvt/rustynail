@@ -516,6 +516,7 @@ fn n_side(st: &mut State) -> LuaResult<usize> {
         max_ci: 0,
         frame_min: 0,
         carry: Vec::new(),
+        carry_link: false,
     });
     let tok = record::arm(st, caller, pc, cfg).expect("recorder armed");
     LAST.with(|l| l.borrow_mut().token = tok);
