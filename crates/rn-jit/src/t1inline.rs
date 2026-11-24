@@ -600,7 +600,7 @@ impl Cx<'_> {
         self.t1i_minmax(s, false);
     }
 
-    /// `math.max(a, b)` / `math.min(a, b)` of two integers or two floats (`imax = a; if imax < b then imax = b`,
+    /// `math.max(a, b)` / `math.min(a, b)` of two integers or two floats (T6: or one of each) (`imax = a; if imax < b then imax = b`,
     /// `imin = a; if b < imin then imin = b`: the result is one of the operands, copied with its tag).
     fn t1i_minmax(&mut self, s: &Site, max: bool) {
         let (ints, p1, p2) = (self.p.label(), self.p.label(), self.p.label());
@@ -608,10 +608,43 @@ impl Cx<'_> {
         self.ld(3, W::B1, fr(s.a + 2, 0));
         self.ld(4, W::B8, fr(s.a + 1, 8));
         self.ld(6, W::B8, fr(s.a + 2, 8));
-        self.br(Cc::Ne, 2, Src::V(3), s.slow);
+        let cc = if s.mu & M_MM_LE != 0 { Cc::Le } else { Cc::Lt };
+        if self.env().tset & 0x40 != 0 {
+            // T6 (`t6` bit 1): one integer and one float compare as numbers (`LTintfloat`: exact when the integer fits a float, which the guard ensures; NaN
+            // never wins, as in the interpreter's `lua_compare`); the result is the winning operand itself, with its own tag
+            let (same, a_int) = (self.p.label(), self.p.label());
+            self.br(Cc::Eq, 2, Src::V(3), same);
+            self.br(Cc::Eq, 2, Src::Imm(i32::from(LUA_VNUMINT)), a_int);
+            self.br(Cc::Ne, 2, Src::Imm(i32::from(LUA_VNUMFLT)), s.slow);
+            self.br(Cc::Ne, 3, Src::Imm(i32::from(LUA_VNUMINT)), s.slow);
+            // a = float (V4), b = integer (V6) -> V5 = float bits of b
+            self.t1i_mm_int_to_float(s, 6);
+            let (x, y) = if max { (4, 5) } else { (5, 4) };
+            self.op(Op::FBr {
+                cc,
+                a: x,
+                b: y,
+                to: p2,
+            });
+            self.op(Op::Jmp(p1));
+            self.op(Op::Bind(a_int));
+            self.br(Cc::Ne, 3, Src::Imm(i32::from(LUA_VNUMFLT)), s.slow);
+            // a = integer (V4) -> V5 = float bits of a, b = float (V6)
+            self.t1i_mm_int_to_float(s, 4);
+            let (x, y) = if max { (5, 6) } else { (6, 5) };
+            self.op(Op::FBr {
+                cc,
+                a: x,
+                b: y,
+                to: p2,
+            });
+            self.op(Op::Jmp(p1));
+            self.op(Op::Bind(same));
+        } else {
+            self.br(Cc::Ne, 2, Src::V(3), s.slow);
+        }
         self.br(Cc::Eq, 2, Src::Imm(i32::from(LUA_VNUMINT)), ints);
         self.br(Cc::Ne, 2, Src::Imm(i32::from(LUA_VNUMFLT)), s.slow);
-        let cc = if s.mu & M_MM_LE != 0 { Cc::Le } else { Cc::Lt };
         let (x, y) = if max { (4, 6) } else { (6, 4) };
         self.op(Op::FBr {
             cc,
@@ -626,6 +659,28 @@ impl Cx<'_> {
         self.t1i_store(s, Src::V(2), 4, true);
         self.op(Op::Bind(p2));
         self.t1i_store(s, Src::V(3), 6, true);
+    }
+
+    /// T6: `V5` = the float bits of the integer in `V{v}` when it is exactly representable (`|i| <= 2^53`); a larger one takes the generic path
+    /// (`LTintfloat` compares those through the float's integer part). Clobbers `X2`.
+    fn t1i_mm_int_to_float(&mut self, s: &Site, v: V) {
+        const X2: X = 2;
+        #[cfg(feature = "trace")]
+        let (m_big, m_conv) = crate::tr::t6_minmax_mut();
+        #[cfg(not(feature = "trace"))]
+        let (m_big, m_conv) = (false, false);
+        if !m_big {
+            self.op(Op::Mov(5, 1u64 << 53));
+            self.br(Cc::Gt, v, Src::V(5), s.slow);
+            self.op(Op::Mov(5, (-(1i64 << 53)) as u64));
+            self.br(Cc::Lt, v, Src::V(5), s.slow);
+        }
+        if m_conv {
+            self.op(Op::GtoF(X2, v));
+        } else {
+            self.op(Op::I2Fx(X2, v));
+        }
+        self.op(Op::FtoG(5, X2));
     }
 
     /// `math.sqrt(x)` of a number.

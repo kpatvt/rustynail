@@ -16333,6 +16333,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t6_01_ctor.lua"),
     },
+    // docs/JIT_TRACE.md section 44.1 (T6 bit 1): mixed integer / float `math.min` / `math.max` of tier 1
+    Prog {
+        name: "t6_02_minmax",
+        small: true,
+        src: include_str!("../../../../tests/vm/t6_02_minmax.lua"),
+    },
     // docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings
     Prog {
         name: "tr24c_01_restarts",

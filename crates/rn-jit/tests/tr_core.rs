@@ -13182,6 +13182,35 @@ fn t6_ctor_programs() {
     compare(all);
 }
 
+/// docs/JIT_TRACE.md section 44.1 (T6, `t6` bit 1): `math.min` / `math.max` of one integer and one float inline in tier 1 (`t6_02_minmax`: every pair of
+/// 36 values with NaN, signed zeros, infinities and integers around 2^53 / 2^63, the benchmark shapes, mixed call sites, errors) in tier 1 with traces on but
+/// nothing hot (`t1x`) and in `always` / `on2`, with `t6` 0 / 1 / 3, `+verify`, the emulator, budgets 3 / 17 / 200, GC stress 1 / 2; every job against the
+/// interpreter. Detector of `t6_mm_big_skip`, `t6_mm_conv_skip`.
+#[test]
+fn t6_minmax_programs() {
+    let p = "t6_02_minmax";
+    let mut jobs = Vec::new();
+    for trace in ["t1x", "always", "on2"] {
+        for lim in ["t6=0", "t6=1", "t6=3"] {
+            jobs.push(Job::new(p, trace).limits_s(lim));
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+        }
+        let lim = "t6=3";
+        jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        for b in [3, 17, 200] {
+            jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+        }
+        for gc in ["1", "2"] {
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim),
+            );
+        }
+    }
+    compare(jobs);
+}
+
 /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): a root recording whose iteration ends with a slot of another type than its first read
 /// checked restarts in place from the new types. `tr24c_01_restarts` (an integer accumulator that becomes a float, a slot nil in the first iteration,
 /// a type that flips every iteration, a string / number slot with an error raised in a later iteration under `pcall`, an allocation with collections)

@@ -4489,6 +4489,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "t6_ctor_programs")],
     },
     Row {
+        name: "t6_mm_big_skip",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_minmax_programs")],
+    },
+    Row {
+        name: "t6_mm_conv_skip",
+        owner: "T6",
+        dets: &[d("tr_core", "t6_minmax_programs")],
+    },
+    Row {
         name: "blfirst_never",
         owner: "blfirst",
         dets: &[d("tr_policy", "blfirst_policy")],

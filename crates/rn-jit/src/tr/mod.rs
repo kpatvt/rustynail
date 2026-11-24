@@ -3329,6 +3329,14 @@ pub(crate) fn ctor_mutants() -> u8 {
         | u8::from(mutants::active("ctor_any_reg")) * CT_ANY_REG
 }
 
+/// Section 44.1 (T6): the active mutants `(t6_mm_big_skip, t6_mm_conv_skip)` of the mixed integer / float `math.min` / `math.max` of tier 1.
+pub(crate) fn t6_minmax_mut() -> (bool, bool) {
+    (
+        mutants::active("t6_mm_big_skip"),
+        mutants::active("t6_mm_conv_skip"),
+    )
+}
+
 /// BUNDLE-K item B: the active mutants `(strself_tag_skip, strself_mt_skip, strself_nil_hit)` of the inline string `SELF` of tier 1.
 pub(crate) fn strself_mut() -> (bool, bool, bool) {
     (

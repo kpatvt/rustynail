@@ -980,6 +980,9 @@ pub const NAMES: &[&str] = &[
     "ctor_mainpos_off",
     "ctor_collide",
     "ctor_any_reg",
+    // docs/JIT_TRACE.md section 44.1 (T6 bit 1): mixed integer / float `math.min` / `math.max` of tier 1
+    "t6_mm_big_skip",
+    "t6_mm_conv_skip",
     // docs/JIT_TRACE.md section 44.3 (`blfirst`): blacklist at the first unchangeable abort
     "blfirst_never",
     "blfirst_side_always",
@@ -1086,7 +1089,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 829);
+        assert_eq!(NAMES.len(), 831);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
