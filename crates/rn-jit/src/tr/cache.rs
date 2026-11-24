@@ -849,7 +849,8 @@ pub struct TrLimits {
     /// Bit 0 (`RAPOL_VICTIM`): the eviction victim is the value whose previous use is furthest away (Belady for the backward scan) instead of the
     /// value with the lowest defining ref (loop bodies only). Bit 1 (`RAPOL_CALLSPILL`): at a helper call that is always made, the values in
     /// caller-saved registers are spilled (one store at the definition, a reload behind a call only when read before the next one) instead of
-    /// being saved and reloaded at every call. 0 = every lever off (the allocator of section 50); default [`RAPOL_PROCESS`].
+    /// being saved and reloaded at every call. Bit 2 (`RAPOL_RBP`): `V9` (`rbp`) is allocatable in every trace (the register of `xregs` bit 0).
+    /// 0 = every lever off (the allocator of section 50); default [`RAPOL_PROCESS`].
     pub rapol: u32,
     /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Bit 0 (`jret`): the tier-1 `CALL` marks the frame it pushes
     /// (`CIST_T1RET`) and stores the address of its per-site resume cell in it; the tier-1 return of such a frame jumps through the cell instead

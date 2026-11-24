@@ -72,8 +72,12 @@ pub const RAPOL_VICTIM: u32 = 1;
 /// Section 51 (`rapol` bit 1): a value live across a helper call is spilled (stored once at its definition, reloaded after each call) instead of
 /// being saved to the exit area before and reloaded after every call it crosses. Loop homes and values pinned by an open snapshot keep the save.
 pub const RAPOL_CALLSPILL: u32 = 2;
+/// Section 51 (`rapol` bit 2): `V9` (`rbp`: callee-saved, read by nothing but the thunk's frame-pointer chain; the register of `xregs` bit 0) is
+/// allocatable in every trace. It is the last register of the free-register order, so a trace uses it only under pressure, and a helper call keeps
+/// it (no save / reload, never evicted by `RAPOL_CALLSPILL`).
+pub const RAPOL_RBP: u32 = 4;
 /// Every lever of `rapol`.
-pub const RAPOL_ALL: u32 = RAPOL_VICTIM | RAPOL_CALLSPILL;
+pub const RAPOL_ALL: u32 = RAPOL_VICTIM | RAPOL_CALLSPILL | RAPOL_RBP;
 
 const GPR_POOL: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10];
 
@@ -1079,9 +1083,10 @@ pub fn allocate_hinted(
             }
         }
     }
+    let rbp = opts.xregs & 1 != 0 || opts.pol & RAPOL_RBP != 0;
     let mut avail = Mask {
         g: 0x17F
-            | (u16::from(opts.xregs & 1) << 9)
+            | (u16::from(rbp) << 9)
             | if (ir.rec_call.is_some() || ir.rec_ret.is_some())
                 && !mutants::active("xregs_rec_r14")
             {
