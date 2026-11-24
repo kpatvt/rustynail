@@ -477,6 +477,7 @@ are ignored with a warning at `RUSTYNAIL_JIT_VERBOSE>=1`.
 | `leaadd` | 1 | 0-1 | N1d (`leaadd`, docs/JIT_TRACE.md section 41): an integer `ADD a, #imm` into a register other than `a` is one `lea d, [a + imm]` instead of `mov d, a; add d, imm` |
 | `pollr15` | 2 | 0-2 | P2-3b: the trace poll is `cmp byte [r15 + disp], 0` when the poll word is within reach of the per-state data (0 = address in a ... |
 | `xregs` | 0 | 0-3 | P2 bundle 1: extra general registers of the trace register allocator: bit 0 = `rbp` (`V9`, free: only the thunk's frame-pointer ... |
+| `rapol` | 5 | 0-7 | Section 51: policy levers of the trace register allocator (docs/JIT_TRACE.md section 51): bit 0 = Belady eviction victims in loop bodies, bit 1 = values spilled across always-made helper calls (off: lua_lexer formation), bit 2 = `rbp` (`V9`) allocatable in every trace |
 | `rearm` | 4 | 0-64 | R1: a stay of compiled code that hands a frame to the interpreter arms the sampling tick (`jit_hooks::rearm_tick`) for the next ... |
 
 Trace code is charged to the same code cap and memory limit as tier 1 code (a refusal flushes traces and sets a global

@@ -107,7 +107,9 @@ pub const DLINK_PROCESS: u32 = 3;
 /// Section 50 (`slink`): the process default of [`TrLimits::slink`] (also the struct default).
 pub const SLINK_PROCESS: u32 = 2;
 /// Section 51 (`rapol`): the process default of [`TrLimits::rapol`] (also the struct default): the trace register allocator's policy levers.
-pub const RAPOL_PROCESS: u32 = 0;
+/// **5 = `RAPOL_VICTIM | RAPOL_RBP`** (docs/JIT_TRACE.md 51.4: -1.40 % instructions / -1.22 % cycles over the 33-program sample, no program above
+/// +0.04 % instructions); `RAPOL_CALLSPILL` (2) stays off (lua_lexer's formation at the default hot threshold).
+pub const RAPOL_PROCESS: u32 = 5;
 /// E9: the process default of [`TrLimits::t1call`] (also the struct default).
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).

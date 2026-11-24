@@ -6482,3 +6482,133 @@ with the registers (saves only the side trace's slot loads, about one instructio
   the official suite (`scripts/jit-official.sh`, `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`): OK on 5.5 and 5.4.
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle-feature suites (the identity jobs of `s50_slink_programs` ran only inside
   the mutant runner's oracle build), PGO builds, the all-223 benchmark; no 5.4 performance numbers.
+
+## 51. Trace register allocator policy (knob `rapol`; 2026-11-24, base 7f153aa)
+
+Task: cause C3 (spills) of docs/STUDY_WHY_GAP.md: the allocator's policy, not the register count, as the lever; measure the spill traffic first,
+then build levers in the order of the measured classes. **Result: three levers behind one knob (`rapol`, bits of `ra::RAPOL_*`); bits 0 and 2
+are the default (`RAPOL_PROCESS = 5`), bit 1 is built, sound and tested but off. Measured `rapol=0` -> `5` (one binary) over a 33-program sample:
+geomean -1.40 % instructions / -1.22 % cycles (5.5), -1.26 % instructions (5.4); byte_multi -8.7 % / -5.3 %, fmt_s -11.0 % / -9.1 %,
+oop_methods -9.6 % / -13.1 %, heapsort -3.8 % / +0.2 %; no program above +0.04 % instructions or +1.7 % cycles. The study's estimates (byte_multi
+-25 % instructions, towers -9 %, lua_lexer -5 %) are missed: -8.7 %, -0.9 %, -0.4 %. The straight-line programs' spill classes are small
+(1-6 % of their instructions in all, 51.1) and none of them is one big class. No backward-linear-scan rewrite: the existing allocator already is
+one (LuaJIT's scheme, 7.2); what the measurement found are policy choices, each fixable in place.**
+
+### 51.1 Step 0: what the allocator's spill code costs (measured before building)
+
+Method: a scratch build (not committed: a diagnostic in `asm.rs` / `mod.rs` / `ra.rs`) binds a label before and after every piece the assembler
+emits for the allocation of an IR instruction (the reloads in front of it, the instruction, its spill stores, its reloads behind it), around the
+back-edge and loop-entry moves and around the save / reload of each helper-call site, and writes the label offsets and the allocation (with the
+value of every reload) into the `RUSTYNAIL_JIT_DUMP` text; the machine code is byte-identical with and without the labels (addresses aside).
+AMD IBS op sampling in the same runs (`perf record -e ibs_op/cnt_ctl=1,swfilt=1/u -c 20000`, precise IPs, CPU 4, `RUSTYNAIL_SEED=0`,
+`RUSTYNAIL_JIT_PERFMAP=2`): every sample in a trace is mapped to its label region and classified (spill stores by why the value has a slot,
+reloads by the reloaded value, `mov r,r` / `movaps` / `movabs imm64` inside an instruction by pattern). Runs repeated to 6 000-39 000 samples
+(byte_multi 15, towers 15, richards 10, raytrace 8, fmt_s 30, classic_vector 3, lua_lexer 2); shares of all sampled ops of the program
+(about all instructions; +-0.1-0.3 points).
+
+| class (% of all instructions) | byte_multi | fmt_s | towers | richards | raytrace | classic_vector | lua_lexer |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| trace code, all | 87.9 | 33.2 | 50.4 | 37.5 | 17.1 | 29.4 | 45.4 |
+| eviction: spill store at the definition | 6.52 (loop body) | 1.37 (body) | 0.73 | 0.39 | 0.08 | 0.19 | 0.59 |
+| eviction: reload behind the evicting instruction | 10.64 (body) | 4.21 (body) | 0.55 | 1.22 | 0.15 | 0.21 | 0.17 |
+| frame-slot loads (`SLOAD`) spilled and reloaded | 0 | 0.02 | 1.47 | 0.20 | 0.20 | 0.22 | 2.41 (R1 lead run) |
+| snapshot-only slot stores (live in a snapshot after the last use, no free register) | 2.30 (body) | 1.20 (body) | 0.83 | 0.20 | 0.03 | 0.25 | 0.28 |
+| loop-carried values through memory at the back-edge | 4.72 | 1.27 | 0.07 | 0 | 0 | 0.02 | 0.03 |
+| loop invariants reloaded from slot homes | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| helper-call save / reload of live registers | 0 | 0 | 0 | 0 | 0.31 (`TNEW`) | 2.77 (`TNEW`, `NEWREF`) | 1.71 (`LIB`) |
+| register moves inside instructions (two-address, `movaps`) | 6.95 | 2.80 | 0.78 | 0.09 | 0.53 | 0.50 | 0.58 |
+| 64-bit constants (`movabs` into `V7`; not allocator work) | 0 | 0 | 3.46 | 2.97 | 1.22 | 2.45 | 1.25 |
+
+Upper bound of the allocator classes (constants excluded): byte_multi 31 %, fmt_s 11 %, towers 4.4 %, richards 2.1 %, raytrace 1.3 %,
+classic_vector 4.0 %, lua_lexer 5.8 % of all instructions. What it says:
+
+* **Two kinds of programs.** byte_multi and fmt_s run one loop trace whose body evicts: 5 body registers (8 minus the budget register `V5` minus
+  two array-base homes). The victim was the value with the lowest ref: in byte_multi the string `S[k]` that the next three `string.byte` reads
+  use again, so four reloads per iteration. Every other program runs straight-line traces (no `LOOP` in the hot traces): no class above 2.8 %.
+* lua_lexer's largest class is the leading `SLOAD` run of an R1 root (24 frame slots loaded and stored into the spill slots that R1's carry entry
+  fills): not removable by rematerialising from the frame (the stack is stale behind a carry entry, section 16).
+* Call-site save / reload runs only at calls without an inline fast path (`TNEW`, `NEWREF`, the helper `LIB` kinds); `TBAR`, `TLEN`,
+  `string.byte` keep it on their cold path.
+* No loop invariant lives in a slot home in the seven programs: the home policy (`max_gpr_homes`) is not a lever here.
+
+### 51.2 The levers (knob `rapol` of `RUSTYNAIL_JIT_TRACE_LIMITS`; `cache::RAPOL_PROCESS = 5`; `ra::RaOpts::pol`)
+
+| bit | lever | what changed | default | commit |
+|---|---|---|---|---|
+| 1 `RAPOL_VICTIM` | Belady victims in loop bodies | inside a loop body the victim is the value whose previous read (going up from the evicting instruction) is furthest away; the reads are indexed once per trace at the first body eviction (flat array, counting sort); straight-line code keeps the lowest-ref choice | on | 1 |
+| 2 `RAPOL_CALLSPILL` | spill across calls | at a call that is always made (`CALLN`, `TNEW`, `NEWREF`, `TSET`, `SNEW`, `CONCAT`, `STRTO`, `LIB` kinds without a fast path) every value in a caller-saved register is evicted: one store at its definition, a reload behind a call only when it is read before the next call; loop homes and values pinned by an open snapshot keep the save | off | 2 |
+| 4 `RAPOL_RBP` | `rbp` allocatable | `V9` (`rbp`: callee-saved, read only by the thunk's frame-pointer chain; the register of `xregs` bit 0) is allocatable in every trace, last in the free order; calls keep it | on | 3 |
+
+Tried and dropped (measured, scratch): Belady in straight-line traces too (richards +0.5 %, raytrace +0.2-0.4 % instructions: the furthest-read
+victim often has no slot yet, so the eviction adds a store, and lua_lexer changed formation); a PHI bias on top of Belady (fmt_s, heapsort worse);
+preferring victims that already have a slot (no effect); `rbp` only for loop traces whose body spills (a second allocation; its compile cost ate the
+gain on cd / raytrace); a hint putting values that cross an always-made call into `rbp` (cd, raytrace slightly worse than plain `rbp`). Not built:
+rematerialising `SLOAD` values from the frame (the measured class is R1 lead runs, unsound there), constant registers (the `movabs` class is in
+straight-line traces), two-address forms of the in-instruction moves (not examined further).
+
+Why `rbp` alone is now a default although `xregs=1` was not (docs/PERF.md BUNDLE-H): the gate failure then was `rec_loop` +5.9 % cycles at fewer
+instructions, undiagnosed. On this base `rec_loop` is -1.7 % instructions / -2.9 % cycles and heapsort +0.2 % cycles at -3.8 % instructions
+(min of 3; the 0-vs-7 pass, taken while a gate ran on other CPUs, read heapsort +23 % cycles: noise, not reproduced in the clean pass).
+
+### 51.3 Soundness and tests
+
+* Every lever only changes which valid allocation is produced: a victim choice, extra evictions (the existing eviction: store at the definition,
+  reload behind the instruction, TR27 pins respected) and one more allocatable register (the `xregs` bit 0 path, tested since P2 bundle 1).
+* `RAPOL_CALLSPILL`: an evicted value leaves the call site's saved set because its register is free at the call (the reload follows the
+  instruction); pinned values (their register is in an exit map on both sides of the call) and loop homes are never evicted. Mutant
+  `callspill_no_reload` (the value leaves the saved set without a reload; registry 863 -> 864) is caught by `tr_ra::allocation_matches_interpreter`
+  (and the straight-line variant) and `tr_core::s51_rapol_programs`.
+* `tests/tr_ra.rs`: the differential allocator test runs every case with all levers off, all on, and the random seeds with a rotating lever set
+  (`+randra` with `xregs` 0-3); the lowering model now destroys every caller-saved register a call site does not save (before, a wrong live set
+  could not fail it).
+* `tr_core::s51_rapol_programs`: `tests/tr_core/s51_progs.rs` (`s51_loop_pressure`: twelve live integers / floats in a loop body, rotations,
+  invariants, type-flip exits; `s51_call_values`: values across table constructors, concatenation, `tostring`, `string.rep` in a loop and its
+  side traces; `s51_phi_rotate`: swaps and three-cycles of both classes with a call in the body) and `s50_spill_values`, `r1_many_slots`,
+  `r1_nbody_pairs`, under `rapol` 0 / 1 / 2 / 4 / 7 x `always` / `on2` x plain, `+verify`, budget 17; with `rapol=7` also `+exitstorm=3 +verify
+  +randra=5`, budget 3, `xregs=3`, GC stress 1 / 2 in both collector modes, `RUSTYNAIL_JIT_STRESS=stackmove +tracemove`, and with the oracle
+  feature the instruction-count identity (budgets none / 3 / 17). Runs in both versions' trace suites.
+
+### 51.4 Measured (release `rn-cli`, one binary, `rapol=0` against the levers; `RUSTYNAIL_SEED=0`, `taskset -c 4`; instructions of one run, cycles min of 3 interleaved)
+
+Sample: the 30 programs of section 50 plus lib/byte_multi, lib/fmt_s and jit-trace/rec_loop (33).
+
+| lever step | geomean instr | geomean cycles | largest gains (instr / cycles) | worst |
+|---|---:|---:|---|---|
+| 0 -> 1 (`VICTIM`) | -0.29 % | -0.29 % | fmt_s -4.4 / -9.0, byte_multi -3.9 / -0.3, heapsort -1.5 / -1.0 | oop_methods **+1.04 %** instr (-4.6 % cycles: one memory op fewer, two register moves more in its back-edge cycle) |
+| 1 -> 3 (`CALLSPILL`) | +0.56 % | +0.48 % | classic_vector -0.6, binary_trees -0.6, metamethods -0.4 | **lua_lexer +22.9 %** (formation, below) |
+| 3 -> 7 (`RBP`) | -1.24 % | -0.37 % (pass disturbed by a gate run) | oop_methods -10.5, fmt_s -7.0, byte_multi -5.1, heapsort -2.3, bounce -1.2 | none above 0 in instructions |
+| **0 -> 5 (shipped)** | **-1.40 %** | **-1.22 %** | fmt_s -11.0 / -9.1, oop_methods -9.6 / -13.1, byte_multi -8.7 / -5.3, heapsort -3.8 / +0.2, rec_loop -1.7 / -2.9, bounce -1.3 / -1.2, towers -0.9 / -3.3, deltablue -0.9 / -0.6 | instructions: storage +0.04, fib / string_ops +0.00; cycles: expr_lang +1.70, fib +1.03 |
+| 0 -> 5, Lua 5.4 (instructions only) | -1.26 % | not run | fmt_s -10.9, oop_methods -9.6, byte_multi -8.7, rec_loop -1.5, deltablue -1.0 | storage +0.04 |
+
+byte_multi: 102.7 -> 93.7 instructions per iteration (2.86 M iterations; LuaJIT 29.6). **Bar** (no program above +1 % instructions / +2 % cycles,
+geomean not worse): met for the shipped `rapol=5` in 5.5 (5.4: instructions only). `VICTIM` alone misses it on oop_methods (+1.04 %
+instructions), `CALLSPILL` misses it on lua_lexer; neither is shipped alone.
+
+**Formation lottery.** Hot thresholds 248 / 252 / 256 / 260 / 264, instructions `rapol=0` -> `5`: classic_vector -0.42 / -0.46 / -0.47 / -0.42 /
+-0.47 %, cd -0.13 / -0.13 / -0.13 / -0.12 / -0.11, lua_lexer -0.37 / -0.34 / -0.43 / -0.20 / -0.24, raytrace -0.13 / -0.12 / -0.15 / -0.12 / -0.12,
+richards -0.40 / -0.51 / -0.51 / -0.52 / -0.77, towers -0.99 / -0.69 / -0.92 / -0.83 / -0.70, deltablue -0.89 / -0.81 / -0.89 / -0.82 / -0.87,
+byte_multi -8.74 at all five: same sign everywhere. With `CALLSPILL` (bit 1) lua_lexer is -0.14 .. -0.28 % at 248 / 252 / 260 / 264 and
++22.9 % at 256: at that threshold any change of its R1 root's allocation (`carry: root e3 ... dsts` registers; seen also with straight-line Belady
+and with a call hint) moves the side-trace formation to a known slow attractor (4.05-4.73 G instructions, side trace of exit 34 of trace 11 never
+formed). Not chased; it is why bit 1 stays off.
+
+**Compile cost** (`[trace] phases`, min of 3, `rapol=0` -> `5`): allocator `ra` Mtsc cd 6.22 -> 5.61, raytrace 1.94 -> 1.95, richards 1.06 ->
+1.03, towers 0.68 -> 0.67, fmt_s 0.06 -> 0.06; whole pipeline cd 30.2 -> 27.6, raytrace 8.51 -> 8.46, richards 4.61 -> 4.56, towers 3.21 ->
+3.25: no measurable change (the reads index of `VICTIM` is built only when a loop body evicts; a first version that built it for every trace cost
+richards +0.5 % instructions).
+
+### 51.5 Gates and what was not run
+
+* Commit 1 (knob, `VICTIM`, tests): `GATE_CPUS=5-11,13-15 scripts/gate-light.sh --fast --base HEAD~1`: every step PASS (trace suites 5.5 196 s,
+  5.4 188 s, `vm_corpus`, jit-diff 1-50) except the mutant group: 80 ran, 79 caught; the survivor `rec_inner_first_stale`
+  (`tr_core::pm4_recursion_entry_counters`) also survives on the base 7f153aa (checked with `gate-mutants.sh --only rec_inner_first_stale` on a
+  `git archive` of the base): pre-existing, not caused by this work (the default code is unchanged in that commit).
+* Commit 2 (`CALLSPILL`): `gate-light.sh callspill_,spill_no_reload,exit_rename_ignored,cycle_stale_xmm,phi_swap --fast --base HEAD~1`: all PASS.
+* Commit 3 (`RBP`): `gate-light.sh xregs_,callspill_,spill_no_reload --fast --base HEAD~1`: all PASS. Default commit (`rapol=5`):
+  `gate-light.sh --fast --base HEAD~1`: every step PASS (trace suites 5.5 164 s / 5.4, `vm_corpus`, jit-diff 1-50, the planned mutant group)
+  after regenerating the stale mutant map (line numbers in `cache.rs`).
+* Final binaries (5.5 and 5.4 release `rn-cli`, default `rapol=5`): `JITDIFF_MODES="off tr trdef" scripts/jit-diff.sh 1 40`: 40 seeds, 0 diffs,
+  0 timeouts, both versions; the official suite (`scripts/jit-official.sh`, `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`): OK on 5.5 and 5.4.
+  With every lever (`rapol=7`, 5.5): jit-diff 1-40 `off tr` 0 diffs, official suite OK.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle-feature suites (the identity jobs of `s51_rapol_programs` run
+  only in oracle builds), PGO builds, the all-223 benchmark; 5.4 cycles.
