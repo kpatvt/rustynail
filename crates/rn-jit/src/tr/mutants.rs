@@ -1050,6 +1050,8 @@ pub const NAMES: &[&str] = &[
     "slink_tag_skip",
     "slink_refund_off",
     "slink_count_skip",
+    // docs/JIT_TRACE.md section 51 (`rapol`): policy levers of the trace register allocator
+    "callspill_no_reload",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1135,7 +1137,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 863);
+        assert_eq!(NAMES.len(), 864);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

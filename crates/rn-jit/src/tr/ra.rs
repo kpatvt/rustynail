@@ -69,8 +69,11 @@ pub const BUDGET_GPR: u8 = 5;
 /// Section 51 (`rapol` bit 0): the eviction victim is the value whose previous use (going up from the current instruction) is furthest away,
 /// Belady's choice for a backward scan, instead of the value with the lowest defining ref.
 pub const RAPOL_VICTIM: u32 = 1;
+/// Section 51 (`rapol` bit 1): a value live across a helper call is spilled (stored once at its definition, reloaded after each call) instead of
+/// being saved to the exit area before and reloaded after every call it crosses. Loop homes and values pinned by an open snapshot keep the save.
+pub const RAPOL_CALLSPILL: u32 = 2;
 /// Every lever of `rapol`.
-pub const RAPOL_ALL: u32 = RAPOL_VICTIM;
+pub const RAPOL_ALL: u32 = RAPOL_VICTIM | RAPOL_CALLSPILL;
 
 const GPR_POOL: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10];
 
@@ -458,6 +461,29 @@ fn is_call_op(op: TOp) -> bool {
             | TOp::Strto
             | TOp::Lib
     )
+}
+
+/// Section 51 (`RAPOL_CALLSPILL`): a call site whose helper call is on the main path of the assembled code, whatever the assembler's options:
+/// the instructions with an inline fast path (`TLEN` / `TNEXT`, the `LIB` kinds `BYTE`, `STREQ`, `TYPE`, `TYPENAME`, `SETMT`, `CCALLS`,
+/// `RANDOM`, `RANDF`; `TBAR`'s test of the colours) keep the save / reload of the call site, which their fast path does not execute.
+fn always_calls(ins: &Ins) -> bool {
+    match ins.op {
+        TOp::Calln | TOp::Tnew | TOp::Newref | TOp::Tset | TOp::Snew | TOp::Concat | TOp::Strto => {
+            true
+        }
+        TOp::Lib => !matches!(
+            ins.aux & 0xFF,
+            lib::BYTE
+                | lib::STREQ
+                | lib::TYPE
+                | lib::TYPENAME
+                | lib::SETMT
+                | lib::CCALLS
+                | lib::RANDOM
+                | lib::RANDF
+        ),
+        _ => false,
+    }
 }
 
 /// Constant-defining instructions: operand `a` is the constant, `b` is unused (`NOREF` from the recorder).
@@ -1935,6 +1961,9 @@ impl Ra<'_> {
             self.deferred.extend(slots);
         }
         let live_after = if is_call(ir, &ins) {
+            if self.opts.pol & RAPOL_CALLSPILL != 0 && always_calls(&ins) {
+                self.spill_across_call()?;
+            }
             let mut m = Mask::default();
             // `V9` / `V10` (`rbp`, `r14`) are callee-saved: `CallH` keeps them
             for r in 0..NGPR_CLOBBERED as u8 {
@@ -2053,6 +2082,36 @@ impl Ra<'_> {
                     self.vals[v].pins -= 1;
                 }
                 self.open.retain(|&o| o != s);
+            }
+        }
+        Ok(())
+    }
+
+    /// Section 51 (`RAPOL_CALLSPILL`): every value that holds a register the helper call destroys and is live after it is evicted at the call
+    /// (reloaded right after it from its spill slot, stored once at its definition), except loop homes (`fixed`) and values pinned by an open
+    /// snapshot (their register is in an exit map on both sides of the call): those keep the save / reload of the call site.
+    fn spill_across_call(&mut self) -> R<()> {
+        for x in [false, true] {
+            let (pool, np) = Self::pool_arr(x);
+            for &r in &pool[..np] {
+                if !x && usize::from(r) >= NGPR_CLOBBERED {
+                    continue;
+                }
+                let h = self.holder(x, r);
+                if h == NONE {
+                    continue;
+                }
+                let v = h as usize;
+                if self.vals[v].fixed || self.vals[v].pins > 0 {
+                    continue;
+                }
+                if mutants::active("callspill_no_reload") {
+                    // MUTANT: the value leaves the call's saved set without a reload behind the call
+                    self.free_reg(v);
+                    self.evicted.set(x, r);
+                    continue;
+                }
+                self.evict(v, x, r)?;
             }
         }
         Ok(())

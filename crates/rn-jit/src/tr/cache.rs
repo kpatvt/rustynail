@@ -847,7 +847,9 @@ pub struct TrLimits {
     pub slink: u32,
     /// Section 51 (`rapol`, docs/JIT_TRACE.md section 51): policy levers of the trace register allocator (bits of `ra::RAPOL_*`; `ra::RaOpts::pol`).
     /// Bit 0 (`RAPOL_VICTIM`): the eviction victim is the value whose previous use is furthest away (Belady for the backward scan) instead of the
-    /// value with the lowest defining ref. 0 = every lever off (the allocator of section 50); default [`RAPOL_PROCESS`].
+    /// value with the lowest defining ref (loop bodies only). Bit 1 (`RAPOL_CALLSPILL`): at a helper call that is always made, the values in
+    /// caller-saved registers are spilled (one store at the definition, a reload behind a call only when read before the next one) instead of
+    /// being saved and reloaded at every call. 0 = every lever off (the allocator of section 50); default [`RAPOL_PROCESS`].
     pub rapol: u32,
     /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Bit 0 (`jret`): the tier-1 `CALL` marks the frame it pushes
     /// (`CIST_T1RET`) and stores the address of its per-site resume cell in it; the tier-1 return of such a frame jumps through the cell instead

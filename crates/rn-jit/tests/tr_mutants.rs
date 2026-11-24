@@ -4771,6 +4771,14 @@ const TABLE: &[Row] = &[
         owner: "S50",
         dets: &[d("tr_core", "mixed_string_loops_are_not_flushed_as_ineffective")],
     },
+    Row {
+        name: "callspill_no_reload",
+        owner: "S51",
+        dets: &[
+            d("tr_ra", "allocation_matches_interpreter"),
+            d("tr_core", "s51_rapol_programs"),
+        ],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
