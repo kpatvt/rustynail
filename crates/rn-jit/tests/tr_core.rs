@@ -39,6 +39,8 @@ mod r1_progs;
 mod s4_progs;
 #[path = "tr_core/s50_progs.rs"]
 mod s50_progs;
+#[path = "tr_core/s51_progs.rs"]
+mod s51_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -61,6 +63,7 @@ use rn_jit::tr::TraceOpts;
 use rn_jit::{Config, Mode};
 use s4_progs::S4_PROGS;
 use s50_progs::S50_PROGS;
+use s51_progs::S51_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -188,6 +191,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S4_PROGS)
         .chain(Y_PROGS)
         .chain(S50_PROGS)
+        .chain(S51_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -13109,6 +13113,73 @@ fn s50_slink_programs() {
             );
         } else if k.ends_with("slink=1") || k.ends_with("slink=2") {
             assert!(*n > 0, "{k}: no side link was attached");
+        }
+    }
+}
+
+/// Section 51 (`rapol`, docs/JIT_TRACE.md section 51): the policy levers of the trace register allocator change which values live in registers,
+/// spill slots and `rbp` (Belady victims in loop bodies, values spilled across helper calls, `V9` allocatable). The programs of
+/// `tests/tr_core/s51_progs.rs` (loop pressure with rotations and invariants, values across helper calls, PHI cycles) and the pressure programs of
+/// R1 / section 50, under every lever alone and all together, `always` / `on2`, `+verify`, exit storms with `+randra`, budgets, GC stress 1 / 2 in
+/// both collector modes, stack moves, `xregs=3`; with the oracle feature the instruction-count identity.
+#[test]
+fn s51_rapol_programs() {
+    let progs = [
+        "s51_loop_pressure",
+        "s51_call_values",
+        "s51_phi_rotate",
+        "s50_spill_values",
+        "r1_many_slots",
+        "r1_nbody_pairs",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["rapol=0", "rapol=1", "rapol=2", "rapol=4", "rapol=7"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            }
+            let lim = "rapol=7";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify +randra=5")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).budget(3).limits_s(lim));
+            jobs.push(Job::new(p, trace).limits_s("rapol=7,xregs=3"));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(lim),
+            );
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.prog.starts_with("s51_")
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+        {
+            assert!(o.stats.installed > 0, "{}: nothing traced", j.tag());
         }
     }
 }

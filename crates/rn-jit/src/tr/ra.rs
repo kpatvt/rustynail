@@ -66,6 +66,12 @@ pub const MAX_PHI: usize = 64;
 /// (`SDivRem` skips it). `asm::assemble` accepts exactly this register.
 pub const BUDGET_GPR: u8 = 5;
 
+/// Section 51 (`rapol` bit 0): the eviction victim is the value whose previous use (going up from the current instruction) is furthest away,
+/// Belady's choice for a backward scan, instead of the value with the lowest defining ref.
+pub const RAPOL_VICTIM: u32 = 1;
+/// Every lever of `rapol`.
+pub const RAPOL_ALL: u32 = RAPOL_VICTIM;
+
 const GPR_POOL: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10];
 
 const NOREG: u8 = 255;
@@ -197,6 +203,8 @@ pub struct RaOpts {
     /// R1 (`regcarry`): the index of the first instruction behind the leading `SLOAD` run of a root (`exit::lead_run`): the allocator records where the
     /// run's values are before that instruction ([`Allocation::carry`]). 0: nothing is recorded.
     pub carry_at: usize,
+    /// Section 51 (`rapol`): the policy levers (`RAPOL_*` bits).
+    pub pol: u32,
 }
 
 impl Default for RaOpts {
@@ -210,6 +218,7 @@ impl Default for RaOpts {
             hkaddr: false,
             ixfuse: false,
             carry_at: 0,
+            pol: super::cache::RAPOL_PROCESS,
         }
     }
 }
@@ -773,6 +782,81 @@ struct Ra<'a> {
     deferred: Vec<u16>,
     end_hints: Vec<Loc>,
     carried: Vec<bool>,
+    /// Section 51 (`RAPOL_VICTIM`): per value, the instructions that read it (built at the first eviction: most traces never evict).
+    uses: Option<Uses>,
+    /// The `end_uses` of the allocation (read at the end).
+    end_refs: Vec<Ref>,
+}
+
+/// Section 51 (`RAPOL_VICTIM`): per value, the instructions that read it, ascending (one flat array: `at[off[v]..off[v + 1]]`). The entry values of
+/// the PHIs are read at the `LOOP` marker, the back-edge values of the PHIs and `end_uses` at the end (`n`).
+#[derive(Default)]
+struct Uses {
+    off: Vec<u32>,
+    at: Vec<u32>,
+}
+
+impl Uses {
+    fn build(
+        ir: &TraceIr,
+        fused: &[bool],
+        l: Option<usize>,
+        phis: &[usize],
+        end_uses: &[Ref],
+    ) -> Uses {
+        let n = ir.ins.len();
+        // (value, instruction) in instruction order, then a counting sort by value (stable: each value's reads stay ascending)
+        let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(2 * n);
+        let mut add = |r: Ref, at: usize| {
+            if TraceIr::is_ins(r) && idx(r) < n {
+                pairs.push((idx(r) as u32, at as u32));
+            }
+        };
+        for i in 0..n {
+            if l == Some(i) {
+                for &p in phis {
+                    add(entry_ref(ir, p), i);
+                }
+                continue;
+            }
+            if ir.ins[i].op == TOp::Phi {
+                continue;
+            }
+            let refs = operand_refs(ir, fused, i);
+            for (k, &r) in refs.iter().enumerate() {
+                if !refs[..k].contains(&r) {
+                    add(r, i);
+                }
+            }
+        }
+        for &p in phis {
+            add(ir.ins[p].b, n);
+        }
+        for &r in end_uses {
+            add(r, n);
+        }
+        let mut off = vec![0u32; n + 1];
+        for &(v, _) in &pairs {
+            off[v as usize + 1] += 1;
+        }
+        for v in 0..n {
+            off[v + 1] += off[v];
+        }
+        let mut fill: Vec<u32> = off[..n].to_vec();
+        let mut at = vec![0u32; pairs.len()];
+        for &(v, pos) in &pairs {
+            at[fill[v as usize] as usize] = pos;
+            fill[v as usize] += 1;
+        }
+        Uses { off, at }
+    }
+
+    /// The last read of `v` before instruction `i`, if any.
+    fn before(&self, v: usize, i: usize) -> Option<u32> {
+        let u = &self.at[self.off[v] as usize..self.off[v + 1] as usize];
+        let k = u.partition_point(|&p| (p as usize) < i);
+        (k > 0).then(|| u[k - 1])
+    }
 }
 
 type R<T> = Result<T, RaError>;
@@ -1094,6 +1178,8 @@ pub fn allocate_hinted(
             .iter()
             .map(|i| i.op == TOp::Sload && aux_bits(i.aux) & SLOAD_CARRIED != 0)
             .collect(),
+        uses: None,
+        end_refs: end_uses.to_vec(),
     };
     ra.run(end_uses, weak)
 }
@@ -1271,6 +1357,19 @@ impl Ra<'_> {
     }
 
     fn score(&self, v: usize) -> i64 {
+        if self.opts.pol & RAPOL_VICTIM != 0 && self.l.is_some_and(|l| self.cur_i > l) {
+            // the previous use before the current instruction (its own operands are not candidates), else the definition: the
+            // register is free over the longest stretch above the current instruction
+            let mut s = self
+                .uses
+                .as_ref()
+                .and_then(|u| u.before(v, self.cur_i))
+                .map_or(v as i64, i64::from);
+            if self.vals[v].weak_only {
+                s -= 1_000_000;
+            }
+            return s;
+        }
         let mut s = v as i64;
         if self.ir.ins[v].op == TOp::Phi {
             s += 100_000;
@@ -1283,6 +1382,14 @@ impl Ra<'_> {
 
     /// Evicts the best victim of the class not in `excl`; returns its register.
     fn try_evict(&mut self, x: bool, excl: Mask) -> R<Option<u8>> {
+        if self.opts.pol & RAPOL_VICTIM != 0
+            && self.uses.is_none()
+            && self.l.is_some_and(|l| self.cur_i > l)
+        {
+            let ends: Vec<Ref> = std::mem::take(&mut self.end_refs);
+            self.uses = Some(Uses::build(self.ir, &self.fused, self.l, &self.phis, &ends));
+            self.end_refs = ends;
+        }
         let ignore_pins = mutants::active("exit_rename_ignored");
         let mut best: Option<(i64, u8)> = None;
         let mut best_pinned: Option<(i64, u8)> = None;

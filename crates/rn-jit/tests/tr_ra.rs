@@ -325,6 +325,20 @@ fn lower_run(ir: &TraceIr, al: &Allocation, m: &mut Model) -> Result<Outcome, St
                 }
             }
         };
+        // section 51: a helper call destroys every caller-saved register but the ones its call site saves and reloads (`rapol`
+        // `RAPOL_CALLSPILL` leaves the values it spilled out of the set: their reloads follow the instruction)
+        if let Some(cs) = al.calls.iter().find(|c| c.at == pc) {
+            for g in 0..NGPR_CLOBBERED as u8 {
+                if g != SCRATCH_GPR && cs.live.gpr >> g & 1 == 0 {
+                    mc.wr(Loc::G(g), 0xDEAD_0000_0000_0000 | u64::from(g));
+                }
+            }
+            for x in 0..NXMM as u8 {
+                if cs.live.xmm >> x & 1 == 0 {
+                    mc.wr(Loc::X(x), 0xDEAD_0000_0000_0100 | u64::from(x));
+                }
+            }
+        }
         if let Some(v) = result {
             if ia.dst != Loc::None {
                 mc.wr(ia.dst, v);
@@ -1006,17 +1020,25 @@ fn model(slots: &[Val], nups: usize) -> Model {
 /// Allocates (default and some random seeds), checks, and compares the lowering with the interpreter on `models`.
 fn differential(ir: &TraceIr, models: &[Model], end_uses: &[Ref], seeds: u64) -> Vec<Allocation> {
     let mut out = Vec::new();
-    for seed in std::iter::once(None).chain((0..seeds).map(Some)) {
+    // section 51: the deterministic allocation with every `rapol` lever off and with all of them on, then the seeds
+    let configs = [(None, 0), (None, RAPOL_ALL)]
+        .into_iter()
+        .chain((0..seeds).map(|s| (Some(s), (s as u32 / 4 + s as u32) % (RAPOL_ALL + 1))));
+    for (seed, pol) in configs {
         let opts = RaOpts {
             randra: seed,
             // P2 bundle 1: the seeds cycle through the extra-register sets (none, `rbp`, `r14`, both); the default allocation has none
             xregs: seed.map_or(0, |s| (s % 4) as u8),
+            pol,
             ..RaOpts::default()
         };
         let al = allocate(ir, end_uses, &opts)
-            .unwrap_or_else(|e| panic!("allocate (seed {seed:?}): {e:?}"));
+            .unwrap_or_else(|e| panic!("allocate (seed {seed:?} rapol {pol}): {e:?}"));
         if let Err(e) = check(ir, &al, end_uses) {
-            panic!("checker (seed {seed:?}): {e}\n{}", dump(ir, &al));
+            panic!(
+                "checker (seed {seed:?} rapol {pol}): {e}\n{}",
+                dump(ir, &al)
+            );
         }
         for (mi, m0) in models.iter().enumerate() {
             let mut a = m0.clone();
@@ -1025,7 +1047,7 @@ fn differential(ir: &TraceIr, models: &[Model], end_uses: &[Ref], seeds: u64) ->
             let got = lower_run(ir, &al, &mut b).unwrap_or_else(|e| panic!("lowering: {e}"));
             assert!(
                 want == got && a == b,
-                "seed {seed:?} model {mi}: interp {want:?} lowering {got:?}\nmodel {a:?}\nvs {b:?}\n{}",
+                "seed {seed:?} rapol {pol} model {mi}: interp {want:?} lowering {got:?}\nmodel {a:?}\nvs {b:?}\n{}",
                 dump(ir, &al)
             );
         }
@@ -1518,6 +1540,7 @@ fn randra_seeds() {
             let opts = RaOpts {
                 randra: Some(seed),
                 xregs: (seed % 4) as u8,
+                pol: (seed as u32 / 4) % (RAPOL_ALL + 1),
                 ..RaOpts::default()
             };
             let al = allocate(&case.ir, &[], &opts).expect("allocate");

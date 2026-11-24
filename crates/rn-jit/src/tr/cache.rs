@@ -106,6 +106,8 @@ pub const LAZYLOOP_PROCESS: u32 = 1;
 pub const DLINK_PROCESS: u32 = 3;
 /// Section 50 (`slink`): the process default of [`TrLimits::slink`] (also the struct default).
 pub const SLINK_PROCESS: u32 = 2;
+/// Section 51 (`rapol`): the process default of [`TrLimits::rapol`] (also the struct default): the trace register allocator's policy levers.
+pub const RAPOL_PROCESS: u32 = 0;
 /// E9: the process default of [`TrLimits::t1call`] (also the struct default).
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
@@ -843,6 +845,10 @@ pub struct TrLimits {
     /// slots, tags the stack lacks), adds the refund and joins the carry entry. Bit 1 (plain link, overrides bit 0): no carried loads; the link entry
     /// stores the exit map, adds the refund and joins the plain entry behind its budget load (E6's link entry). 0 = off; default [`SLINK_PROCESS`].
     pub slink: u32,
+    /// Section 51 (`rapol`, docs/JIT_TRACE.md section 51): policy levers of the trace register allocator (bits of `ra::RAPOL_*`; `ra::RaOpts::pol`).
+    /// Bit 0 (`RAPOL_VICTIM`): the eviction victim is the value whose previous use is furthest away (Belady for the backward scan) instead of the
+    /// value with the lowest defining ref. 0 = every lever off (the allocator of section 50); default [`RAPOL_PROCESS`].
+    pub rapol: u32,
     /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Bit 0 (`jret`): the tier-1 `CALL` marks the frame it pushes
     /// (`CIST_T1RET`) and stores the address of its per-site resume cell in it; the tier-1 return of such a frame jumps through the cell instead
     /// of looking the caller's resume entry up. Bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`, like
@@ -1018,6 +1024,7 @@ impl Default for TrLimits {
             lazypoison: 0,
             dlink: DLINK_PROCESS,
             slink: SLINK_PROCESS,
+            rapol: RAPOL_PROCESS,
             t1call: T1CALL_PROCESS,
             cspeed: crate::cspeed::DEFAULT,
             ccheck: 0,
@@ -1232,6 +1239,7 @@ impl TrLimits {
                 "lazypoison" => l.lazypoison = v.min(1),
                 "dlink" => l.dlink = v.min(3),
                 "slink" => l.slink = v.min(15),
+                "rapol" => l.rapol = v & super::ra::RAPOL_ALL,
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(15),
