@@ -20,7 +20,9 @@ pub const FXHASH: u32 = 8;
 /// from an index of the snapshots that name each candidate (it scanned every snapshot map once per store of every candidate), its candidate
 /// lookup per instruction from the candidate map; the loop pass's output and the assembler's micro-op program presized from the input.
 pub const PASSES: u32 = 16;
-/// The register allocator's free-register choice and eviction scan without a temporary vector per query (the pool lives on the stack).
+/// The register allocator's free-register choice and eviction scan without a temporary vector per query (the pool lives on the stack),
+/// and its per-snapshot set-up (unfusing the snapshot refs, the validity check, the snapshot-only marks) once per snapshot instead of once
+/// per guard (the guards of a snapshot share its map, TR27).
 pub const RA: u32 = 32;
 /// The pipeline takes the closed recording over instead of copying it (nothing reads the recording after its compile).
 pub const REC: u32 = 64;

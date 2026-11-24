@@ -915,6 +915,11 @@ pub fn allocate_hinted(
         }
     }
     let mut guard_snaps: Vec<(usize, u32)> = Vec::new();
+    // Section 49 (`cspeed` lever `RA`): the per-snapshot work once per snapshot, not once per guard (the guards of one snapshot share its
+    // map, TR27): `snap_once[k]` = this is the first guard of its snapshot
+    let once = crate::cspeed::on(crate::cspeed::RA);
+    let mut seen = vec![false; if once { ir.snaps.len() } else { 0 }];
+    let mut snap_once: Vec<bool> = Vec::new();
     for (i, ins) in ir.ins.iter().enumerate() {
         if ins.flags & F_GUARD != 0 {
             let s = aux_snap(ins.aux);
@@ -922,8 +927,13 @@ pub fn allocate_hinted(
                 return bad(format!("snapshot {s} out of range at {i}"));
             }
             guard_snaps.push((i, s));
-            for e in ir.snap_entries(s) {
-                unfuse(&mut fused, e.r);
+            let first = (!once || !std::mem::replace(&mut seen[s as usize], true))
+                && !(once && mutants::active("cspeed_ra_unfuse_skip"));
+            snap_once.push(first);
+            if first {
+                for e in ir.snap_entries(s) {
+                    unfuse(&mut fused, e.r);
+                }
             }
         }
     }
@@ -947,8 +957,12 @@ pub fn allocate_hinted(
         .zip(&fused)
         .map(|(i, &f)| defines(i.op, f))
         .collect();
-    // snapshot refs must be values
-    for &(i, s) in &guard_snaps {
+    // snapshot refs must be values (the first guard of a snapshot is the strictest test: `idx >= i` only grows with `i`)
+    for (&(i, s), _) in guard_snaps
+        .iter()
+        .zip(&snap_once)
+        .filter(|&(_, &first)| first)
+    {
         for e in ir.snap_entries(s) {
             if TraceIr::is_ins(e.r) && (idx(e.r) >= i || !defs[idx(e.r)]) {
                 return bad(format!("snapshot {s} ref {} unusable at {i}", e.r));
@@ -1010,7 +1024,7 @@ pub fn allocate_hinted(
                 real[idx(r)] = true;
             }
         }
-        for &(_, s) in &guard_snaps {
+        for (&(_, s), _) in guard_snaps.iter().zip(&snap_once).filter(|&(_, &f)| f) {
             for e in ir.snap_entries(s) {
                 if TraceIr::is_ins(e.r) {
                     snapped[idx(e.r)] = true;
