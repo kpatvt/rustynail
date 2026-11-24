@@ -5666,7 +5666,7 @@ with the knob as the only difference (`RUSTYNAIL_JIT_TRACE_LIMITS=t4=0` / `t4=3`
 So the handle as written (link the start exit to the sibling trace) has nothing to link: the sibling is linked, and what fails is the return into a caller
 outside the recursion. What T4 builds instead:
 
-### 46.2 What was built (knob `t4`, `RUSTYNAIL_JIT_TRACE_LIMITS=t4=N`, default 0)
+### 46.2 What was built (knob `t4`, `RUSTYNAIL_JIT_TRACE_LIMITS=t4=N`, default 3 since the user flipped it on after the bar misses were reviewed: expr_lang 5.4 +2.6 % ins, list 5.5 +2.3 % cyc, sumrec 5.4 +2.9 % cyc)
 
 | bit | what |
 |---|---|

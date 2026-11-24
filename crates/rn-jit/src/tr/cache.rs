@@ -109,7 +109,7 @@ pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
 pub const DEEPPROBE_PROCESS: u32 = 12;
 /// T4 (`t4`, docs/JIT_TRACE.md section 46): the process default of [`TrLimits::t4`] (also the struct default).
-pub const T4_PROCESS: u32 = 0;
+pub const T4_PROCESS: u32 = 3;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
