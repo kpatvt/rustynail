@@ -983,6 +983,11 @@ pub const NAMES: &[&str] = &[
     // docs/JIT_TRACE.md section 44.1 (T6 bit 1): mixed integer / float `math.min` / `math.max` of tier 1
     "t6_mm_big_skip",
     "t6_mm_conv_skip",
+    // docs/JIT_TRACE.md section 44.2 (T8, `libcall` bit 10): `string.find` with a pattern on trace (`LIB FINDP`)
+    "findp_init_skip",
+    "findp_caps_skip",
+    "findp_end_off",
+    "findp_outcome_skip",
     // docs/JIT_TRACE.md section 44.3 (`blfirst`): blacklist at the first unchangeable abort
     "blfirst_never",
     "blfirst_side_always",
@@ -1089,7 +1094,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 831);
+        assert_eq!(NAMES.len(), 835);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

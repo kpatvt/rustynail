@@ -1688,6 +1688,59 @@ fn find_core(kind: u32, fl: u32, args: [u64; 3]) -> u64 {
     }
 }
 
+/// T8: `FINDP` (see [`lib::FINDP`]): the library's matcher on a pattern without captures. No allocation, no table touched.
+#[inline(always)]
+fn findp_core(fl: u32, args: [u64; 3]) -> u64 {
+    use rn_core::value::{ctb, Value, LUA_VLNGSTR, LUA_VSHRSTR};
+    let strv = |p: u64, long: bool| -> Option<rn_core::string::StrRef> {
+        let tag = if long {
+            ctb(LUA_VLNGSTR)
+        } else {
+            ctb(LUA_VSHRSTR)
+        };
+        // SAFETY: caller contract of `lib_core`; `Value` is `repr(C)` `{ tag word, payload }`.
+        let v: Value = unsafe { std::mem::transmute::<[u64; 2], Value>([u64::from(tag), p]) };
+        v.as_strref()
+    };
+    let (Some(x), Some(y)) = (strv(args[0], fl & 1 != 0), strv(args[1], fl & 8 != 0)) else {
+        return 0;
+    };
+    let (x, y) = (x.get().as_bytes(), y.get().as_bytes());
+    if x.len() >= 1 << 31 || y.len() >= 1 << 31 {
+        return 0;
+    }
+    // MUTANT `findp_init_skip`: the start argument is ignored (a search from 1)
+    let init = if mutants::active("findp_init_skip") {
+        1
+    } else {
+        args[2] as i64
+    };
+    let r = rn_std::pattern::find_with(x, y, init, true, false, |ms, s1, end| match ms {
+        Some(ms) => {
+            // MUTANT `findp_caps_skip`: a pattern with captures is answered with the whole match
+            if mutants::active("findp_caps_skip") || ms.captures(None).is_ok_and(|c| c.is_empty()) {
+                Some((s1 as u64 + 1, end as u64))
+            } else {
+                None
+            }
+        }
+        None => Some((s1 as u64 + 1, end as u64)),
+    });
+    match r {
+        // MUTANT `findp_end_off`: the end is one too small
+        Ok(Some(Some((start, end)))) => {
+            let end = if mutants::active("findp_end_off") {
+                end.wrapping_sub(1)
+            } else {
+                end
+            };
+            end << 32 | (start + 1)
+        }
+        Ok(None) => 1,
+        _ => 0,
+    }
+}
+
 /// `a == b`, `a < b`, `a <= b` of two strings (`STREQ` / `STRLT` / `STRLE`; flag bits 0 / 3 = `a` / `b` long): 2 when true, 1 when false, 0 for a bad
 /// operand. Shared by [`lib_core`] and the lean entry [`jit_tr_lib_cmp`].
 ///
@@ -1987,6 +2040,7 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
         }
         lib::STREQ | lib::STRLT | lib::STRLE => cmp_core(kind, fl, args),
         lib::FIND | lib::FINDS => find_core(kind, fl, args),
+        lib::FINDP => findp_core(fl, args),
         lib::FMTX => {
             // BUNDLE-C: stash the trailing arguments of the extended `FMT` form (see `lib::FMTX`)
             let Some((vals, n)) = fmt_values(fl, args, &strv, 0) else {
@@ -7508,7 +7562,7 @@ impl Cx<'_> {
                 }
                 if matches!(
                     kind,
-                    lib::STREQ | lib::STRLT | lib::STRLE | lib::FIND | lib::FINDS
+                    lib::STREQ | lib::STRLT | lib::STRLE | lib::FIND | lib::FINDS | lib::FINDP
                 ) && self.ir.ty_of(ins.b) == Ty::LngStr
                 {
                     fl |= 8;
@@ -7535,7 +7589,13 @@ impl Cx<'_> {
                 }
                 let n = match kind {
                     k if lib::is_fmt(k) || k == lib::FMTX => 3,
-                    lib::SUB | lib::RANDOM | lib::FIND | lib::FINDS | lib::CHAR3 | lib::REPS => 3,
+                    lib::SUB
+                    | lib::RANDOM
+                    | lib::FIND
+                    | lib::FINDS
+                    | lib::FINDP
+                    | lib::CHAR3
+                    | lib::REPS => 3,
                     lib::BYTE
                     | lib::TYPE
                     | lib::IPAIRS_END

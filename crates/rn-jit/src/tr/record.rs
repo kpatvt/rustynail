@@ -409,6 +409,8 @@ pub struct RecCfg {
 pub const STORM_BYTES: usize = 48;
 /// P-B: a trace is not worth recording when the collector steps more often than every `STORM_FACTOR` iterations.
 pub const STORM_FACTOR: usize = 4;
+/// T8: bit of a `pend_str` entry (a VM slot index) that says the helper result is the packed `FINDP` word of the two result slots starting there.
+const FINDP_PACK: usize = 1 << 62;
 
 /// [`HeadQuery`] for any prototype: is `pc` of this prototype a loop head with an installed root trace?
 pub type FrameHeadQuery = Rc<dyn Fn(&mut State, &Proto, u32) -> Option<bool>>;
@@ -3456,6 +3458,16 @@ impl Rec {
                         1
                     } else if abs == usize::MAX - 1 {
                         2 // F2: a string comparison that came out true
+                    } else if abs & FINDP_PACK != 0 {
+                        // T8: `FINDP` of a call with both results: `end << 32 | (start + 1)`
+                        let a0 = abs & !FINDP_PACK;
+                        match (
+                            vm.st.get(StkId(a0)).as_int(),
+                            vm.st.get(StkId(a0 + 1)).as_int(),
+                        ) {
+                            (Some(s), Some(e)) => ((e as u64) << 32) | (s as u64).wrapping_add(1),
+                            _ => 1,
+                        }
                     } else {
                         let v = vm.st.get(StkId(abs));
                         // P-B: a `Lib` result is a string, a light C function (its address) or `byte + 1`
@@ -11040,15 +11052,50 @@ impl Rec {
             (Some(x), Some(y)) => (x.get().as_bytes(), y.get().as_bytes()),
             _ => return Err(AbortReason::Diverge),
         };
-        if !plain && !rn_std::pattern::nospecials(pb) {
-            return Err(self.nyi()); // a real pattern
+        // T8 (`libcall` bit 10): a real pattern without captures is the `FINDP` op (the matcher runs in the helper, the recorder's own run only decides the
+        // outcome the guard expects); anything with a capture, a pattern error or a huge string stays the stitching call
+        let pattern = !plain && !rn_std::pattern::nospecials(pb);
+        let mut pfound: Option<(i64, i64)> = None;
+        if pattern {
+            if self.cfg.libcall_mask & 1024 == 0 || sb.len() >= 1 << 31 || pb.len() >= 1 << 31 {
+                return Err(self.nyi()); // a real pattern
+            }
+            let m =
+                rn_std::pattern::find_with(sb, pb, vinit, true, false, |ms, s1, end| match ms {
+                    Some(ms) => ms
+                        .captures(None)
+                        .ok()
+                        .filter(Vec::is_empty)
+                        .map(|_| (s1 as i64 + 1, end as i64)),
+                    None => Some((s1 as i64 + 1, end as i64)),
+                });
+            match m {
+                Ok(Some(Some(se))) => pfound = Some(se),
+                Ok(None) => {}
+                _ => return Err(self.nyi()), // captures, a malformed pattern
+            }
         }
-        let pos = rn_std::pattern::find_plain_pos(sb, pb, vinit);
-        let hint = self.lib_hint(vm, a, nargs, wanted);
-        let kind = if plain { lib::FIND } else { lib::FINDS };
+        let pos = if pattern {
+            pfound.map(|_| 0)
+        } else {
+            rn_std::pattern::find_plain_pos(sb, pb, vinit)
+        };
+        let mut hint = self.lib_hint(vm, a, nargs, wanted);
+        // the model reads the packed result from the two result slots when the call has both
+        let packed = pattern && pfound.is_some() && wanted != 1 && wanted != 0;
+        if packed {
+            hint |= FINDP_PACK;
+        }
+        let kind = if plain {
+            lib::FIND
+        } else if pattern {
+            lib::FINDP
+        } else {
+            lib::FINDS
+        };
         let r = self.lib_op(kind, Ty::Int, s, p, Some(init), hint)?;
         let one = self.kint(1);
-        if !mutants::active("find_outcome_guard_skip") {
+        if !mutants::active("find_outcome_guard_skip") && !mutants::active("findp_outcome_skip") {
             self.guard(
                 if pos.is_some() { TOp::Ne } else { TOp::Eq },
                 Ty::I64,
@@ -11061,6 +11108,21 @@ impl Rec {
             let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
             self.def_abs(top_rel, nil);
             return self.lib_tail(idx, func_rel, top_rel, &[nil], false, wanted);
+        }
+        if pattern {
+            // low half = start + 1, high half = end
+            let mask = self.kint(0xFFFF_FFFF);
+            let lo = self.ins(TOp::Band, Ty::Int, r, mask)?;
+            let start = self.ins(TOp::Sub, Ty::Int, lo, one)?;
+            if wanted == 1 {
+                self.def_abs(top_rel, start);
+                return self.lib_tail(idx, func_rel, top_rel, &[start], false, wanted);
+            }
+            let sh = self.kint(32);
+            let end = self.ins(TOp::Shr, Ty::Int, r, sh)?;
+            self.def_abs(top_rel, start);
+            self.def_abs(top_rel + 1, end);
+            return self.lib_tail(idx, func_rel, top_rel, &[start, end], false, wanted);
         }
         let start = self.ins(TOp::Sub, Ty::Int, r, one)?;
         // the length of the pattern (the model's value is the recorded one)

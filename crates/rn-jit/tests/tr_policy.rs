@@ -1268,7 +1268,7 @@ fn p2_xregs_process_default() {
     }
 }
 
-/// BUNDLE-H: the process default of `libcall` (`LIBCALL_PROCESS`); the struct default is the same, an explicit value wins and is clamped to 1023.
+/// BUNDLE-H: the process default of `libcall` (`LIBCALL_PROCESS`); the struct default is the same, an explicit value wins and is clamped to the highest bit (2047 after T8 bit 10).
 #[test]
 fn bh_libcall_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, LIBCALL_PROCESS};
@@ -1284,7 +1284,7 @@ fn bh_libcall_process_default() {
         (Some("libcall=0"), 0),
         (Some("maxside=9,libcall=1"), 1),
         (Some("libcall=7"), 7),
-        (Some("libcall=9999"), 1023),
+        (Some("libcall=9999"), 2047),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);

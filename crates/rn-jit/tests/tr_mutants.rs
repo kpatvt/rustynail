@@ -4499,6 +4499,26 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "t6_minmax_programs")],
     },
     Row {
+        name: "findp_init_skip",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findp_programs")],
+    },
+    Row {
+        name: "findp_caps_skip",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findp_programs")],
+    },
+    Row {
+        name: "findp_end_off",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findp_programs")],
+    },
+    Row {
+        name: "findp_outcome_skip",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findp_programs")],
+    },
+    Row {
         name: "blfirst_never",
         owner: "blfirst",
         dets: &[d("tr_policy", "blfirst_policy")],

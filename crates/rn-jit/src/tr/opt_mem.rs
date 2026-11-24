@@ -409,6 +409,7 @@ pub fn header_safe_ins(i: &Ins, level: u32) -> bool {
             | lib::RANDOM
             | lib::FIND
             | lib::FINDS
+            | lib::FINDP
             | lib::FMTX => true,
             // HDRSUB: the class-A string makers (no collector step, no table touched: they only intern / allocate a string) from level 2
             lib::SUB if level >= 2 || mutants::active("hdrlib_sub_always") => true,

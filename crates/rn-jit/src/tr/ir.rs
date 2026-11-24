@@ -521,8 +521,13 @@ pub mod lib {
     pub const REPS: u32 = 25;
     /// BUNDLE-H: the longest result of `REP` / `REPS` the helper builds (bytes).
     pub const REP_MAX: usize = 1 << 22;
+    /// T8 (`libcall` bit 10, docs/JIT_TRACE.md section 44.2): `string.find(s, p, init)` with a real pattern that has no captures: operands `s`, `p`, third =
+    /// `init` (an integer); flag bit 0 / 3 = `s` / `p` is long. The helper runs the library's matcher (`find_with`): 1 = no match, `end << 32 | (start + 1)`
+    /// for a match (`start` the 1-based start, `end` the 1-based end, both below 2^31), 0 = "did nothing" (a capture or a position capture, a pattern error,
+    /// a string of 2^31 bytes or more: the guard exits and the interpreter runs the call). Read-only: header-safe, no allocation.
+    pub const FINDP: u32 = 26;
     /// Number of kinds (below [`FMT_BASE`]).
-    pub const COUNT: u32 = 26;
+    pub const COUNT: u32 = 27;
     /// The names `TYPENAME` produces, by index.
     pub const TYPENAMES: [&str; 10] = [
         "nil", "boolean", "number", "string", "table", "function", "thread", "userdata", "integer",

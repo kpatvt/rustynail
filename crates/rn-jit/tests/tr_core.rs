@@ -13211,6 +13211,59 @@ fn t6_minmax_programs() {
     compare(jobs);
 }
 
+/// docs/JIT_TRACE.md section 44.2 (T8, `libcall` bit 10): `string.find` with a real pattern, no captures, recorded as the `FINDP` library op (`t8_01_findp`: a
+/// lexer loop, one result wanted, init values, empty matches, capture patterns that stay calls, a pattern that changes from capture-free to a capture, malformed
+/// patterns under `pcall`, long strings, tail calls) in `always` / `on2`, with `libcall` 1023 (off) / 2047, `+verify`, the emulator, exit storm, budgets, GC
+/// stress 1 / 2 in both collector modes; every job against the interpreter. With the bit on `always` installs more traces than with it off. Detector of
+/// `findp_init_skip`, `findp_caps_skip`, `findp_end_off`, `findp_outcome_skip`.
+#[test]
+fn t8_findp_programs() {
+    let p = "t8_01_findp";
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2"] {
+        for lim in ["libcall=1023", "libcall=2047"] {
+            jobs.push(Job::new(p, trace).limits_s(lim));
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+        }
+        let lim = "libcall=2047";
+        jobs.push(
+            Job::new(p, trace)
+                .opts("+exitstorm=3 +verify")
+                .limits_s(lim),
+        );
+        jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        for b in [3, 17, 200] {
+            jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+        }
+        for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+            let mut j = Job::new(p, trace)
+                .env("RUSTYNAIL_GC_STRESS", gc)
+                .limits_s(lim);
+            if mode == "inc" {
+                j = j.env("RUSTYNAIL_GC_MODE", "inc");
+            }
+            jobs.push(j);
+        }
+    }
+    let res = compare(jobs);
+    let mut n: std::collections::HashMap<(String, String), [u64; 2]> = Default::default();
+    for (j, o) in &res {
+        if j.env.is_empty() && j.budget.is_none() && j.opts.is_empty() {
+            let k = usize::from(j.limits == "libcall=2047");
+            n.entry((j.prog.to_string(), j.trace.to_string()))
+                .or_default()[k] = o.stats.installed;
+        }
+    }
+    for ((p, trace), [off, on]) in &n {
+        if trace == "always" {
+            assert!(
+                on > off,
+                "{p} [{trace}]: the pattern find installs no more traces than the stitched call ({on} vs {off})"
+            );
+        }
+    }
+}
+
 /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): a root recording whose iteration ends with a slot of another type than its first read
 /// checked restarts in place from the new types. `tr24c_01_restarts` (an integer accumulator that becomes a float, a slot nil in the first iteration,
 /// a type that flips every iteration, a string / number slot with an error raised in a later iteration under `pcall`, an allocation with collections)

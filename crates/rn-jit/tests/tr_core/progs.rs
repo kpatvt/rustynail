@@ -16339,6 +16339,12 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t6_02_minmax.lua"),
     },
+    // docs/JIT_TRACE.md section 44.2 (T8, `libcall` bit 10): `string.find` with a pattern without captures on trace
+    Prog {
+        name: "t8_01_findp",
+        small: true,
+        src: include_str!("../../../../tests/vm/t8_01_findp.lua"),
+    },
     // docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings
     Prog {
         name: "tr24c_01_restarts",
