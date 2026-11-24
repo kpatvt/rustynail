@@ -988,6 +988,10 @@ pub const NAMES: &[&str] = &[
     "findp_caps_skip",
     "findp_end_off",
     "findp_outcome_skip",
+    // docs/JIT_TRACE.md section 44.2 (T8, `libcall` bit 11): `string.match` on trace (`LIB FINDM` + `SUB`)
+    "findm_span_off",
+    "findm_caps_skip",
+    "findm_outcome_skip",
     // docs/JIT_TRACE.md section 44.3 (`blfirst`): blacklist at the first unchangeable abort
     "blfirst_never",
     "blfirst_side_always",
@@ -1094,7 +1098,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 835);
+        assert_eq!(NAMES.len(), 838);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

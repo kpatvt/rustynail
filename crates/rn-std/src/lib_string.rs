@@ -964,6 +964,12 @@ pub fn jit_find_addr() -> usize {
     str_find as *const () as usize
 }
 
+/// T8: the address of `string.match`.
+#[cfg(feature = "jit")]
+pub fn jit_match_addr() -> usize {
+    str_match as *const () as usize
+}
+
 /// BUNDLE-G1: the address of `string.format`.
 #[cfg(feature = "jit")]
 pub fn jit_format_addr() -> usize {

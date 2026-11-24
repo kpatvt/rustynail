@@ -411,6 +411,8 @@ pub const STORM_BYTES: usize = 48;
 pub const STORM_FACTOR: usize = 4;
 /// T8: bit of a `pend_str` entry (a VM slot index) that says the helper result is the packed `FINDP` word of the two result slots starting there.
 const FINDP_PACK: usize = 1 << 62;
+/// T8: bit of a `pend_str` entry that says the helper result is a literal the recorder computed (`FINDM`: the VM slot holds the matched string, not the span).
+const FINDP_LIT: usize = 1 << 61;
 
 /// [`HeadQuery`] for any prototype: is `pc` of this prototype a loop head with an installed root trace?
 pub type FrameHeadQuery = Rc<dyn Fn(&mut State, &Proto, u32) -> Option<bool>>;
@@ -1282,6 +1284,8 @@ struct Rec {
     /// instruction ran, in emission order; `usize::MAX`: unknown, the result is not used by anything), and the values the
     /// lockstep read from them.
     pend_str: Vec<usize>,
+    /// T8: the model's value of the helper result of each `pend_str` entry marked [`FINDP_LIT`], in emission order.
+    pend_lit: Vec<u64>,
     /// BUNDLE-C: scratch of `eval_one` (the one-instruction IR, its operand values, the interpreter's value buffer).
     scratch: Scratch,
     /// N3b: the native being recorded is the target of a `TAILCALL` (its results land in the returning frame's function slot).
@@ -1617,6 +1621,7 @@ impl Rec {
             pend_lens: std::collections::VecDeque::new(),
             pending_next: None,
             pend_str: Vec::new(),
+            pend_lit: Vec::new(),
             scratch: Scratch::default(),
             tail_lib: false,
             str_allocs: 0,
@@ -1850,6 +1855,7 @@ impl Rec {
         self.atg_tabs.clear();
         self.hs_guarded.clear();
         self.pend_str.clear();
+        self.pend_lit.clear();
         self.pending_next = None;
         self.pending_strto = None;
         self.post_strs.clear();
@@ -2818,6 +2824,7 @@ impl Rec {
             self.post_val = Some(vm.st.get(StkId(abs)));
         }
         self.pend_str.clear();
+        self.pend_lit.clear();
         self.light_new()
     }
 
@@ -3451,6 +3458,7 @@ impl Rec {
         }
         if !self.pend_str.is_empty() {
             let slots = std::mem::take(&mut self.pend_str);
+            let mut lits = std::mem::take(&mut self.pend_lit).into_iter();
             self.post_strs = slots
                 .into_iter()
                 .map(|abs| {
@@ -3458,6 +3466,8 @@ impl Rec {
                         1
                     } else if abs == usize::MAX - 1 {
                         2 // F2: a string comparison that came out true
+                    } else if abs & FINDP_LIT != 0 {
+                        lits.next().unwrap_or(1)
                     } else if abs & FINDP_PACK != 0 {
                         // T8: `FINDP` of a call with both results: `end << 32 | (start + 1)`
                         let a0 = abs & !FINDP_PACK;
@@ -6587,6 +6597,12 @@ impl Rec {
                 }
                 None if self.cfg.libfind && addr == rn_std::lib_string::jit_find_addr() => {
                     self.lib_find(vm, idx, a, nargs, wanted, addr)
+                }
+                None if self.cfg.libfind
+                    && self.cfg.libcall_mask & 2048 != 0
+                    && addr == rn_std::lib_string::jit_match_addr() =>
+                {
+                    self.lib_match(vm, idx, a, nargs, wanted, addr)
                 }
                 None if self.cfg.f1strlen && addr == jit_hooks::strlen_addr() => {
                     self.lib_str_len(vm, idx, a, nargs, wanted, addr)
@@ -11146,6 +11162,93 @@ impl Rec {
         self.def_abs(top_rel, start);
         self.def_abs(top_rel + 1, end);
         self.lib_tail(idx, func_rel, top_rel, &[start, end], false, wanted)
+    }
+
+    /// T8 (`libcall` bit 11): `string.match(s, p [, init])` of two strings and an integer (or nil / absent) `init`, with a pattern that has no capture or exactly one
+    /// string capture: `FINDM` (the span of the result: the capture, or the whole match) guarded against the outcome seen, then `SUB(s, start, end)` makes the result string.
+    /// Several captures, a position capture and a pattern error stay the stitching call (the recorder's own run of the matcher decides; the helper answers 0 for them at run time).
+    fn lib_match(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
+        if !(2..=3).contains(&nargs) {
+            return Err(self.nyi());
+        }
+        let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
+        self.need_ext(top_rel + 3)?;
+        let (s, _, _) = self.lib_str_arg(vm, a + 1)?;
+        let (p, _, _) = self.lib_str_arg(vm, a + 2)?;
+        let (init, vinit) = if nargs >= 3 {
+            let (r, t) = self.rd(vm, a + 3)?;
+            match t {
+                Ty::Int => (r, vm.slot(a + 3).as_int().ok_or(AbortReason::Diverge)?),
+                Ty::Nil => (self.kint(1), 1),
+                _ => return Err(self.nyi()),
+            }
+        } else {
+            (self.kint(1), 1)
+        };
+        let (sv, pv) = (vm.slot(a + 1), vm.slot(a + 2));
+        let (sb, pb) = match (sv.as_strref(), pv.as_strref()) {
+            (Some(x), Some(y)) => (x.get().as_bytes(), y.get().as_bytes()),
+            _ => return Err(AbortReason::Diverge),
+        };
+        if sb.len() >= 1 << 31 || pb.len() >= 1 << 31 {
+            return Err(self.nyi());
+        }
+        let m = rn_std::pattern::find_with(sb, pb, vinit, false, false, |ms, s1, end| {
+            let caps = ms?.captures(Some((s1, end))).ok()?;
+            match caps.as_slice() {
+                [rn_std::pattern::Cap::Str(sl)] => {
+                    let off = (sl.as_ptr() as usize).wrapping_sub(sb.as_ptr() as usize);
+                    (off <= sb.len()).then(|| (off as i64 + 1, (off + sl.len()) as i64))
+                }
+                _ => None,
+            }
+        });
+        let found = match m {
+            Ok(Some(Some(se))) => Some(se),
+            Ok(None) => None,
+            _ => return Err(self.nyi()), // several captures, a position capture, a malformed pattern
+        };
+        // the model's value of the helper result (the VM slot holds the matched string, not the span)
+        let lit = found.map_or(1, |(st, en)| ((en as u64) << 32) | (st as u64 + 1));
+        self.pend_lit.push(lit);
+        let r = self.lib_op(lib::FINDM, Ty::Int, s, p, Some(init), FINDP_LIT)?;
+        let one = self.kint(1);
+        if !mutants::active("findm_outcome_skip") {
+            self.guard(
+                if found.is_some() { TOp::Ne } else { TOp::Eq },
+                Ty::I64,
+                r,
+                one,
+                0,
+            )?;
+        }
+        let Some((st, en)) = found else {
+            let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
+            self.def_abs(top_rel, nil);
+            return self.lib_tail(idx, func_rel, top_rel, &[nil], false, wanted);
+        };
+        let mask = self.kint(0xFFFF_FFFF);
+        let lo = self.ins(TOp::Band, Ty::Int, r, mask)?;
+        let start = self.ins(TOp::Sub, Ty::Int, lo, one)?;
+        let sh = self.kint(32);
+        let end = self.ins(TOp::Shr, Ty::Int, r, sh)?;
+        let rl = (en - st + 1).max(0) as usize;
+        let rty = if rl > rn_core::string::MAX_SHORT_LEN {
+            Ty::LngStr
+        } else {
+            Ty::ShrStr
+        };
+        let hint = self.lib_hint(vm, a, nargs, wanted);
+        let res = self.lib_op(lib::SUB, rty, s, start, Some(end), hint)?;
+        self.lib_tail(idx, func_rel, top_rel, &[res], true, wanted)
     }
 
     /// BUNDLE-A (`libnext`): the plain call `next(t [, k])` (1 or 2 arguments, a table, a control value the helper can pass or nil): the

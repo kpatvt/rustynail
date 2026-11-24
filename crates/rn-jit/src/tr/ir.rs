@@ -526,8 +526,12 @@ pub mod lib {
     /// for a match (`start` the 1-based start, `end` the 1-based end, both below 2^31), 0 = "did nothing" (a capture or a position capture, a pattern error,
     /// a string of 2^31 bytes or more: the guard exits and the interpreter runs the call). Read-only: header-safe, no allocation.
     pub const FINDP: u32 = 26;
+    /// T8 (`libcall` bit 11, docs/JIT_TRACE.md section 44.2): `string.match(s, p, init)` whose pattern has no capture or exactly one string capture: as [`FINDP`], but
+    /// the span answered is that of the result (the capture, or the whole match when there is none); the recorder follows it with `SUB(s, start, end)`, which makes the
+    /// result string. 0 = "did nothing" (several captures, a position capture, a pattern error, a string of 2^31 bytes or more).
+    pub const FINDM: u32 = 27;
     /// Number of kinds (below [`FMT_BASE`]).
-    pub const COUNT: u32 = 27;
+    pub const COUNT: u32 = 28;
     /// The names `TYPENAME` produces, by index.
     pub const TYPENAMES: [&str; 10] = [
         "nil", "boolean", "number", "string", "table", "function", "thread", "userdata", "integer",

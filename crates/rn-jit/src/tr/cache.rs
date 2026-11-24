@@ -325,8 +325,8 @@ pub const UPBAR_PROCESS: u32 = 1;
 /// BUNDLE-H / BUNDLE-R (`libcall`): process default of [`TrLimits::libcall`] (**1023** after BUNDLE-R; 7 in BUNDLE-H). Bit 0 = the missing library calls recorded: n-ary `string.char`, `math.random()`,
 /// `string.lower` / `upper` / `reverse`; bit 1 = lean direct entries of the `LIB` helpers; bit 2 = inline `type`, string compares and `math.random`; bit 3 = `string.rep` recorded; bit 4 = its result length
 /// class is a guard on the computed length (side traces); bit 5 = `table.unpack` of a small table inline; bit 6 = `table.move` of a small range inline; bit 7 = `tonumber` of a non-numeral string;
-/// bit 8 = concatenated string keys through `HREFV`; bit 9 = lean entry of `LIB find`; bit 10 (T8, section 44.2) = `string.find` with a pattern without captures (`LIB FINDP`).
-pub const LIBCALL_PROCESS: u32 = 2047;
+/// bit 8 = concatenated string keys through `HREFV`; bit 9 = lean entry of `LIB find`; bit 10 (T8, section 44.2) = `string.find` with a pattern without captures (`LIB FINDP`); bit 11 = `string.match` with no capture or one string capture (`LIB FINDM` + `SUB`).
+pub const LIBCALL_PROCESS: u32 = 4095;
 /// BUNDLE-J (`centry`): a C-entered function root whose trace has fewer IR instructions than this does not repay the entry from C (the interpreter runs the
 /// calls; measured: entering compiled code from C costs about 280 instructions per call more than the interpreter's own entry, so the light roots of `a > b` (6 IR), a `pcall`'d
 /// function (5-23 IR), a coroutine body (19), a gsub callback (30) and the 46 IR roots of `serpent_ser` lose or gain nothing; the object comparators of `oop_mixins` (70, 76 IR) win
@@ -1130,7 +1130,7 @@ impl TrLimits {
                 "deephop" => l.deephop = v.min(1),
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
-                "libcall" => l.libcall = v.min(2047),
+                "libcall" => l.libcall = v.min(4095),
                 "retf" => l.retf = v.min(15),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),

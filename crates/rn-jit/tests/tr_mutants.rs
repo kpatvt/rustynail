@@ -4519,6 +4519,21 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "t8_findp_programs")],
     },
     Row {
+        name: "findm_span_off",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findm_programs")],
+    },
+    Row {
+        name: "findm_caps_skip",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findm_programs")],
+    },
+    Row {
+        name: "findm_outcome_skip",
+        owner: "T8",
+        dets: &[d("tr_core", "t8_findm_programs")],
+    },
+    Row {
         name: "blfirst_never",
         owner: "blfirst",
         dets: &[d("tr_policy", "blfirst_policy")],
