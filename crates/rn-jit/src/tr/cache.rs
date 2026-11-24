@@ -369,6 +369,8 @@ pub const SINKMT_PROCESS: u32 = 1;
 pub const SINKSIDE_PROCESS: u32 = 2;
 /// J1-2: process default of [`TrLimits::sinkstub`]. SINK-F: 1.
 pub const SINKSTUB_PROCESS: u32 = 1;
+/// Section 52 (`sinkmm`): process default of [`TrLimits::sinkmm`] (also the struct default).
+pub const SINKMM_PROCESS: u32 = 1;
 /// SINK-R: process default of [`TrLimits::sinkroot`] (2: the shape is demoted for the root head only).
 pub const SINKROOT_PROCESS: u32 = 2;
 /// BUNDLE-P: process value of [`TrLimits::hoptop`]: a root through which 98 % of the entries leave by one pre-roll site into a side trace (4 checks in a row) is a
@@ -668,6 +670,11 @@ pub struct TrLimits {
     /// J1-2: an exit that must materialise sunk tables (frameless, not an entry check) is restored by its inline stub, which calls the light
     /// helper `exit::jit_tr_mat` instead of the whole exit handler (0 = the handler). Default 0 here, [`SINKSTUB_PROCESS`] in a process.
     pub sinkstub: u32,
+    /// Section 52 (`sinkmm`, docs/JIT_TRACE.md section 52.2): the sunk-frame stub (`sinkstub`) also takes exits whose inlined frames include
+    /// metamethod frames, on its attached path (a side trace hangs off the exit: the frames stay virtual, the stub stores the slots, calls
+    /// `exit::jit_tr_mat` and jumps through the cell); without a side trace such an exit still goes through the handler, which rebuilds the
+    /// metamethod frames (`nCcalls`, `CIST_MMRET`). 0 = off; default [`SINKMM_PROCESS`].
+    pub sinkmm: u32,
     /// J2-2: per-site deeper inlining: a loop recording that ended at the recursion or depth limit (`Recursion` / `Depth` abort) is
     /// re-recorded once, immediately, with `unroll` and `maxdepth` raised to this value (at most `exit::MAX_FRAMES`), and so are the
     /// side recordings of its family (0 = never, the struct default; process default [`DEEP_PROCESS`]).
@@ -978,6 +985,7 @@ impl Default for TrLimits {
             sinkside: SINKSIDE_PROCESS,
             sinkroot: SINKROOT_PROCESS,
             sinkstub: SINKSTUB_PROCESS,
+            sinkmm: SINKMM_PROCESS,
             deep: DEEP_PROCESS,
             deepins: 300,
             deephop: 1,
@@ -1193,6 +1201,7 @@ impl TrLimits {
                 "sinkside" => l.sinkside = v.min(2),
                 "sinkroot" => l.sinkroot = v.min(2),
                 "sinkstub" => l.sinkstub = v.min(1),
+                "sinkmm" => l.sinkmm = v.min(1),
                 "deep" => l.deep = v.min(8),
                 "deepins" if v > 0 => l.deepins = v,
                 "deephop" => l.deephop = v.min(1),

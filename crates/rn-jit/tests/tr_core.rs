@@ -41,6 +41,8 @@ mod s4_progs;
 mod s50_progs;
 #[path = "tr_core/s51_progs.rs"]
 mod s51_progs;
+#[path = "tr_core/s52_progs.rs"]
+mod s52_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -64,6 +66,7 @@ use rn_jit::{Config, Mode};
 use s4_progs::S4_PROGS;
 use s50_progs::S50_PROGS;
 use s51_progs::S51_PROGS;
+use s52_progs::S52_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -192,6 +195,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(Y_PROGS)
         .chain(S50_PROGS)
         .chain(S51_PROGS)
+        .chain(S52_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -13182,6 +13186,72 @@ fn s51_rapol_programs() {
             assert!(o.stats.installed > 0, "{}: nothing traced", j.tag());
         }
     }
+}
+
+/// Section 52 (`sinkmm`, docs/JIT_TRACE.md section 52.2): exits with sunk tables inside metamethod frames take the sunk-frame stub on their attached path
+/// (side trace attached: slot stores, the helper, the jump through the cell; no side trace: the handler, or the helper's own frame rebuild when a flush
+/// took the side trace away). `s52_mm_frames` (classic-style `__call` constructors and arithmetic metamethods, receivers of two classes, an error and a
+/// traceback inside a metamethod behind such an exit, a count hook, a coroutine, a method replaced between rounds) and the SINK-F programs, knob off /
+/// on, in `always` / `on2`, `+verify`, exit storms, budgets, GC stress 1 / 2 in both collector modes, the stack-move stress; the stub really is taken.
+/// Detector of `sinkmm_unatt_inline`.
+#[test]
+fn s52_sinkmm_programs() {
+    const BASE: &str = "sinkmt=1,sinkside=2,sinkstub=1";
+    let mut jobs = Vec::new();
+    for p in [
+        "s52_mm_frames",
+        "sinkf_side",
+        "j1_sinkf",
+        "sink_alias_frames",
+    ] {
+        for trace in ["always", "on2"] {
+            for mm in ["sinkmm=0", "sinkmm=1"] {
+                let lim = format!("{BASE},{mm}");
+                for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                    jobs.push(Job::new(p, trace).opts(opts).limits_s(&lim));
+                }
+                jobs.push(Job::new(p, trace).budget(17).limits_s(&lim));
+            }
+            let lim = format!("{BASE},sinkmm=1");
+            jobs.push(Job::new(p, trace).budget(3).limits_s(&lim));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(&lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(&lim),
+            );
+            jobs.push(Job::new(p, trace).limits_s(&format!("{lim},sinkroot=2")));
+        }
+    }
+    let res = compare(jobs);
+    let (mut on, mut off) = (0, 0);
+    for (j, o) in &res {
+        if j.prog == "s52_mm_frames"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+            && j.budget.is_none()
+        {
+            if j.limits.ends_with("sinkmm=1") {
+                on += o.stats.stub_frames;
+            } else if j.limits.ends_with("sinkmm=0") {
+                off += o.stats.stub_frames;
+            }
+        }
+    }
+    assert!(
+        on > off,
+        "s52_mm_frames: the metamethod-frame stub was never taken ({on} vs {off})"
+    );
 }
 
 /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Frames the tier-1 `CALL` pushes carry `CIST_T1RET` and their site's resume

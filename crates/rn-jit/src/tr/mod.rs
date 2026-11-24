@@ -2588,6 +2588,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         lean_sub: true,
         libcall: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.libcall },
         sink_stub: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkstub != 0 },
+        // SAFETY: as above.
+        sink_mm: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkmm != 0 },
         mat_fn: exit::jit_tr_mat as *const () as usize as u64,
         carry_head: carry_env.0,
         carry_sig: carry_env.1,

@@ -1052,6 +1052,8 @@ pub const NAMES: &[&str] = &[
     "slink_count_skip",
     // docs/JIT_TRACE.md section 51 (`rapol`): policy levers of the trace register allocator
     "callspill_no_reload",
+    // docs/JIT_TRACE.md section 52 (`sinkmm`, `resink`): the sunk-frame stub for metamethod frames, sunk allocations replayed into side traces
+    "sinkmm_unatt_inline",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1137,7 +1139,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 864);
+        assert_eq!(NAMES.len(), 865);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

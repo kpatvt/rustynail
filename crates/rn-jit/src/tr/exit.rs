@@ -1917,6 +1917,19 @@ pub fn sunk_frame_stub_ok(s: &ExitSnap) -> bool {
         && s.link_cell == 0
 }
 
+/// Section 52 (`sinkmm`): [`sunk_frame_stub_ok`] for a snapshot whose frames include metamethod frames (no vararg frame, no `top`, no link). The stub
+/// takes only the exits with a side trace attached (the frames stay virtual); the others divert to the handler, and [`jit_tr_mat`] rebuilds the frames
+/// itself when the side trace went away meanwhile.
+pub fn sunk_frame_stub_mm_ok(s: &ExitSnap) -> bool {
+    !s.sunk.is_empty()
+        && !s.frames.is_empty()
+        && s.frames.iter().all(|f| f.nextra < 0)
+        && s.frames.iter().any(|f| f.mm)
+        && s.top.is_none()
+        && s.usable
+        && s.link_cell == 0
+}
+
 /// J1-2: may the inline stub of `s` materialise its sunk tables itself (through [`jit_tr_mat`])? Frameless, no `top`, no link.
 pub fn sunk_stub_ok(s: &ExitSnap) -> bool {
     !s.sunk.is_empty() && s.frames.is_empty() && s.top.is_none() && s.usable && s.link_cell == 0
@@ -2640,10 +2653,26 @@ pub unsafe extern "C" fn jit_tr_mat(
             jit_hooks::set_error(&mut st, rn_core::status::Status::ErrMem);
         }
         cache::handler_leave(&mut st);
-        !ok
+        // (MUTANT `sinkmm_unatt_inline`: with the stub's divert also skipped, an exit without a side trace jumps through an empty cell)
+        if ok && s.frames.iter().any(|f| f.mm) && !mutants::active("sinkmm_unatt_inline") {
+            // Section 52 (`sinkmm`): the stub of a snapshot with metamethod frames continues in the side trace attached to it; if that went away (a
+            // flush deferred until `handler_leave`), the frames are rebuilt here (the stub cannot rebuild metamethod frames) and the stub lands in tier 1
+            // SAFETY: `cells` holds one live cell per snapshot of the running trace (its stub called us with its own snapshot).
+            let c = if meta.cells.is_null() {
+                0
+            } else {
+                unsafe { &*meta.cells.add(snap as usize) }.get() as u64
+            };
+            if c == 0 || c == s.land_addr {
+                // SAFETY: the contract of `restore` (the slots are stored, the frames are virtual, the root frame is live).
+                unsafe { restore_chain(&ctx, s, s.code_or(meta.root_code)) };
+                return 2;
+            }
+        }
+        u32::from(!ok)
     }));
     match r {
-        Ok(err) => u32::from(err),
+        Ok(v) => v,
         Err(e) => {
             let msg = e
                 .downcast_ref::<String>()

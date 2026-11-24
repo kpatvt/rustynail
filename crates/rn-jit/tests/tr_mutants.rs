@@ -4779,6 +4779,11 @@ const TABLE: &[Row] = &[
             d("tr_core", "s51_rapol_programs"),
         ],
     },
+    Row {
+        name: "sinkmm_unatt_inline",
+        owner: "S52",
+        dets: &[d("tr_core", "s52_sinkmm_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

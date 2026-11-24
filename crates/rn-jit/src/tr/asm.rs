@@ -266,6 +266,8 @@ pub struct AsmEnv {
     /// J1-2 (`sinkstub`): frameless exits that materialise sunk tables are restored by their inline stub (slot stores, then a `CallH` of
     /// `mat_fn`, then the jump through the exit cell) instead of the generic stub and the exit handler.
     pub sink_stub: bool,
+    /// Section 52 (`sinkmm`): the sunk-frame stub also takes exits with metamethod frames that have a frame cell (`exit::sunk_frame_stub_mm_ok`).
+    pub sink_mm: bool,
     /// J1-2: `exit::jit_tr_mat` (or a test double).
     pub mat_fn: u64,
     /// P2-3a (`budsub`): with `budget_reg`, `BUDGET` is `sub r, n; jl stub` and the cold stub refunds `n` (`add r, n`) before it reaches the exit
@@ -403,6 +405,7 @@ impl Default for AsmEnv {
             lean_sub: false,
             libcall: 0,
             sink_stub: false,
+            sink_mm: false,
             mat_fn: 0,
             budget_sub: false,
             poll_off: None,
@@ -9635,7 +9638,11 @@ impl Cx<'_> {
             && self.env.mat_fn != 0
             && !mutants::active("sinkstub_never")
             && !mutants::active("sinkstub_frames_never")
-            && exit::sunk_frame_stub_ok(es)
+            && (exit::sunk_frame_stub_ok(es)
+                || (self.env.sink_mm
+                    && frame_cell
+                    && self.env.exit_cells != 0
+                    && exit::sunk_frame_stub_mm_ok(es)))
             && self.env.root_code != 0
             && self.env.counters != 0
             && !self.env.generic_only
@@ -10023,6 +10030,9 @@ impl Cx<'_> {
         // rule) and go on to the slot stores and the helper; the jump through the cell after it keeps the frames virtual
         let cell = (self.env.exit_cells != 0 && frame_cell)
             .then(|| self.env.exit_cells + 8 * u64::from(snap));
+        // Section 52 (`sinkmm`): metamethod frames are never rebuilt by this stub (the shared frame rebuild knows only plain and tail frames)
+        let mm = es.frames.iter().any(|f| f.mm);
+        assert!(!mm || cell.is_some(), "sinkmm stub without a frame cell");
         let common = self.label();
         if let Some(c) = cell {
             let unatt = self.label();
@@ -10049,6 +10059,10 @@ impl Cx<'_> {
             }
             self.push(Op::Jmp(common));
             self.bind(unatt);
+            if mm && !mutants::active("sinkmm_unatt_inline") {
+                // Section 52 (`sinkmm`): without a side trace the metamethod frames must be rebuilt (`nCcalls`, `CIST_MMRET`, `ctx`): the handler does it
+                self.push(Op::Jmp(generic_l));
+            }
         }
         // a hooked thread: the rebuilt frames need `trap = 1`, and a hook may look at the stack: the handler does it all
         self.ld(
@@ -10124,6 +10138,45 @@ impl Cx<'_> {
                 b: Src::Imm(0),
                 to: err,
             });
+        }
+        if mm {
+            // Section 52 (`sinkmm`): the helper read the cell after its own bookkeeping: `2` = no side trace is attached any more (a flush), it rebuilt the
+            // frames (`exit::restore_chain`, metamethod frames included) and the stub lands in tier 1 in the innermost frame; `0` = continue in the side trace
+            let chain = self.label();
+            self.push(Op::Br {
+                cc: Cc::Eq,
+                a: 0,
+                b: Src::Imm(2),
+                to: chain,
+            });
+            let c = cell.expect("checked above");
+            self.push(Op::Mov(7, c));
+            self.ld(7, W::B8, rm(7, 0));
+            self.push(Op::JmpR(7));
+            self.bind(chain);
+            self.ld(
+                1,
+                W::B8,
+                M {
+                    base: Base::Thread,
+                    off: rn_core::jit_hooks::thread::CI as i32,
+                },
+            );
+            self.push(Op::SetCi(1));
+            self.push(Op::ReloadFrame {
+                stack_off: self.env.stack_off,
+            });
+            self.ld(
+                4,
+                W::B8,
+                rm(1, rn_core::jit_layout::callinfo::KCACHE as i32),
+            );
+            self.push(Op::SetK(4));
+            self.push(Op::Mov(7, es.land_addr));
+            self.push(Op::JmpR(7));
+            self.bind(err);
+            self.push(Op::Ret(rn_core::jit_hooks::JitExit::Error as u32));
+            return Ok(());
         }
         // the chain is rebuilt by a copy shared by the snapshots with the same frames (V5 = the innermost `savedpc`, V6 = the landing)
         self.push(Op::Mov(
