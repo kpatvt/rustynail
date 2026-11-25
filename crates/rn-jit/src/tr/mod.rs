@@ -2838,7 +2838,12 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     // trace's own counters) identifies a re-compile that would repeat a flushed generation
     // (P-G: hashed from the structures; the text itself is built only for `RUSTYNAIL_JIT_DUMP`)
     let t_h = phase::now();
-    let hash = cache::shape_hash_ir(ir, &al);
+    // Section 53 (`cspeed` lever `SIDEHASH`): only a root trace's hash is ever compared
+    let hash = if act.side && crate::cspeed::on(crate::cspeed::SIDEHASH) {
+        0
+    } else {
+        cache::shape_hash_ir(ir, &al)
+    };
     phase::add(phase::HASH, t_h);
     let t_inst = phase::now();
     let text = act

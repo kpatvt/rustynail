@@ -27,8 +27,12 @@ pub const RA: u32 = 32;
 /// The pipeline takes the closed recording over instead of copying it (nothing reads the recording after its compile).
 pub const REC: u32 = 64;
 
+/// Section 53: a side trace's compile computes no shape hash. The hash of a compile only identifies a re-compile of a head's root trace that
+/// would repeat the generation flushed last (`cache::install` compares it for root traces; `cache::retire` keeps it for a head's own trace),
+/// so a side trace's was never read: the install gets 0 ("no hash").
+pub const SIDEHASH: u32 = 128;
 /// All levers.
-pub const ALL: u32 = MASKS | ENC | FXHASH | PASSES | RA | REC;
+pub const ALL: u32 = MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 
