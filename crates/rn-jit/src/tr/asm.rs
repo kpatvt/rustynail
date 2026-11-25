@@ -9501,6 +9501,8 @@ impl Cx<'_> {
             self.push(Op::Jmp(d.plain));
         }
         let mut k = 0;
+        // the allocation is final here: `uses_gpr` scans every instruction and snapshot (with cspeed=0), so it is asked once, not per exit
+        let uses_r14 = self.al.uses_gpr(10);
         // stubs are only requested while the instructions are assembled, so the list is final here
         while k < self.stubs.len() {
             let (snap, entry, label, poll, shape) = {
@@ -9534,7 +9536,7 @@ impl Cx<'_> {
                 // entry); not when the trace allocated `r14` (its stubs reload the constants pointer in front of their jump, a link would skip that)
                 let slink = self.env.slink_snaps
                     && !self.env.lazy
-                    && !self.al.uses_gpr(10)
+                    && !uses_r14
                     && self.env.budget_reg == Some(super::ra::BUDGET_GPR);
                 if ((self.env.dlink_snaps && self.env.lazy) || slink)
                     && self.env.exit_cells != 0
