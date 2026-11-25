@@ -6377,7 +6377,11 @@ impl Cx<'_> {
     /// (`cmp byte [r15 + disp32], 0`) made the Zen 5 front end the bottleneck of lib/str_eq: +31 % cycles at -8 % instructions
     /// (docs/JIT_TRACE.md section 56).
     fn payload_scaled_c(&mut self, base: V, idx: V, c: i64) -> Mi {
-        if c == -1 && !mutants::active("ixfuse_pay_disp_pos") && !mutants::active("b2arr_no_not") && !mutants::active("b2arr_off8") {
+        if c == -1
+            && !mutants::active("ixfuse_pay_disp_pos")
+            && !mutants::active("b2arr_no_not")
+            && !mutants::active("b2arr_off8")
+        {
             self.push(Op::MovR(7, idx));
             self.push(Op::Neg(7));
             return Mi {
