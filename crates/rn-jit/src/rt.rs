@@ -109,6 +109,20 @@ pub fn register_with_trace_pinned_off(cfg: Config) -> bool {
     register_with(cfg)
 }
 
+/// Section 53 (`memtune`, docs/JIT_TRACE.md): glibc's heap kept and grown in large steps (see `TrLimits::memtune`). A compile allocates and frees
+/// its IR, snapshot maps, allocation and code vectors (tens to hundreds of KiB); with the defaults a free at the top of the heap above 128 KiB
+/// is returned to the kernel (`brk` shrinks) and blocks above the dynamic `mmap` threshold are mapped and unmapped per compile, so the next
+/// compile faults the same pages in again. The settings only change when memory goes back to the kernel, not what any allocation returns.
+fn memtune() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: `mallopt` only changes the allocator's tuning parameters; it is called once, at registration, before any state exists.
+    unsafe {
+        libc::mallopt(libc::M_TRIM_THRESHOLD, 64 << 20);
+        libc::mallopt(libc::M_TOP_PAD, 8 << 20);
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 32 << 20);
+    }
+}
+
 /// [`register`] with an explicit configuration; the first registration of the process wins. Returns
 /// whether this call installed the compiler. `Mode::Off` installs nothing.
 pub fn register_with(cfg: Config) -> bool {
@@ -151,6 +165,10 @@ pub fn register_with(cfg: Config) -> bool {
         #[cfg(feature = "trace")]
         if crate::tr::cache::TrConfig::process().checked().mode != crate::tr::cache::TrMode::Off {
             crate::tr::install_driver();
+            // Section 53 (`memtune`): the allocator set up for the compiler's allocation pattern
+            if crate::tr::cache::TrConfig::process().limits.memtune != 0 {
+                memtune();
+            }
         }
         jit_hooks::install(VTable {
             hot_call,

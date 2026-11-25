@@ -61,6 +61,8 @@ pub const SNAPPRUNE_PROCESS: u32 = 1;
 pub const HSTOREGUARD_PROCESS: u32 = 1;
 /// K5: the process default of [`TrLimits::slotlive`] (also the struct default).
 pub const SLOTLIVE_PROCESS: u32 = 1;
+/// Section 53: the process default of [`TrLimits::memtune`] (also the struct default).
+pub const MEMTUNE_PROCESS: u32 = 1;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
 pub const LAZYSTUB_PROCESS: u32 = 1;
 /// P1: the process default of [`TrLimits::presize`] (also the struct default).
@@ -880,6 +882,12 @@ pub struct TrLimits {
     /// `cspeed=0` and compares the machine code and the label offsets byte for byte; a difference aborts the compile and is counted
     /// (`[trace] ccheck:` line of the statistics). 0 = off (default).
     pub ccheck: u32,
+    /// Section 53 (`memtune`, docs/JIT_TRACE.md): the C allocator of the process is set up for the compiler's allocation pattern at the JIT's
+    /// registration (glibc `mallopt`: freed memory at the top of the heap is kept up to 64 MiB instead of 128 KiB, the heap grows in 8 MiB
+    /// steps, and blocks up to 32 MiB come from the heap instead of their own `mmap`), so that the vectors every compile allocates and frees
+    /// do not go back to the kernel and fault in again (first-touch page faults). Process-wide, read once from the environment at
+    /// `rt::register`; 0 = the allocator's defaults. Default [`MEMTUNE_PROCESS`].
+    pub memtune: u32,
     /// Section 38 (`deepprobe`, docs/JIT_TRACE.md): a deep site (J2-2: a loop head whose recording ended at the recursion / depth limit) picks the
     /// iteration its root trace is recorded on: its first `deepprobe` closed root recordings are probes (dropped, the longest recorded path is
     /// kept), the next ones are dropped while their path is shorter than 7/8 of that, for at most `deepprobe` more recordings (the last one is
@@ -1049,6 +1057,7 @@ impl Default for TrLimits {
             t1call: T1CALL_PROCESS,
             cspeed: crate::cspeed::DEFAULT,
             ccheck: 0,
+            memtune: MEMTUNE_PROCESS,
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
@@ -1271,6 +1280,7 @@ impl TrLimits {
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
+                "memtune" => l.memtune = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }

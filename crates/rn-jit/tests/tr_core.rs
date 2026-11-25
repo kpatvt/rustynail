@@ -14217,6 +14217,17 @@ fn c1_cspeed_identical_code() {
     );
 }
 
+/// docs/JIT_TRACE.md section 53 (`memtune`): the process allocator set-up parses, is on by default and can be switched off (it changes when
+/// memory goes back to the kernel, never what a program computes: the whole suite runs with it).
+#[test]
+fn f53_memtune_knob() {
+    assert_eq!(TrLimits::default().memtune, 1);
+    assert_eq!(rn_jit::tr::cache::MEMTUNE_PROCESS, 1);
+    assert_eq!(TrLimits::parse("memtune=0").0.memtune, 0);
+    assert_eq!(TrLimits::parse("memtune=7").0.memtune, 1);
+    assert!(TrLimits::parse("memtune=0").1.is_empty());
+}
+
 /// docs/JIT_TRACE.md section 39.2 (T3, `heatside`): exits of a full family that keep coming back get side traces beyond `maxside`. `t3_01_heatside`
 /// (a 40-way branch chain in one hot loop, a chain whose late branches stop being taken, an error raised in a late branch under `pcall` and a
 /// collection in another) x `always` / `on2` x `heatside` 0 / 48, `+verify`; for the shipped value: exit storm, emulator, budgets 3 / 17 / 200, GC
