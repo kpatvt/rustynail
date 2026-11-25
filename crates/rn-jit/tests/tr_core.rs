@@ -14230,6 +14230,41 @@ fn f53_memtune_knob() {
     assert!(TrLimits::parse("memtune=0").1.is_empty());
 }
 
+/// docs/JIT_TRACE.md section 53 (`codemap`): the dual-mapped code arena (traces installed, deferred stubs placed and exits patched without
+/// `mprotect`) against the single mapping: the programs that must trace and the side-trace / deferred-stub programs of the corpus, `always` and
+/// `on2`, `codemap` 1 / 0, with an exit storm, `+verify` and GC stress 1 / 2 in both collector modes on the shipped value; every job against the
+/// interpreter. (The arena's own tests in `mem.rs` cover packing, patching, freeing and `fork`.)
+#[test]
+fn f53_codemap_programs() {
+    assert_eq!(TrLimits::default().codemap, 1);
+    assert_eq!(TrLimits::parse("codemap=0").0.codemap, 0);
+    let mut jobs = Vec::new();
+    for p in MUST_TRACE {
+        for trace in ["always", "on2"] {
+            for lim in ["codemap=1", "codemap=0"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+            }
+        }
+        jobs.push(
+            Job::new(p, "always")
+                .opts("+exitstorm=3 +verify")
+                .limits_s("codemap=1"),
+        );
+        for gc in ["1", "2"] {
+            for mode in ["gen", "inc"] {
+                let mut j = Job::new(p, "always")
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s("codemap=1");
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// docs/JIT_TRACE.md section 39.2 (T3, `heatside`): exits of a full family that keep coming back get side traces beyond `maxside`. `t3_01_heatside`
 /// (a 40-way branch chain in one hot loop, a chain whose late branches stop being taken, an error raised in a late branch under `pcall` and a
 /// collection in another) x `always` / `on2` x `heatside` 0 / 48, `+verify`; for the shipped value: exit storm, emulator, budgets 3 / 17 / 200, GC

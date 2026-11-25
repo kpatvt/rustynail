@@ -63,6 +63,8 @@ pub const HSTOREGUARD_PROCESS: u32 = 1;
 pub const SLOTLIVE_PROCESS: u32 = 1;
 /// Section 53: the process default of [`TrLimits::memtune`] (also the struct default).
 pub const MEMTUNE_PROCESS: u32 = 1;
+/// Section 53: the process default of [`TrLimits::codemap`] (also the struct default).
+pub const CODEMAP_PROCESS: u32 = 1;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
 pub const LAZYSTUB_PROCESS: u32 = 1;
 /// P1: the process default of [`TrLimits::presize`] (also the struct default).
@@ -888,6 +890,11 @@ pub struct TrLimits {
     /// do not go back to the kernel and fault in again (first-touch page faults). Process-wide, read once from the environment at
     /// `rt::register`; 0 = the allocator's defaults. Default [`MEMTUNE_PROCESS`].
     pub memtune: u32,
+    /// Section 53 (`codemap`, docs/JIT_TRACE.md): the code arena maps its chunks twice (a shared anonymous mapping and a second view of its pages: an RX view the code runs at, an RW
+    /// view every write goes through: `crate::mem` "Dual mapping"), so that installing a trace, placing a deferred stub and patching an exit
+    /// need no `mprotect` and compiles pack densely (no page rounding per commit). A `fork` child gets private copies. 0 = the single
+    /// mapping with `mprotect` flips. Default [`CODEMAP_PROCESS`].
+    pub codemap: u32,
     /// Section 38 (`deepprobe`, docs/JIT_TRACE.md): a deep site (J2-2: a loop head whose recording ended at the recursion / depth limit) picks the
     /// iteration its root trace is recorded on: its first `deepprobe` closed root recordings are probes (dropped, the longest recorded path is
     /// kept), the next ones are dropped while their path is shorter than 7/8 of that, for at most `deepprobe` more recordings (the last one is
@@ -1058,6 +1065,7 @@ impl Default for TrLimits {
             cspeed: crate::cspeed::DEFAULT,
             ccheck: 0,
             memtune: MEMTUNE_PROCESS,
+            codemap: CODEMAP_PROCESS,
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
@@ -1281,6 +1289,7 @@ impl TrLimits {
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
                 "memtune" => l.memtune = v.min(1),
+                "codemap" => l.codemap = v.min(1),
                 _ => bad.push(w.to_string()),
             }
         }

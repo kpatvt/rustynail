@@ -23,6 +23,21 @@
 //!   deferred until the chunk is reused, so a free costs no syscall), or unmapped. Pooled chunks beyond
 //!   1 MiB of total size are additionally trimmed with `madvise(MADV_DONTNEED)`.
 //!
+//! # Dual mapping (`codemap`, docs/JIT_TRACE.md section 53)
+//!
+//! [`CodeArena::set_dual`] maps every new chunk twice (one shared anonymous mapping and a second view of its pages): an RX view (the addresses code runs at and blocks report) and an
+//! RW view at another address that every write goes through (the `int3` fill, [`CodeArena::writer`], [`CodeArena::patch`]). No page is
+//! writable and executable at one address, and no write needs an `mprotect`: a commit only moves `sealed_end` to `bump` (no page
+//! rounding, so the next compile packs right behind the last one), a patch writes through the RW view. A chunk whose views cannot be made
+//! falls back to the single mapping above. x86 keeps instruction fetch coherent with stores to the same physical page
+//! through any virtual address, as for a write through the executable address.
+//!
+//! **Fork.** The pages of both views are shared, also with a child after `fork`. A `pthread_atfork` child handler (registered with the
+//! first dual chunk) replaces every registered RX view in the child by a private copy (fresh anonymous pages, the code copied, made RX,
+//! `mremap`ped over the shared view) and unmaps the RW view, then bumps a fork generation; each arena of the child sees the new
+//! generation at its next operation and turns its chunks into ordinary single-mapping chunks (`sealed_end` rounded up to the page,
+//! the rest made RW). Parent and child never write each other's code. Quarantined chunks are not registered (they are `PROT_NONE`).
+//!
 //! # Limits
 //!
 //! The *cap* ([`CodeArena::cap`]) bounds **mapped** address space ([`CodeArena::mapped`]): every chunk is
@@ -60,7 +75,7 @@ use std::io::Write;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 const INT3: u8 = 0xCC;
@@ -319,8 +334,106 @@ impl std::error::Error for ArenaError {}
 
 static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Section 53 (`codemap`): the dual chunks of the process (`rx`, `rw`, `len`; a free entry has `rx == 0`), for the fork handler.
+const DUAL_REG_LEN: usize = 1024;
+#[allow(clippy::declare_interior_mutable_const)]
+const REG_EMPTY: [AtomicUsize; 3] = [
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+];
+static DUAL_REG: [[AtomicUsize; 3]; DUAL_REG_LEN] = [REG_EMPTY; DUAL_REG_LEN];
+/// Bumped in a child after `fork` (by [`dual_fork_child`]): an arena whose generation differs turns its dual chunks into single ones.
+static FORK_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Enters a dual chunk into [`DUAL_REG`]; false when the registry is full (the chunk is then not made dual).
+fn dual_register(rx: usize, rw: usize, len: usize) -> bool {
+    static ATFORK: std::sync::Once = std::sync::Once::new();
+    ATFORK.call_once(|| {
+        // SAFETY: registers a plain `extern "C"` function as the child handler; no other handler is involved.
+        unsafe { libc::pthread_atfork(None, None, Some(dual_fork_child)) };
+    });
+    for e in DUAL_REG.iter() {
+        if e[0]
+            .compare_exchange(0, rx, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            e[1].store(rw, Ordering::Release);
+            e[2].store(len, Ordering::Release);
+            return true;
+        }
+    }
+    false
+}
+
+/// Removes a dual chunk from [`DUAL_REG`].
+fn dual_unregister(rx: usize) {
+    for e in DUAL_REG.iter() {
+        if e[0].load(Ordering::Acquire) == rx {
+            e[2].store(0, Ordering::Release);
+            e[1].store(0, Ordering::Release);
+            e[0].store(0, Ordering::Release);
+            return;
+        }
+    }
+}
+
+/// The `pthread_atfork` child handler of the dual chunks (see the module docs): every RX view becomes a private copy, every RW view goes.
+/// Only `mmap` / `mprotect` / `mremap` / `munmap` and a copy (async-signal-safe).
+extern "C" fn dual_fork_child() {
+    for e in DUAL_REG.iter() {
+        let (rx, rw, len) = (
+            e[0].load(Ordering::Acquire),
+            e[1].load(Ordering::Acquire),
+            e[2].load(Ordering::Acquire),
+        );
+        if rx == 0 || rw == 0 || len == 0 {
+            continue;
+        }
+        // SAFETY: `rx` / `rw` are the two live views of `len` bytes made by `map_dual` (registered until unmapped); the child is
+        // single-threaded here. The copy lands in fresh private memory that then replaces the shared RX view in place.
+        unsafe {
+            let tmp = libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            if tmp == libc::MAP_FAILED {
+                // (no memory for the copy: the child keeps the shared view; it must not compile into it, so it is made read-only)
+                libc::mprotect(
+                    rx as *mut libc::c_void,
+                    len,
+                    libc::PROT_READ | libc::PROT_EXEC,
+                );
+                continue;
+            }
+            std::ptr::copy_nonoverlapping(rx as *const u8, tmp as *mut u8, len);
+            libc::mprotect(tmp, len, libc::PROT_READ | libc::PROT_EXEC);
+            let r = libc::mremap(
+                tmp,
+                len,
+                len,
+                libc::MREMAP_MAYMOVE | libc::MREMAP_FIXED,
+                rx as *mut libc::c_void,
+            );
+            if r == libc::MAP_FAILED {
+                libc::munmap(tmp, len);
+            }
+            libc::munmap(rw as *mut libc::c_void, len);
+        }
+        e[1].store(0, Ordering::Release);
+    }
+    FORK_GEN.fetch_add(1, Ordering::AcqRel);
+}
+
 struct Chunk {
     base: *mut u8,
+    /// Section 53 (`codemap`): the RW view of a dual chunk (every write goes through it), null for a single mapping. In a dual chunk
+    /// the whole RX view is executable and `sealed_end` is not page aligned.
+    rw: *mut u8,
     len: usize,
     /// Page-aligned; `[0, sealed_end)` is RX, `[sealed_end, len)` is RW.
     sealed_end: usize,
@@ -336,9 +449,27 @@ struct Chunk {
 
 impl Chunk {
     fn unmap(self) {
+        if !self.rw.is_null() {
+            dual_unregister(self.base as usize);
+            // SAFETY: the RW view made by `map_dual` for this chunk, used by nothing else.
+            unsafe { libc::munmap(self.rw as *mut libc::c_void, self.len) };
+        }
         // SAFETY: `base`/`len` are exactly the mapping created in `map_chunk`, owned by this Chunk; blocks
         // into it are dead (freed, or the arena is being dropped).
         unsafe { libc::munmap(self.base as *mut libc::c_void, self.len) };
+    }
+
+    /// Where the byte at offset `off` is written: the RW view of a dual chunk, the address itself otherwise.
+    fn wptr(&self, off: usize) -> *mut u8 {
+        if self.rw.is_null() {
+            self.base.wrapping_add(off)
+        } else {
+            self.rw.wrapping_add(off)
+        }
+    }
+
+    fn dual(&self) -> bool {
+        !self.rw.is_null()
     }
 }
 
@@ -439,6 +570,10 @@ pub struct CodeArena {
     /// S1: successful [`CodeArena::patch`] calls.
     patches: u64,
     perf: Option<PerfMap>,
+    /// Section 53 (`codemap`): new chunks are dual-mapped.
+    dual: bool,
+    /// The [`FORK_GEN`] this arena's chunks were made for.
+    fork_gen: u64,
     _not_sync: PhantomData<Cell<()>>,
 }
 
@@ -499,6 +634,8 @@ impl CodeArena {
             mprotects: 0,
             patches: 0,
             perf: PerfMap::from_env(),
+            dual: false,
+            fork_gen: FORK_GEN.load(Ordering::Acquire),
             _not_sync: PhantomData,
         }
     }
@@ -533,6 +670,89 @@ impl CodeArena {
         self.slots.iter().flatten().count() + self.pool.len() + self.quarantined.len()
     }
 
+    /// Section 53 (`codemap`): chunks mapped from now on are dual-mapped (see the module docs); existing chunks keep their form.
+    pub fn set_dual(&mut self, on: bool) {
+        self.dual = on;
+    }
+    /// Whether new chunks are dual-mapped.
+    pub fn dual_enabled(&self) -> bool {
+        self.dual
+    }
+    /// Number of live chunks that are dual-mapped (tests).
+    pub fn dual_chunks(&self) -> usize {
+        self.slots.iter().flatten().filter(|c| c.dual()).count()
+    }
+
+    /// Section 53: after a `fork` (the child handler ran), the dual chunks of this arena become single-mapping chunks: the handler made
+    /// each RX view a private copy and unmapped the RW view; here `sealed_end` is rounded up to the page and the rest of a live chunk is made
+    /// RW again (a pooled chunk is marked sealed to its end, so that `revive` flips all of it).
+    fn sync_fork(&mut self) {
+        let g = FORK_GEN.load(Ordering::Acquire);
+        if g == self.fork_gen {
+            return;
+        }
+        self.fork_gen = g;
+        self.dual = false;
+        let pg = page_size();
+        let mut flips: Vec<(*mut u8, usize)> = Vec::new();
+        for c in self.slots.iter_mut().flatten() {
+            if c.dual() {
+                c.rw = std::ptr::null_mut();
+                let end = align_up(c.bump, pg).map_or(c.len, |e| e.min(c.len));
+                c.used_end = c.bump;
+                c.sealed_end = end;
+                c.bump = end;
+                if end < c.len {
+                    flips.push((c.base.wrapping_add(end), c.len - end));
+                }
+            }
+        }
+        for c in self.pool.iter_mut() {
+            if c.dual() {
+                c.rw = std::ptr::null_mut();
+                c.sealed_end = c.len;
+            }
+        }
+        for (p, n) in flips {
+            // (a failure leaves the tail RX: an allocation there then faults on its `int3` fill, as an mprotect failure of `revive` would)
+            let _ = self.protect(p, n, libc::PROT_READ | libc::PROT_WRITE);
+        }
+    }
+
+    /// Maps a dual chunk (see the module docs); `None` when a view or the registry entry cannot be made.
+    fn map_dual(len: usize) -> Option<(*mut u8, *mut u8)> {
+        // A shared anonymous mapping (shown as `/dev/zero (deleted)`, which profilers treat as anonymous memory and resolve through the
+        // perf map; a `memfd` view would be a file to them) and a second view of the same pages made by `mremap` with `old_size` 0 (valid
+        // for shared mappings only). The first view becomes the RX one.
+        // SAFETY: plain system calls; every result is checked and everything made is released on failure.
+        unsafe {
+            let rw = libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            if rw == libc::MAP_FAILED {
+                return None;
+            }
+            let rx = libc::mremap(rw, 0, len, libc::MREMAP_MAYMOVE);
+            if rx == libc::MAP_FAILED {
+                libc::munmap(rw, len);
+                return None;
+            }
+            if libc::mprotect(rx, len, libc::PROT_READ | libc::PROT_EXEC) != 0
+                || !dual_register(rx as usize, rw as usize, len)
+            {
+                libc::munmap(rx, len);
+                libc::munmap(rw, len);
+                return None;
+            }
+            Some((rx as *mut u8, rw as *mut u8))
+        }
+    }
+
     /// Enables or disables quarantine mode for chunks freed from now on (see the module docs).
     pub fn set_quarantine(&mut self, on: bool) {
         self.quarantine = on;
@@ -543,6 +763,23 @@ impl CodeArena {
     }
 
     fn map_chunk(&mut self, len: usize) -> Result<Chunk, ArenaError> {
+        if self.dual {
+            if let Some((rx, rw)) = Self::map_dual(len) {
+                self.mapped += len;
+                let gen = self.next_gen;
+                self.next_gen += 1;
+                return Ok(Chunk {
+                    base: rx,
+                    rw,
+                    len,
+                    sealed_end: 0,
+                    bump: 0,
+                    used_end: 0,
+                    live: BTreeSet::new(),
+                    gen,
+                });
+            }
+        }
         // SAFETY: anonymous private mapping, no hint; the result is checked before use.
         let p = unsafe {
             libc::mmap(
@@ -562,6 +799,7 @@ impl CodeArena {
         self.next_gen += 1;
         Ok(Chunk {
             base: p as *mut u8,
+            rw: std::ptr::null_mut(),
             len,
             sealed_end: 0,
             bump: 0,
@@ -602,7 +840,7 @@ impl CodeArena {
 
     /// Makes a pooled chunk writable again (the deferred RX -> RW flip) and empties it.
     fn revive(&mut self, c: &mut Chunk) -> Result<(), ArenaError> {
-        if c.sealed_end > 0 {
+        if c.sealed_end > 0 && !c.dual() {
             self.protect(c.base, c.sealed_end, libc::PROT_READ | libc::PROT_WRITE)?;
         }
         c.sealed_end = 0;
@@ -653,6 +891,7 @@ impl CodeArena {
         if size == 0 || size > MAX_BLOCK_SIZE || !align.is_power_of_two() || align > page_size() {
             return Err(ArenaError::BadRequest);
         }
+        self.sync_fork();
         let fits = |c: &Chunk| {
             align_up(c.bump, align)
                 .and_then(|o| o.checked_add(size))
@@ -667,7 +906,8 @@ impl CodeArena {
         // SAFETY: `[bump, off+size)` lies inside the chunk (checked by `fits`, or a fresh chunk with
         // size <= len) and above `sealed_end`, so it is RW; no CodeWriter can exist (they borrow the arena
         // shared and we hold `&mut self`).
-        unsafe { std::ptr::write_bytes(c.base.add(c.bump), INT3, off + size - c.bump) };
+        // (section 53: a dual chunk is written through its RW view)
+        unsafe { std::ptr::write_bytes(c.wptr(c.bump), INT3, off + size - c.bump) };
         c.bump = off + size;
         c.live.insert(off);
         let (gen, ptr) = (
@@ -705,7 +945,8 @@ impl CodeArena {
         }
         // SAFETY: the block is live, inside the chunk, in the RW region; `&mut CodeBlock` guarantees unique
         // access to these bytes (blocks never overlap) and the shared arena borrow prevents commit/free.
-        let bytes = unsafe { std::slice::from_raw_parts_mut(block.ptr, block.size) };
+        // (section 53: a dual chunk is written through its RW view)
+        let bytes = unsafe { std::slice::from_raw_parts_mut(c.wptr(block.offset), block.size) };
         Ok(CodeWriter { bytes })
     }
 
@@ -733,6 +974,14 @@ impl CodeArena {
     pub fn commit(&mut self) -> Result<(), ArenaError> {
         while let Some(&id) = self.pending.last() {
             let c = self.chunk(id);
+            if c.dual() {
+                // section 53: the RX view is executable already; the blocks are committed by moving the watermark (no page rounding)
+                let c = self.slots[id].as_mut().expect("code chunk slot is live");
+                c.sealed_end = c.bump;
+                c.used_end = c.bump;
+                self.pending.pop();
+                continue;
+            }
             let (base, start, bump) = (c.base, c.sealed_end, c.bump);
             let end = align_up(bump, page_size()).map_or(c.len, |e| e.min(c.len));
             // SAFETY: `[bump, end)` is inside the chunk and still RW (above sealed_end).
@@ -761,6 +1010,7 @@ impl CodeArena {
     /// frames only resume after the compile returned). If the reseal fails the page stays RW: the caller
     /// must treat that as fatal for the blocks on it (`rt` aborts, see docs/UNSAFE.md).
     pub fn reopen_tail(&mut self) -> bool {
+        self.sync_fork();
         if !self.pending.is_empty() {
             return false;
         }
@@ -769,7 +1019,8 @@ impl CodeArena {
         };
         let pg = page_size();
         let c = self.chunk(id);
-        if c.bump != c.sealed_end || c.used_end == 0 {
+        // (section 53: a dual chunk has no partly used sealed page: the next block follows the last one)
+        if c.bump != c.sealed_end || c.used_end == 0 || c.dual() {
             return false;
         }
         let start = c.used_end & !(pg - 1);
@@ -801,6 +1052,7 @@ impl CodeArena {
     /// valid code for every path that can reach them. The trace compiler patches only from the exit handler of the trace that owns the bytes (the
     /// handler is a call from the trace's shared exit routine and returns into it only after this has finished).
     pub unsafe fn patch(&mut self, patches: &[(usize, &[u8])]) -> Result<(), ArenaError> {
+        self.sync_fork();
         let pg = page_size();
         let lo = patches
             .iter()
@@ -823,6 +1075,16 @@ impl CodeArena {
             .ok_or(ArenaError::BadRequest)?;
         let c = self.chunk(id);
         let b = c.base as usize;
+        if c.dual() {
+            // section 53: written through the RW view, no protection change
+            for (a, code) in patches {
+                // SAFETY: inside the committed part of the chunk (checked above); the RW view maps the same pages; the caller
+                // guarantees nothing executes the bytes meanwhile.
+                unsafe { std::ptr::copy_nonoverlapping(code.as_ptr(), c.wptr(*a - b), code.len()) };
+            }
+            self.patches += 1;
+            return Ok(());
+        }
         let start = (lo - b) & !(pg - 1);
         let stop = align_up(hi - b, pg).ok_or(ArenaError::BadRequest)?;
         // SAFETY: `[start, stop)` is page aligned and inside the committed part of the chunk (checked above).
@@ -879,6 +1141,7 @@ impl CodeArena {
     /// # Safety
     /// No thread may be executing inside the block, and no copy of its entry pointer may be called after.
     pub unsafe fn free(&mut self, block: CodeBlock) -> Result<(), ArenaError> {
+        self.sync_fork();
         self.validate(&block)?;
         let id = block.chunk;
         let c = self.slots[id].as_mut().expect("code chunk slot is live");
@@ -893,7 +1156,13 @@ impl CodeArena {
             let pg = page_size();
             let s = align_up(block.offset, pg).unwrap_or(usize::MAX);
             let e = (block.offset + block.size) & !(pg - 1);
-            if e > s {
+            if e > s && c.dual() {
+                // SAFETY: as below, through the RW view of the shared mapping: MADV_REMOVE frees the backing pages (both views read
+                // zero afterwards; MADV_DONTNEED would only drop this view's page-table entries).
+                unsafe {
+                    libc::madvise(c.wptr(s).cast::<libc::c_void>(), e - s, libc::MADV_REMOVE);
+                }
+            } else if e > s {
                 // SAFETY: `[s, e)` is page aligned and lies inside the freed block, hence inside this
                 // arena's private anonymous mapping and unused by any live block; MADV_DONTNEED only drops
                 // the pages (they read back as zero).
@@ -920,6 +1189,10 @@ impl CodeArena {
         c.gen = self.next_gen;
         self.next_gen += 1;
         if self.quarantine {
+            // (section 53: a quarantined dual chunk leaves the fork registry: the child handler must not read a PROT_NONE view)
+            if c.dual() {
+                dual_unregister(c.base as usize);
+            }
             // Best effort: a failed mprotect leaves the chunk mapped and charged, never reused.
             let _ = self.protect(c.base, c.len, libc::PROT_NONE);
             self.quarantined.push(c);
@@ -930,9 +1203,14 @@ impl CodeArena {
             let pooled: usize = self.pool.iter().map(|p| p.len).sum();
             if pooled + c.len > POOL_RESIDENT {
                 // SAFETY: the range is exactly this arena's private anonymous mapping with no live blocks;
-                // MADV_DONTNEED only drops its pages (they read back as zero and are re-filled on use).
+                // MADV_DONTNEED only drops its pages (they read back as zero and are re-filled on use). (Section 53: the shared pages
+                // of a dual chunk are freed with MADV_REMOVE through its RW view.)
                 unsafe {
-                    libc::madvise(c.base as *mut libc::c_void, c.len, libc::MADV_DONTNEED);
+                    if c.dual() {
+                        libc::madvise(c.rw as *mut libc::c_void, c.len, libc::MADV_REMOVE);
+                    } else {
+                        libc::madvise(c.base as *mut libc::c_void, c.len, libc::MADV_DONTNEED);
+                    }
                 }
             }
             self.pool.push(c);
@@ -1056,6 +1334,157 @@ mod tests {
             }
         }
         assert_eq!(a.used(), 0);
+    }
+
+    fn dual_arena() -> CodeArena {
+        let mut a = CodeArena::new();
+        a.set_dual(true);
+        a
+    }
+
+    /// Section 53 (`codemap`): a dual arena runs code written through the RW view, commits and patches without an `mprotect`, packs the
+    /// blocks of consecutive commits without page rounding, and frees / reuses chunks like the single mapping.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dual_mapping_runs_patches_and_packs() {
+        let mut a = dual_arena();
+        let b1 = put(&mut a, &RET42);
+        a.commit().unwrap();
+        assert_eq!(a.dual_chunks(), 1, "the chunk is dual-mapped");
+        let b2 = put(&mut a, &LEA3);
+        a.commit().unwrap();
+        let b3 = put(&mut a, &ADD);
+        a.commit().unwrap();
+        // consecutive commits pack: the second block follows the first in the same page
+        assert_eq!(b2.addr(), b1.addr() + 16);
+        assert_eq!(b3.addr(), b2.addr() + 16);
+        assert!(!a.reopen_tail(), "a dual chunk has no tail page to reopen");
+        // SAFETY: blocks are live, committed, and hold code matching these signatures; nothing runs them while they are patched.
+        unsafe {
+            let f1: extern "C" fn() -> u32 = a.entry(&b1).unwrap();
+            let f2: extern "C" fn(u64) -> u64 = a.entry(&b2).unwrap();
+            let f3: extern "C" fn(u64, u64) -> u64 = a.entry(&b3).unwrap();
+            assert_eq!(f1(), 42);
+            assert_eq!(f2(5), 16);
+            assert_eq!(f3(40, 2), 42);
+            a.patch(&[(b1.addr() + 1, &[7]), (b2.addr() + 4, &[0x02])])
+                .unwrap();
+            assert_eq!(f1(), 7);
+            assert_eq!(f2(5), 17);
+            // committed blocks stay unwritable through the writer, uncommitted bytes are not patchable
+            let mut b1w = b1;
+            assert_eq!(a.writer(&mut b1w).err(), Some(ArenaError::NotWritable));
+            let b4 = put(&mut a, &RET42);
+            assert_eq!(
+                a.patch(&[(b4.addr(), &[0x90])]),
+                Err(ArenaError::BadRequest)
+            );
+            assert_eq!(
+                a.entry::<extern "C" fn() -> u32>(&b4).err(),
+                Some(ArenaError::NotCommitted)
+            );
+            a.commit().unwrap();
+            let f4: extern "C" fn() -> u32 = a.entry(&b4).unwrap();
+            assert_eq!(f4(), 42);
+            for b in [b1w, b2, b3, b4] {
+                a.free(b).unwrap();
+            }
+        }
+        assert_eq!(
+            a.mprotect_calls(),
+            0,
+            "no protection change in a dual arena"
+        );
+        assert_eq!(a.used(), 0);
+        // the freed chunk is pooled and reused
+        let b5 = put(&mut a, &LEA3);
+        a.commit().unwrap();
+        // SAFETY: as above.
+        unsafe {
+            let f5: extern "C" fn(u64) -> u64 = a.entry(&b5).unwrap();
+            assert_eq!(f5(1), 4);
+            a.free(b5).unwrap();
+        }
+        assert_eq!(a.mprotect_calls(), 0);
+    }
+
+    /// Section 53: large blocks in a dual arena (pages inside a freed block are given back with MADV_REMOVE while its neighbours live on),
+    /// a second chunk, and a drop with live code.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dual_mapping_large_blocks_and_neighbours() {
+        let mut a = dual_arena();
+        let small = put(&mut a, &RET42);
+        let mut big = a.alloc(5 * page_size(), 16).unwrap();
+        a.writer(&mut big).unwrap().write_at(0, &ADD);
+        let tail = put(&mut a, &LEA3);
+        a.commit().unwrap();
+        // SAFETY: committed blocks with matching code; the big block is freed while nothing runs it.
+        unsafe {
+            a.free(big).unwrap();
+            let f: extern "C" fn() -> u32 = a.entry(&small).unwrap();
+            let g: extern "C" fn(u64) -> u64 = a.entry(&tail).unwrap();
+            assert_eq!(f(), 42);
+            assert_eq!(g(5), 16);
+        }
+        let huge = a.alloc(DEFAULT_CHUNK_SIZE, 16).unwrap();
+        assert!(a.live_chunks() >= 2);
+        // (the arena's drop unmaps the chunks with the live blocks)
+        let _ = (huge, small, tail);
+        assert_eq!(a.mprotect_calls(), 0);
+    }
+
+    /// Section 53: after `fork` the child's dual chunks are private copies: the child runs the code it inherited, compiles and patches its
+    /// own (as single-mapping chunks), and none of it reaches the parent, whose code and later patches stay its own.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn dual_mapping_fork_child_gets_private_copies() {
+        let mut a = dual_arena();
+        let b1 = put(&mut a, &RET42);
+        let b2 = put(&mut a, &LEA3);
+        a.commit().unwrap();
+        // SAFETY: `fork` in a test process: the child only runs code of this arena and system calls, then `_exit`s.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            // child: exit status 0 = all checks held
+            let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // SAFETY: committed blocks with matching code; nothing runs them while they are patched.
+                unsafe {
+                    let f1: extern "C" fn() -> u32 = a.entry(&b1).unwrap();
+                    if f1() != 42 {
+                        return false;
+                    }
+                    a.patch(&[(b1.addr() + 1, &[9])]).unwrap();
+                    if f1() != 9 {
+                        return false;
+                    }
+                    let b3 = put(&mut a, &ADD);
+                    a.commit().unwrap();
+                    let f3: extern "C" fn(u64, u64) -> u64 = a.entry(&b3).unwrap();
+                    f3(40, 2) == 42 && a.dual_chunks() == 0
+                }
+            }));
+            // SAFETY: leaves the child without running the parent's destructors.
+            unsafe { libc::_exit(if ok.unwrap_or(false) { 0 } else { 1 }) };
+        }
+        let mut status = 0;
+        // SAFETY: waits for the child made above.
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "the child's checks failed (status {status})"
+        );
+        // SAFETY: committed blocks of the parent with matching code.
+        unsafe {
+            let f1: extern "C" fn() -> u32 = a.entry(&b1).unwrap();
+            let f2: extern "C" fn(u64) -> u64 = a.entry(&b2).unwrap();
+            assert_eq!(f1(), 42, "the child's patch reached the parent");
+            assert_eq!(f2(5), 16);
+            a.patch(&[(b2.addr() + 4, &[0x02])]).unwrap();
+            assert_eq!(f2(5), 17);
+        }
+        assert_eq!(a.dual_chunks(), 1, "the parent keeps its dual chunk");
     }
 
     /// S1: `patch` rewrites committed code (two `mprotect`s per call, the pages executable again afterwards) and refuses bytes outside the committed part.

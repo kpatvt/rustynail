@@ -540,6 +540,11 @@ impl JitData {
         if let Some(m) = PerfMap::from_env() {
             arena.set_perf_map(Some(m));
         }
+        // Section 53 (`codemap`): dual-mapped code chunks (no `mprotect` per compile or patch); quarantine keeps the single mapping
+        #[cfg(feature = "trace")]
+        arena.set_dual(
+            crate::tr::cache::TrConfig::process().limits.codemap != 0 && mode != Mode::Verify,
+        );
         JitData {
             near: false,
             enabled,
@@ -933,6 +938,12 @@ pub fn set_trace(st: &mut State, cfg: crate::tr::cache::TrConfig) {
         let off = cfg.mode == crate::tr::cache::TrMode::Off;
         // SAFETY: as in `set_mode`.
         let was_off = unsafe { (*dp).tr.cfg.mode == crate::tr::cache::TrMode::Off };
+        // Section 53 (`codemap`): the state's knob decides for the chunks mapped from now on
+        // SAFETY: as in `set_mode`.
+        unsafe {
+            let q = (*dp).arena.quarantine_enabled();
+            (*dp).arena.set_dual(cfg.limits.codemap != 0 && !q);
+        }
         // SAFETY: as in `set_mode`.
         unsafe { (*dp).tr.cfg = cfg };
         if off {

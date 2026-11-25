@@ -1073,7 +1073,14 @@ fn lifetime_verify_mode_quarantines_flushed_trace_blocks() {
         let (b1, _) = c::trace_block(&mut st, t1).unwrap();
         assert_eq!(exec(&mut st, "return f(10)"), "55");
         assert_eq!(n.load(Ordering::Relaxed), 10);
-        assert_eq!(map_perms(b1).as_deref(), Some("r-xp"));
+        // (docs/JIT_TRACE.md section 53, `codemap`: a dual-mapped chunk's RX view is a shared mapping, `r-xs`; verify mode keeps the
+        // single private mapping)
+        let perms = map_perms(b1);
+        assert!(
+            perms.as_deref() == Some("r-xp")
+                || (mode == Mode::Always && perms.as_deref() == Some("r-xs")),
+            "{mode:?}: {perms:?}"
+        );
         c::request_flush(&mut st, t1, FlushWhy::Dep);
         seen.push((mode, map_perms(b1)));
     }
@@ -1082,9 +1089,8 @@ fn lifetime_verify_mode_quarantines_flushed_trace_blocks() {
         Some("---p"),
         "verify mode must quarantine the freed chunk PROT_NONE: {seen:?}"
     );
-    assert_ne!(
-        seen[1].1.as_deref(),
-        Some("---p"),
+    assert!(
+        !seen[1].1.as_deref().is_some_and(|p| p.starts_with("---")),
         "the control run (no verify) must not quarantine: {seen:?}"
     );
 }

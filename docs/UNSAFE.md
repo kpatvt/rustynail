@@ -198,6 +198,17 @@ in rn-core, the hooks under `cfg(feature = "jit")` (`jit_hooks.rs`, the `'frame`
   instant code can run. The patched bytes are rel32 fields of `jmp` / `jcc` to the stub's 5-byte `nop` (found through the
   assembler's fixups and checked by opcode) and the `nop` itself (`jmp rel32`). The stub block belongs to the trace and is freed with
   it (`cache::retire`). Tests: `tr_core::s1_lazystub_programs` (twins `lazystub=1/0`, exit storms, GC and stack-move stress).
+- **J-DUAL (`codemap`, docs/JIT_TRACE.md section 53):** a dual chunk (`CodeArena::set_dual`, mem.rs "Dual mapping") is one shared
+  anonymous mapping (the RW view) and a second view of the same pages made by `mremap(old_size = 0)` and made RX; blocks report
+  RX addresses, every write (the `int3` fill, `writer`, `patch`) goes through the RW view at the same offset. No address is writable
+  and executable, and no protection changes; a commit only moves `sealed_end` (no page rounding), a patch writes the RW view (the
+  same single-thread rule as J-PATCH: no generated code runs meanwhile). `free` gives interior pages back with `MADV_REMOVE` through
+  the RW view (shared pages), the pool trims with it too. `fork`: the pages are shared with the child, so a `pthread_atfork` child
+  handler copies every registered RX view into private memory, `mremap`s the copy over it and unmaps the RW view (the registry is a
+  fixed array of atomics, the handler only makes system calls and copies); each arena of the child turns its chunks into single
+  chunks at its next operation (`sync_fork`: `sealed_end` rounded up to the page, the rest made RW). Quarantined chunks leave the
+  registry (`PROT_NONE`). Tests: `mem::tests::dual_mapping_*` (packing, patching, freeing, a fork whose child patches and compiles
+  without reaching the parent), `tr_core::f53_codemap_programs`.
 - **J-STRESS:** `state::move_stack` (feature `jit`) re-allocates the stack block, fixes open upvalues, poisons and frees the old
   block; only reachable through `jit_hooks::stress_move_stack` when `RUSTYNAIL_JIT_STRESS=stackmove`.
 - **Charge accounting (replaces J-CHARGE):** `Mem::charge_ext` up front for whole pages, `Mem::uncharge_ext` for the unused part
