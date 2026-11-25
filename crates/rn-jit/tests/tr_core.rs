@@ -14219,12 +14219,13 @@ fn c1_cspeed_identical_code() {
     );
 }
 
-/// docs/JIT_TRACE.md section 53 (`memtune`): the process allocator set-up parses, is on by default and can be switched off (it changes when
-/// memory goes back to the kernel, never what a program computes: the whole suite runs with it).
+/// docs/JIT_TRACE.md section 53 (`memtune`): the process allocator set-up parses, is off by default (53.5) and can be switched on (it changes when
+/// memory goes back to the kernel, never what a program computes).
 #[test]
 fn f53_memtune_knob() {
-    assert_eq!(TrLimits::default().memtune, 1);
-    assert_eq!(rn_jit::tr::cache::MEMTUNE_PROCESS, 1);
+    assert_eq!(TrLimits::default().memtune, 0);
+    assert_eq!(rn_jit::tr::cache::MEMTUNE_PROCESS, 0);
+    assert_eq!(TrLimits::parse("memtune=1").0.memtune, 1);
     assert_eq!(TrLimits::parse("memtune=0").0.memtune, 0);
     assert_eq!(TrLimits::parse("memtune=7").0.memtune, 1);
     assert!(TrLimits::parse("memtune=0").1.is_empty());

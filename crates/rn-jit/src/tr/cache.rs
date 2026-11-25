@@ -61,8 +61,9 @@ pub const SNAPPRUNE_PROCESS: u32 = 1;
 pub const HSTOREGUARD_PROCESS: u32 = 1;
 /// K5: the process default of [`TrLimits::slotlive`] (also the struct default).
 pub const SLOTLIVE_PROCESS: u32 = 1;
-/// Section 53: the process default of [`TrLimits::memtune`] (also the struct default).
-pub const MEMTUNE_PROCESS: u32 = 1;
+/// Section 53: the process default of [`TrLimits::memtune`] (also the struct default). Off: the knob misses the bar on `awfy/nbody` (+2 % cycles at
+/// identical instructions, docs/JIT_TRACE.md 53.5) while it is the largest gain of the section (geomean -2.05 % cycles against -0.97 %).
+pub const MEMTUNE_PROCESS: u32 = 0;
 /// Section 53: the process default of [`TrLimits::codemap`] (also the struct default).
 pub const CODEMAP_PROCESS: u32 = 1;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).

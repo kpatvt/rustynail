@@ -6781,3 +6781,165 @@ allocation (instructions, operands, reloads, every snapshot location), so the st
 cd's ~130 M extra instructions under `cspeed=0`; the rest is the old encoder paths. The shipped default is not affected (`MASKS` is on). `cspeed=0`
 measured the section-49 "before" only up to section 50; hoisting the call out of the loop (one `uses_gpr(10)` per trace) would make it a valid
 "before" again. Not changed here.
+
+## 53. Cheaper formation steps: measured ceilings per lever, `codemap`, `memtune`, the side-trace `cspeed` levers (2026-11-24, base 65f3453)
+
+Task: docs/STUDY_FORMATION.md builder 1, a formation step (side-trace compile path first, then root, then recording) **2x cheaper in cycles**, code
+allowed to change, every candidate lever measured first with a scratch ceiling experiment. **Result: the 2x goal is missed by a wide margin.** What was
+built makes a step 4-9 % cheaper in cycles (cd 5.5 of its ~96 Mcyc of formation, 6 %; raytrace 4 %, richards 6 %, towers 9 %; cd 10 % with `memtune`);
+whole programs -0.97 % cycles (geomean, 31 programs, 5.5, shipped defaults), -2.05 % with `memtune` on, which misses the bar on `awfy/nbody` and is
+therefore shipped off. Section 53.5 says why the structural levers were not reached.
+
+### 53.1 Method
+
+* Binaries: release `rn-cli` (5.5; 5.4 with `--cfg rustynail_lua54`, `LUA_VERSION=5.4`), base 65f3453 built in this session, scratch builds (never
+  committed, removed) for the ceiling experiments. Copies with names of equal length, so that `argv[0]` does not move the stack (see 53.4).
+* Totals: `perf stat -e cycles:u,instructions:u,task-clock,page-faults`, CPU 4 (`taskset`), nothing else running (checked), 200 ms spin before each
+  run, `RUSTYNAIL_SEED=0`, configurations interleaved, every limits variable of equal length, and an environment padding variable rotated over
+  5 lengths (0 / 24 / 72 / 136 / 200 bytes) across the runs of a configuration (the layout lottery of 53.4). Cycles = min (and median) of 5 runs (3 for
+  5.4), instructions = min. `task-clock` is the wall time of the process including the kernel; `cycles:u` does not see page faults, `mprotect` or
+  TLB shoot-downs (`cycles:k` is not available at `perf_event_paranoid` 2), so both are reported.
+* The phase timers of `RUSTYNAIL_JIT_VERBOSE=1` were not used for decisions: they count TSC ticks (wall time, 2.52 cycles per tick at full clock),
+  and the clock of CPU 4 varied between 3.3 and 5.0 GHz between back-to-back runs without the spin, which moved a phase by up to 35 %.
+* Profiles: a frame-pointer build (`-C force-frame-pointers=yes`, own target directory, removed), `perf record -e cycles:u -c 100003 --call-graph fp
+  --user-callchains`, 5 runs per program, inclusive shares of the run. (DWARF unwinding lost 16 % of the samples and most chains.)
+* Ceilings by doubling (scratch switches): a phase run a second time on the same inputs and its result dropped; the cycle difference is the cost of the
+  warm second run (the first, cold, run costs about 1.6x that, docs/STUDY_FORMATION.md sections 0 and 3.1), i.e. a lower bound of what removing the phase saves.
+
+### 53.2 Where a step goes, and the measured ceilings
+
+**Profile (fp call chains, % of the program's cycles; cd / raytrace / richards / towers / deltablue):** formation 40.3 / 37.1 / 31.9 / 25.1 / 32.7. Of it:
+recording (the recorder's own work per bytecode, `rec_step` without the pipeline it calls; includes the few tier-1 compiles it triggers) 9.2 / 12.4 / 9.2 / 5.2 / 13.2; trace pipeline 25.7 / 20.1 / 18.1 /
+16.1 / 12.7 (front passes 7.8 / 6.1 / 5.0 / 3.8 / 2.9, allocator 5.1 / 4.9 / 4.3 / 3.6 / 2.9, exits 2.6 / 2.1 / 1.1 / 1.3 / 0.8, assembler 4.3 / 3.5 / 3.7 / 3.2 / 2.6, shape
+hash 1.05 / 0.81 / 0.83 / 0.74 / 0.50, x86 encoder of traces and tier 1 3.6 / 3.0 / 3.7 / 2.4 / 4.1); tier-1 compile 3.6 / 4.5 / 6.4 / 2.7 / 7.1; deferred stubs 2.4 /
+1.0 / 1.0 / 1.3 / 1.0. Allocation leaves under formation (malloc / free / realloc, `RawVec` growth, `hashbrown`) 8.3 / 7.7 / 6.9 / 4.5 / 7.5, spread over about
+40 call sites, none above 0.7 %. Inside the recorder, `record_one` (guards, snapshots, table-lookup guards) is the cost; the per-step bookkeeping of
+`on_step` around it is under 1 %. Of a doubled side-trace back end (cd), the forwarding pass is 17 %, sinking 6 %, the allocator 21 %, the assembler
+13 %, the exit builder 10.5 %, the encoder 8 %, the shape hash 6 %.
+
+**Ceiling experiments [M] (cycles min / task-clock, % of the program; raytrace / cd / richards / towers / deltablue / fmt_s):**
+
+| lever | experiment | ceiling |
+|---|---|---|
+| (1b/1c) kernel side of the compile: page faults, `mprotect` | scratch: code chunks mapped RWX (no `mprotect`), pre-faulted, the heap pre-faulted and never trimmed | -1.0/-3.1, -3.5/-8.0, -1.0/-2.7, +0.1/0.0, -1.2/-3.3, +0.5/+6.5 |
+| | of that: no `mprotect` (RWX) | -0.9/-2.4, -1.0/-4.0, +0.2/-1.0, +0.1/-1.1, -0.6/-1.7, 0/0 |
+| | of that: glibc tunables (trim 256 MiB, top pad 16 MiB) | +1.1/-0.1, -1.8/-3.3, -0.8/-2.0, -0.4/-1.0, -0.3/-1.6, +0.6/+1.2 |
+| (1a) side-trace back end | doubled (front, allocator, exits, assembler, encoder, hash) | +8.8, +13.1, +10.5, +7.9, +3.5, 0 (2x cheaper, cold: about -7 / -10 / -8 / -6 / -3 %) |
+| root back end | doubled | +3.9, +6.9, +0.1, +0.8, +5.3, +4.6 |
+| side forwarding pass alone | doubled | +2.0, +3.6, +3.7, +3.3, +1.5, 0 |
+| exit builder alone | doubled | +1.4, +3.5, +0.4, -0.9, +1.0 |
+| shape hash alone | doubled | instructions +0.46 / +0.56 / +0.38 / +0.24 / +0.24 % |
+| tier-1 compile | doubled | +2.5, +3.0, +2.7, +0.1, +4.7, +6.7 |
+| (1d) recording | profile share (halving: half of it) | 12.4 / 9.2 / 9.2 / 5.2 / 13.2 % |
+| skip the side forwarding pass when it changes nothing | count of side traces whose IR the pass leaves unchanged | 27 / 38, 123 / 234, 1 / 31, 8 / 27, 15 / 40: no sound skip worth building |
+| (2) failed-recording predictor | docs/STUDY_FORMATION.md 3.4 (blacklist ceiling) | -2 / -4 / -1 / -8 / -10 % and +22 % on lua_lexer; not re-measured, not built |
+
+(1c) cold start: its page-fault part is the first row; the cold instruction cache of the compiler code between compiles is not removable without
+batching compiles, which changes formation (not attempted). A per-compile arena (1b proper) was not built: the allocation leaves are 4.5-8.3 % of the
+run over about 40 sites (the allocator swap of the study and the tunables above bound what a faster allocator buys), and an arena means threading an
+allocator through every pass.
+
+### 53.3 What was built (knobs of `RUSTYNAIL_JIT_TRACE_LIMITS`, constants in `tr/cache.rs` / `crate::cspeed`)
+
+| commit | lever | knob, default | what | verification |
+|---|---|---|---|---|
+| F53a | `memtune` | `memtune`, `MEMTUNE_PROCESS` **0** (off) | at registration glibc `mallopt`: keep up to 64 MiB of freed heap top, grow the heap by 8 MiB, blocks up to 32 MiB from the heap | `tr_core::f53_memtune_knob`; changes no result |
+| F53b | `SIDEHASH` | `cspeed` bit 128, on | no shape hash for a side trace (only a root's is ever compared, `cache::install` / `retire`) | identical code (`ccheck`) |
+| F53c | `FWDSNAP`, `SINKSKIP` | `cspeed` bits 256 / 512, on | side forwarding pass: snapshots renamed into one buffer, pruned in place, frame links by a running offset, its clean-up keeps the (unchanged) snapshot tables; sinking returns before its analysis without a `TNEW` | identical code: `ccheck` now also compares the snapshots of the passes (headers, entries, frame links, steps; `print::dump` shows instructions only); mutant `fwdsnap_frame_stale` |
+| F53d | `codemap` | `codemap`, `CODEMAP_PROCESS` 1 | code chunks dual-mapped: a shared anonymous mapping (RW view) and a second view of its pages (`mremap` with `old_size` 0) made RX; writes go through the RW view, so installs, deferred stubs and patches need no `mprotect` and commits pack without page rounding; `pthread_atfork` child handler gives a forked child private copies; quarantine (`RUSTYNAIL_JIT=verify`) keeps the single mapping | `mem::tests::dual_mapping_*` (packing, patching, freeing, a fork whose child runs, patches and compiles without reaching the parent), `tr_core::f53_codemap_programs` (codemap 0 / 1, exit storm, GC stress 1 / 2 in both modes), docs/UNSAFE.md J-DUAL; with the default on every trace test runs dual-mapped |
+| F53e | pattern cache | (a fix, no knob) | rn-std's compiled-pattern cache picks its two-slot set from the pattern's first and last eight bytes and length instead of its address (53.4) | rn-std tests; markdown 380-381 M instructions under every layout tried |
+
+`cspeed` default is now 1019 (all levers; `cspeed=123` = the section-49 set, `cspeed=0` = the old paths). A `memfd` view was tried first for `codemap`
+and dropped: `perf` treats a `memfd:` mapping as a file and stops resolving trace symbols through the perf map (the shared anonymous mapping shows as
+`/dev/zero (deleted)`, which it treats as anonymous). Pre-faulting a dual chunk (`MAP_POPULATE` + `MADV_POPULATE_READ`) was measured and dropped:
+cycles -0.3..-1.2 %, but `lib/fmt_s` +16 % wall (1 MiB faulted up front).
+
+### 53.4 Numbers
+
+**Per lever, same binary, knob off -> on (6 programs; cycles min of 9 / task-clock):**
+
+| lever | raytrace | cd | richards | towers | deltablue | fmt_s |
+|---|---|---|---|---|---|---|
+| `memtune` | -1.0 / -2.5 | -1.7 / -3.5 | -0.7 / -1.8 | -0.7 / -0.7 | -0.3 / -1.4 | -0.8 / +0.6 |
+| `codemap` | +0.1 / -0.5 | -0.7 / -3.3 | -0.6 / -1.9 | -0.3 / -1.2 | -0.4 / -0.9 | -0.1 / +1.2 |
+| `SIDEHASH` + `FWDSNAP` (7 runs; instructions) | -1.5 / -0.57 % | -2.9 / -1.15 % | -2.2 / -0.86 % | -1.1 / -0.70 % | -0.3 / -0.20 % | -0.1 / -0.04 % |
+
+Instructions of the compile-heavy programs at the hot thresholds 248 / 252 / 256 / 260 / 264 (base -> final, the code is identical so formation is the
+same): raytrace -0.52 / -0.64 / -0.56 / -0.61 / -0.56 %, cd -1.16 / -1.20 / -1.14 / -1.00 / -1.02 %, richards -1.43 / -0.92 / -0.94 / -0.90 / -0.83 %, towers -0.67 /
+-0.58 / -0.69 / -0.66 / -0.65 %, deltablue -0.15 / -0.17 / -0.20 / -0.21 / -0.23 %, fmt_s +0.02 % at each: no lottery.
+
+**Ceiling against achieved:** kernel side (1b/1c), cycles / wall: cd ceiling -3.5 / -8.0 %, achieved -2.4 / -6.8 % with `memtune` and `codemap` (sum of the
+two same-binary rows above; shipped, `codemap` alone: -0.7 / -3.3 %); raytrace -1.0 / -3.1 against -0.9 / -3.0; richards -1.0 / -2.7 against -1.3 / -3.7; towers
++0.1 / 0 against -1.0 / -1.9; deltablue -1.2 / -3.3 against -0.7 / -2.3. Side back end (1a): 2x ceiling about -7 / -10 / -8 / -6 / -3 % (raytrace / cd / richards / towers / deltablue), achieved -1.5 / -2.9 / -2.2 /
+-1.1 / -0.3 %. Recording (1d), tier-1 compile, root back end, the predictor (2): not built, 0.
+
+**Whole programs, 31-program sample (section 49's), base 65f3453 against the final binary (5.5: 5 runs, 5.4: 3 runs; cycles min):**
+
+| | 5.5 shipped (`memtune` 0) | 5.5 `memtune=1` | 5.4 shipped | 5.4 `memtune=1` |
+|---|---:|---:|---:|---:|
+| geomean cycles | **-0.97 %** | -2.05 % | **-0.54 %** | -1.44 % |
+| geomean instructions | -0.18 % | -0.19 % | -0.11 % | -0.12 % |
+| geomean task-clock | -1.51 % | -3.33 % | -0.84 % | -2.29 % |
+| worst instructions | markdown +0.45 %, expr_lang +0.28 % | the same | lua_parser +0.78 %, markdown +0.46 % | the same |
+| worst cycles | markdown +1.9 %, havlak +1.0 % | **nbody +2.2 %** | prototype_objects +5.1 %, regex_nfa +2.7 % (7 runs) | regex_nfa +2.6 %, forth_vm +1.9 % |
+| best cycles | lua_parser -5.9, events -3.6, prototype_objects -3.0, regex_nfa -2.5, cd -2.3, towers -2.2, lru_cache -2.1, richards -2.0 % | prototype_objects -10.7, lua_parser -5.9, particles_physics -4.6, events -4.2, cd -3.9, lru_cache -3.8, regex_nfa -3.3 % | cd -2.3, expr_lang -2.3, scheme_interp -2.1, richards -1.8, towers -1.8 % | prototype_objects -7.7, dijkstra_routes -4.5, cd -4.1, expr_lang -3.6, lru_cache -3.2 % |
+
+Per program (5.5, shipped, cycles / instructions): bounce -0.4 / -0.10, cd -2.3 / -1.14, deltablue -0.6 / -0.20, havlak +1.0 / +0.03, json -1.3 / -0.13, list
+-0.9 / -0.15, mandelbrot 0 / -0.01, nbody +0.1 / -0.02, permute -0.2 / -0.05, queens -1.5 / -0.03, richards -2.0 / -0.94, sieve +0.5 / 0, storage -0.2 / 0, towers
+-2.2 / -0.69, events -3.6 / 0, expr_lang -2.0 / +0.28, lru_cache -2.1 / -0.70, markdown +1.9 / +0.45, raytrace -1.4 / -0.56, bigint_rsa +0.5 / 0, dijkstra_routes
+-0.1 / -0.08, forth_vm -0.7 / -0.01, prototype_objects -3.0 / -0.08, roguelike_turns -1.1 / -0.18, scheme_interp +1.0 / -0.02, lua_parser -5.9 / -1.09, oop_mixins
+-0.3 / -0.08, particles_physics -0.6 / -0.11, regex_nfa -2.5 / -0.02, classic_vector +0.4 / -0.08, fmt_s -0.2 / +0.02 (%).
+
+**Steady state** (5x the default size: raytrace 10, cd 5, richards 125, towers 225, deltablue 100, json 175, lru_cache 450000, havlak 30, expr_lang 30; 5.5, 3
+runs): shipped -0.67 % cycles, -0.08 % instructions (geomean; every program -0.03..-0.38 % instructions except expr_lang +0.50 %, the pattern hash);
+`memtune=1` -2.03 % (havlak -6.6 %, cd -3.4 %, lru_cache -3.2 %). Cheaper steps did not lower code quality (the trace code is identical).
+
+**The layout lottery.** The first bar run (binaries named `base` / `fin` / `fin`, limits strings of different length) showed markdown +8.4 %
+instructions. Cause: rn-std's compiled-pattern cache indexed its sets by string address, and `memtune` moved markdown's hot patterns into one set
+(410 M instructions at every `argv[0]` length tried, 378 M with `memtune=0`; with a relative binary path both 377 M). F53e indexes by content (380-381 M
+everywhere). Since then the runs control `argv[0]`, the length of the limits variable and rotate an environment pad. The remaining cycle outliers
+at identical instructions are layout too: 5.4 prototype_objects / regex_nfa are +3.6 % / +3.6 % with every new knob off in the same final binary.
+
+### 53.5 Bar, misses, and why 2x was not reached
+
+**Bar** (no program over +1 % instructions / +2 % cycles at default size, geomean not worse, steady state not worse): shipped defaults meet it on 5.5
+(worst markdown +0.45 % instructions / +1.9 % cycles). 5.4 misses on cycles at identical instructions: prototype_objects +5.1 %, regex_nfa +2.7 %; the
+same binary with all new knobs off shows +3.6 % on both, so these are the binary's code layout (as in 49.5), not a lever. **`memtune` misses** on 5.5
+nbody: +1.8..+2.7 % cycles at identical instructions in four separate series, from the top pad (top pads of 1, 2, 4 and 8 MiB all give +1.9..+3.3 %; on
+5.4 the same knob gives nbody -2.5 %; with transparent huge pages `always` the padded heap is backed differently). It is the largest lever measured here
+(5.5 geomean -2.05 % instead of -0.97 %, prototype_objects -10.7 %, havlak -2.9 % at default size and -6.6 % at 5x), so it stays as a knob:
+`RUSTYNAIL_JIT_TRACE_LIMITS=memtune=1`, or `MEMTUNE_PROCESS = 1` to ship it.
+
+**Goal missed: a formation step 2x cheaper.** Achieved: a step 4-9 % cheaper in cycles (cd 10 % with `memtune`); the side forwarding pass is the
+only pass made substantially cheaper (`SINKSKIP` was not measured on its own). Why, from 53.2:
+
+1. **The step has no hot spot.** The pipeline is ten passes, each linear in the snapshot volume (one snapshot of 10-60 entries per guard-bearing
+   bytecode, copied and walked by the recorder, the forwarding pass, sinking, the allocator, the exit builder, the assembler); after C1 and this
+   section no function is above 2 % of the run. Halving it needs fewer or smaller snapshots and fewer passes: delta-encoded snapshots of a side
+   trace against its parent's exit and one pass that allocates while it emits. Both change every stage of the back end and its tests (the exit
+   numbering, stubs, counters and `ccheck` follow the snapshot table), far beyond the time box; neither was prototyped.
+2. **The kernel and allocator part was smaller than the hypothesis.** Page faults were 5-10x the interpreter's (cd 2290 against 412), but removing
+   them and every `mprotect` gave 1-3.5 % of cycles and 3-8 % of wall time; `memtune` + `codemap` reach that ceiling.
+3. **The skip levers are not sound or not large.** The side forwarding pass changes the IR in most side traces (richards 30 of 31), so "skip when
+   nothing to forward" is no lever; the shape hash and sinking without allocations were the safe skips (built). A sound predictor of failing
+   recordings was not found (the study's blacklist ceiling includes lua_lexer's +22 %).
+4. **Recording** (5-13 % of the run) is `record_one` itself: guards and snapshots per bytecode, the same volume as item 1.
+
+### 53.6 Gates and what was not run
+
+* Each commit: `GATE_CPUS=2-15 scripts/gate-light.sh <group> --fast --base HEAD~1`. F53a (automatic group) and F53b (`cspeed_`): every step PASS
+  except `mutant-map` (line shifts), regenerated and checked (`gen-mutant-map.py --check`) and amended into the commit. F53c (`fwdsnap_,cspeed_`): its
+  first run had `fwdsnap_no_prune` survive (an equivalent mutant: the renamed entries of a kept snapshot are never prunable, and `ccheck` did not compare
+  snapshots); replaced by `fwdsnap_frame_stale` and `ccheck` extended, then all steps PASS (mutant group 5 caught). F53d: the first run failed
+  `tr_runtime::lifetime_verify_mode_quarantines_flushed_trace_blocks` (it expected the private `r-xp` mapping; a dual chunk is `r-xs`), fixed; the automatic
+  mutant group had one survivor, `rec_inner_first_stale`, which also survives at the base 65f3453 (checked with the same test binary configuration) and is
+  not caused by this work; rerun with `cspeed_,fwdsnap_`: all PASS. F53e (`cspeed_`): all PASS. F53f (`memtune` default off, this section,
+  `cspeed_`): all PASS.
+* `ccheck=1` on raytrace, cd, richards, towers, deltablue, fmt_s, lru_cache, havlak, json, classic_vector (final 5.5 binary, snapshots compared): 3-278
+  compiles compared per program, 0 differ.
+* Final binaries (5.5 and 5.4, shipped defaults: `codemap=1`, `cspeed=1019`, `memtune=0`): `JITDIFF_MODES="off tr trdef" scripts/jit-diff.sh 1 40`: 40
+  seeds, 0 diffs, 0 timeouts on each version; the official suite (`scripts/jit-official.sh`, `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`): OK on 5.5
+  and 5.4.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle suites, PGO builds, the all-223 benchmark, `bench-fast.sh`; no 5.4 steady
+  state; the hot-threshold check on six programs only; lua_lexer not measured (no predictor was built). `cargo test -p rn-std` in release fails
+  `interp_scripts` gen_04 / inc_04 / pool_04 (a C-stack depth count, 142852 vs 142854) at the base as well.
