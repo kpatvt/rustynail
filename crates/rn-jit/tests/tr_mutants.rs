@@ -1896,7 +1896,8 @@ const TABLE: &[Row] = &[
         name: "tlen_inline_zero_bound_skip",
         owner: "A2",
         dets: &[d("tr_core", "tlen_inline_programs")],
-    },    Row {
+    },
+    Row {
         name: "frame_side_never",
         owner: "S1",
         dets: &[d("tr_core", "s1_frame_side_programs")],
@@ -3965,7 +3966,8 @@ const TABLE: &[Row] = &[
             "tr_loop",
             "hstore_after_a_nil_store_keeps_its_old_value_check",
         )],
-    },    Row {
+    },
+    Row {
         name: "entry2_transitive_stale",
         owner: "G1",
         dets: &[
@@ -4215,7 +4217,8 @@ const TABLE: &[Row] = &[
         name: "aref_phi_cse",
         owner: "K7",
         dets: &[d("tr_core", "k7_aref_phi_programs")],
-    },    Row {
+    },
+    Row {
         name: "lazystub_reloadk",
         owner: "S1L",
         dets: &[d("tr_core", "s1_lazystub_programs")],
@@ -4264,7 +4267,8 @@ const TABLE: &[Row] = &[
         name: "presize_no_free",
         owner: "P1",
         dets: &[d("tr_core", "p1_presize_programs")],
-    },    Row {
+    },
+    Row {
         name: "h9_inl_push_skip",
         owner: "E1",
         dets: &[d("tr_core", "e1_unroll_programs")],
@@ -4348,7 +4352,8 @@ const TABLE: &[Row] = &[
         name: "lazyloop_root_not_set",
         owner: "E4",
         dets: &[d("tr_core", "e4_lazyloop_programs")],
-    },    Row {
+    },
+    Row {
         name: "midfold_outer_unchecked",
         owner: "E5",
         dets: &[d("tr_core", "e5_midfold_programs")],
@@ -4833,6 +4838,11 @@ const TABLE: &[Row] = &[
         name: "t1g_next_fn_skip",
         owner: "R2",
         dets: &[d("tr_core", "r2_genfor_programs")],
+    },
+    Row {
+        name: "reroot_never",
+        owner: "S59",
+        dets: &[d("tr_core", "s59_reroot_programs")],
     },
 ];
 

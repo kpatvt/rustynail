@@ -781,8 +781,8 @@ site	crates/rn-jit/src/tr/asm.rs	tlen_fast	8080	tlen_inline_zero_bound_skip
 site	crates/rn-jit/src/tr/asm.rs	tlen_fast	8104	tlen_inline_zero_bound_skip
 site	crates/rn-jit/src/tr/mod.rs	tlen_mut	3750	tlen_inline_zero_bound_skip
 det	crates/rn-jit/tests/tr_core.rs	tlen_inline_programs	8642	tlen_inline_zero_bound_skip
-det	crates/rn-jit/tests/tr_core.rs	s1_frame_side_programs	9447	tlen_inline_zero_bound_skip
 site	crates/rn-jit/src/tr/cache.rs	exit_hot_policy	5766	frame_side_never
+det	crates/rn-jit/tests/tr_core.rs	s1_frame_side_programs	9447	frame_side_never
 site	crates/rn-jit/src/tr/asm.rs	inline_stub	10543	frame_cell_no_test
 det	crates/rn-jit/tests/tr_core.rs	s1_frame_side_programs	9447	frame_cell_no_test
 site	crates/rn-jit/src/tr/exit.rs	exit_entry	2648	frame_cell_unwind_skip
@@ -1695,9 +1695,9 @@ site	crates/rn-jit/src/tr/record.rs	hstore_mt_guard	5531	hstore_mt_stale
 det	crates/rn-jit/tests/tr_core.rs	f5_hstore_guard_programs	9395	hstore_mt_stale
 site	crates/rn-jit/src/tr/opt_loop.rs	copy_one	1014	hstore_known_nonnil_wrong
 site	crates/rn-jit/src/tr/opt_loop.rs	copy_one	1021	hstore_known_nonnil_wrong
-det	crates/rn-jit/tests/tr_asm.rs	hand_entry_ents_follow_the_chain_and_skip_stored_slots	2021	hstore_known_nonnil_wrong
-det	crates/rn-jit/tests/tr_core.rs	g1_guard_diet_programs	9153	hstore_known_nonnil_wrong
 site	crates/rn-jit/src/tr/exit.rs	entry_ents	456	entry2_transitive_stale
+det	crates/rn-jit/tests/tr_asm.rs	hand_entry_ents_follow_the_chain_and_skip_stored_slots	2021	entry2_transitive_stale
+det	crates/rn-jit/tests/tr_core.rs	g1_guard_diet_programs	9153	entry2_transitive_stale
 site	crates/rn-jit/src/tr/exit.rs	entry_ents	470	entry_inherit_wrong_slot
 det	crates/rn-jit/tests/tr_asm.rs	hand_entry_ents_follow_the_chain_and_skip_stored_slots	2021	entry_inherit_wrong_slot
 det	crates/rn-jit/tests/tr_core.rs	g1_guard_diet_programs	9153	entry_inherit_wrong_slot
@@ -1798,8 +1798,8 @@ site	crates/rn-core/src/table.rs	insert_small	1844	smallins_order_swap
 det	crates/rn-jit/tests/tr_smallins.rs	smallins_pairs_order_matches_the_reference	22	smallins_order_swap
 site	crates/rn-jit/src/tr/opt_loop.rs	copy_one	1112	aref_phi_cse
 det	crates/rn-jit/tests/tr_core.rs	k7_aref_phi_programs	12358	aref_phi_cse
-det	crates/rn-jit/tests/tr_core.rs	s1_lazystub_programs	12404	aref_phi_cse
 site	crates/rn-jit/src/tr/asm.rs	reload_k_pass	617	lazystub_reloadk
+det	crates/rn-jit/tests/tr_core.rs	s1_lazystub_programs	12404	lazystub_reloadk
 site	crates/rn-jit/src/tr/exit.rs	append_shared_exit	1020	lazystub_resume_v8
 det	crates/rn-jit/tests/tr_core.rs	s1_lazystub_programs	12404	lazystub_resume_v8
 site	crates/rn-jit/src/tr/exit.rs	append_shared_exit	1028	lazystub_resume_xmm
@@ -1818,8 +1818,8 @@ site	crates/rn-jit/src/tr/record.rs	hash_insert	5979	p1_memo_dunder
 det	crates/rn-jit/tests/tr_core.rs	p1_presize_programs	12582	p1_memo_dunder
 site	crates/rn-core/src/table.rs	mut_smallins	1868	presize_no_free
 det	crates/rn-jit/tests/tr_core.rs	p1_presize_programs	12582	presize_no_free
-det	crates/rn-jit/tests/tr_core.rs	e1_unroll_programs	12643	presize_no_free
 site	crates/rn-jit/src/tr/asm.rs	rec_call_tail_lazy	4310	h9_inl_push_skip
+det	crates/rn-jit/tests/tr_core.rs	e1_unroll_programs	12643	h9_inl_push_skip
 site	crates/rn-jit/src/tr/record.rs	end_rec_call	7188	h9_inl_savedpc_off
 det	crates/rn-jit/tests/tr_core.rs	e1_unroll_programs	12643	h9_inl_savedpc_off
 site	crates/rn-jit/src/tr/asm.rs	rec_call_tail_lazy	4323	h9_inl_bump_off
@@ -1852,8 +1852,8 @@ site	crates/rn-jit/src/tr/cache.rs	lazy_loop_rule	6674	lazyloop_decide_any
 det	crates/rn-jit/tests/tr_policy.rs	e4_policy	2280	lazyloop_decide_any
 site	crates/rn-jit/src/tr/asm.rs	entry_checks	4986	lazyloop_root_not_set
 det	crates/rn-jit/tests/tr_core.rs	e4_lazyloop_programs	12890	lazyloop_root_not_set
-det	crates/rn-jit/tests/tr_core.rs	e5_midfold_programs	13709	lazyloop_root_not_set
 site	crates/rn-jit/src/tr/asm.rs	entry_checks	4942	midfold_outer_unchecked
+det	crates/rn-jit/tests/tr_core.rs	e5_midfold_programs	13709	midfold_outer_unchecked
 site	crates/rn-jit/src/tr/asm.rs	rec_ret_tail	4564	midfold_rootret_inner
 det	crates/rn-jit/tests/tr_core.rs	e5_midfold_programs	13709	midfold_rootret_inner
 site	crates/rn-jit/src/tr/mod.rs	pipeline_inner	2417	midfold_store_family
@@ -2052,4 +2052,5 @@ det	crates/rn-jit/tests/tr_core.rs	r2_genfor_programs	14030	t1g_close_tbc_skip
 site	crates/rn-jit/src/tr/mod.rs	t1g_mut	3772	t1g_close_level_skip
 det	crates/rn-jit/tests/tr_core.rs	r2_genfor_programs	14030	t1g_close_level_skip
 site	crates/rn-jit/src/tr/mod.rs	t1g_mut	3773	t1g_next_fn_skip
+det	crates/rn-jit/tests/tr_core.rs	r2_genfor_programs	14030	t1g_next_fn_skip
 site	crates/rn-jit/src/tr/cache.rs	pre_exit_check	7368	reroot_never
