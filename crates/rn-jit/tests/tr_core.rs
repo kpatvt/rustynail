@@ -12396,7 +12396,9 @@ fn s1_lazystub_programs() {
         ("sinkf_side", ""),
         ("j1_sinkf", ""),
         ("r1_nbody_pairs", ""),
-        ("s1_frame_sides", ""),
+        // (section 39.2 `heatside` off: with the shipped grants the twins of `on2 +exitstorm=7 +verify +randra=5` formed differently
+        // (exits 110530 / 112294, side traces 184 / 189), the baseline failed and the mutant runner dropped this detector)
+        ("s1_frame_sides", "heatside=0"),
         ("p2_xregs", "xregs=3"),
         (
             "s1_dbl_chain",

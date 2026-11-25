@@ -208,15 +208,25 @@ fn shape_tier1_newkey_clears_the_id() {
     use rn_jit::t15::runtime::{T15Config, T15Mode};
     use rn_jit::tr::cache::TrConfig;
     init();
-    let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
-    rn_jit::set_mode(&mut st, rn_jit::Mode::Always);
-    rn_jit::set_t15(&mut st, T15Config::for_mode(T15Mode::Off));
-    set_trace(
-        &mut st,
-        TrConfig::parse(Some("on"), Some("2000000000,2000000000"), None, None, None),
-    );
-    rn_jit::tr::attach_driver(&mut st);
-    let src = "
+    // `t6=2` (the fused constructor of section 44.1 off, its bit-1 math path kept): the T6 constructor takes these groups whole (the layout id is then
+    // zeroed by the constructor, `ctor_layout_skip`'s detector), so only with it off do the constructors reach the inline insertion of a new key and
+    // this mutant's site; the shipped configuration runs too
+    for limits in [None, Some("t6=2")] {
+        let mut st: LuaState = rn_std::new_state_with_libs().expect("state");
+        rn_jit::set_mode(&mut st, rn_jit::Mode::Always);
+        rn_jit::set_t15(&mut st, T15Config::for_mode(T15Mode::Off));
+        set_trace(
+            &mut st,
+            TrConfig::parse(
+                Some("on"),
+                Some("2000000000,2000000000"),
+                None,
+                limits,
+                None,
+            ),
+        );
+        rn_jit::tr::attach_driver(&mut st);
+        let src = "
       KEEP = {}
       local function m1(i) return {name = i, value = 2, key = 3, next = 4, len = 5, size = 6, id = 7, tag = 8} end
       local function m2(i) return {k1 = i, k2 = 2, k3 = 3, k4 = 4, k5 = 5} end
@@ -230,26 +240,27 @@ fn shape_tier1_newkey_clears_the_id() {
         end
       end
       run(3000) run(7)";
-    rn_core::table::set_mut_born_mark(MARK);
-    let base = st.top();
-    assert_eq!(st.load_buffer(src.as_bytes(), b"=shape", None), Status::Ok);
-    let func = st.top() - 1;
-    let status = st.pcall(func, LUA_MULTRET, 0);
-    rn_core::table::set_mut_born_mark(0);
-    assert_eq!(status, Status::Ok, "script failed: {:?}", st.get(func));
-    st.set_top(base);
-    let g = st.globals();
-    let key = Value::string(st.heap().new_str(b"KEEP").unwrap());
-    let keep = g.get(&key);
-    let keep = keep.as_table().expect("KEEP");
-    for i in 1..=40 {
-        let t = keep.get_int(i).as_table().expect("kept table");
-        assert!(t.hash_size() >= 8, "table {i}: {} nodes", t.hash_size());
-        assert_eq!(
-            t.layout_id(),
-            0,
-            "table {i}: the id survived the key insertions"
-        );
+        rn_core::table::set_mut_born_mark(MARK);
+        let base = st.top();
+        assert_eq!(st.load_buffer(src.as_bytes(), b"=shape", None), Status::Ok);
+        let func = st.top() - 1;
+        let status = st.pcall(func, LUA_MULTRET, 0);
+        rn_core::table::set_mut_born_mark(0);
+        assert_eq!(status, Status::Ok, "script failed: {:?}", st.get(func));
+        st.set_top(base);
+        let g = st.globals();
+        let key = Value::string(st.heap().new_str(b"KEEP").unwrap());
+        let keep = g.get(&key);
+        let keep = keep.as_table().expect("KEEP");
+        for i in 1..=40 {
+            let t = keep.get_int(i).as_table().expect("kept table");
+            assert!(t.hash_size() >= 8, "table {i}: {} nodes", t.hash_size());
+            assert_eq!(
+                t.layout_id(),
+                0,
+                "table {i} ({limits:?}): the id survived the key insertions"
+            );
+        }
     }
 }
 
