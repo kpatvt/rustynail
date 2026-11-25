@@ -474,6 +474,7 @@ pub fn abort_name(r: AbortReason) -> &'static str {
         AbortReason::SideShort => "SideShort",
         AbortReason::AllocStorm => "AllocStorm",
         AbortReason::Unroll => "Unroll",
+        AbortReason::Reroot => "Reroot",
     }
 }
 
@@ -886,6 +887,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         snapprune_locals: cfg.limits.snapprune >= 2,
         pureb: cfg.limits.pureb != 0,
         opencall: cfg.limits.opencall != 0,
+        avoid: if cfg.limits.reroot != 0 {
+            pr.and_then(|pr| cache::head_reroot_avoid(st, pr, pc))
+        } else {
+            None
+        },
         ..RecCfg::default()
     };
     match record::arm(st, ci, pc, rc) {
@@ -1208,6 +1214,7 @@ fn finish_outcome(st: &mut State) {
         }
         RecOutcome::Aborted(why) => match why {
             AbortReason::Unstable => cache::abort_unstable(st, act.id),
+            AbortReason::Reroot if !act.side => cache::abort_reroot(st, act.id),
             AbortReason::FnShort if !act.side => {
                 cache::abort_recording(st, act.id, "FnShort", unchangeable(why));
             }
@@ -1223,6 +1230,15 @@ fn finish_outcome(st: &mut State) {
             ),
         },
         RecOutcome::Closed(rec) => {
+            // section 59 (`reroot`): remember the path (the rule compares a root's path with its side trace's); a closed root recording ends its head's constraint
+            cache::reroot_closed(
+                st,
+                act.id,
+                act.side,
+                &rec.path,
+                &rec.path_proto,
+                &rec.path_depth,
+            );
             // section 38 (`deepprobe`): a deep site picks the iteration its root is recorded on (the longest of its probes)
             if !act.side
                 && cache::deep_probe_drop(

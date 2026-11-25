@@ -207,6 +207,12 @@ pub const CLOREUSE_PROCESS: u32 = 1;
 pub const DOMTOP_PROCESS: u32 = 82;
 /// C36 (`domn`): process value of [`TrLimits::domn`]: entries a root needs before the `domtop` rule may fire.
 pub const DOMN_PROCESS: u32 = 65536;
+/// Section 59 (`reroot`): process value of [`TrLimits::reroot`] (also the struct default): the percent of a root's entries (at least `domn`) that leave through
+/// ONE pre-roll site into a side trace above which the root is re-recorded once, steered away from the path it took at that site. 0 = off.
+pub const REROOT_PROCESS: u32 = 0;
+/// Section 59 (`rerootall`): process value of [`TrLimits::rerootall`]: the `reroot` rule also needs this percent of the entries to leave through any pre-roll
+/// site (0 = no such condition).
+pub const REROOTALL_PROCESS: u32 = 80;
 /// P2 fix (`pollr15`): process value of [`TrLimits::pollr15`]. **2 = on except in traces of native self-recursion** (regression fix of 2026-11-12: the P2 fix had made it 0, which cost 1 instruction per loop iteration of every other trace: lib/m_*, int_sum +5..13 %). 0 = off, 1 = on everywhere. The r15-addressed poll makes `programs/fib` 7-9 % slower in cycles than the
 /// `movabs` form at every loop-head offset (docs/PERF.md "P2 loop-top placement fix"); `RUSTYNAIL_JIT_TRACE_LIMITS=pollr15=1` turns it on (all 223 programs 0.985 / 0.971 on, 0.989 / 0.983 off).
 pub const POLLR15_PROCESS: u32 = 2;
@@ -634,6 +640,14 @@ pub struct TrLimits {
     pub domtop: u32,
     /// C36: see `domtop`.
     pub domn: u32,
+    /// Section 59: a root with at least `domn` entries since install, `reroot` percent or more of which leave through ONE pre-roll site into a side trace, is
+    /// flushed once (no penalty) and re-recorded with a path constraint: a recording that follows the old root's path past the point where the side trace's
+    /// path left it is dropped (no penalty, at most [`REROOT_TRIES`] times), so the new root takes the side trace's direction there. 0 = off; default
+    /// [`REROOT_PROCESS`] (process and tests).
+    pub reroot: u32,
+    /// Section 59: the `reroot` rule fires only when all pre-roll exits together are at least `rerootall` percent of the entries (0 = no condition; default
+    /// [`REROOTALL_PROCESS`]).
+    pub rerootall: u32,
     /// P3: after an entry-failure flush of a root whose entry segment holds a callee identity guard (TR6d), the head is recorded again with callee guards kept out of the entry segment
     /// (0 = off; default [`NCALLEE_PROCESS`] (process and tests)).
     pub ncallee: u32,
@@ -1015,6 +1029,8 @@ impl Default for TrLimits {
             sidenest: SIDENEST_PROCESS,
             domtop: DOMTOP_PROCESS,
             domn: DOMN_PROCESS,
+            reroot: REROOT_PROCESS,
+            rerootall: REROOTALL_PROCESS,
             ncallee: NCALLEE_PROCESS,
             chainre: CHAINRE_PROCESS,
             chainn: CHAINN_PROCESS,
@@ -1237,6 +1253,8 @@ impl TrLimits {
                 "sidenest" => l.sidenest = v.min(1),
                 "domtop" => l.domtop = v.min(100),
                 "domn" => l.domn = v,
+                "reroot" => l.reroot = v.min(100),
+                "rerootall" => l.rerootall = v.min(100),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -1606,6 +1624,11 @@ pub struct HeadData {
     pub ident_kept: Cell<bool>,
     /// C36: the head had its `domtop` re-record.
     pub dom_done: Cell<bool>,
+    /// Section 59: the head had its `reroot` re-record (once per head).
+    pub reroot_done: Cell<bool>,
+    /// Section 59: the path prefix a root recording of this head must not complete (pc, prototype, depth per step) and the drops left; cleared when a root
+    /// recording of the head closes or the drops run out.
+    pub reroot_avoid: RefCell<Option<(std::rc::Rc<Vec<(u32, usize, u8)>>, u8)>>,
     /// P3 (`ncallee`): the head is recorded with its callee guards out of the entry segment (set by an entry-failure flush of a trace whose entry segment held one; never reset).
     pub ncallee: Cell<bool>,
     /// BUNDLE-L B (`bhoist`): the head is recorded without hoisted bounds guards (set when a root with hoisted guards was flushed as ineffective; never reset).
@@ -1751,6 +1774,8 @@ impl HeadData {
             linked_in: Cell::new(false),
             ident_kept: Cell::new(false),
             dom_done: Cell::new(false),
+            reroot_done: Cell::new(false),
+            reroot_avoid: RefCell::new(None),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
             rearm_budget: Cell::new(REARM_BUDGET),
@@ -2890,6 +2915,12 @@ pub struct TrStats {
     pub ident_kept: u64,
     /// C36: roots re-recorded by the `domtop` rule.
     pub dom_flushes: u64,
+    /// Section 59: roots flushed by the `reroot` rule, root recordings dropped by its path constraint, constraints given up.
+    pub reroots: u64,
+    /// See `reroots`.
+    pub reroot_drops: u64,
+    /// See `reroots`.
+    pub reroot_gaveup: u64,
     /// P3: chain re-orders (child subtrees flushed by [`chain_check`]).
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
@@ -3262,6 +3293,8 @@ pub struct TrState {
     /// BUNDLE-P: per trace, the readings of its previous hop-rate check ([`pre_exit_check`]). Per state (it was a thread-local, which let a second state
     /// on the same thread see the first one's readings).
     hops: BTreeMap<(u32, u32), HopSt>,
+    /// Section 59 (`reroot`): the recorded paths of closed recordings (pc, prototype, depth per step), by trace id (filled only with the knob on).
+    pub rr_paths: crate::fx::HashMap<(u32, u32), std::rc::Rc<Vec<(u32, usize, u8)>>>,
     /// BUNDLE-J (`centry`): code addresses of the prototypes that were first hot when a C function called them (read when the prototype is compiled).
     pub(crate) centry: crate::fx::HashSet<usize>,
     /// BUNDLE-J: hot events of registered C-entered functions so far (key: code address; the entries start at the `centrywait`-th).
@@ -3306,6 +3339,7 @@ impl TrState {
             dep_hook: None,
             nest_q: Vec::new(),
             hops: BTreeMap::new(),
+            rr_paths: Default::default(),
             centry: Default::default(),
             centry_seen: Default::default(),
         }
@@ -4189,6 +4223,8 @@ enum AbortKind {
     Drop,
     /// Section 38: a deep site's probe (or short try) closed and was dropped: no penalty, the next back-edge records again.
     Probe,
+    /// Section 59: a root recording completed its head's avoided path: no penalty, the next back-edge records again.
+    Reroot,
 }
 
 fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind) {
@@ -4336,6 +4372,11 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
         }
         AbortKind::Probe => {
             tp.on_deep_probe(r.head);
+            Penalty::Wait(1)
+        }
+        AbortKind::Reroot => {
+            tp.heads[r.head].trace.set(None);
+            tp.to_warm_keep(r.head, 1);
             Penalty::Wait(1)
         }
     };
@@ -7340,6 +7381,39 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
         return false;
     };
     let e = u64::from(h.entry_ok.get());
+    // Section 59 (`reroot`): a root through whose busiest pre-roll site `reroot` percent of the entries hop into one side trace was recorded on the
+    // minority direction of a branch of its loop: flush it once and re-record it steered away from the path it took there (counters only: deterministic)
+    let rr = d.tr.cfg.limits.reroot;
+    if rr != 0
+        && !h.reroot_done.get()
+        && e >= u64::from(d.tr.cfg.limits.domn)
+        && !mutants::active("reroot_never")
+    {
+        let mut best: Option<(usize, u64, TrId)> = None;
+        for (k, x) in meta.exits.iter().enumerate() {
+            if let (true, Some(SideSt::Has(sid))) = (x.pre, sides.get(k)) {
+                // SAFETY: as above
+                let c = u64::from(exit_count(unsafe { &*meta.counters.add(k) }.get()));
+                if best.is_none_or(|b| c > b.1) {
+                    best = Some((k, c, *sid));
+                }
+            }
+        }
+        let all_ok = p_all * 100 >= e * u64::from(d.tr.cfg.limits.rerootall);
+        if let Some((k, c, sid)) = best.filter(|b| all_ok && b.1 * 100 >= e * u64::from(rr)) {
+            h.reroot_done.set(true);
+            if let Some(av) = reroot_avoid_path(&d.tr.rr_paths, id, sid, meta, k) {
+                let n = av.len();
+                *h.reroot_avoid.borrow_mut() = Some((av, REROOT_TRIES));
+                d.tr.stats.reroots += 1;
+                vlog(d_of(st), || {
+                    format!("reroot: root slot {} had {}% of its {e} entries through pre-roll exit {k} ({c}; all pre-roll exits {}%): re-record avoiding its first {n} steps", id.slot, c * 100 / e.max(1), p_all * 100 / e.max(1))
+                });
+                request_flush(st, id, FlushWhy::Dom);
+                return true;
+            }
+        }
+    }
     // F2a: a root with a side trace on a type-guard exit can ping-pong with it (every entry fails the guard, the side
     // trace links back into the entry): the threshold is lower, so that a persistent type change is re-recorded as
     // the prototype did (a hot type-guard exit flushed the trace at once)
@@ -7888,6 +7962,115 @@ pub fn shape_miss(st: &mut State, id: TrId) -> bool {
         super::shape::MISSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     false
+}
+
+/// Section 59 (`reroot`): drops of a constrained root recording before the constraint is given up.
+pub const REROOT_TRIES: u8 = 16;
+
+/// Section 59 (`reroot`): the path prefix a root recording of head `pc` of `pr` must not complete, if any.
+pub fn head_reroot_avoid(
+    st: &mut State,
+    pr: ProtoRef,
+    pc: u32,
+) -> Option<std::rc::Rc<Vec<(u32, usize, u8)>>> {
+    let d = d_of(st);
+    let tp = tr_of(d, pr.0)?;
+    let i = tp.head_index(pc)?;
+    let a = tp.head(i).reroot_avoid.borrow();
+    a.as_ref().map(|x| x.0.clone())
+}
+
+/// Section 59: the recording `id` closed (`side`: a side recording) with this path: kept for the `reroot` rule; a root recording ends its head's constraint.
+pub fn reroot_closed(
+    st: &mut State,
+    id: TrId,
+    side: bool,
+    path: &[u32],
+    protos: &[super::ir::ProtoKey],
+    depths: &[u8],
+) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.reroot == 0 {
+        return;
+    }
+    if d.tr.rr_paths.len() >= 4096 {
+        d.tr.rr_paths.clear();
+    }
+    let v: Vec<(u32, usize, u8)> = path
+        .iter()
+        .zip(protos)
+        .zip(depths)
+        .map(|((&pc, pr), &dp)| (pc, pr.0, dp))
+        .collect();
+    d.tr.rr_paths.insert((id.slot, id.gen), std::rc::Rc::new(v));
+    if side {
+        return;
+    }
+    if let Some(Slot {
+        body: Body::Rec(r), ..
+    }) = d.tr.slot(id)
+    {
+        let (root, head) = (r.root, r.head);
+        if let Some(tp) = tr_of(d, root).filter(|_| root != 0) {
+            tp.heads[head].reroot_avoid.borrow_mut().take();
+        }
+    }
+}
+
+/// Section 59: a root recording completed the avoided path prefix: dropped without penalty (the next back-edge records again); after
+/// [`REROOT_TRIES`] drops the constraint is given up.
+pub fn abort_reroot(st: &mut State, id: TrId) {
+    let d = d_of(st);
+    d.tr.stats.reroot_drops += 1;
+    if let Some(Slot {
+        body: Body::Rec(r), ..
+    }) = d.tr.slot(id)
+    {
+        let (root, head) = (r.root, r.head);
+        if let Some(tp) = tr_of(d, root).filter(|_| root != 0) {
+            let mut a = tp.heads[head].reroot_avoid.borrow_mut();
+            let left = a.as_ref().map_or(0, |x| x.1.saturating_sub(1));
+            if left == 0 {
+                *a = None;
+                d.tr.stats.reroot_gaveup += 1;
+            } else if let Some(x) = a.as_mut() {
+                x.1 = left;
+            }
+        }
+    }
+    finish_abort(st, id, "Reroot", AbortKind::Reroot);
+}
+
+/// Section 59: the path prefix the re-record of root `root` must not complete: the root's path up to the first step where the path of the side trace `side`
+/// (attached to pre-roll exit `k`) leaves it. `None` when a path is unknown or the side trace's path never leaves the root's (a type-only difference).
+fn reroot_avoid_path(
+    paths: &crate::fx::HashMap<(u32, u32), std::rc::Rc<Vec<(u32, usize, u8)>>>,
+    root: TrId,
+    side: TrId,
+    meta: &ExitMeta,
+    k: usize,
+) -> Option<std::rc::Rc<Vec<(u32, usize, u8)>>> {
+    let r = paths.get(&(root.slot, root.gen))?;
+    let s = paths.get(&(side.slot, side.gen))?;
+    let snap = meta.snaps.get(meta.exits.get(k)?.snap as usize)?;
+    let depth = u8::try_from(snap.frames.len()).ok()?;
+    let &(pc0, pr0, d0) = s.first()?;
+    if pc0 != snap.pc {
+        return None;
+    }
+    let at = (1..r.len()).find(|&i| r[i].0 == pc0 && r[i].1 == pr0 && r[i].2 == depth)?;
+    let mut i = 0;
+    while at + i < r.len() && i < s.len() {
+        let (a, b) = (r[at + i], s[i]);
+        if a.0 != b.0 || a.1 != b.1 || a.2.wrapping_sub(depth) != b.2.wrapping_sub(d0) {
+            break;
+        }
+        i += 1;
+    }
+    if at + i >= r.len() || i >= s.len() || i == 0 {
+        return None;
+    }
+    Some(std::rc::Rc::new(r[..=at + i].to_vec()))
 }
 
 /// BUNDLE-L B: is the head `pc` of `pr` to be recorded without hoisted bounds guards?

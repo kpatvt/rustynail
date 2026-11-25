@@ -7329,3 +7329,73 @@ expressions with callees from a table so that the callee guard exits at the `CAL
 tlib_fast_paths_match_reference` (the first script in-process, bits on and off, against `tests/data/s59_tlib{,54}.expected` from the
 references) and `tr_core::s59_byte_opencall_programs` (the second as `s59_byte_opencall`, knobs on / off / lockstep, `+verify`, exit
 storms, budgets, `-loop`, `+emurun`, GC stress 1 and 2, stack-move stress). Each of the four mutants is caught by its test.
+
+## 60. Root choice on the minority direction of a loop branch: `reroot` (awfy/queens; 2026-11-25, base bb9bd4d)
+
+Task: awfy/queens loses 24 % of its cycles to the formation lottery of the loop root at `queens.lua:16` (`RUSTYNAIL_JIT_TRACE_HOT=128` against the default
+256). **Result: the cause is the path the root records, not the side-exit linking; the handle `reroot` (re-record once, steered away from the old path)
+gives queens -19.3 % cycles / -22.1 % instructions and is built, tested and default OFF (`REROOT_PROCESS = 0`): awfy/cd regresses +2.9 .. +3.8 % cycles.**
+
+### 59.1 Cause (measured with `RUSTYNAIL_JIT_EXITDUMP=1` and `RUSTYNAIL_JIT_VERBOSE=2`, release `rn-cli`)
+
+* The loop body is `if self:getRowColumn(r, c)` with `getRowColumn` = `freeRows[r+1] and freeMaxs[c+r+1] and freeMins[c-r+8]` inlined. At HOT 256 the
+  iteration that makes the head hot has `freeRows[r+1] == true, freeMaxs[..] == false`; the root records that path (50-instruction pre-roll, guards
+  `ALOAD true` at `freeRows` and `ALOAD false` at `freeMaxs`, pre-roll exits S17 / S19, body exits S11 / S20). At HOT 128 the iteration has
+  `freeRows[r+1] == false`: one guard `ALOAD false` (39-instruction pre-roll). The two directions are about equally frequent (S17 + S11 = 1.22 M
+  exits of the bad root, S9 + S14 = 1.12 M of the good one), but the bad path needs two branch outcomes (about 25 % of the iterations), the good one
+  one (about 50 %).
+* Every iteration off the root's path goes: pre-roll up to the guard, exit (plain `slink` link into the side trace), side trace, writeback and
+  **link to the root's entry** at the head (`Rec::close`: `self.link = Some(at)`, the plain link snapshot; the side trace never enters at the
+  `LOOP` label). On the bad root nearly every entry leaves in the pre-roll: entries 1.56 M, pre-roll exits into side traces 1.37 M (88 %; S17 alone
+  939 k = 60 %); on the good root entries 0.80 M, pre-roll exits 0.30 M (38 %). The common iteration costs a full pre-roll + hop on the bad root and
+  a 7-instruction body iteration on the good one.
+* `slink=2` links only the exit -> side direction (50.2); the side -> root direction always goes through the root's entry and pre-roll (as in LuaJIT,
+  whose side traces also link to the root's start). The existing rules do not fire: the ineffective rule counts only the uncovered pre-roll exits
+  (`ineffcover`: p = 0 here), the hop / C36 `domtop` rules need 90 % of the entries in pre-roll exits (88 %) and 82 % in one site (60 %).
+* Linking side traces to the `LOOP` label (candidate (i)) is not built: the body expects the hoisted invariants of the pre-roll in registers
+  (`freeRows` / `freeMaxs` array pointers and sizes, `c`), which a pre-roll exit before their definition (S17 precedes the `freeMaxs` loads) does not
+  have and which any store or call of the side trace may invalidate; an exact form must re-derive them in the side trace (a pre-roll of its own).
+
+### 59.2 As built (knobs `reroot`, `rerootall`; `RUSTYNAIL_JIT_TRACE_LIMITS`)
+
+* Rule (`cache::pre_exit_check`, counters only, once per head `HeadData::reroot_done`): entries `e >= domn` (65536), the busiest pre-roll site with a
+  side trace has `reroot` percent of `e` or more, and all pre-roll exits together have `rerootall` percent (default 80). Then the avoided path is
+  computed (`reroot_avoid_path`): the root's recorded path (pc, prototype, depth per step; kept per trace id in `TrState::rr_paths` while the knob is on,
+  `cache::reroot_closed`) up to the first step where the side trace's recorded path, aligned at the exit's snapshot pc and depth, leaves it. If the
+  side path never leaves the root's (a type-only difference) nothing happens. Otherwise the family is flushed (`FlushWhy::Dom`: no penalty) and the head
+  keeps the prefix (`HeadData::reroot_avoid`, `REROOT_TRIES` = 16 drops).
+* Constraint (`Rec::on_step`, root recordings only, `RecCfg::avoid`): a recording whose path equals the prefix when it reaches its length aborts
+  `Reroot` (`AbortKind::Reroot`: no penalty, the head re-arms with wait 1, `cache::abort_reroot`); after 16 drops the constraint is dropped. A closed
+  root recording of the head clears it. The re-record therefore takes the side trace's direction at the branch where the side trace left the old path.
+* Counters: `[trace] reroot: roots R drops D given up G` (`RUSTYNAIL_JIT_VERBOSE=1`).
+* Exactness: the knob only chooses which iteration a root records (a recording is dropped before it is compiled); no guard, snapshot or link changes.
+
+### 59.3 Measured (release `rn-cli`, one binary, `reroot=0` against `reroot=50`, `taskset -c 12`, min of 9 cycles, instructions of that run)
+
+| program | rule fires | cycles M 0 / 50 | delta | instructions M 0 / 50 | delta |
+|---|---|---|---:|---|---:|
+| awfy/queens | 1 root (60 % / 88 %) | 90.84 / 73.34 | -19.26 % | 479.11 / 373.18 | -22.11 % |
+| awfy/cd | 1 root (83 % / 91 %) | 243.37 / 252.49; rerun 243.55 / 250.67 | +3.75 %; +2.92 % | 648.29 / 660.42; 650.65 / 656.81 | +1.87 %; +0.95 % |
+| corpus/astar_jumper | 2-3 roots without `rerootall`, 0 with 80 | 1728.35 / 1691.46 | -2.13 % | 4423.90 / 4162.83 | -5.90 % |
+| corpus/containers_lru_heap | 1 root (63 % / 89 %) | 1300.42 / 1265.14 | -2.71 % | 5389.67 / 5278.56 | -2.06 % |
+| corpus/penlight_mix | 1 root (65 % / 99 %) | 2233.97 / 2213.76 | -0.90 % | 10236.30 / 10231.98 | -0.04 % |
+| corpus2/heldout/stream_closures | 2 roots (56 % / 84 %, 73 % / 110 %) | 760.30 / 769.34 | +1.19 % | 2862.39 / 2888.08 | +0.90 % |
+| corpus/lua_lexer | 0 with `rerootall=80` (64 %) | 812.75 / 814.67 | +0.24 % | 3274.84 / 3279.77 | +0.15 % |
+| awfy/richards, awfy/towers, apps/raytrace | 0 | +0.67 / -1.69 / +0.10 % (min of 7) | | +0.21 / +0.01 / +0.38 % | |
+| sample: deltablue, havlak, json, list, nbody, bounce, storage, class_middleclass, json_rxi, binary_trees | 0 | -0.6 .. +4.0 % (min of 7) | | -3.2 .. +2.6 % | |
+
+The rule does not fire on the sample, richards, towers or raytrace: their differences are the run-to-run formation noise of this build (deltablue
+305 / 310 / 313 M instructions in three runs of one configuration; astar_jumper 4184 .. 4510 M). richards and towers lose to exits into tier 1
+(section 50.4), not to pre-roll hops: `reroot` does not apply to them. **Decision: default OFF** (cd above +2 % cycles and up in instructions).
+`reroot=50` gives queens its HOT-128 tree; what stays open is a stabiliser that compares the re-recorded tree with the old one (cd's re-record has a
+worse body) before keeping it.
+
+### 59.4 Tests, mutants
+
+* `tr_core::s59_reroot_programs`: `tests/tr_core/s59_progs.rs` (`s59_queens`: the awfy loop; `s59_side_errors`: errors raised on the side path,
+  caught by `xpcall` with `debug.getlocal` in the handler, a count hook installed from inside, collections; `s59_phases`: a branch whose majority
+  changes between phases, a float type change at the end) and `s50_frame_sides`, `r1_type_flip`, in `always` / `on2` x `reroot=0`,
+  `reroot=1,domn=64`, `reroot=1,domn=64,rerootall=0`, `+verify`, `+exitstorm=3 +verify`, budgets 3 / 17, GC stress 1 / 2 in both collector modes,
+  stack moves with `+tracemove`; with the oracle feature the instruction-count identity. Asserts the rule fired in `s59_queens` (`rerootall=0`) and
+  never with `reroot=0` (at the test thresholds it also fires with drops in `s50_frame_sides` and `s59_queens`).
+* Mutant (registry 875 -> 876): `reroot_never`, caught by `s59_reroot_programs`.

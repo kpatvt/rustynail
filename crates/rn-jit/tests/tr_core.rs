@@ -43,6 +43,8 @@ mod s50_progs;
 mod s51_progs;
 #[path = "tr_core/s52_progs.rs"]
 mod s52_progs;
+#[path = "tr_core/s59_progs.rs"]
+mod s59_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -67,6 +69,7 @@ use s4_progs::S4_PROGS;
 use s50_progs::S50_PROGS;
 use s51_progs::S51_PROGS;
 use s52_progs::S52_PROGS;
+use s59_progs::S59_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -196,6 +199,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S50_PROGS)
         .chain(S51_PROGS)
         .chain(S52_PROGS)
+        .chain(S59_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -527,6 +531,9 @@ struct TStats {
     inner_links: u64,
     inner_rets: u64,
     inner_woken: u64,
+    /// Section 59: `reroot: roots R drops D given up G`.
+    reroots: u64,
+    reroot_drops: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -767,6 +774,10 @@ impl TStats {
                     s.midfold_traces = t;
                     s.midfold_refused = rf;
                 }
+            } else if let Some(r) = l.strip_prefix("reroot: roots ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                s.reroots = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.reroot_drops = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("dlink: attached ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.dlink_attached = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -14519,5 +14530,86 @@ fn n1_programs_enter_traces() {
             j.prog,
             o.stats.line()
         );
+    }
+}
+
+/// Section 59 (`reroot`, docs/JIT_TRACE.md section 59): a loop root through whose busiest pre-roll site most entries hop into one side trace is flushed
+/// once and re-recorded with a path constraint (recordings that follow the old path past the point where the side trace left it are dropped without
+/// penalty). The `s59_*` programs (the queens loop, errors raised on the side path with `debug.getlocal` from a message handler and a count hook
+/// installed from inside, a branch whose majority changes between phases with a type change at the end) and two section 50 programs, in `always` /
+/// `on2` x `reroot` 0 / 1 (`domn=64`: the rule may fire in short runs) / 1 with every pre-roll condition dropped, `+verify`, exit storms, budgets,
+/// GC stress 1 / 2 in both collector modes, stack moves; with the oracle feature the instruction-count identity. Asserts that the rule fired in the
+/// queens program (`rerootall=0`: at the test thresholds its pre-roll exits stay below 80 %) and in no job with `reroot=0`. Detector of `reroot_never`.
+#[test]
+fn s59_reroot_programs() {
+    let progs = [
+        "s59_queens",
+        "s59_side_errors",
+        "s59_phases",
+        "s50_frame_sides",
+        "r1_type_flip",
+    ];
+    let lims = [
+        "reroot=0",
+        "reroot=1,domn=64",
+        "reroot=1,domn=64,rerootall=0",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in lims {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            }
+            let lim = lims[2];
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).budget(3).limits_s(lim));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(lim),
+            );
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    let mut fired = std::collections::BTreeMap::<String, (u64, u64)>::new();
+    for (j, o) in &res {
+        if j.limits == "reroot=0" {
+            assert_eq!(o.stats.reroots, 0, "{}: reroot with the knob off", j.tag());
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if plain && j.limits != "reroot=0" {
+            let e = fired.entry(format!("{} {}", j.prog, j.limits)).or_default();
+            e.0 += o.stats.reroots;
+            e.1 += o.stats.reroot_drops;
+        }
+    }
+    eprintln!("s59 reroot (roots, drops): {fired:?}");
+    for (k, (n, _)) in &fired {
+        if k == "s59_queens reroot=1,domn=64,rerootall=0" {
+            assert!(*n > 0, "{k}: the reroot rule never fired");
+        }
     }
 }
