@@ -98,10 +98,14 @@ const STAY_SKEW_PROGS: [&str; 6] = [
 
 /// Programs that need more memory than the oracle children get (deep recursion to the stack limit, and with the
 /// collector stopped the generated program 4): excluded, the identity test (collector on) covers them.
-const MEM_HEAVY: [&str; 4] = [
+/// (`e4_02_lazy_loop_errors` overflows the stack in a recursion inside a loop: with a stay budget (3, 17) the traces end at every
+/// depth and every stay checkpoint digests the live slots of all frames, more than 6.5 GB of checkpoints against 88 MB without a
+/// budget; docs/JIT_TRACE.md section 58.)
+const MEM_HEAVY: [&str; 5] = [
     "tests/vm/co_09_stack_and_args",
     "tests/vm/err_08_stack_overflow",
     "tests/vm/err_09_error_in_error_handling",
+    "tests/vm/e4_02_lazy_loop_errors",
     "gen:4",
 ];
 
