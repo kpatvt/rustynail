@@ -69,6 +69,9 @@ pub const F_ANYSTR: u8 = 16;
 /// long variant without an IR instruction saying so (`s == t` of different variants is folded to false), so the `relaxstr` pass keeps the
 /// exact guard. Merges of loads (`opt_loop`) must OR it.
 pub const F_OBS: u8 = 32;
+/// [`Ins::flags`] (B1 `pureb`, docs/JIT_TRACE.md section 59): a `LIB BYTE` of a recorded `string.byte` range whose positions an earlier guard proved
+/// to lie in the string (`1 <= i`, `j == i + n - 1`, `j <= #s`): it has no `NE 0` guard of its own and is not a DCE root (a dead result is dropped).
+pub const F_PUREB: u8 = 128;
 
 /// BUNDLE-L A: the displacement `d` (in elements) of an `Aref` with a complemented-index operand: `~index == n + d`.
 pub const fn aref_disp(aux: u32) -> i32 {

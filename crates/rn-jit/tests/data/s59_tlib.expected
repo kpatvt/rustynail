@@ -1,0 +1,61 @@
+dense	1	4	4	true	true	3	3	true
+dense	2	5	5	true	true	6	3	true
+dense	3	6	6	true	true	9	3	true
+dense	4	7	7	true	true	12	3	true
+dense	5	8	8	true	true	15	3	true
+dense	7	10	10	true	true	21	3	true
+dense	8	11	11	true	true	24	3	true
+dense	9	12	12	true	true	27	3	true
+dense	16	19	19	true	true	48	3	true
+dense	17	20	20	true	true	51	3	true
+dense	33	36	36	true	true	99	3	true
+dense	50	53	53	true	true	150	3	true
+dense	64	67	67	true	true	192	3	true
+dense	100	103	103	true	true	300	3	true
+holes	1	1	1	true	1=1 3=3	true
+holes+	1	4	4	true
+holes	2	1	1	true	1=1 12=12	true
+holes+	2	2	2	true
+holes	3	9	9	true	2=2 3=3 4=4 5=5 6=6 7=7 8=8 9=9	true
+holes+	3	10	10	true
+holes	4	7	7	true	1=1 2=2 3=3 4=4 5=5 6=6 7=7	true
+holes+	4	7	7	true
+holes	5	17	17	true	1=1 2=2 3=3 5=5 6=6 7=7 8=8 9=9 10=10 11=11 12=12 13=13 14=14 15=15 16=16 17=17	true
+holes+	5	18	18	true
+range	1	20	2	21	nil,nil,1,2,3,4,5,6,7,8,9,10,11	true
+range	3	10	1	8	nil,3,4,5,6,7,8,9,10,nil,nil,nil,nil	true
+range	5	5	1	1	nil,5,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil	true
+range	1	25	1	20	nil,1,2,3,4,5,6,7,8,9,10,11,12	true
+range	18	25	1	3	nil,18,19,20,nil,nil,nil,nil,25,nil,nil,nil,nil	true
+range	20	26	1	1	nil,20,nil,nil,nil,nil,25,nil,nil,nil,nil,nil,nil	true
+range	1	8	9	0	nil,nil,nil,nil,nil,nil,nil,nil,nil,1,2,3,4	true
+nonempty	nil,1,2,3,4,5,nil	5
+nonempty-hash	nil,1,2,3,4,5,nil	5	1
+same	nil,1,2,3,4,nil	nil,2,3,4,4,nil
+empty-range	0	0
+src-index	nil,1,200,3,nil	i2
+dst-newindex	nil,2,4,6,8,nil	n1 n2 n3 n4
+dst-len	nil,1,2,3,4,nil	42	4
+dst-index	dflt0,1,2,3,dflt4,dflt5
+err1	bad argument #3 to 'table.move' (too many elements to move)	nil
+err2	bad argument #4 to 'table.move' (destination wrap around)	nil
+err3	bad argument #3 to 'table.move' (too many elements to move)	nil
+err4	bad argument #5 to 'table.move' (table expected, got string)
+neg	nil,a,b,c,1,nil
+neg-dst	1=3 -1=1 0=2
+pop-empty	nil	0	nil
+pop-zero	zero	0	nil
+pop	3	2	1	1	nil	0
+pop-holes	1	1	0	nil	0
+pop-append	5	4	3	h
+pop-shrink	820	0	nil
+pop-sparse	3	3	2
+pop-pos	1	3	nil,2,nil,nil	2
+pop-pos-oob	bad argument #2 to 'table.remove' (position out of bounds)	bad argument #2 to 'table.remove' (position out of bounds)	nil	nil
+pop-notable	bad argument #1 to 'table.remove' (table expected, got string)	bad argument #1 to 'table.remove' (table expected, got nil)	bad argument #1 to 'table.remove' (table expected, got no value)
+pop-index	2	1	I0	0	i0
+pop-newindex	3	2	1	
+pop-len	20	1	nil	30	l
+pop-len0	z	nil
+pop-badlen	object length is not an integer
+loop	412659

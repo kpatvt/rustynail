@@ -433,6 +433,14 @@ pub const NAMES: &[&str] = &[
     "byte_inline_len_skip",
     "byte_range_guard_skip",
     "byte_range_count_off",
+    // B1 (`pureb`): the range's `j <= #s` guard is not emitted (a string shorter than `j` gives a `BYTE` of 0, i.e. -1)
+    "pureb_len_guard_skip",
+    // B2 (`opencall`): the open-result `CALL` defines every register from `A - 2` up
+    "opencall_defs_low",
+    // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
+    "tmove_presize_holes",
+    // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
+    "tpop_meta_skip",
     "random_range_off",
     // C2: tier-1 comparisons of non-numbers (`jit_cmp`)
     "c2cmp_swap",
@@ -1104,6 +1112,9 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_hooked_head_no_trap(active("hooked_head_no_trap"));
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
+    rn_core::table::set_mut_tlib(
+        u8::from(active("tmove_presize_holes")) | u8::from(active("tpop_meta_skip")) << 1,
+    );
     rn_core::table::set_mut_smallins(u8::from(active("smallins_order_swap")));
     rn_core::table::set_mut_presize(u8::from(active("presize_no_free")));
     rn_core::table::set_mut_shape(
@@ -1151,7 +1162,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 875);
+        assert_eq!(NAMES.len(), 879);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

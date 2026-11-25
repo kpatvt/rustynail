@@ -1,4 +1,4 @@
-//! BUNDLE-B knob: the Rust string runtime fast paths, each switchable alone.
+//! BUNDLE-B knob: the Rust string runtime fast paths (and, since section 59, two `table` library ones), each switchable alone.
 //!
 //! `RUSTYNAIL_STR_FAST` is a bit mask read once per process (decimal or `0x` hex); unset means [`DEFAULT`].
 //! Tests force bits with [`set_mask`]. Every piece is semantically transparent (the same results, errors and
@@ -19,8 +19,16 @@ pub const COPY: u32 = 8;
 /// with fewer than 16 start positions.
 pub const MEMFIND: u32 = 16;
 
+/// M1 `tmovepre` (docs/JIT_TRACE.md section 59): `table.move(a, f, e, 1, b)` into an empty table `b` without a metatable sizes `b`'s array part
+/// first when every value of `a[f..e]` is non-nil and in `a`'s array part (`TableRef::move_presize`: the size the element copy would grow to),
+/// so that the bulk copy applies.
+pub const TMOVEPRE: u32 = 32;
+/// R1 `tpop` (docs/JIT_TRACE.md section 59): `table.remove(t)` (one argument) of a table without a metatable: raw border, raw read, raw store
+/// of nil, without the generic argument checks.
+pub const TPOP: u32 = 64;
+
 /// The process default (the one place that decides which pieces are on).
-pub const DEFAULT: u32 = FMTC | PAT1 | PATC | MEMFIND;
+pub const DEFAULT: u32 = FMTC | PAT1 | PATC | MEMFIND | TMOVEPRE | TPOP;
 
 const UNINIT: u32 = u32::MAX;
 static MASK: AtomicU32 = AtomicU32::new(UNINIT);

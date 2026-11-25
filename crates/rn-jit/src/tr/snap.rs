@@ -256,10 +256,17 @@ pub fn prune_faulty() -> bool {
         || mutants::active("prune_after_call")
         || mutants::active("prune_live_temp")
         || mutants::active("prune_local")
+        || mutants::active("opencall_defs_low")
 }
 
-pub fn prune_info(p: &rn_core::func::Proto, locals: bool) -> Option<std::sync::Arc<PruneInfo>> {
+pub fn prune_info(
+    p: &rn_core::func::Proto,
+    locals: bool,
+    opencall: bool,
+) -> Option<std::sync::Arc<PruneInfo>> {
     let f = crate::live::Faults {
+        open_call_defs: opencall,
+        open_defs_low: mutants::active("opencall_defs_low"),
         no_backedges: mutants::active("prune_loop_carried"),
         open_empty: mutants::active("prune_after_call"),
         ignore_live: mutants::active("prune_live_temp"),

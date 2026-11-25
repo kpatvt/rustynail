@@ -214,6 +214,30 @@ fn mut_tbl_move_meta_skip() -> bool {
     false
 }
 
+/// Test-only mutants of the `table` library fast paths of rn-std (M1 / R1, docs/JIT_TRACE.md section 59; feature `jit_trace_mut`): a bit
+/// mask, `1` `tmove_presize_holes` ([`TableRef::move_presize`] ignores holes of the source range), `2` `tpop_meta_skip` (the `table.remove(t)`
+/// fast path of rn-std ignores the metatable).
+#[cfg(feature = "jit_trace_mut")]
+static MUT_TLIB: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Select the mutants of [`mut_tlib`] (feature `jit_trace_mut`).
+#[cfg(feature = "jit_trace_mut")]
+pub fn set_mut_tlib(bits: u8) {
+    MUT_TLIB.store(bits, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Is the `table` library fast-path mutant `bit` active (see [`set_mut_tlib`]; always false without the feature)?
+#[inline(always)]
+pub fn mut_tlib(bit: u8) -> bool {
+    #[cfg(feature = "jit_trace_mut")]
+    return MUT_TLIB.load(std::sync::atomic::Ordering::Relaxed) & bit != 0;
+    #[cfg(not(feature = "jit_trace_mut"))]
+    {
+        let _ = bit;
+        false
+    }
+}
+
 /// Test-only mutants of the layout-id clears (S4, feature `jit_trace_mut`): a bit mask, `1` `shape_stamp_not_bumped_on_newkey`
 /// (the free-main-position insert keeps the id), `2` `shape_collide_move_no_clear` (the collision insert keeps it), `4`
 /// `shape_gc_deadkey_reuse` (the GC dead-key marking keeps it), `8` `shape_weak_clear_skip` (the weak-table clears keep it).
@@ -2657,6 +2681,39 @@ impl TableRef {
             std::ptr::copy(arr_val(t, s + c - 1), arr_val(t, d + c - 1), c);
         }
         true
+    }
+
+    /// M1 (rn-std `STR_FAST` bit `TMOVEPRE`, docs/JIT_TRACE.md section 59): before `table.move(self, spos, spos + count - 1, 1, dst)` copies
+    /// element by element into the *empty* table `dst` (no metatable, no array part, the dummy node), give `dst` the array part that the
+    /// copy's own growth ends with, so that the bulk [`TableRef::arr_copy_to`] applies. Exact only when the copy inserts every key `1..=count`
+    /// in ascending order: every source value of the range is non-nil (a nil is not inserted and changes the growth). Then every insertion of
+    /// key `k` into the full array `1..k-1` with an empty hash part resizes to `2^ceillog2(k)` with no hash part (5.5 `rehash_append` /
+    /// `rehash_dummy_int`, 5.4 `computesizes`: more than half of `1..2^i` used), so the growth ends at `(2^ceillog2(count), 0)`: the same
+    /// `resize` call this makes up front. Returns whether `dst` was resized (a failed allocation leaves `dst` empty and returns false: the
+    /// element loop then fails as before). Mutant `tmove_presize_holes` (the hole test dropped).
+    pub fn move_presize(self, heap: &mut Heap, dst: TableRef, spos: i64, count: u64) -> bool {
+        if self == dst
+            || spos < 1
+            || count == 0
+            || count > 1 << 26
+            || dst.metatable().is_some()
+            || dst.array_size() != 0
+            || dst.hash_size() != 0
+        {
+            return false;
+        }
+        // SAFETY: handle invariants; the range is checked against the array size before the tags are read.
+        unsafe {
+            let s = self.as_ptr();
+            let si = spos as u64 - 1;
+            if si + count > (*s).asize as u64 {
+                return false;
+            }
+            if !mut_tlib(1) && (si..si + count).any(|k| arr_empty(s, k as usize)) {
+                return false;
+            }
+        }
+        dst.resize(heap, 1u32 << ceillog2(count as u32), 0).is_ok()
     }
 
     /// N2: bulk `dst[dpos + j] = self[spos + j]` for `j` in `0..count` between two *different*

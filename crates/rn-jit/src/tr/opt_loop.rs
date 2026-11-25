@@ -1704,6 +1704,10 @@ impl TyWith for TraceIr {
 // ---- cleanup: dead snapshots and dead pure instructions ---------------------------------------------------------------
 
 fn is_root(i: &Ins) -> bool {
+    // B1 (`pureb`): a proven-in-range `BYTE` is a pure load of the string
+    if i.op == TOp::Lib && i.flags & super::ir::F_PUREB != 0 {
+        return false;
+    }
     i.flags & F_GUARD != 0
         || matches!(
             i.op,

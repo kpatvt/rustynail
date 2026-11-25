@@ -63,6 +63,11 @@ pub struct Faults {
     pub ignore_live: bool,
     /// Every register is a temporary: the active locals are not protected.
     pub ignore_locals: bool,
+    /// B2 (`opencall`, not a fault): a `CALL` with `C == 0` defines every register from `A` up.
+    pub open_call_defs: bool,
+    /// Mutant `opencall_defs_low` (with `open_call_defs`): the open-result `CALL` defines every register from `A - 2` up (kills the pending
+    /// operand of an enclosing expression).
+    pub open_defs_low: bool,
 }
 
 /// The effect of one instruction: registers read, registers unconditionally written, and the successors.
@@ -203,6 +208,14 @@ fn effect(code: &[u32], pc: usize, f: Faults) -> Option<Eff> {
             e.uses = if b == 0 { open(a) } else { range(a, b) };
             if c >= 2 {
                 e.defs = range(a, c - 1);
+            } else if c == 0 && f.open_call_defs {
+                // B2: the results are `A .. top`; the open reader that follows (`CALL` / `RETURN` / `SETLIST` with `B == 0`) reads only them,
+                // and the registers above `top` are free temporaries that the code generator writes before it reads them
+                e.defs = from(if f.open_defs_low {
+                    a.saturating_sub(2)
+                } else {
+                    a
+                });
             }
         }
         Tailcall => {

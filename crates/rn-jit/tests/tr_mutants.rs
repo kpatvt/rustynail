@@ -2175,6 +2175,26 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "f2_programs")],
     },
     Row {
+        name: "pureb_len_guard_skip",
+        owner: "S59",
+        dets: &[d("tr_core", "s59_byte_opencall_programs")],
+    },
+    Row {
+        name: "opencall_defs_low",
+        owner: "S59",
+        dets: &[d("tr_core", "s59_byte_opencall_programs")],
+    },
+    Row {
+        name: "tmove_presize_holes",
+        owner: "S59",
+        dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],
+    },
+    Row {
+        name: "tpop_meta_skip",
+        owner: "S59",
+        dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],
+    },
+    Row {
         name: "random_range_off",
         owner: "F2",
         dets: &[d("tr_core", "f2_programs")],

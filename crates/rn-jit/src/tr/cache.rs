@@ -152,6 +152,10 @@ pub const DEEP_DONE: u32 = u32::MAX;
 pub const MIDFOLD_PROCESS: u32 = 1;
 /// L1: the process default of [`TrLimits::bytext`] (also the struct default).
 pub const BYTEXT_PROCESS: u32 = 1;
+/// B1 (section 59): the process default of [`TrLimits::pureb`] (also the struct default).
+pub const PUREB_PROCESS: u32 = 1;
+/// B2 (section 59): the process default of [`TrLimits::opencall`] (also the struct default).
+pub const OPENCALL_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -782,6 +786,14 @@ pub struct TrLimits {
     /// `table.concat` / `string.rep` / `string.pack` result adopted without a copy in 5.5) and library-buffer strings (`shrlen == -4`) instead of
     /// calling the helper for them: 0 = only regular long strings inline, 1 = all long kinds (default [`BYTEXT_PROCESS`]).
     pub bytext: u32,
+    /// B1 (`pureb`, docs/JIT_TRACE.md section 59): a recorded `string.byte(s, i, j)` range (2..8 results) guards `j <= #s` once (one `TLEN`) and its
+    /// `LIB BYTE` ops carry no guard of their own (`F_PUREB`: not DCE roots, a dead result is dropped): 0 = one `BYTE` + `NE 0` guard per result,
+    /// 1 = on (default [`PUREB_PROCESS`]).
+    pub pureb: u32,
+    /// B2 (`opencall`, docs/JIT_TRACE.md section 59): in the bytecode liveness of `snapprune`, a `CALL` with `C == 0` (open results) defines every
+    /// register from `A` up (the results are `A .. top`, the open reader that follows reads only those, nothing reads above them before a write):
+    /// 0 = it defines nothing, 1 = on (default [`OPENCALL_PROCESS`]).
+    pub opencall: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1048,6 +1060,8 @@ impl Default for TrLimits {
             hstoreguard: HSTOREGUARD_PROCESS,
             slotlive: SLOTLIVE_PROCESS,
             bytext: BYTEXT_PROCESS,
+            pureb: PUREB_PROCESS,
+            opencall: OPENCALL_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1268,6 +1282,8 @@ impl TrLimits {
                 "hstoreguard" => l.hstoreguard = v.min(1),
                 "slotlive" => l.slotlive = v.min(1),
                 "bytext" => l.bytext = v.min(1),
+                "pureb" => l.pureb = v.min(1),
+                "opencall" => l.opencall = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -3431,18 +3447,24 @@ pub fn caller_proto(st: &mut State) -> Option<ProtoRef> {
 pub fn prune_cached(
     p: &rn_core::func::Proto,
     locals: bool,
+    opencall: bool,
 ) -> Option<std::sync::Arc<super::ir::PruneInfo>> {
     let jp = p.jit.get() as usize;
-    if jp > rt::NOJIT && !locals && !super::snap::prune_faulty() {
+    // (the cached copy is the analysis of the process default of `opencall`; a state with the other value computes its own)
+    if jp > rt::NOJIT
+        && !locals
+        && opencall == (OPENCALL_PROCESS != 0)
+        && !super::snap::prune_faulty()
+    {
         // SAFETY: as in `landing_cached`.
         if let Some(tp) = unsafe { (*(jp as *const JitProto)).tr.as_deref() } {
             return tp
                 .prune
-                .get_or_init(|| super::snap::prune_info(p, false))
+                .get_or_init(|| super::snap::prune_info(p, false, opencall))
                 .clone();
         }
     }
-    super::snap::prune_info(p, locals)
+    super::snap::prune_info(p, locals, opencall)
 }
 
 /// P-G: the block structure of `p` for the recorder (P-G, always on in the pipeline): the copy cached in the prototype's trace

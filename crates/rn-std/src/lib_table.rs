@@ -115,6 +115,20 @@ fn tinsert(st: &mut State) -> LuaResult<usize> {
 
 fn tremove(st: &mut State) -> LuaResult<usize> {
     let tv = st.arg(0);
+    // R1 (`STR_FAST` bit `TPOP`): `remove(t)` of a table without a metatable is the general path below with every access raw (the border
+    // of `aux_getn`, `pos == size`, no shift loop, the read and the store of nil at `size`, also for `size == 0`: `t[0]` is read and cleared).
+    // Mutant `tpop_meta_skip` (the metatable test dropped).
+    if st.nargs() == 1 && crate::strfast::on(crate::strfast::TPOP) {
+        if let Some(t) = tv.as_table() {
+            if t.metatable().is_none() || rn_core::table::mut_tlib(2) {
+                let size = t.len(st.heap()) as i64;
+                let res = t.get_int(size);
+                st.push(res);
+                st.raw_set_int(t, size, &Value::NIL)?;
+                return Ok(1);
+            }
+        }
+    }
     let size = aux_getn(st, 1, TAB_RW)?;
     let mut pos = st.opt_integer(2, size)?;
     if pos != size {
@@ -160,6 +174,13 @@ fn tmove(st: &mut State) -> LuaResult<usize> {
         let n = e - f + 1;
         st.arg_check(t <= i64::MAX - n + 1, 4, b"destination wrap around")?;
         let fwd = t > e || t <= f || (tt != 1 && !st.equals(src, dst)?);
+        // M1 (`STR_FAST` bit `TMOVEPRE`): an empty destination gets the array part the element copy would grow to (exact: see `move_presize`).
+        // Mutant `tmove_presize_holes` (the source holes ignored).
+        if t == 1 && crate::strfast::on(crate::strfast::TMOVEPRE) {
+            if let (Some(a), Some(b)) = (src.as_table(), dst.as_table()) {
+                a.move_presize(st.heap(), b, f, n as u64);
+            }
+        }
         // N2: same table (identical object), both ranges in its array part: one `memmove`
         let done = match (src.as_table(), dst.as_table()) {
             (Some(a), Some(b)) if a == b && f > 0 && t > 0 => a.arr_move(f, t, n as usize, !fwd),

@@ -4412,6 +4412,48 @@ fn p2_xregs_programs() {
     }
 }
 
+/// Section 59: B1 (`pureb`: `string.byte` ranges with one `j <= #s` guard and DCE-able loads) and B2 (`opencall`: open-result `CALL`s define
+/// the registers from `A` up in the `snapprune` liveness), with the knobs on (shipped) and off, in the trace modes with lockstep, exit storms,
+/// budgets, GC stress and the stack-move stress. Mutants `pureb_len_guard_skip`, `opencall_defs_low`.
+#[test]
+fn s59_byte_opencall_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["", "pureb=0,opencall=0", "lockstep=1"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("-loop", 0),
+                ("+emurun +verify", 0),
+            ] {
+                let mut j = Job::new("s59_byte_opencall", trace)
+                    .opts(opts)
+                    .limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        for gc in ["1", "2"] {
+            jobs.push(Job::new("s59_byte_opencall", trace).env("RUSTYNAIL_GC_STRESS", gc));
+        }
+        jobs.push(Job::new("s59_byte_opencall", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
+            assert!(
+                o.stats.installed >= 3 && o.stats.entered >= 1,
+                "s59: traces did not run: {}",
+                o.stats.line()
+            );
+        }
+    }
+}
+
 /// F2: library calls recorded as trace constructs (string comparisons, getmetatable, rawget / rawset, assert, string.byte, integer math.random)
 /// in the trace modes with lockstep, exit storms, budgets, GC stress and the stack-move stress (K3b: the `f2*` knobs are hard-wired on; the jobs run the shipped configuration).
 /// Mutants `strcmp_lt_as_le`, `strcmp_guard_skip`, `getmt_null_skip`, `getmt_protected_skip`, `assert_extra_dropped`, `rawset_tbar_skip`,

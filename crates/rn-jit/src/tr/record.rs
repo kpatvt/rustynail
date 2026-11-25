@@ -187,6 +187,10 @@ pub struct RecCfg {
     pub snapprune: bool,
     /// F4 experiment (`snapprune=2`): dead *locals* are pruned as well (`debug.getlocal` of a dead local then shows a stale value).
     pub snapprune_locals: bool,
+    /// B1 (`pureb`): `string.byte` ranges guard `j <= #s` once and emit unguarded, DCE-able `LIB BYTE` ops ([`super::ir::F_PUREB`]).
+    pub pureb: bool,
+    /// B2 (`opencall`): the `snapprune` liveness lets an open-result `CALL` define every register from `A` up.
+    pub opencall: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -535,6 +539,8 @@ impl Default for RecCfg {
         RecCfg {
             snapprune: false,
             snapprune_locals: false,
+            pureb: super::cache::PUREB_PROCESS != 0,
+            opencall: super::cache::OPENCALL_PROCESS != 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -2751,7 +2757,8 @@ impl Rec {
         if self.cfg.snapprune && self.segs.is_empty() {
             // SAFETY: the root frame's prototype is alive for the whole recording (its closure runs in the root frame).
             let p = unsafe { &*(self.frames[0].proto as *const Proto) };
-            self.b.ir.prune = super::cache::prune_cached(p, self.cfg.snapprune_locals);
+            self.b.ir.prune =
+                super::cache::prune_cached(p, self.cfg.snapprune_locals, self.cfg.opencall);
             snap::prune_snaps(&mut self.b.ir);
         }
         let mut ir = std::mem::take(&mut self.b.ir);
@@ -10708,7 +10715,20 @@ impl Rec {
                 self.ins(TOp::Add, Ty::Int, i, dn)?
             };
             self.guard(TOp::Eq, Ty::I64, j, last, 0)?;
-            // (`j <= #s` is the guard of the last `BYTE`: its helper answers 0 for a position behind the end)
+            // (without `pureb`, `j <= #s` is the guard of the last `BYTE`: its helper answers 0 for a position behind the end)
+        }
+        // B1 (`pureb`): one `j <= #s` guard (a `TLEN` of the string) proves every position, then `BYTE`s without guards that DCE drops when
+        // their result is dead (with the guards above, the helper never answers 0)
+        let pureb = self.cfg.pureb && n >= 2;
+        if pureb && !mutants::active("pureb_len_guard_skip") {
+            let ts = self.rd(vm, a + 1)?.1;
+            let fl = if ts == Ty::ShrStr { 1 } else { 2 };
+            let n0 = self.b.ir.ins.len();
+            let ls = self.b.emit_flags(TOp::Tlen, Ty::Int, 0, s, NOREF, fl)?;
+            if self.b.ir.ins.len() > n0 {
+                self.pend_lens.push_back(l);
+            }
+            self.guard(TOp::Le, Ty::I64, j, ls, 0)?;
         }
         let km1 = self.kint(-1);
         let mut res = Vec::new();
@@ -10720,7 +10740,16 @@ impl Rec {
                 self.ins(TOp::Add, Ty::Int, i, kp)?
             };
             let hint = vm.base + a + p as usize;
-            let raw = self.lib_op(lib::BYTE, Ty::Int, s, ix, None, hint)?;
+            let raw = if pureb {
+                self.first_store.get_or_insert(self.b.ir.ins.len());
+                let r =
+                    self.b
+                        .emit_flags(TOp::Lib, Ty::Int, super::ir::F_PUREB, s, ix, lib::BYTE)?;
+                self.pend_str.push(hint);
+                r
+            } else {
+                self.lib_op(lib::BYTE, Ty::Int, s, ix, None, hint)?
+            };
             res.push(self.ins(TOp::Add, Ty::Int, raw, km1)?);
         }
         // the native pushes every result above its arguments
