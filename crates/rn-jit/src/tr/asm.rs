@@ -1799,12 +1799,15 @@ fn findm_core(fl: u32, args: [u64; 3]) -> u64 {
         return 0;
     }
     let r = rn_std::pattern::find_with(x, y, args[2] as i64, false, false, |ms, s1, end| {
-        let caps = ms?.captures(Some((s1, end))).ok()?;
-        match caps.as_slice() {
-            // MUTANT `findm_caps_skip`: the first of several captures is the result
-            [rn_std::pattern::Cap::Str(sl), ..]
-                if caps.len() == 1 || mutants::active("findm_caps_skip") =>
-            {
+        // the first capture only, no `captures()` vector (an allocation per call: real_dis_ppc +5 % instructions, docs/JIT_TRACE.md section 56)
+        let ms = ms?;
+        let nc = ms.ncaptures(true);
+        // MUTANT `findm_caps_skip`: the first of several captures is the result
+        if nc == 0 || (nc != 1 && !mutants::active("findm_caps_skip")) {
+            return None;
+        }
+        match ms.get_onecapture(0, s1, end).ok()? {
+            rn_std::pattern::Cap::Str(sl) => {
                 let off = (sl.as_ptr() as usize).wrapping_sub(x.as_ptr() as usize);
                 (off <= x.len()).then(|| (off as u64, (off + sl.len()) as u64))
             }
