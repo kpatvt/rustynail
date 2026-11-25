@@ -1,134 +1,217 @@
-//! Section 59 programs (`reroot`: a loop root recorded on the minority direction of a branch is flushed once and re-recorded steered away from that
-//! path, docs/JIT_TRACE.md section 59). Each has a loop whose first recorded iteration can take the rare direction of a branch inside an inlined
-//! callee, so most entries of the root leave through one pre-roll exit into a side trace; the re-record drops recordings that follow the old path
-//! (no penalty) until one takes the other direction or the drops run out. Observers behind the re-record: errors raised on the side path with
-//! `debug.getlocal`, a count hook installed from inside, collections, a phase change of the branch's majority.
+//! Section 59 programs (docs/JIT_TRACE.md section 59): the hoisted loop budget (`budhoist`) and the chunk poll (`pollk`). Call-free counted loops of
+//! every length around the chunk sizes the tests use (4, 64), nested, left early (break, type change, hole), with an error inside, with count / line
+//! hooks set while the traces run, inside coroutines that yield between the loops, and with counts near 2^64. Each prints values that expose a wrong
+//! iteration count after an exit or a chunk end; the count identity (`fetches + insns`) and the count budgets expose a wrong charge or refund.
 
 use super::progs::Prog;
 
 pub const S59_PROGS: &[Prog] = &[
     Prog {
-        name: "s59_queens",
+        name: "s59_nested",
         small: false,
         src: r#"
--- the awfy queens loop: `getRowColumn` short-circuits over three boolean arrays; which direction the root records at `freeRows[r + 1]` is a
--- matter of the iteration that made the loop hot
-local Q = {}
-Q.__index = Q
-function Q:getRowColumn(r, c)
-  return self.freeRows[r + 1] and self.freeMaxs[c + r + 1] and self.freeMins[c - r + 8]
-end
-function Q:setRowColumn(r, c, v)
-  self.freeRows[r + 1] = v
-  self.freeMaxs[c + r + 1] = v
-  self.freeMins[c - r + 8] = v
-end
-function Q:placeQueen(c)
-  for r = 0, 7 do
-    if self:getRowColumn(r, c) then
-      self.queenRows[r + 1] = c
-      self:setRowColumn(r, c, false)
-      if c == 7 then return true end
-      if self:placeQueen(c + 1) then return true end
-      self:setRowColumn(r, c, true)
-    end
-  end
-  return false
-end
-local function queens()
-  local q = setmetatable({ freeRows = {}, freeMaxs = {}, freeMins = {}, queenRows = {} }, Q)
-  for i = 1, 8 do q.freeRows[i] = true; q.queenRows[i] = -1 end
-  for i = 1, 16 do q.freeMaxs[i] = true; q.freeMins[i] = true end
-  local ok = q:placeQueen(0)
-  local sig = 0
-  for i = 1, 8 do sig = sig * 10 + q.queenRows[i] end
-  return ok, sig
-end
-local good, sig = 0, 0
-for it = 1, 60 do
-  local ok, s = queens()
-  if ok then good = good + 1 end
-  sig = s
-end
-print(good, sig)
-"#,
-    },
-    Prog {
-        name: "s59_side_errors",
-        small: false,
-        src: r#"
--- the first hot iteration takes the rare branch (k % 5 == 0 is true at the recording); later the common branch raises errors inside the inlined
--- callee every so often (caught by pcall, the frame's locals read by debug.getlocal from a message handler), a count hook is installed from inside
--- the loop for one round, and collections run between rounds
-local hits, seen = 0, {}
-local function pick(t, k)
-  if t[k] then
-    return t[k] * 2
-  end
-  if k % 97 == 13 and t.boom then
-    local secret = k * 3
-    error({ k = k, secret = secret })
-  end
-  return -k
-end
-local function round(n, boom, off)
-  local t = { boom = boom }
-  for i = 1, n, 5 do t[i + off] = i end
-  local acc = 0
-  for k = 1, n do
-    local v = pick(t, k)
-    if v > 0 then acc = acc + v else acc = acc - 1 end
-  end
-  return acc
-end
-local function handler(e)
-  local name, val = debug.getlocal(2, 3)
-  return { e = e, name = name, val = val }
-end
-for r = 1, 12 do
-  if r == 7 then
-    debug.sethook(function() hits = hits + 1 end, "", 1000)
-  elseif r == 8 then
-    debug.sethook()
-  end
-  local ok, res = xpcall(round, handler, 400 + r * 31, r % 3 == 0, r % 5)
-  if ok then
-    seen[#seen + 1] = res
-  else
-    seen[#seen + 1] = string.format("err k=%s secret=%s %s=%s", tostring(res.e.k), tostring(res.e.secret), tostring(res.name), tostring(res.val))
-  end
-  collectgarbage()
-end
-print(table.concat(seen, " "), hits > 0)
-"#,
-    },
-    Prog {
-        name: "s59_phases",
-        small: false,
-        src: r#"
--- the majority direction of the branch changes between phases: the re-record may complete the avoided path again and again (drops, then the
--- constraint is given up); a type change of the loaded value in the last phase makes the type guard of the old path fail too
-local function cls(x, lim)
-  if x < lim then return x + 1 end
-  if x % 2 == 0 then return x // 2 end
-  return 3 * x + 1
-end
-local function run(n, lim, flt)
-  local s = 0
-  local v = {}
-  for i = 1, n do v[i] = flt and (i * 1.5) or i end
+-- inner loops of lengths around the chunk sizes, entered many times from an outer loop
+local t = {}
+for j = 1, 300 do t[j] = (j % 7) * 0.5 end
+local function run(n, m)
+  local out = 0.0
   for i = 1, n do
-    local y = cls(v[i], lim)
-    s = s + y
+    local a = 0.0
+    for j = 1, m do a = a + t[j] * 0.5 end
+    out = out + a
+  end
+  return out
+end
+local acc = {}
+for _, m in ipairs({0, 1, 2, 3, 4, 5, 7, 62, 63, 64, 65, 66, 127, 128, 129, 200, 300}) do
+  local s = 0.0
+  for r = 1, 30 do s = s + run(5, m) end
+  acc[#acc + 1] = string.format("%d:%.2f", m, s)
+end
+-- integer loops with steps
+local function isum(a, b, st)
+  local s = 0
+  for k = a, b, st do s = s + k end
+  return s
+end
+for r = 1, 40 do isum(1, 100, 3) end
+acc[#acc + 1] = isum(1, 100, 3) .. "/" .. isum(100, 1, -7) .. "/" .. isum(5, 4, 1)
+print(table.concat(acc, " "))
+"#,
+    },
+    Prog {
+        name: "s59_break",
+        small: false,
+        src: r#"
+-- body exits at every position of a chunk: break, a type change, a hole, a bound
+local function find(t, n, x)
+  local s = 0
+  for j = 1, n do
+    local v = t[j]
+    if v > x then break end
+    s = s + v
   end
   return s
 end
-local out = {}
-for p = 1, 9 do
-  local lim = (p % 3 == 0) and 10 or ((p % 3 == 1) and 900 or 450)
-  out[#out + 1] = tostring(run(1000, lim, p == 9))
+local function sum(t, n)
+  local s = 0.0
+  for j = 1, n do s = s + t[j] end
+  return s
 end
-print(table.concat(out, ","))
+local t = {}
+for j = 1, 200 do t[j] = j end
+local out = {}
+for r = 1, 50 do find(t, 200, 1000) end
+for _, x in ipairs({0, 1, 3, 4, 5, 63, 64, 65, 66, 150, 199, 1000}) do out[#out + 1] = find(t, 200, x) end
+local f = {}
+for j = 1, 130 do f[j] = j * 0.5 end
+for r = 1, 50 do sum(f, 130) end
+for _, k in ipairs({1, 4, 5, 64, 65, 66, 130}) do
+  local g = {}
+  for j = 1, 130 do g[j] = j * 0.5 end
+  g[k] = "x"
+  out[#out + 1] = tostring(pcall(sum, g, 130))
+  g[k] = 1.25
+  out[#out + 1] = sum(g, 130)
+  -- an integer element: the body exits at a type guard and the interpreter finishes the loop with the count of the snapshot
+  g[k] = 7
+  out[#out + 1] = sum(g, 130)
+  g[k + 1] = 9
+  out[#out + 1] = sum(g, 130)
+end
+-- a long loop (many chunks) with integer elements in later chunks
+local h = {}
+for j = 1, 400 do h[j] = j * 0.5 end
+for r = 1, 20 do sum(h, 400) end
+h[70] = 3; h[200] = 5; h[399] = 11
+out[#out + 1] = sum(h, 400)
+-- reads past the end (a bound exit) at the last iteration of a chunk
+out[#out + 1] = tostring(pcall(sum, f, 132))
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "s59_error",
+        small: false,
+        src: r#"
+-- an error raised by the instruction behind a body exit, caught, then the loop entered again
+local function acc(t, n)
+  local s = 0
+  for j = 1, n do s = s + t[j] * 2 end
+  return s
+end
+local t = {}
+for j = 1, 100 do t[j] = j end
+for r = 1, 60 do acc(t, 100) end
+local out = {}
+for _, k in ipairs({1, 2, 4, 5, 63, 64, 65, 100}) do
+  local old = t[k]
+  t[k] = {}
+  local ok, e = pcall(acc, t, 100)
+  out[#out + 1] = tostring(ok) .. ":" .. tostring(e):gsub("^.-:%d+: ", "")
+  t[k] = old
+  out[#out + 1] = acc(t, 100)
+end
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "s59_hooks",
+        small: false,
+        src: r#"
+-- count and line hooks set while the loop's trace runs (from an outer iteration), every count small; the hook records where it fired
+local t = {}
+for j = 1, 100 do t[j] = j end
+local function work(n)
+  local s = 0
+  for j = 1, n do s = s + t[j] end
+  return s
+end
+local log = {}
+local function hook(ev, line)
+  local info = debug.getinfo(2, "l")
+  local j = "-"
+  for k = 1, 20 do
+    local name, v = debug.getlocal(2, k)
+    if name == nil then break end
+    if name == "j" or name == "s" then j = j .. name .. "=" .. tostring(v) end
+  end
+  log[#log + 1] = ev:sub(1, 1) .. (line or info.currentline) .. "/" .. j
+end
+local total = 0
+for r = 1, 200 do
+  if r == 120 then debug.sethook(hook, "", 3) end
+  if r == 122 then debug.sethook(hook, "", 1) end
+  if r == 123 then debug.sethook(hook, "", 17) end
+  if r == 126 then debug.sethook(hook, "l") end
+  if r == 127 then debug.sethook(hook, "l", 5) end
+  if r == 128 then debug.sethook() end
+  total = total + work(70)
+end
+debug.sethook()
+print(total, #log, table.concat(log, " ", 1, math.min(#log, 400)))
+"#,
+    },
+    Prog {
+        name: "s59_coro",
+        small: false,
+        src: r#"
+-- counted loops inside coroutines that yield between them (and from a hook-free helper inside the outer loop)
+local t = {}
+for j = 1, 80 do t[j] = j * 0.25 end
+local function gen(m)
+  return coroutine.wrap(function()
+    for i = 1, 40 do
+      local a = 0.0
+      for j = 1, m do a = a + t[j] end
+      coroutine.yield(a)
+    end
+    return -1
+  end)
+end
+local out = {}
+for _, m in ipairs({1, 3, 4, 5, 64, 65, 80}) do
+  local g = gen(m)
+  local s = 0.0
+  for k = 1, 40 do s = s + g() end
+  out[#out + 1] = string.format("%.2f", s)
+end
+-- two coroutines interleaved, each in its own loop
+local a, b = gen(70), gen(5)
+local s = 0.0
+for k = 1, 40 do s = s + a() - b() end
+out[#out + 1] = string.format("%.2f", s)
+print(table.concat(out, " "))
+"#,
+    },
+    Prog {
+        name: "s59_counts",
+        small: false,
+        src: r#"
+-- loop counts near 2^64 (the chunk bias wraps), left by a break, and long loops spanning many chunks
+local function upto(a, b, st, lim)
+  local s, c = 0, 0
+  for k = a, b, st do
+    c = c + 1
+    if c > lim then break end
+    s = s + (k & 7)
+  end
+  return s, c
+end
+local out = {}
+for r = 1, 30 do upto(1, 1000, 1, 2000) end
+for _, x in ipairs({
+  {math.mininteger, math.maxinteger, 1, 300},
+  {math.maxinteger - 70, math.maxinteger, 1, 1000},
+  {math.mininteger, math.mininteger + 70, 1, 1000},
+  {math.maxinteger, math.mininteger, -1, 130},
+  {0, math.maxinteger, 2, 65},
+  {1, 100000, 1, 1000000},
+}) do
+  local s, c = upto(x[1], x[2], x[3], x[4])
+  out[#out + 1] = s .. "/" .. c
+end
+print(table.concat(out, " "))
 "#,
     },
 ];

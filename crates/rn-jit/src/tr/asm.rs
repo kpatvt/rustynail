@@ -75,6 +75,29 @@ const FIRST_SLOT_K: u16 = 8;
 /// N2c: the extension slot of the segment oracle (the entry `CallInfo`).
 pub const ORACLE_SLOT_K: u16 = 9;
 
+/// Section 59 (`budhoist`): the extension slot of the chunk bias (above [`EXT_SLOTS`]: the plan requires the room itself).
+const BH_SLOT_K: u16 = 10;
+
+/// Section 59 (`budhoist`): the hoisted budget of a call-free counted loop (`cloop` shape). The loop runs in *chunks*: at the loop entry (`setup`, with
+/// the count register holding the true FORLOOP count `c`, i.e. `c + 1` iterations remain) a chunk of `k = min(c + 1, kmax)` iterations is charged at once
+/// (`budget -= k * n`; when the budget cannot pay `k` iterations, a chunk of one iteration if it can pay one, else the exit of the loop's `BUDGET` guard
+/// in the state where that guard would fail), the count register runs the chunk (`k - 1 .. 0`) and the bias slot holds `c + 1 - k` (true count = count
+/// register + bias). The body has no `BUDGET` (and with `pollk` no `POLL`). When the chunk ends and the bias is nonzero the next head's true count is put
+/// back and control returns to `setup`. Every exit of the body goes through a trampoline: `budget += (cnt + extra) * n` (the iterations of the chunk the
+/// per-iteration charge would not have taken yet; `extra = 1` in front of the body's `BUDGET` position) and `cnt += bias` (the true count of the
+/// snapshot), so every exit sees exactly the budget and the count of the per-iteration form.
+#[derive(Clone, Copy, Debug)]
+struct BhPlan {
+    loop_idx: usize,
+    poll_idx: usize,
+    budget_idx: usize,
+    cnt: V,
+    n: i32,
+    kmax: i64,
+    drop_poll: bool,
+    setup: L,
+}
+
 /// The spill slot that counts loop iterations when [`AsmEnv::count_iterations`] is on (one below the cycle scratch).
 pub const ITER_SLOT: u16 = SCRATCH_SPILL - 1;
 
@@ -212,6 +235,12 @@ pub struct AsmEnv {
     /// N1c (`cloop`): the counted-loop back-edge of a peeled loop is `add idx, step; sub cnt, 1; jae head`, the loop-ending `NE count, #0` guard exits through
     /// a fall-through that undoes the two updates.
     pub cloop: bool,
+    /// Section 59 (`budhoist`): a call-free counted loop of the `cloop` shape charges its budget once per chunk of iterations at the loop entry instead of
+    /// `sub r, n; jl` per iteration; every exit of the body refunds the iterations not yet run (see [`BhPlan`]).
+    pub budhoist: bool,
+    /// Section 59 (`pollk`): with `budhoist`, nonzero: the per-iteration poll of such a loop is dropped and the chunk is at most `pollk` iterations (the poll
+    /// runs at every chunk start). 0: the body keeps its poll.
+    pub pollk: u32,
     /// B4-4: `//` and `%` by a constant use multiplication (`divmagic`).
     pub divmagic: bool,
     /// F2: `string.byte(s, i)` with `1 <= i <= #s` is inline loads (the helper call is the slow path) (`f2byte`).
@@ -384,6 +413,8 @@ impl Default for AsmEnv {
             nopay: false,
             divmagic: false,
             cloop: false,
+            budhoist: false,
+            pollk: 0,
             lea_add: false,
             hk_fuse: false,
             hk_key64: false,
@@ -2558,6 +2589,12 @@ struct Cx<'a> {
     root_ci_cold: Vec<(L, L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
     bud_cold: Vec<(L, L, i32)>,
+    /// Section 59 (`budhoist`): the plan of the hoisted budget of the loop, if any.
+    bh: Option<BhPlan>,
+    /// Section 59: the refund trampolines of the body exits: `(label, stub, extra)`: `budget += (cnt + extra) * n; cnt += bias; jmp stub`.
+    bh_tramps: Vec<(L, L, i32)>,
+    /// Section 59: the trampoline of each stub label (one per stub and `extra`).
+    bh_tramp_ix: std::collections::HashMap<(L, i32), L>,
     /// R1: the cold exits of a carrying link: `(label, poll stub, stores)`: the carried writeback entries are stored (they are not on the stack yet), then
     /// control continues in the stub of the poll at the head.
     rc_cold: Vec<(L, L, Vec<(u16, Ref, Loc)>)>,
@@ -2631,6 +2668,9 @@ impl<'a> Cx<'a> {
             rec_ci_cold: Vec::new(),
             root_ci_cold: Vec::new(),
             bud_cold: Vec::new(),
+            bh: None,
+            bh_tramps: Vec::new(),
+            bh_tramp_ix: std::collections::HashMap::new(),
             rc_cold: Vec::new(),
             dense_cold: Vec::new(),
             carry_slow: Vec::new(),
@@ -2835,14 +2875,36 @@ impl<'a> Cx<'a> {
     }
 
     /// The label of the exit stub of guard `i`, with the `+exitstorm` check emitted at the current position.
-    fn guard_label(&mut self, i: usize) -> Result<L, AsmError> {
+    /// The exit label of guard `i` without the `+exitstorm` check and without a section-59 trampoline.
+    fn plain_guard_label(&mut self, i: usize) -> Result<L, AsmError> {
         let snap = aux_snap(self.ir.ins[i].aux);
-        let l = match self.entry_kind(i) {
+        Ok(match self.entry_kind(i) {
             EntryKind::No if self.ir.ins[i].op == TOp::Poll => self.poll_stub_label(snap)?,
             EntryKind::No => self.stub_label(snap, false)?,
             EntryKind::Yes => self.stub_label(snap, true)?,
             EntryKind::FirstIter => self.disp_label(snap)?,
-        };
+        })
+    }
+
+    /// Section 59: the refund trampoline in front of exit label `l` of body guard `i` (or `l` itself outside a hoisted loop body).
+    fn bh_wrap(&mut self, i: usize, l: L) -> L {
+        let Some(p) = self.bh else { return l };
+        if i <= p.loop_idx {
+            return l;
+        }
+        let extra = i32::from(i < p.budget_idx);
+        if let Some(&t) = self.bh_tramp_ix.get(&(l, extra)) {
+            return t;
+        }
+        let t = self.label();
+        self.bh_tramp_ix.insert((l, extra), t);
+        self.bh_tramps.push((t, l, extra));
+        t
+    }
+
+    fn guard_label(&mut self, i: usize) -> Result<L, AsmError> {
+        let l = self.plain_guard_label(i)?;
+        let l = self.bh_wrap(i, l);
         // F8: the guard right behind an allocation (`NE new, 0`) fails only when the allocation failed, i.e. when no object
         // exists; a spurious exit there would resume tier 1 *before* the instruction after the object was already
         // allocated (a leaked table that the interpreter never allocates: the byte count of a stopped collector drifts)
@@ -3327,6 +3389,10 @@ pub fn assemble_dl(
     let mut inplace = false;
     // N1c: the counted-loop tail (see `Cx::cloop_plan`)
     let cloop = cx.cloop_plan(e2plan.as_ref().map(|p| p.0));
+    cx.bh = cx.bh_plan(
+        cloop.as_ref().map(|&(g, c, _)| (g, c)),
+        e2plan.as_ref().map(|p| p.0),
+    );
     let mut cloop_done = false;
     for i in 0..ir.ins.len() {
         if cloop_done {
@@ -5191,6 +5257,140 @@ impl Cx<'_> {
         self.al.ins[i].dst
     }
 
+    /// Section 59: the chunk setup of a hoisted loop, at the loop entry (behind the entry moves) and at every chunk end with a nonzero bias. The count
+    /// register holds the true count `c`, the budget register the budget in front of the next iteration's charge.
+    fn bh_setup(&mut self, p: BhPlan) -> Result<(), AsmError> {
+        let r = self
+            .env
+            .budget_reg
+            .expect("a hoisted budget needs the budget register");
+        let x_poll = self.plain_guard_label(p.poll_idx)?;
+        let x_bud = self.plain_guard_label(p.budget_idx)?;
+        let (c, n, k) = (p.cnt, p.n, p.kmax);
+        let bias = spill_m(self.ext_slot(BH_SLOT_K));
+        let (big, slow, head) = (self.label(), self.label(), self.label());
+        self.bind(p.setup);
+        if p.drop_poll {
+            self.poll_ops(x_poll);
+        }
+        // c + 1 <= kmax - 1 iterations remain: one chunk for all of them, bias 0
+        self.br(Cc::Uge, c, Src::Imm((k - 1) as i32), big);
+        self.push(Op::Lea(7, rm(c, 1)));
+        self.push(Op::Mul(7, Src::Imm(n)));
+        self.br(Cc::Lt, r, Src::V(7), slow);
+        self.push(Op::Sub(r, Src::V(7)));
+        self.st(W::B8, bias, Src::Imm(0));
+        self.push(Op::Jmp(head));
+        // a chunk of `kmax` iterations, bias `c + 1 - kmax` (modulo 2^64: a count of 2^64 - 1 is exact too)
+        self.bind(big);
+        let kn = (k * i64::from(n)) as i32;
+        self.br(Cc::Lt, r, Src::Imm(kn), slow);
+        self.push(Op::Sub(r, Src::Imm(kn)));
+        self.push(Op::Lea(7, rm(c, (1 - k) as i32)));
+        self.st(W::B8, bias, Src::V(7));
+        self.push(Op::Mov(c, (k - 1) as u64));
+        self.push(Op::Jmp(head));
+        // the budget cannot pay the chunk: one iteration if it pays one (bias `c`), else the exit of the loop's `BUDGET` (after the poll, as in the
+        // per-iteration order)
+        self.bind(slow);
+        if !p.drop_poll {
+            self.poll_ops(x_poll);
+        }
+        self.br(Cc::Lt, r, Src::Imm(n), x_bud);
+        self.push(Op::Sub(r, Src::Imm(n)));
+        self.st(W::B8, bias, Src::V(c));
+        self.push(Op::Mov(c, 0));
+        self.bind(head);
+        Ok(())
+    }
+
+    /// Section 59 (`budhoist`): whether the loop's budget can be hoisted (see [`BhPlan`]): a `cloop` loop (`cloop`: guard `g`, count register `c`) without
+    /// helper calls or shape guards, its body starting with `POLL; BUDGET n`, the count PHI used by the loop control only, in `c` at every body exit and
+    /// never spilled, and the bias slot within the exit area.
+    fn bh_plan(&mut self, cloop: Option<(usize, V)>, e2_end: Option<usize>) -> Option<BhPlan> {
+        let (ir, al, env) = (self.ir, self.al, self.env);
+        if !env.budhoist || env.budget_reg.is_none() {
+            return None;
+        }
+        let (g, c) = cloop?;
+        let l = usize::from(ir.loop_at? - REF_BIAS);
+        if super::ra::has_call(ir)
+            || usize::from(al.nspill) + usize::from(BH_SLOT_K) + 1 > usize::from(ITER_SLOT)
+            || e2_end.is_some_and(|e| e > l)
+        {
+            return None;
+        }
+        let n = ir.ins.len();
+        // (the PHIs follow the `LOOP` marker)
+        let pi = (l + 1..n).find(|&j| ir.ins[j].op != TOp::Phi)?;
+        let bi = pi + 1;
+        if bi >= g || ir.ins[pi].op != TOp::Poll || ir.ins[bi].op != TOp::Budget {
+            return None;
+        }
+        let cref = ir.ins[g].a;
+        if !TraceIr::is_ins(cref) {
+            return None;
+        }
+        let ci = usize::from(cref - REF_BIAS);
+        if ci <= l
+            || ir.ins[ci].op != TOp::Phi
+            || al.ins[ci].dst != Loc::G(c)
+            || !al.ins[ci].stores.is_empty()
+            || al.forced_spills.iter().any(|&(_, r)| r == cref)
+        {
+            return None;
+        }
+        for j in l + 1..n {
+            let x = ir.ins[j];
+            if (j > bi && matches!(x.op, TOp::Poll | TOp::Budget)) || x.op == TOp::Hshape {
+                return None;
+            }
+            if j != g && j != g + 1 && j != ci && (x.a == cref || x.b == cref) {
+                return None;
+            }
+            if x.flags & F_GUARD != 0 || matches!(x.op, TOp::Poll | TOp::Budget) {
+                let s = aux_snap(x.aux);
+                let locs = al.snap_locs.get(s as usize)?;
+                let mut found = false;
+                for (k, e) in ir.snap_entries(s).iter().enumerate() {
+                    if e.r == cref {
+                        if locs.get(k) != Some(&Loc::G(c)) {
+                            return None;
+                        }
+                        found = true;
+                    }
+                }
+                if !found {
+                    return None;
+                }
+            }
+        }
+        let nb = i32::from(ir.ins[bi].a);
+        if nb <= 0 {
+            return None;
+        }
+        // (every product `k * n` stays below 2^30)
+        let cap = (1i64 << 30) / i64::from(nb);
+        let kmax = if env.pollk > 0 {
+            i64::from(env.pollk).min(cap)
+        } else {
+            cap
+        };
+        if kmax < 2 {
+            return None;
+        }
+        Some(BhPlan {
+            loop_idx: l,
+            poll_idx: pi,
+            budget_idx: bi,
+            cnt: c,
+            n: nb,
+            kmax,
+            drop_poll: env.pollk > 0,
+            setup: self.label(),
+        })
+    }
+
     /// N1c: emits the tail planned by [`Self::cloop_plan`] (the guard `g`, the count register, the other in-place adds).
     fn cloop_tail(
         &mut self,
@@ -5212,6 +5412,16 @@ impl Cx<'_> {
             },
             to: loop_l,
         });
+        // Section 59: the chunk ended; a nonzero bias means the loop goes on: the true count of the next head is `-1 + bias`, back to `setup`
+        let chunk_end = match self.bh {
+            Some(p) => {
+                let ce = self.label();
+                self.ld(7, W::B8, spill_m(self.ext_slot(BH_SLOT_K)));
+                self.br(Cc::Ne, 7, Src::Imm(0), ce);
+                Some((ce, p.setup))
+            }
+            _ => None,
+        };
         // the loop ends (`count == 0` in front of the subtraction): the registers get their values in front of the guard back
         if !mutants::active("cloop_no_fixup_cnt") {
             self.push(Op::Add(cnt, Src::Imm(1)));
@@ -5222,6 +5432,14 @@ impl Cx<'_> {
             self.push(Op::Sub(d, s));
         }
         self.push(Op::Jmp(x));
+        if let Some((ce, setup)) = chunk_end {
+            self.bind(ce);
+            if mutants::active("bh_chunk_end_bias_long") {
+                self.push(Op::Add(7, Src::Imm(1)));
+            }
+            self.push(Op::Add(cnt, Src::V(7)));
+            self.push(Op::Jmp(setup));
+        }
         for j in g..self.ir.ins.len() {
             self.track_tags(j);
         }
@@ -5581,11 +5799,17 @@ impl Cx<'_> {
                 for m in &self.al.entry_seq.clone() {
                     self.emit_move(*m);
                 }
+                if let Some(p) = self.bh {
+                    self.bh_setup(p)?;
+                }
                 self.head_pad();
                 self.bind(loop_l);
                 self.count_iteration();
             }
             TOp::Phi => {}
+            // Section 59: the hoisted loop's body charges nothing (the chunk is charged at `setup`) and, with `pollk`, polls at `setup` only
+            TOp::Budget if self.bh.is_some_and(|p| p.budget_idx == i) => {}
+            TOp::Poll if self.bh.is_some_and(|p| p.poll_idx == i && p.drop_poll) => {}
             TOp::Poll => {
                 if !mutants::active("poll_skip") {
                     let x = self.guard_label(i)?;
@@ -9513,6 +9737,30 @@ impl Cx<'_> {
                 self.push(Op::Add(r, Src::Imm(back)));
             }
             self.push(Op::Jmp(exit));
+        }
+        // Section 59: the refund trampolines of the hoisted loop's body exits (`V7` and the flags are dead at every exit)
+        if let Some(p) = self.bh {
+            let r = self
+                .env
+                .budget_reg
+                .expect("a hoisted budget needs the budget register");
+            for (label, exit, extra) in std::mem::take(&mut self.bh_tramps) {
+                self.bind(label);
+                if !mutants::active("bh_refund_skip") {
+                    if extra != 0 {
+                        self.push(Op::Lea(7, rm(p.cnt, extra)));
+                    } else {
+                        self.push(Op::MovR(7, p.cnt));
+                    }
+                    self.push(Op::Mul(7, Src::Imm(p.n)));
+                    self.push(Op::Add(r, Src::V(7)));
+                }
+                if !mutants::active("bh_bias_skip") {
+                    self.ld(7, W::B8, spill_m(self.ext_slot(BH_SLOT_K)));
+                    self.push(Op::Add(p.cnt, Src::V(7)));
+                }
+                self.push(Op::Jmp(exit));
+            }
         }
         let mut shared: Option<L> = None;
         let disps = std::mem::take(&mut self.disps);

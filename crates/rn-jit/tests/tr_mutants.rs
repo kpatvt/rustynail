@@ -4737,6 +4737,21 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "n1_programs")],
     },
     Row {
+        name: "bh_chunk_end_bias_long",
+        owner: "S59",
+        dets: &[d("tr_core", "s59_programs")],
+    },
+    Row {
+        name: "bh_refund_skip",
+        owner: "S59",
+        dets: &[d("tr_core", "s59_count_identity")],
+    },
+    Row {
+        name: "bh_bias_skip",
+        owner: "S59",
+        dets: &[d("tr_core", "s59_programs")],
+    },
+    Row {
         name: "nidx_disp_off1",
         owner: "N1",
         dets: &[d("tr_core", "n1_programs")],
