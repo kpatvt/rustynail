@@ -6943,3 +6943,16 @@ only pass made substantially cheaper (`SINKSKIP` was not measured on its own). W
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle suites, PGO builds, the all-223 benchmark, `bench-fast.sh`; no 5.4 steady
   state; the hot-threshold check on six programs only; lua_lexer not measured (no predictor was built). `cargo test -p rn-std` in release fails
   `interp_scripts` gen_04 / inc_04 / pool_04 (a C-stack depth count, 142852 vs 142854) at the base as well.
+
+## 55. Side-trace compile path at identical code: kill test (2026-11-24, base d7bab19; nothing built)
+
+**Kill test failed: no lever, and no short path, makes the side-trace compile 2x cheaper at identical machine code.** Measured with a scratch build (not committed): the phase timers of `[trace] phases` read a user-mode `instructions` counter of the thread (`perf_event_open`, exclude_kernel) instead of `rdtsc`, and add into a second side-only table while `pipeline` runs a side trace (the side forwarding pass timed as well). Deterministic, one run per configuration, `RUSTYNAIL_SEED=0`, default size.
+
+| program | side traces | side pipeline M instr, `cspeed` 1019 / 0 | k instr per side trace | sinking | forwarding | allocator | exits | assembler | encoder | install + rest |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| awfy/cd | 213 | 78.4 / 114.8 | 368 | 9.1 % | 15.0 % | 22.8 % | 13.3 % | 17.8 % | 14.2 % | 7.7 % |
+| apps/raytrace | 44 | 46.8 / 76.9 | 1064 | 20.5 % | 6.8 % | 25.7 % | 15.1 % | 15.4 % | 10.8 % | 5.7 % |
+| awfy/richards | 31 | 18.2 / 25.6 | 587 | 0.2 % | 25.1 % | 26.3 % | 7.4 % | 20.5 % | 13.6 % | 6.9 % |
+| awfy/towers | 21 | 10.4 / 12.8 | 494 | 0 % | 22.7 % | 25.1 % | 10.3 % | 18.6 % | 16.8 % | 6.5 % |
+
+Why there is no 2x at identical code: the biggest phase is the allocator at 23-26 %, so dropping the allocator and the exit builder entirely would still leave the side pipeline at 62-67 % of its cost. 2x means taking half out of every phase together. The flat profile of cd (`perf record -e instructions:u`) has no compile function above 2.3 % of the run, and malloc / free / `finish_grow` together are about 2.5 % of the run, so an arena is bounded at about 10 % of the side pipeline. The r14 retry allocation never runs on these four programs (`xregs` bit 2 is off), so there is no duplicated allocator run to remove either. The side pipeline is 11.4 % of cd's 686 M instructions, so even 2x would give about -5.7 % on cd. The remaining route is structural and changes the code: emitting x86 straight from the IR in one backward pass that also allocates registers (replacing the allocator, the assembler's micro-op program and the encoder, 55-60 % of the side cost), plus snapshots stored as deltas to the parent's exit (sinking, forwarding and the exits walk the full maps). That is a new back end with its own soundness bar, not a 30-minute prototype.
