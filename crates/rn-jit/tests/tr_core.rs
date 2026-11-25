@@ -12386,18 +12386,20 @@ fn k7_aref_phi_programs() {
 /// (`s1_dbl_chain`, P3 `chainre`: the double-counting snapshots must be told to the installer by the deferred stubs too). Every job pins the
 /// string-hash seed (section 33: the exits of `sinkf_side` under `+exitstorm=7` follow the seed, and the twins ran with two random seeds); the
 /// storm job of `sinkf_side` also runs at seed 13, whose formation takes 105 more exits. Detector of `lazystub_resume_xmm`, `lazystub_resume_v8`,
-/// `lazystub_reloadk`, `lazystub_dbl_skip` (through `s1_dbl_chain`: 1 vs 5 re-orders), `lazystub_site_rel_pos`.
+/// `lazystub_reloadk`, `lazystub_dbl_skip` (through `s1_dbl_chain`: 1 vs 5 re-orders), `lazystub_site_rel_pos`. One exception to the counter identity:
+/// `s1_frame_sides` with the shipped `heatside` under `+exitstorm=7 +randra=5` forms after the process's memory layout (a malloc tunable or the
+/// verbose level moves it as much as the stubs do), so only its output is compared; its `heatside=0` twin keeps the identity.
 #[test]
 fn s1_lazystub_programs() {
-    let progs: [(&str, &str); 9] = [
+    let progs: [(&str, &str); 10] = [
         ("s1_lazy_exits", ""),
         ("s1_lazy_exits", "xregs=3"),
         ("h2_fmat", ""),
         ("sinkf_side", ""),
         ("j1_sinkf", ""),
         ("r1_nbody_pairs", ""),
-        // (section 39.2 `heatside` off: with the shipped grants the twins of `on2 +exitstorm=7 +verify +randra=5` formed differently
-        // (exits 110530 / 112294, side traces 184 / 189), the baseline failed and the mutant runner dropped this detector)
+        // (the shipped `heatside` and `heatside=0`: the counters of the shipped job under `+exitstorm=7 +randra=5` are not compared, see `layout_sensitive`)
+        ("s1_frame_sides", ""),
         ("s1_frame_sides", "heatside=0"),
         ("p2_xregs", "xregs=3"),
         (
@@ -12490,6 +12492,18 @@ fn s1_lazystub_programs() {
         assert!(s.dstub_patched <= s.dstubs, "{}", j.tag());
         built += s.dstubs;
         let e = &eager[&key(j)];
+        // The formation of `s1_frame_sides` under `+exitstorm=7 +randra=5` follows the process's memory layout, not the stubs: with the shipped
+        // `heatside` the eager twin forms with exits 112294 / 189 side traces and the lazy one with 110530 / 184, but the eager twin alone gives
+        // 110530 at `TR_CORE_VERBOSE=2` or `MALLOC_TOP_PAD_=1048576`, and `GLIBC_TUNABLES=glibc.malloc.tcache_count=0` swaps the two (lazy 112294,
+        // eager 110530); `heatside=0` moves the same way under that tunable (106987 / 108332). No semantic change, so only the output (checked
+        // against the interpreter by `compare`) is required of the shipped job; its `heatside=0` twin keeps the counter identity (it holds at the
+        // default layout).
+        let layout_sensitive = j.prog == "s1_frame_sides"
+            && j.opts.contains("+exitstorm=7")
+            && !j.limits.contains("heatside=0");
+        if layout_sensitive {
+            continue;
+        }
         // the twins behave alike: the same exits, the same traces, the same chain re-orders
         assert_eq!(
             (
