@@ -7196,3 +7196,52 @@ helper and TRACE-1 (instruction sampling has skid here, no precise event on this
 Verification: `scripts/jit-diff.sh 1 10` with `off tr trdef` on 5.5 and 5.4 (0 diffs); `ccheck=1` on awfy/cd (278 compared, 0 differ) and
 apps/raytrace (56, 0); `scripts/gate-light.sh ixfuse_,findm_,tset_,b2arr_ --fast`: every step passed (11 mutants killed) except `fmt` and
 `mutant-map`, both fixed in the follow-up commit (rustfmt line break, regenerated `scripts/gate-mutant-map.tsv`; rechecked OK).
+
+## 57. Session-n regressions: `rapol` bit 2 (`rbp` allocatable) side effects (2026-11-25, base 80d4fa1)
+
+Method: perf stat `cycles:u,instructions:u` on CPU 4 (`taskset -c 4`, 300 ms spin, `RUSTYNAIL_SEED=0`, equal-length binary paths
+and environments, min of 5-7, binaries rotated). A heavy gate ran on CPUs 8-15 during the session: absolute cycles moved by up to 2x between
+series (oop_inherit 49-99 Mcyc for the same binary), so every comparison below is within one series; instructions are deterministic.
+
+Re-measurement of the shipped binaries (session-l 7413bff / session-m 8cd1f06 / session-n ab7d185, min of 7, one series):
+
+| program | bin-l cyc | bin-m cyc | bin-n cyc | bin-n / bin-m ins |
+|---|---|---|---|---|
+| jit-trace/oop_inherit | 83.4 M | 84.6 M | 98.8 M (+17 %) | 0.914 |
+| jit-trace/dot | 1813 M | 1770 M | 2168 M (+22 %) | 0.999 |
+
+Both are real. Knob bisection on bin-n: `rapol=1` (bit 2 off, `rbp` not allocatable; default 5 since c0bf0ce) gives dot 2243 -> 1790 Mcyc and
+oop_inherit 98.6 -> 76.1 Mcyc (at +5 % instructions: more spills). Two different mechanisms, both new code shapes that bit 2 produces:
+
+* **dot** (inner loop `s = s + a[i] * b[i]`): the loop-invariant array part pointer of `a` became a loop home in `rbp` (`make_homes` takes the
+  pool reversed, `rbp` first). `rbp` as a SIB base has no disp-less encoding, so the payload load is `movsd xmm1, [rbp + r8*8 + 0]`: the
+  scaled-index-plus-displacement form of section 56 (ixfuse), again a front-end stall at identical instruction count. **Fix**: `ra::Ra::idxbase`
+  marks the base operands of fused `ALOAD` / `ASTORE` with a register index; for them `make_homes` moves `rbp` to the end of its pool (it is
+  still taken when nothing else is free).
+* **oop_inherit**: the extra register changed the loop-back parallel moves into a memory-to-memory 2-cycle (two spill slots swapped). With a
+  memory-to-memory step present, `sequentialise_x` saved the cycle's destination in the free double register: `movsd xmm0, [slot A]` (a value
+  just stored by an integer `mov`) ... `movsd [slot B], xmm0`, then read by `mov r8, [slot B]` at the top of the next iteration. The carried
+  integer chain crossed the GPR/FP domain twice per iteration through memory (no memory renaming / slower forwarding on Zen 5): +29 % cycles
+  at -2.6 % instructions against the slot save. **Fix**: the double scratch register only saves double-register destinations; a general register
+  or slot destination of a cycle with a memory-to-memory step is saved in the scratch slot (`mov rax, [A]; mov [scratch], rax` ... all in the
+  integer domain), as when no double register is free.
+
+After the fix (b0 = 80d4fa1, b2 = fix; same series, min of 5):
+
+| program | b0 cyc | fix cyc | b0 ins | fix ins |
+|---|---|---|---|---|
+| jit-trace/dot | 2623 M | 1937 M (-26 %) | 6509.9 M | 6509.9 M |
+| jit-trace/oop_inherit | 98.8 M | 88.0 M (-11 %) | 226.7 M | 232.7 M |
+| jit-trace/oop_inherit (2nd series, with bin-m) | 95.9 M | 49.5 M (bin-m 57.5 M) | 226.7 M | 232.7 M |
+
+oop_inherit now runs below session-m in the same series (the -8.7 % instructions of session-n are partly given back: +2.6 %).
+
+Not changed by the fix and not caused by `rapol` (rapol=1 vs 5 within 2 %, instructions equal), min of 3 in one series, bin-m / b0 / fix:
+lib/len_op 85.8 / 91.2 / 90.3 Mcyc (instructions equal), lib/it_next 81.8 / 85.5 / 85.2 (equal), real/template_engine 1151 / 1191 / 1212
+(+0.5 % ins), programs/metamethods 1139 / 1140 / 1156 (-0.4 % ins): within the cross-series noise of this session (a gate ran on the other
+CPUs); left as layout / noise. lib/find_pat 360 / 378 / 390 Mcyc at +3.3 % instructions (1292.8 -> 1335.5 M): a real instruction increase
+from the runtime side (rn-std pattern / FINDM changes between 8cd1f06 and ab7d185), not bisected in this session.
+
+Verification: `cargo test -p rn-jit --features trace --test tr_ra` (19 passed), `scripts/jit-diff.sh 1 10` with `off tr trdef` (0 diffs),
+`scripts/gen-mutant-map.py` regenerated (line shifts). `scripts/gate-light.sh phi_,cycle_,spill_ --fast` was started but stopped before
+its first test step (it sat in `gate_wait_load` behind the heavy gate on CPUs 8-15, past the time box): still to run.

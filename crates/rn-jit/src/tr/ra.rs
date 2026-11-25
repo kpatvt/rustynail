@@ -661,7 +661,9 @@ pub fn sequentialise(moves: &[Move], scratch_slot: u16) -> Vec<Move> {
 
 /// [`sequentialise`] with a free double register `xscratch` (not read or written by any move, holding no live value):
 /// a cycle whose saved destination is a double register is broken with `movaps` through it (no `movq` round trip on
-/// the carried chain: Q1), and it replaces the scratch slot when `V7` is busy with a memory-to-memory step.
+/// the carried chain: Q1). A cycle whose saved destination is a general register or a slot never goes through it
+/// (section 57: an integer chain stored by `movsd` and reloaded by `mov` lost store-to-load forwarding on Zen 5,
+/// jit-trace/oop_inherit +29 % cycles): with `V7` busy with a memory-to-memory step it is saved in the scratch slot.
 pub fn sequentialise_x(moves: &[Move], scratch_slot: u16, xscratch: Option<u8>) -> Vec<Move> {
     let mut pend: Vec<Move> = Vec::new();
     let mut consts: Vec<Move> = Vec::new();
@@ -722,7 +724,6 @@ pub fn sequentialise_x(moves: &[Move], scratch_slot: u16, xscratch: Option<u8>) 
         // memory-to-memory step needs it as its own scratch; only then does the save go through memory.
         let tmp = match (m.dst, xscratch) {
             (Loc::X(_), Some(xs)) => Loc::X(xs),
-            (_, Some(xs)) if mem_mem => Loc::X(xs),
             _ if mem_mem => Loc::Spill(scratch_slot),
             _ => Loc::G(SCRATCH_GPR),
         };
@@ -781,6 +782,8 @@ struct Ra<'a> {
     n: usize,
     l: Option<usize>,
     fused: Vec<bool>,
+    /// Section 57: values used as the base of a fused array access with a register index (`rbp` last for them).
+    idxbase: Vec<bool>,
     defines: Vec<bool>,
     is_x: Vec<bool>,
     vals: Vec<Val>,
@@ -1151,6 +1154,18 @@ pub fn allocate_hinted(
         }
     }
     let is_x: Vec<bool> = ir.ins.iter().map(|i| i.t == Ty::Num).collect();
+    // Section 57: the base of a fused array access with a register index (`[base + 8 * ~x]`, `[base + x + tag]`). With
+    // `rbp` as the base, the payload load needs a zero disp8 (`[rbp + 8 * x + 0]`): the scaled-index-plus-displacement form
+    // of section 56 (jit-trace/dot +25 % cycles at equal instructions). Such values prefer any other register.
+    let mut idxbase = vec![false; n];
+    for i in 0..n {
+        if matches!(ir.ins[i].op, TOp::Aload | TOp::Astore) {
+            let [base, index, _] = operand_refs(ir, &fused, i);
+            if TraceIr::is_ins(base) && TraceIr::is_ins(index) && idx(base) < n {
+                idxbase[idx(base)] = true;
+            }
+        }
+    }
     let mut rng = opts.randra.map(Rng::new);
     let reuse_slots = match rng.as_mut() {
         Some(r) => !r.chance(1, 4),
@@ -1163,6 +1178,7 @@ pub fn allocate_hinted(
         n,
         l,
         fused,
+        idxbase,
         defines: defs,
         is_x,
         vals: vec![
@@ -1783,6 +1799,13 @@ impl Ra<'_> {
                 let mut pool = Self::pool(x);
                 pool.reverse();
                 pool.retain(|&r| self.avail.has(x, r) && self.holder(x, r) == NONE);
+                if !x && self.idxbase[v] {
+                    // section 57: `rbp` as an indexed base costs a disp8 on every access
+                    if let Some(p) = pool.iter().position(|&r| r == 9) {
+                        pool.remove(p);
+                        pool.push(9);
+                    }
+                }
                 if !pool.is_empty() {
                     let k = if self.rng.is_some() {
                         self.rbelow(pool.len())
