@@ -643,6 +643,28 @@ impl<'a> Em<'a> {
         Ok(n)
     }
 
+    /// Section 53 (`cspeed` lever `FWDSNAP`): [`Em::new_snap`] on entries the caller renamed into `buf`, pruned in place (the same
+    /// entries in the same order as the filter of `new_snap`).
+    fn new_snap_buf(
+        &mut self,
+        s: Snap,
+        buf: &mut Vec<SnapEntry>,
+        links: &[FrameLink],
+        step: u32,
+    ) -> Result<u32, Gave> {
+        if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
+            return up("too many snapshots");
+        }
+        if let Some(p) = &self.src.prune {
+            let ir = &self.b.ir;
+            buf.retain(|e| !snap::may_drop(p, &s, e, ir.ty_of(e.r)));
+        }
+        let n = self.b.ir.snapshot(s, buf);
+        self.b.ir.frames.extend_from_slice(links);
+        self.snap_step.push(step);
+        Ok(n)
+    }
+
     /// The output snapshot for the `src` snapshot `old` in the current copy (memoised per copy).
     fn snap_of(&mut self, old: u32) -> Result<u32, Gave> {
         if self.keep_snaps {
@@ -1303,7 +1325,32 @@ fn roll(rec: &Recorded, opts: &TraceOpts, keep_snaps: bool) -> Result<Out, Gave>
     let mut em = Em::new(rec, opts);
     em.keep_snaps = keep_snaps;
     emit_preroll(&mut em)?;
-    if keep_snaps {
+    if keep_snaps && crate::cspeed::on(crate::cspeed::FWDSNAP) {
+        // (section 53: the loop below with one buffer for the renamed entries and the frame links found by a running offset)
+        let mut buf: Vec<SnapEntry> = Vec::new();
+        let mut foff = 0usize;
+        for old in 0..rec.ir.snaps.len() as u32 {
+            let sn = rec.ir.snaps[old as usize];
+            buf.clear();
+            for e in rec.ir.snap_entries(old) {
+                buf.push(SnapEntry {
+                    r: em.operand(e.r),
+                    ..*e
+                });
+            }
+            let nf = usize::from(sn.nframes);
+            let links = &rec.ir.frames[foff..foff + nf];
+            // (MUTANT `fwdsnap_frame_stale`: the running offset stays: later snapshots get the frame links of an earlier one)
+            if !mutants::active("fwdsnap_frame_stale") {
+                foff += nf;
+            }
+            let n = em.new_snap_buf(sn, &mut buf, links, rec.snap_step[old as usize])?;
+            if n != old {
+                return up("snapshot numbering moved");
+            }
+        }
+        em.entry_snap_out = rec.entry_snap;
+    } else if keep_snaps {
         // H1: a side / stitched trace keeps its snapshots as they are, in the same order (the entry snapshot of `entry_checks`, the
         // link snapshot that no instruction names, the stubs' exit numbers): they are copied now that every value has its new ref
         for old in 0..rec.ir.snaps.len() as u32 {
@@ -1702,6 +1749,12 @@ fn cleanup(o: &mut Out) -> Result<(), Gave> {
             used[s] = true;
         }
     }
+    // Section 53 (`cspeed` lever `FWDSNAP`): with every snapshot kept, the snapshots were built in order by `roll` (contiguous maps, frames
+    // in snapshot order): the rebuild below would copy them unchanged
+    let keep_tables = o.keep_all && crate::cspeed::on(crate::cspeed::FWDSNAP);
+    if keep_tables {
+        return cleanup_dead(o);
+    }
     let mut new_of = vec![u32::MAX; nsn];
     let mut snaps: Vec<Snap> = Vec::new();
     let mut map: Vec<SnapEntry> = Vec::new();
@@ -1736,7 +1789,12 @@ fn cleanup(o: &mut Out) -> Result<(), Gave> {
     ir.snapmap = map;
     ir.frames = frames;
     o.snap_step = step;
+    cleanup_dead(o)
+}
 
+/// The dead-instruction part of [`cleanup`].
+fn cleanup_dead(o: &mut Out) -> Result<(), Gave> {
+    let ir = &mut o.ir;
     // ---- dead instructions ----
     let n = ir.ins.len();
     let mut live = vec![false; n];

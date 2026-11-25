@@ -649,6 +649,11 @@ fn run0(rec: &mut Recorded, opts: &TraceOpts) -> Result<Vec<usize>, String> {
     if opts.sinkside == 2 && !matches!(end, EndKind::Loop | EndKind::Link(_)) {
         return Ok(Vec::new());
     }
+    // Section 53 (`cspeed` lever `SINKSKIP`): no `TNEW`, no candidate
+    if crate::cspeed::on(crate::cspeed::SINKSKIP) && !rec.ir.ins.iter().any(|i| i.op == TOp::Tnew) {
+        NOTE.with(|n| *n.borrow_mut() = "sink: no candidates".into());
+        return Ok(Vec::new());
+    }
     let loaded = loaded_slots(&rec.ir);
     let mut cands: Vec<Cand> = Vec::new();
     for t in 0..rec.ir.ins.len() {

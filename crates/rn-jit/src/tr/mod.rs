@@ -1914,6 +1914,25 @@ pub static CCHECK: [std::sync::atomic::AtomicU64; 2] = [
     std::sync::atomic::AtomicU64::new(0),
 ];
 
+/// Section 53: the snapshots of a recording as text for the `ccheck` comparison of the passes (`print::dump` shows the instructions only):
+/// per snapshot its header without the map offset, its entries and its frame links; then the step of every snapshot and the entry snapshot.
+fn ccheck_snaps_text(r: &Recorded) -> String {
+    use std::fmt::Write;
+    let mut o = String::new();
+    for s in 0..r.ir.snaps.len() as u32 {
+        let mut sn = r.ir.snaps[s as usize];
+        sn.map.0 = 0;
+        let _ = write!(
+            o,
+            "{sn:?}{:?}{:?};",
+            r.ir.snap_entries(s),
+            snap::frame_links(&r.ir, s)
+        );
+    }
+    let _ = write!(o, "{:?}{:?}", r.snap_step, r.entry_snap);
+    o
+}
+
 /// The allocation as text for the `ccheck` comparison (without the lazily built register masks).
 fn ccheck_alloc_text(a: &ra::Allocation) -> String {
     let mut c = a.clone();
@@ -1946,6 +1965,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         if slow.is_err()
             || print::dump(&o.ir) != print::dump(&rec.ir)
             || format!("{:?}", o.writeback) != format!("{:?}", rec.writeback)
+            || ccheck_snaps_text(&o) != ccheck_snaps_text(&rec)
         {
             CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);

@@ -31,8 +31,16 @@ pub const REC: u32 = 64;
 /// would repeat the generation flushed last (`cache::install` compares it for root traces; `cache::retire` keeps it for a head's own trace),
 /// so a side trace's was never read: the install gets 0 ("no hash").
 pub const SIDEHASH: u32 = 128;
+/// Section 53: the forwarding pass of a side / stitched trace (`opt_loop::run_fwd`, which keeps the snapshots and their numbers) renames each
+/// snapshot's entries into one reused buffer and prunes them in place (it built three vectors per snapshot and looked the frame links up from
+/// the start of the frame list), and its clean-up keeps the snapshot tables as they are (with every snapshot kept, the rebuild was a copy).
+pub const FWDSNAP: u32 = 256;
+/// Section 53: allocation sinking returns before its analysis (the set of loaded slots, the candidate scan) when the trace allocates no table
+/// (no `TNEW`): it found no candidate then. Most side traces allocate nothing.
+pub const SINKSKIP: u32 = 512;
+
 /// All levers.
-pub const ALL: u32 = MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH;
+pub const ALL: u32 = MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

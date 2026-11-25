@@ -14170,7 +14170,9 @@ fn tr24c_restarts_programs() {
 /// of the corpus, `always` and `on2`, with `ccheck=1`: each trace compile runs its passes and its back end (allocation, exits, assembler,
 /// encoder) a second time with `cspeed=0` and compares the IR, the machine code, the label offsets and the allocation / exit structures; each tier-1 compile re-encodes
 /// its program with the old encoder. No compile may differ, the programs give the interpreter's results, and the corpus compiles something.
-/// GC stress 1 / 2 and `+verify` on the programs that must trace; the levers off (`cspeed=0`) run the same corpus as a control.
+/// GC stress 1 / 2 and `+verify` on the programs that must trace; the levers off (`cspeed=0`) run the same corpus as a control. Section 53 added
+/// the levers `SIDEHASH`, `FWDSNAP` and `SINKSKIP` (the side-trace forwarding pass's snapshot copy and sinking without a `TNEW` are compared with
+/// the old passes here too; detector of `fwdsnap_frame_stale`).
 #[test]
 fn c1_cspeed_identical_code() {
     let mut jobs = Vec::new();

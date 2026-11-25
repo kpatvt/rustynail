@@ -4814,6 +4814,11 @@ const TABLE: &[Row] = &[
         owner: "S52",
         dets: &[d("tr_core", "s52_resink_programs")],
     },
+    Row {
+        name: "fwdsnap_frame_stale",
+        owner: "F53",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
