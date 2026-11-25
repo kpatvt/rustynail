@@ -1155,7 +1155,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 875);
+        assert_eq!(NAMES.len(), 878);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
