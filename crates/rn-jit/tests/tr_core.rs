@@ -13994,6 +13994,49 @@ fn t6_minmax_programs() {
     compare(jobs);
 }
 
+/// docs/JIT_TRACE.md section 54 (R2, `t1g`): the tier-1 generic-`for` paths (`r2_01_genfor`: pairs / next / ipairs over hash, array and mixed tables, modifications
+/// during the traversal, an invalid key to `next`, other light C function / C closure / Lua / `__pairs` iterators, closures capturing loop variables, to-be-closed
+/// variables in blocks and loops, a long traversal with a collection in the middle) in tier 1 with traces on but nothing hot (`t1x`), with traces off (`off`) and in
+/// `always` / `on2`, with `t1g` 0 / 1 / 2 / 3, `+verify`, the emulator, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes and stack-move stress; every
+/// job against the interpreter, three more string-hash seeds. Detector of `t1g_close_tbc_skip`, `t1g_close_level_skip`, `t1g_next_fn_skip`.
+#[test]
+fn r2_genfor_programs() {
+    let p = "r2_01_genfor";
+    let mut jobs = Vec::new();
+    for trace in ["t1x", "off", "always", "on2"] {
+        for lim in ["t1g=0", "t1g=1", "t1g=2", "t1g=3"] {
+            jobs.push(Job::new(p, trace).limits_s(lim));
+        }
+        let lim = "t1g=3";
+        jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+        jobs.push(Job::new(p, trace).opts("+emurun +verify").limits_s(lim));
+        for b in [3, 17, 200] {
+            jobs.push(Job::new(p, trace).budget(b).limits_s(lim));
+        }
+        for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+            let mut j = Job::new(p, trace)
+                .env("RUSTYNAIL_GC_STRESS", gc)
+                .limits_s(lim);
+            if mode == "inc" {
+                j = j.env("RUSTYNAIL_GC_MODE", "inc");
+            }
+            jobs.push(j);
+        }
+        jobs.push(
+            Job::new(p, trace)
+                .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                .limits_s(lim),
+        );
+    }
+    let mut all: Vec<Job> = jobs.into_iter().map(|j| j.seed(0)).collect();
+    for trace in ["t1x", "always"] {
+        for seed in [5, 11, 23] {
+            all.push(Job::new(p, trace).limits_s("t1g=3").seed(seed));
+        }
+    }
+    compare(all);
+}
+
 /// docs/JIT_TRACE.md section 44.2 (T8, `libcall` bit 10): `string.find` with a real pattern, no captures, recorded as the `FINDP` library op (`t8_01_findp`: a
 /// lexer loop, one result wanted, init values, empty matches, capture patterns that stay calls, a pattern that changes from capture-free to a capture, malformed
 /// patterns under `pcall`, long strings, tail calls) in `always` / `on2`, with `libcall` 1023 (off) / 2047, `+verify`, the emulator, exit storm, budgets, GC

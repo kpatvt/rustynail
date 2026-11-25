@@ -4819,6 +4819,21 @@ const TABLE: &[Row] = &[
         owner: "F53",
         dets: &[d("tr_core", "c1_cspeed_identical_code")],
     },
+    Row {
+        name: "t1g_close_tbc_skip",
+        owner: "R2",
+        dets: &[d("tr_core", "r2_genfor_programs")],
+    },
+    Row {
+        name: "t1g_close_level_skip",
+        owner: "R2",
+        dets: &[d("tr_core", "r2_genfor_programs")],
+    },
+    Row {
+        name: "t1g_next_fn_skip",
+        owner: "R2",
+        dets: &[d("tr_core", "r2_genfor_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

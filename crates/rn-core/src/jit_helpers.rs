@@ -1233,6 +1233,44 @@ pub(crate) fn tfor_fast(st: &mut State, ra: StkId, nres: usize, builtins: (usize
     }
 }
 
+/// R2 (`t1g` bit 1): the lean `OP_TFORCALL` of the base library's `next` over a table. The tier-1 template has checked that the
+/// iterator `R[A]` is the registered `next` (by address), that `R[A+1]` is a table and that the C-stack depth is below the limit; it
+/// stores no `savedpc` and reloads nothing afterwards, which is sound because this helper cannot call, raise, allocate or move the
+/// stack. Writes the results exactly as [`tfor_fast`] does and returns [`H_DONE`]; an invalid key (the `next` error) or a state that
+/// is not a table returns [`H_EXIT`] with nothing changed but the traversal hint, and the template then runs [`jit_tforcall`].
+///
+/// # Safety
+/// As [`jit_call`]; additionally the template's checks above hold.
+pub unsafe extern "C" fn jit_tfor_next(
+    th: *mut Thread,
+    ci: *mut CallInfo,
+    instr: u64,
+    _x: u64,
+) -> u32 {
+    // SAFETY: as in `jit_call`.
+    let (mut st, ci) = unsafe { (State::from_th_ptr(th), Ci::from_raw(ci)) };
+    let i = Instruction(instr as u32);
+    let ra = StkId(ci.r().func.0 + 1 + i.a() as usize);
+    let nres = i.c() as usize;
+    let Some(t) = st.get(ra + 1).as_table() else {
+        return H_EXIT;
+    };
+    #[cfg(not(rustynail_lua54))]
+    let (ctl_at, res) = (ra + 3, ra + 3);
+    #[cfg(rustynail_lua54)]
+    let (ctl_at, res) = (ra + 2, ra + 4);
+    let ctl = st.get(ctl_at);
+    let mut hint = st.heap().next_hint;
+    let r = t.next_hinted(&ctl, &mut hint);
+    st.heap().next_hint = hint;
+    match r {
+        Ok(Some((k, v))) => tfor_results2(&mut st, res, nres, k, v),
+        Ok(None) => tfor_nil(&mut st, res, nres),
+        Err(_) => return H_EXIT,
+    }
+    H_DONE
+}
+
 /// `OP_TFORCALL` (`protect_nt!`: only `savedpc` was stored). `next` and the `ipairs` iterator over a table run
 /// without a frame (same results as the builtins); everything else is the interpreter's nested `call`.
 ///

@@ -1069,6 +1069,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         e.str_mt = str_mt_addr(st, d);
         (e.inl, e.inl_mut) = t1inline_bits(d);
         e.t1q = t1q_bits(d);
+        e.t1g = t1g_bits(d);
         e.ccall_helper = ccall_helper(d);
         e.hints = &d.t1i_hints;
         return e;
@@ -1092,6 +1093,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl: 0,
         inl_mut: 0,
         t1q: 0,
+        t1g: 0,
         hints: std::ptr::null(),
         jret: 0,
     };
@@ -1110,6 +1112,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl,
         inl_mut,
         t1q: t1q_bits(d),
+        t1g: t1g_bits(d),
         hints: &d.t1i_hints,
         ccall_helper: ccall_helper(d),
         ..e
@@ -1196,6 +1199,19 @@ fn t1q_bits(d: &JitData) -> u32 {
         let l = d.tr.cfg.limits.t1q;
         if d.tr.cfg.mode != crate::tr::cache::TrMode::Off || l & 0x80 != 0 {
             return (l & 0x7f) | crate::tr::t1q_mut();
+        }
+    }
+    let _ = d;
+    0
+}
+
+/// R2 (`t1g`): the tier-1 generic-`for` paths plus the test-only mutants (bits 8..). With traces off only when the limit was named.
+fn t1g_bits(d: &JitData) -> u32 {
+    #[cfg(feature = "trace")]
+    {
+        let l = d.tr.cfg.limits.t1g;
+        if d.tr.cfg.mode != crate::tr::cache::TrMode::Off || l & 0x80 != 0 {
+            return (l & 0x7f) | crate::tr::t1g_mut();
         }
     }
     let _ = d;
