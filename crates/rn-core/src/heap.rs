@@ -70,6 +70,45 @@ fn bytes_eq_fresh(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
+/// R5: `a == b` for the bytes of two short strings of equal length (at most `MAX_SHORT_LEN`), as overlapping unaligned word loads
+/// instead of a `memcmp` call through the PLT (the intern probes compare the candidate whose hash matched: a hit compares every byte).
+/// The cargo feature `streq_libc` restores the slice comparison (A/B).
+#[inline(always)]
+#[allow(unsafe_code)]
+fn short_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    let n = b.len();
+    debug_assert!(a.len() == n && n <= MAX_SHORT_LEN);
+    if cfg!(feature = "streq_libc") || n > MAX_SHORT_LEN {
+        return a == b;
+    }
+    // SAFETY: every load reads inside `a` / `b` (offsets checked against `n` by the branch it is in).
+    unsafe {
+        let (pa, pb) = (a.as_ptr(), b.as_ptr());
+        let r8 = |p: *const u8, i: usize| (p.add(i) as *const u64).read_unaligned();
+        let r4 = |p: *const u8, i: usize| (p.add(i) as *const u32).read_unaligned();
+        let d8 = |i: usize| r8(pa, i) ^ r8(pb, i);
+        if n > 16 {
+            // 17..=40 bytes: the first 16, then 8-byte steps, the last 8 overlapping
+            let mut x = d8(0) | d8(8) | d8(n - 8);
+            if n > 24 {
+                x |= d8(16);
+                if n > 32 {
+                    x |= d8(24);
+                }
+            }
+            x == 0
+        } else if n >= 8 {
+            d8(0) | d8(n - 8) == 0
+        } else if n >= 4 {
+            (r4(pa, 0) ^ r4(pb, 0)) | (r4(pa, n - 4) ^ r4(pb, n - 4)) == 0
+        } else if n > 0 {
+            *pa == *pb && *pa.add(n / 2) == *pb.add(n / 2) && *pa.add(n - 1) == *pb.add(n - 1)
+        } else {
+            true
+        }
+    }
+}
+
 impl Heap {
     /// New heap on the system allocator.
     pub fn new(seed: u32) -> LuaResult<Heap> {
@@ -260,7 +299,7 @@ impl Heap {
                 if ((*p).hdr.hash.get() == h
                     || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY)))
                     && (*p).len() == s.len()
-                    && LuaString::bytes_raw(p) == s
+                    && short_bytes_eq(LuaString::bytes_raw(p), s)
                 {
                     return Some(0);
                 }
@@ -316,7 +355,7 @@ impl Heap {
                     && (if FRESH && s.len() <= 8 {
                         bytes_eq_fresh(LuaString::bytes_raw(p), s)
                     } else {
-                        LuaString::bytes_raw(p) == s
+                        short_bytes_eq(LuaString::bytes_raw(p), s)
                     })
                 {
                     return (h, p, Some(0));
@@ -388,7 +427,7 @@ impl Heap {
                 if ((*p).hdr.hash.get() == h
                     || ((*p).hdr.extra.get() != 0 && !mut_hash(MUT_CHAIN_CMP_HASH_ONLY)))
                     && (*p).len() == s.len()
-                    && LuaString::bytes_raw(p) == s
+                    && short_bytes_eq(LuaString::bytes_raw(p), s)
                 {
                     // resurrect if dead-but-unswept (`isdead` -> `changewhite`)
                     if (*p).hdr.marked & (self.current_white ^ WHITEBITS) != 0 {
@@ -909,6 +948,38 @@ mod tests {
         let f2 = h.new_str(&forty).unwrap();
         assert!(f1.get().is_short());
         assert_eq!(f1.as_ptr(), f2.as_ptr());
+    }
+
+    /// R5: the word-load comparison of the intern probes equals the slice comparison at every length and every differing byte.
+    #[test]
+    fn short_bytes_eq_matches_slice_equality() {
+        for n in 0..=MAX_SHORT_LEN {
+            let a: Vec<u8> = (0..n).map(|i| (i * 7 + 3) as u8).collect();
+            assert!(short_bytes_eq(&a, &a.clone()), "len {n}");
+            for k in 0..n {
+                for bit in [1u8, 0x80] {
+                    let mut b = a.clone();
+                    b[k] ^= bit;
+                    assert!(!short_bytes_eq(&a, &b), "len {n} byte {k}");
+                }
+            }
+        }
+        // and through the string table: strings that differ in one byte are distinct objects
+        let mut h = heap();
+        for n in 1..=MAX_SHORT_LEN {
+            let a: Vec<u8> = vec![b'q'; n];
+            let p = h.new_str(&a).unwrap();
+            for k in 0..n {
+                let mut b = a.clone();
+                b[k] = b'r';
+                assert_ne!(
+                    h.new_str(&b).unwrap().as_ptr(),
+                    p.as_ptr(),
+                    "len {n} byte {k}"
+                );
+            }
+            assert_eq!(h.new_str(&a).unwrap().as_ptr(), p.as_ptr());
+        }
     }
 
     #[test]

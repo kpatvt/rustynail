@@ -1037,6 +1037,85 @@ pub fn memfind(s1: &[u8], s2: &[u8]) -> Option<usize> {
     if s2.len() > s1.len() {
         return None;
     }
+    #[cfg(target_arch = "x86_64")]
+    if s2.len() >= 2 && s1.len() - s2.len() >= 15 && crate::strfast::on(crate::strfast::MEMFIND) {
+        return memfind_pair(s1, s2);
+    }
+    memfind_scalar(s1, s2)
+}
+
+/// `a == b` for slices of equal length, without a `memcmp` call for the short ones (the middle of a needle whose first and
+/// last bytes already matched).
+#[inline(always)]
+#[allow(unsafe_code)]
+fn eq_short(a: &[u8], b: &[u8]) -> bool {
+    let n = a.len();
+    debug_assert_eq!(n, b.len());
+    // SAFETY: every read is inside `a` / `b` (overlapping unaligned loads of a length the branch checked).
+    unsafe {
+        let (pa, pb) = (a.as_ptr(), b.as_ptr());
+        let r8 = |p: *const u8, i: usize| (p.add(i) as *const u64).read_unaligned();
+        let r4 = |p: *const u8, i: usize| (p.add(i) as *const u32).read_unaligned();
+        match n {
+            0 => true,
+            1..=3 => {
+                *pa == *pb && *pa.add(n / 2) == *pb.add(n / 2) && *pa.add(n - 1) == *pb.add(n - 1)
+            }
+            4..=8 => r4(pa, 0) == r4(pb, 0) && r4(pa, n - 4) == r4(pb, n - 4),
+            9..=16 => r8(pa, 0) == r8(pb, 0) && r8(pa, n - 8) == r8(pb, n - 8),
+            _ => a == b,
+        }
+    }
+}
+
+/// [`memfind`] for a needle of at least two bytes and at least 16 candidate start positions (STR_FAST bit `MEMFIND`): 16
+/// starts at a time, a start being a candidate when both the needle's first byte (at the start) and its last byte (at the
+/// start + `len - 1`) match (SSE2 compares, one mask); candidates are verified lowest first, so the result is the first
+/// occurrence, as the scalar search finds it. The last block overlaps the one before it (its starts already seen are
+/// masked out), so no load reads past the haystack.
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+fn memfind_pair(h: &[u8], n: &[u8]) -> Option<usize> {
+    use std::arch::x86_64::{
+        __m128i, _mm_and_si128, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_set1_epi8,
+    };
+    let m = n.len();
+    let starts = h.len() - m + 1; // candidate start positions, >= 16
+    debug_assert!(m >= 2 && starts >= 16);
+    let (mid, nmid) = (m - 1, &n[1..m - 1]);
+    // SAFETY: SSE2 is part of the x86_64 baseline. Loads: `a` reads `h[i0 .. i0 + 16]` with `i0 + 16 <= starts <= h.len()`, `b`
+    // reads `h[i0 + m - 1 .. i0 + m + 15]` with `i0 + m + 15 <= starts + m - 1 = h.len()`.
+    unsafe {
+        let f = _mm_set1_epi8(n[0] as i8);
+        let l = _mm_set1_epi8(n[m - 1] as i8);
+        let p = h.as_ptr();
+        let mut i = 0usize;
+        loop {
+            let i0 = if i + 16 > starts { starts - 16 } else { i };
+            let a = _mm_loadu_si128(p.add(i0) as *const __m128i);
+            let b = _mm_loadu_si128(p.add(i0 + mid) as *const __m128i);
+            let mut mask =
+                _mm_movemask_epi8(_mm_and_si128(_mm_cmpeq_epi8(a, f), _mm_cmpeq_epi8(b, l))) as u32;
+            if i0 < i {
+                mask &= u32::MAX << (i - i0); // starts below `i` were checked by the previous block
+            }
+            while mask != 0 {
+                let j = i0 + mask.trailing_zeros() as usize;
+                if eq_short(h.get_unchecked(j + 1..j + mid), nmid) {
+                    return Some(j);
+                }
+                mask &= mask - 1;
+            }
+            if i0 + 16 >= starts {
+                return None;
+            }
+            i = i0 + 16;
+        }
+    }
+}
+
+/// The byte-filter search of [`memfind`] (first byte, then the rest compared).
+fn memfind_scalar(s1: &[u8], s2: &[u8]) -> Option<usize> {
     let (first, rest) = (s2[0], &s2[1..]);
     let last = s1.len() - s2.len(); // last possible start
     let mut i = 0;

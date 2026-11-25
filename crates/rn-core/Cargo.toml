@@ -18,6 +18,8 @@ workspace = true
 [features]
 # Promote the PUC hash of every short string at creation (A/B for the lazy hash, `string::LAZY_HASH`).
 eager_hash = []
+# A/B (R5): compare interned short strings with the slice comparison (`memcmp`) instead of word loads (`heap::short_bytes_eq`).
+streq_libc = []
 # A/B (BUNDLE-T): disable the fused coroutine resume path (`coro::CORO_FUSED`).
 coro_nofuse = []
 # A/B (N2 step 1): disable the direct `coroutine.yield` of the native call path (`coro::CORO_YIELD_DIRECT`).

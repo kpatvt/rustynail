@@ -393,11 +393,22 @@ impl State {
         // `post_call` (the function may have set hooks or marked to-be-closed slots)
         // (`fwanted` = wanted results + 1, or a value with `CIST_TBC` set)
         let fwanted = ci.r().callstatus & (CIST_TBC | CIST_NRESULTS);
-        if self.hook_mask() != 0 || fwanted == 0 || fwanted > 4 {
+        // (R2: up to 4 wanted values inline: the generic `for` of 5.5 asks its iterator factory (`pairs`, `ipairs`,
+        // `string.gmatch`, ...) for four)
+        if self.hook_mask() != 0 || fwanted > 5 {
             self.post_call(ci, n)?;
             return Ok(true);
         }
-        if fwanted == 2 {
+        if fwanted == 0 {
+            // R6: `LUA_MULTRET` (a call that is the last argument or expression of a list: `f(a, g(x))`, `t[#t + 1] = ...`
+            // forms, `return g(x)` through a tail call): all `n` results move down to `func`, `top` follows them
+            let first = self.top() - n;
+            for i in 0..n {
+                let v = self.get(first + i);
+                self.set(func + i, v);
+            }
+            self.set_top(func + n);
+        } else if fwanted == 2 {
             let v = if n == 0 {
                 Value::NIL
             } else {
@@ -406,7 +417,7 @@ impl State {
             self.set(func, v);
             self.set_top(func + 1);
         } else {
-            // `moveresults` for 0, 2 or 3 wanted results
+            // `moveresults` for 0, 2, 3 or 4 wanted results
             let wanted = fwanted as usize - 1;
             let first = self.top() - n;
             for i in 0..wanted {
@@ -473,6 +484,14 @@ impl State {
             } else if let Some(cl) = fv.as_cclosure() {
                 return Ok(self.precall_c(func, status, cl.f)? as i32);
             } else if let Some(f) = fv.as_native() {
+                // R6: a light C function tail-called with all results wanted (no `__call` on the way, not a coroutine
+                // function): the inline native call of `CALL`, whose results end at `top`
+                if status == 0
+                    && !crate::coro::in_coro_range(f)
+                    && self.native_fast_with(func, f, LUA_MULTRET)?
+                {
+                    return Ok((self.top() - func) as i32);
+                }
                 return Ok(self.precall_c(func, status, f)? as i32);
             } else if fv.as_light_cfn().is_some() {
                 return Ok(self.precall_c(func, status, c_trampoline())? as i32);

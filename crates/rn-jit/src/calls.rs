@@ -91,6 +91,9 @@ pub struct CallEnv {
     /// BUNDLE-Q (`t1q`): bits 0-3 = the enabled pieces (1 = `EQ` of objects answered in tier 1, 2 = float `MOD` inline helper, 4 / 8 = BUNDLE-S Lua `__index` / `__newindex` frames), bits 8.. = the test-only mutants
     /// (`tr::t1q_mut`; always 0 without the `tr_mutants` feature).
     pub t1q: u32,
+    /// R2 (`t1g`): bits 0-6 = the enabled generic-`for` paths (1 = `CLOSE` skips its helper when nothing is open, 2 = `TFORCALL` of `next` through
+    /// `jit_tfor_next`), bits 8.. = the test-only mutants (`tr::t1g_mut`; always 0 without the `tr_mutants` feature).
+    pub t1g: u32,
     /// BUNDLE-T1I: the per-prototype masks of the rows worth emitting at each `CALL` (`t1inline::site_hints`, keyed by the address of
     /// the prototype's code; lives in the state's `JitData`, which outlives every lowering); null or no entry = every enabled row.
     pub hints: *const super::t1inline::SiteHints,

@@ -3748,6 +3748,15 @@ pub(crate) fn mmcmp_savedpc_skip() -> bool {
     mutants::active("mmcmp_savedpc_skip")
 }
 
+/// R2: the active `t1g` mutants as bits of the `CallEnv::t1g` word: 0x100 `t1g_close_tbc_skip` (the `CLOSE` skip ignores registered to-be-closed
+/// variables), 0x200 `t1g_close_level_skip` (it skips although an open upvalue lies at or above the level), 0x400 `t1g_next_fn_skip` (`TFORCALL` takes the
+/// lean `next` path for any light C function iterator).
+pub(crate) fn t1g_mut() -> u32 {
+    u32::from(mutants::active("t1g_close_tbc_skip")) << 8
+        | u32::from(mutants::active("t1g_close_level_skip")) << 9
+        | u32::from(mutants::active("t1g_next_fn_skip")) << 10
+}
+
 /// BUNDLE-Q: the active `t1q` mutants as bits of the `CallEnv::t1q` word: 0x100 `t1q_eq_same_false`, 0x200 `t1q_eq_nomm_true`, 0x400 `t1q_eq_second_mm_skip`,
 /// 0x800 `t1q_mod_sign_skip`, 0x1000 `t1q_mod_negzero`, 0x2000 `t1q_mod_inf_fix`, BUNDLE-S: bits 14..20 `s1_self_skip`, `s1_get_dst_off`, `s1_savedpc_skip`, `s1_count_skip`, `s1_pay_skip`, `s1_land_skip`, `s1_obj_orig`.
 pub(crate) fn t1q_mut() -> u32 {

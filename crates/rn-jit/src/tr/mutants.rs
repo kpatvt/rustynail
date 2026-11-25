@@ -1062,6 +1062,10 @@ pub const NAMES: &[&str] = &[
     "resink_handler_mat",
     // docs/JIT_TRACE.md section 53 (`cspeed` lever `FWDSNAP`): the side-trace forwarding pass's snapshot copy (`ccheck`)
     "fwdsnap_frame_stale",
+    // docs/JIT_TRACE.md section 54 (R2, `t1g`): the tier-1 generic-`for` paths (`CLOSE` skip, lean `next`)
+    "t1g_close_tbc_skip",
+    "t1g_close_level_skip",
+    "t1g_next_fn_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1147,7 +1151,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 872);
+        assert_eq!(NAMES.len(), 875);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

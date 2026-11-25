@@ -282,6 +282,12 @@ pub const F2IFL_PROCESS: u32 = 1;
 /// continuation entries), **32** `TAILCALL` inside a metamethod frame stays in compiled code, **64** the general `RETURN` (several / open results, vararg frames) of a metamethod frame
 /// does (docs/PERF.md "BUNDLE-V"). Process value 125 = 1 + 4 + 8 + 16 + 32 + 64; a named value is clamped to 127.
 pub const T1Q_PROCESS: u32 = 125;
+/// R2 (`t1g`, docs/STUDY_RUNTIME_GAP.md): process value of [`TrLimits::t1g`] (also the struct default), a bit mask of the tier-1 generic-`for` paths:
+/// **1** `CLOSE` skips its helper when nothing is open at or above its level (no open upvalue there, no to-be-closed variable registered), **2** `TFORCALL`
+/// of the base library's `next` over a table calls the lean helper `jit_tfor_next` (no `savedpc`, no frame reload, no hook re-test: it cannot call, raise or
+/// allocate) and falls back to `jit_tforcall` for anything it does not answer. Bit 7 (0x80) = named explicitly (then it also applies with
+/// `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly).
+pub const T1G_PROCESS: u32 = 3;
 /// BUNDLE-S S2 (`amt`): process value of [`TrLimits::amt`] (K3a: also the struct default). **1:** array reads / stores of tables with a metatable are recorded (docs/PERF.md "BUNDLE-S").
 pub const AMT_PROCESS: u32 = 1;
 /// BUNDLE-D (`armm`): process value of [`TrLimits::armm`] (K3a: the process value is also the struct default). **0:** `programs/metamethods` 2.24x cycles (the tier-1 continuation keeps the loop out of the trace), nothing gains (docs/PERF.md "BUNDLE-D").
@@ -573,6 +579,9 @@ pub struct TrLimits {
     /// BUNDLE-Q (`t1q`): bit mask of the tier-1 exits removed (1 = `EQ` of objects without a real `__eq` call, 2 = float `MOD`, 4 = BUNDLE-S `__index` Lua function frames, 8 = BUNDLE-S `__newindex` Lua function frames); bit 7 (0x80) = named explicitly (then it also applies
     /// with `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly) (default [`T1Q_PROCESS`]).
     pub t1q: u32,
+    /// R2 (`t1g`): bit mask of the tier-1 generic-`for` paths (1 = `CLOSE` without its helper when nothing is open, 2 = `TFORCALL` of `next` through the lean
+    /// helper); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
+    pub t1g: u32,
     /// BUNDLE-S S2 (`amt`): array reads and stores of a table that has a metatable are recorded (a non-nil element is a raw access; a nil element needs the flag guard of `__index` / `__newindex`) (default [`AMT_PROCESS`]).
     pub amt: u32,
     /// BUNDLE-P P2 (`f2ifl`): `F2I_EXACT` of an `FFLOOR` result (already integral or NaN/inf/out of range) is `cvttsd2si; cmp r, 1; jo exit` (an exact `-2^63` result also exits: the guard is conservative there) (default [`F2IFL_PROCESS`]).
@@ -978,6 +987,7 @@ impl Default for TrLimits {
             armm: ARMM_PROCESS,
             f2ifl: F2IFL_PROCESS,
             t1q: T1Q_PROCESS,
+            t1g: T1G_PROCESS,
             amt: AMT_PROCESS,
             rearmside: REARMSIDE_PROCESS,
             rearmclean: REARMCLEAN_PROCESS,
@@ -1197,6 +1207,7 @@ impl TrLimits {
                 "armm" => l.armm = v.min(1),
                 "f2ifl" => l.f2ifl = v.min(1),
                 "t1q" => l.t1q = v.min(0x7f) | 0x80,
+                "t1g" => l.t1g = v.min(0x7f) | 0x80,
                 "amt" => l.amt = v.min(1),
                 "rearmside" => l.rearmside = v.min(64),
                 "rearmclean" => l.rearmclean = v.min(1),

@@ -68,7 +68,7 @@ impl Cx<'_> {
             OpCode::Tforcall => self.helper_template(pc, i, addr(h::jit_tforcall), true, true),
             OpCode::Varargprep => self.helper_template(pc, i, addr(h::jit_varargprep), true, false),
             OpCode::Vararg => self.helper_template(pc, i, addr(h::jit_vararg), false, false),
-            OpCode::Close => self.helper_template(pc, i, addr(h::jit_close), false, false),
+            OpCode::Close => self.t_close(pc, i),
             OpCode::Tbc => self.helper_template(pc, i, addr(h::jit_tbc), false, false),
             _ => unreachable!("not a loops opcode"),
         }
@@ -77,7 +77,6 @@ impl Cx<'_> {
     /// The shape shared by all helper templates: (hook guard), block count, `savedpc` = the instruction after
     /// this one, helper call, error exit, frame reload, late hook test.
     fn helper_template(&mut self, pc: u32, i: Instruction, f: u64, hook_guard: bool, tfor: bool) {
-        let env = self.cfg.calls.expect("calls enabled");
         let x = self.exit_at(pc);
         if hook_guard {
             // active hooks: the interpreter runs the instruction (call hooks, `hook_call` of VARARGPREP)
@@ -88,7 +87,15 @@ impl Cx<'_> {
         self.op(Op::CountSub { n: 1, exit: xc });
         if tfor {
             self.ipairs_fast(pc, i);
+            self.next_fast(pc, i);
         }
+        self.helper_call(pc, i, f);
+    }
+
+    /// The helper call of [`Cx::helper_template`] (after its guards and its count): `savedpc`, the call, the error exit, the frame
+    /// reload and the late hook test.
+    fn helper_call(&mut self, pc: u32, i: Instruction, f: u64) {
+        let env = self.cfg.calls.expect("calls enabled");
         self.op(Op::Mov(0, self.pc_addr(pc + 1)));
         self.st(W::B8, ciw(rn_core::jit_layout::callinfo::SAVEDPC), 0);
         self.op(Op::CallH { f, a: i.0, b: 0 });
@@ -106,6 +113,85 @@ impl Cx<'_> {
         self.br(Cc::Ne, 0, Src::Imm(0), xh);
         let next = self.pcl[pc as usize + 1];
         self.op(Op::Jmp(next));
+    }
+
+    /// `CLOSE A` (R2, `t1g` bit 0): when no to-be-closed variable is registered and no open upvalue lies at or above `R[A]` (the open
+    /// list is sorted, its head is the highest), `luaF_close` does nothing: the template goes on without the helper. Otherwise (and with
+    /// the bit off) the helper template. The count comes first, as in the helper template.
+    fn t_close(&mut self, pc: u32, i: Instruction) {
+        let g = self.cfg.calls.expect("calls enabled").t1g;
+        if g & 1 == 0 {
+            self.helper_template(pc, i, addr(h::jit_close), false, false);
+            return;
+        }
+        let xc = self.exit_cnt(pc, 1);
+        self.op(Op::CountSub { n: 1, exit: xc });
+        let slow = self.p.label();
+        let next = self.pcl[pc as usize + 1];
+        // (mutant `t1g_close_tbc_skip`: registered to-be-closed variables are ignored)
+        if g & 0x100 == 0 {
+            self.ld(4, W::B8, thw(thr::TBC_LEN));
+            self.br(Cc::Ne, 4, Src::Imm(0), slow);
+        }
+        self.ld(4, W::B8, thw(thr::OPENUPVAL));
+        self.br(Cc::Eq, 4, Src::Imm(0), next);
+        // (mutant `t1g_close_level_skip`: an open upvalue at or above the level is not closed)
+        if g & 0x200 == 0 {
+            self.ld(
+                4,
+                W::B8,
+                M {
+                    base: Base::Reg(4),
+                    off: rn_core::jit_layout::upval::V as i32,
+                },
+            );
+            self.op(Op::Lea(6, fr(i.a(), 0)));
+            self.br(Cc::Lt, 4, Src::V(6), next);
+        } else {
+            self.op(Op::Jmp(next));
+        }
+        self.op(Op::Bind(slow));
+        self.helper_call(pc, i, addr(h::jit_close));
+    }
+
+    /// `TFORCALL` of the base library's `next` over a table (R2, `t1g` bit 1; falls through to the helper call when it does not apply):
+    /// the iterator is the registered `next` (compared by address), the state a table and the C-stack depth below the limit; then the lean
+    /// helper `jit_tfor_next` writes the results (it cannot call, raise, allocate or move the stack: no `savedpc`, no reload). It answers
+    /// [`h::H_EXIT`] for an invalid key, and the general helper then raises the error.
+    fn next_fast(&mut self, pc: u32, i: Instruction) {
+        let g = self.cfg.calls.expect("calls enabled").t1g;
+        let nx = rn_core::jit_hooks::builtin_next();
+        if g & 2 == 0 || nx == 0 {
+            return;
+        }
+        let a = i.a();
+        let slow = self.p.label();
+        let next = self.pcl[pc as usize + 1];
+        self.ld(0, W::B4, thw(thr::NCALLS));
+        self.op(Op::And(0, Src::Imm(0xffff)));
+        self.br(
+            Cc::Ge,
+            0,
+            Src::Imm(rn_core::state::LUAI_MAXCCALLS as i32 - 1),
+            slow,
+        );
+        self.ld(0, W::B1, fr(a, 0));
+        self.br(Cc::Ne, 0, Src::Imm(i32::from(LUA_VLCF)), slow);
+        // (mutant `t1g_next_fn_skip`: any light C function is taken for `next`)
+        if g & 0x400 == 0 {
+            self.ld(1, W::B8, fr(a, 8));
+            self.op(Op::Mov(2, nx as u64));
+            self.br(Cc::Ne, 1, Src::V(2), slow);
+        }
+        self.ld(0, W::B1, fr(a + 1, 0));
+        self.br(Cc::Ne, 0, Src::Imm(i32::from(ctb(LUA_VTABLE))), slow);
+        self.op(Op::CallH {
+            f: addr(h::jit_tfor_next),
+            a: i.0,
+            b: 0,
+        });
+        self.br(Cc::Eq, 0, Src::Imm(h::H_DONE as i32), next);
+        self.op(Op::Bind(slow));
     }
 
     /// Inline `ipairs` step for `TFORCALL` (falls through to the helper call when it does not apply): the

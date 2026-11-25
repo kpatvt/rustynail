@@ -16382,4 +16382,10 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm_seed0/p1_presize_order.lua"),
     },
+    // docs/JIT_TRACE.md section 54 (R2, `t1g`): the tier-1 generic-`for` paths
+    Prog {
+        name: "r2_01_genfor",
+        small: true,
+        src: include_str!("../../../../tests/vm/r2_01_genfor.lua"),
+    },
 ];

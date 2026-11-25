@@ -764,3 +764,51 @@ fn format_cache_is_keyed_by_bytes() {
     assert_eq!(d.1, want.1);
     strfast::set_mask(saved);
 }
+
+/// R1 (`MEMFIND`): the paired-byte plain search finds the same first occurrence as the scalar search and a naive scan, for
+/// haystacks around the 16-start block boundaries, needles of 1..40 bytes (matches at the start and the end, overlapping and
+/// repeated candidates from a two-letter alphabet), and random `init` values of `find_plain_pos`.
+#[test]
+fn memfind_pair_matches_the_scalar_search() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = strfast::mask();
+    let naive = |h: &[u8], n: &[u8]| -> Option<usize> {
+        if n.is_empty() {
+            return Some(0);
+        }
+        (0..(h.len() + 1).saturating_sub(n.len())).find(|&i| &h[i..i + n.len()] == n)
+    };
+    let mut r = Rng(0x2545_F491_4F6C_DD1D);
+    let iters = if cfg!(miri) { 300 } else { 40_000 };
+    for it in 0..iters {
+        let alpha: &[u8] = if it % 2 == 0 {
+            b"ab"
+        } else {
+            b"abcdefgh\0\xff"
+        };
+        let hl = r.below(80);
+        let h: Vec<u8> = (0..hl).map(|_| alpha[r.below(alpha.len())]).collect();
+        let nl = 1 + r.below(if it % 5 == 0 { 40 } else { 6 });
+        let n: Vec<u8> = if hl >= nl && r.below(2) == 0 {
+            let at = r.below(hl - nl + 1);
+            h[at..at + nl].to_vec()
+        } else {
+            (0..nl).map(|_| alpha[r.below(alpha.len())]).collect()
+        };
+        let want = naive(&h, &n);
+        for m in [0, strfast::MEMFIND] {
+            strfast::set_mask(m);
+            assert_eq!(memfind(&h, &n), want, "mask {m} h {h:?} n {n:?}");
+        }
+        let init = r.below(hl + 3) as i64 - 1;
+        strfast::set_mask(0);
+        let slow = find_plain_pos(&h, &n, init);
+        strfast::set_mask(strfast::MEMFIND);
+        assert_eq!(
+            find_plain_pos(&h, &n, init),
+            slow,
+            "init {init} h {h:?} n {n:?}"
+        );
+    }
+    strfast::set_mask(saved);
+}
