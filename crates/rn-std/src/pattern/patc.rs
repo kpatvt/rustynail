@@ -496,6 +496,28 @@ impl Drop for PinGuard {
     }
 }
 
+/// The set of a pattern: from its bytes and length, not its address. (It was `(addr >> 4) ^ len`: then whether two hot patterns of a
+/// program shared a set, and thrashed its two slots, depended on where the allocator had put the strings: `apps/markdown` ran 8 % more
+/// instructions in the general matcher under a different heap layout (C allocator settings, the length of `argv[0]`); docs/JIT_TRACE.md
+/// section 53.) Short patterns are interned strings (one address per content), so the address-keyed slots see the same strings as before.
+#[inline(always)]
+fn set_of(pat: &[u8]) -> usize {
+    // (the first and the last eight bytes, overlapping for short patterns, and the length: two loads and a multiply per lookup)
+    let n = pat.len();
+    let (a, b) = if n >= 8 {
+        let w = |i: usize| u64::from_le_bytes(pat[i..i + 8].try_into().expect("eight bytes"));
+        (w(0), w(n - 8))
+    } else {
+        let mut v = 0u64;
+        for (k, &c) in pat.iter().enumerate() {
+            v |= u64::from(c) << (8 * k);
+        }
+        (v, 0)
+    };
+    let h = (a ^ b.rotate_left(29) ^ n as u64).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    ((h >> 40) as usize) & (SLOTS - 1) & !1
+}
+
 /// The compiled form of `pat` once it was seen before (at the same address and length), else `None` (the caller runs
 /// the general matcher). Two slots per set; hits compare the BYTES (a different string at a recycled address never hits).
 /// A leaf on the hit path (the miss is a tail call): no frame setup per probe.
@@ -507,7 +529,7 @@ pub(super) fn lookup(pat: &[u8]) -> Option<&'static Prog> {
     if len > MAX_KEY || len == 0 {
         return None;
     }
-    let set = ((addr >> 4) ^ len) & (SLOTS - 1) & !1;
+    let set = set_of(pat);
     let base = CACHE.get();
     if base.is_null() {
         return miss(pat, set);
