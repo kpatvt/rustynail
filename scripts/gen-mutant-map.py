@@ -79,7 +79,7 @@ def table():
     """name -> (owner, [(bin, test)])"""
     s = read(TAB)
     s = s[s.index("const TABLE"):]
-    s = s[: s.index("\n];")]
+    s = s[: s.index("\n];")] + "\n"
     consts = {}
     cs = read(TAB)
     for m in re.finditer(r"const (P7_BINS|[A-Z0-9_]+): &\[Det\] = &\[(.*?)\];", cs, re.S):

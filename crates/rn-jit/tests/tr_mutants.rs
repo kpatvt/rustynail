@@ -4877,7 +4877,7 @@ const TABLE: &[Row] = &[
     Row {
         name: "reroot_never",
         owner: "S59",
-        dets: &[d("tr_core", "s59_reroot_programs")],
+        dets: &[d("tr_core", "s60_reroot_programs")],
     },
 ];
 
