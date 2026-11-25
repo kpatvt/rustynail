@@ -166,6 +166,9 @@ pub enum AbortReason {
     /// chain returned or tail-called before its own self-call, or any other abort in the unrolled part): the recording with `k = 1` would
     /// have ended at that call. Data, not a fault of the head: the per-prototype unroll policy counts it (docs/JIT_TRACE.md section 34.2).
     Unroll,
+    /// Section 59 (`reroot`): the root recording completed the path prefix its head must not take again (`RecCfg::avoid`): dropped without penalty,
+    /// the next back-edge records again.
+    Reroot,
 }
 
 impl From<IrAbort> for AbortReason {
@@ -183,6 +186,8 @@ impl From<IrAbort> for AbortReason {
 /// Configuration of one recording.
 #[derive(Clone)]
 pub struct RecCfg {
+    /// Section 59 (`reroot`): a root recording that completes this path prefix (pc, prototype, depth per step) aborts `Reroot`.
+    pub avoid: Option<std::rc::Rc<Vec<(u32, usize, u8)>>>,
     /// F4 (`snapprune`): the snapshots of the root frame leave out the dead numeric temporaries (`snap::prune_snaps`).
     pub snapprune: bool,
     /// F4 experiment (`snapprune=2`): dead *locals* are pruned as well (`debug.getlocal` of a dead local then shows a stale value).
@@ -533,6 +538,7 @@ pub fn cache_hooks(id: super::cache::TrId, resolve: ResolveFn) -> DepHooks {
 impl Default for RecCfg {
     fn default() -> RecCfg {
         RecCfg {
+            avoid: None,
             snapprune: false,
             snapprune_locals: false,
             hrefv: true,
@@ -2289,6 +2295,17 @@ impl Rec {
         self.path.push(at);
         self.path_proto.push(ProtoKey(self.frames[depth].proto));
         self.path_depth.push(depth as u8);
+        if let Some(av) = self.cfg.avoid.as_deref() {
+            // section 59: the old root's path up to (and including) the step where its dominant side trace left it
+            if self.cfg.side.is_none()
+                && self.path.len() == av.len()
+                && av.iter().enumerate().all(|(i, &(pc, pr, dp))| {
+                    self.path[i] == pc && self.path_proto[i].0 == pr && self.path_depth[i] == dp
+                })
+            {
+                return Err(AbortReason::Reroot);
+            }
+        }
         self.cost.push(cost);
         self.cur_pc = at;
         if !mm_follower && self.cfg.mm {

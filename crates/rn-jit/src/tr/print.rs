@@ -351,6 +351,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     if s.inner_retried > 0 {
         let _ = writeln!(o, "[trace] innerretry: rounds started {}", s.inner_retried);
     }
+    if s.reroots > 0 || s.reroot_drops > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] reroot: roots {} drops {} given up {}",
+            s.reroots, s.reroot_drops, s.reroot_gaveup
+        );
+    }
     if s.retried > 0 || s.ident_kept > 0 {
         let _ = writeln!(
             o,

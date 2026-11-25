@@ -440,6 +440,8 @@ are ignored with a warning at `RUSTYNAIL_JIT_VERBOSE>=1`.
 | `sidenest` | 1 | 0-1 | C38 slice 1: 1 = a SIDE recording that reaches, inside an inlined callee frame, a loop head of that callee with a root trace ends ... |
 | `domtop` | 82 | 0-100 | C36: a root with at least `domn` entries since its trace was installed, of which `domtop` percent or more leave through ONE ... |
 | `domn` | 65536 | any | C36: see `domtop`. |
+| `reroot` | 0 | 0-100 | Section 59 (built, off): a root with at least `domn` entries, `reroot` percent of which leave through ONE pre-roll site into a side trace, is re-recorded once with a path constraint ... |
+| `rerootall` | 80 | 0-100 | Section 59: `reroot` fires only when all pre-roll exits are at least `rerootall` percent of the entries. |
 | `ncallee` | 1 | 0-1 | P3: after an entry-failure flush of a root whose entry segment holds a callee identity guard (TR6d), the head is recorded again ... |
 | `chainre` | 95 | 0-100 | P3: a side trace of which `chainre` percent or more of at least `chainn` entries leave through its callee-guard exit into a child ... |
 | `chainn` | 65536 | any | P3: see `chainre`. |
