@@ -112,7 +112,12 @@ const MEM_HEAVY: [&str; 5] = [
 /// Programs that traverse tables with pointer keys (tables, functions as keys): the node of such a key sits at a place that depends on the address of the
 /// object, which is different in the oracle's two runs, so `pairs` / `next` visit the keys in another order and a live local (`k`, a string made from it)
 /// differs at the same clock. Not a trace-compiler difference (the same job passes or fails with traces off alike); docs/JIT_TRACE.md section 29.
-const ADDR_ORDER: [&str; 1] = ["tests/vm/table_insert_layout"];
+/// (`jit_t5_01_object_keys`: `for k, v in pairs(strong) do n = n + v end` over table keys, partial sums at the same clock differ, also
+/// with traces off at budget 3; docs/JIT_TRACE.md section 58.)
+const ADDR_ORDER: [&str; 2] = [
+    "tests/vm/table_insert_layout",
+    "tests/vm/jit_t5_01_object_keys",
+];
 
 fn core_src(name: &str) -> &'static str {
     progs::PROGS
