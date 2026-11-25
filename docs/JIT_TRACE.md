@@ -6943,3 +6943,180 @@ only pass made substantially cheaper (`SINKSKIP` was not measured on its own). W
 * Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle suites, PGO builds, the all-223 benchmark, `bench-fast.sh`; no 5.4 steady
   state; the hot-threshold check on six programs only; lua_lexer not measured (no predictor was built). `cargo test -p rn-std` in release fails
   `interp_scripts` gen_04 / inc_04 / pool_04 (a C-stack depth count, 142852 vs 142854) at the base as well.
+
+## 54. Runtime and tier-1 levers for interpreter-shaped programs: R1 `memfind`, R2 generic `for` (`t1g`), R5 string-table compare, R6 MULTRET / C tail calls (2026-11-24, base d7bab19)
+
+Measurement first: docs/STUDY_RUNTIME_GAP.md (per-operation costs on both engines, in-context doubling on text_adventure, an IBS survey of the 40
+programs with a gap above 1.4x, a per-opcode split of tier-1 code). Its result decides the size of this section: **the library functions are not
+where interpreter-shaped programs lose** (in context, `gmatch`, table appends, lookups, `ipairs` scans and vararg calls cost us what they cost
+LuaJIT; `format` costs what LuaJIT's interpreter pays); the measurable per-operation gaps are spread over call overheads, `pairs` / `next`
+(2.1-2.9x LuaJIT's interpreter in tier 1), the coroutine switch (1.31x) and string creation from traces. Four fixes were built, each its own
+commit, in order of measured ceiling x plausibility; the coroutine lever with the largest ceiling was measured and rejected (54.5).
+
+Method: release `rn-cli` (5.5; 5.4 with `RUSTFLAGS="--cfg rustynail_lua54"`), **control = d7bab19 built in this session** (5.4 from `git archive`),
+binaries in equal-length directories, the same environment string on every run (`RUSTYNAIL_STR_FAST=23 RUSTYNAIL_JIT_TRACE_LIMITS=t1g=3`, which
+the control ignores; the all-knobs-off column uses `RUSTYNAIL_STR_FAST=07 RUSTYNAIL_JIT_TRACE_LIMITS=t1g=0`, same length), `RUSTYNAIL_SEED=0`,
+cycles = min of 5 (5.4: 3) interleaved runs pinned to CPU 4 after a 300 ms spin, instructions = min of the same runs. Sample: the 29 programs of
+section 49's sample plus 15 target programs (44).
+
+### 54.1 R1: plain substring search 16 starts at a time (`rn-std`, STR_FAST bit 16 `MEMFIND`, default on)
+
+`pattern::memfind` (the plain `string.find`, `find_plain_pos` of the trace `FIND` helper) found a candidate with a SWAR first-byte search and
+compared the rest with `memcmp`. Now (x86_64, needle of 2+ bytes, 16+ start positions): load 16 bytes at the start positions and 16 at start +
+`len - 1`, compare with the needle's first and last bytes (SSE2), AND the masks, verify the candidates lowest first with overlapping word loads
+(`eq_short`). The last block overlaps the previous one (its already-seen starts masked out), so no load reads past the haystack. Same result (the
+first occurrence). Ceiling (STUDY_RUNTIME_GAP 5 #2): find_plain 60 Mcyc against LuaJIT. Achieved: find_plain 122.2 -> 112.6 Mcyc (-7.9 %),
+785.8 -> 698.5 M instructions (-11.1 %); same binary with the bit off 129.7 (the old code in the new binary is slower than in the old binary: a
+layout difference of the binary). Realised 0.16 of the ceiling against the base, 0.29 against the bit off. Test:
+`rn-std/tests/strfast_diff.rs::memfind_pair_matches_the_scalar_search` (40 000 random haystacks of 0-80 bytes around the block boundaries, needles of
+1-40 bytes from two-letter and ten-letter alphabets, matches at the start / end / overlapping, `find_plain_pos` with random `init`, bit on and
+off against a naive scan). No mutant: the one guard whose removal would be wrong (the masked starts below `i`) is not observable (a start below
+`i` was already rejected, it is rejected again).
+
+### 54.2 R2: tier-1 generic `for` (knob `t1g`, default 3) and four results inline
+
+* **Four results inline** (`rn-core` `native_fast_with`): the inline result move of a native call handled 0-3 wanted results; the 5.5 generic `for`
+  asks its iterator factory (`pairs`, `ipairs`, `string.gmatch`) for four, which went through the general `post_call` (13.6 % of a tier-1
+  `pairs` call on an empty table). Not knob-gated (no behaviour change).
+* **`t1g` bit 0: `CLOSE` without its helper** when no to-be-closed variable is registered (`thread.tbc` length 0) and no open upvalue lies at or
+  above `R[A]` (the open list is sorted, its head is the highest): `luaF_close` would do nothing. Every generic `for` of 5.4 / 5.5 ends with a
+  `CLOSE`. The count of the instruction comes first, as in the helper template.
+* **`t1g` bit 1: `TFORCALL` of `next` through the lean helper `jit_tfor_next`**: the template checks the C-stack depth, that `R[A]` is the
+  registered `next` (by address) and `R[A+1]` a table, then calls a helper that cannot call, raise, allocate or move the stack (no `savedpc`
+  store, no frame reload, no hook re-test after it); an invalid key returns `H_EXIT` and the general `jit_tforcall` raises the error.
+* Knob: `RUSTYNAIL_JIT_TRACE_LIMITS=t1g=N` (`TrLimits::t1g`, `T1G_PROCESS = 3`, `CallEnv::t1g`); like `t1q`, a named value also applies with
+  `RUSTYNAIL_JIT_TRACE=off` (bit 7), so `RUSTYNAIL_JIT_TRACE=off` stays J4 exactly unless asked.
+
+Tier 1 per operation (cycles, same binary, `t1g=0` -> `3`): `pairs` over an empty table 119 -> 101, over 3 keys 218 -> 193, over 12 keys 519 ->
+479, `next` 3 keys 145 -> 123, `ipairs` 3 125 -> 113, `gmatch` 1 word 413 -> 398. The per-iteration cost of `next` stays about 33 cycles against
+LuaJIT's interpreter's 11 (the lean helper is ~60 instructions; the rest is the loop's template code and `next_hinted`): realised 0.18 of the
+`pairs3` gap. Programs (instructions, same binary `t1g=0` -> `3`, at the hot thresholds 248 / 252 / 256 / 260 / 264): text_adventure -0.65 /
+-0.64 / -0.59 / -0.66 / -0.65 %, inspect_lua -0.94 / -0.80 / -0.78 / -0.84 / -0.81 %, lua_parser -0.56 / -0.71 / -0.90 / -0.93 / -0.70 %, json_rxi
+-0.23 / -0.24 / -0.35 / -0.27 / -0.21 %, parser_combinator / roguelike_turns / expr_lang within +-0.03 %: a gain at every threshold, no formation
+landing. Test `tr_core::r2_genfor_programs` (`tests/vm/r2_01_genfor.lua`: pairs / next / ipairs over hash, array and mixed tables, nested loops and
+breaks, modification during the traversal, an invalid key to `next`, light C function / C closure / Lua / `__pairs` iterators, closures capturing
+loop variables, to-be-closed variables in blocks and loops, a 300-key traversal with a collection in the middle; `t1x` / `off` / `always` / `on2` x
+`t1g` 0-3, `+verify`, the emulator, budgets 3 / 17 / 200, GC stress 1 / 2 in both collector modes, stack-move stress, three more seeds; every job
+against the interpreter). Mutants `t1g_close_tbc_skip`, `t1g_close_level_skip`, `t1g_next_fn_skip` (3 caught; registry 872 -> 875).
+
+### 54.3 R5: the string-table probes compare with word loads (`rn-core`, A/B cargo feature `rn-core/streq_libc`)
+
+`Heap::new_str` / `jit_str_probe` / `jit_str_bytes` compared a candidate whose hash matched with a slice comparison, a `bcmp` call through the PLT
+(5 % of `short_core`'s samples on `lib/sub`); a hit compares every byte. `short_bytes_eq` uses overlapping unaligned 4 / 8-byte loads (at most five
+for 40 bytes). Ceiling (STUDY_RUNTIME_GAP 5 #7): `string.sub` in a trace 36.6 against LuaJIT's 19.7 cycles. Achieved (A/B builds, same session):
+lib/sub 124.2 -> 116.2 Mcyc (-6.5 %, -3.5 % instructions), knucleotide 1017.5 -> 988.4 (-2.9 %), json_rxi and lib/char unchanged. A first version
+with a loop over 8-byte words cost lib/sub +2.3 % instructions (over the bar) and was replaced by the straight-line form. Test
+`heap::tests::short_bytes_eq_matches_slice_equality` (every length 0-40, every byte flipped by 1 and 0x80, and through the string table).
+
+### 54.4 R6: native calls with all results wanted, light C tail calls (`rn-core`)
+
+`native_fast_with` moves the results of a `LUA_MULTRET` call (the last argument or expression of a list: `f(a, g(x))`, `{g(x)}`,
+`print(fmt(...))`) inline instead of through `post_call`; `pre_tail_call` runs a light C function tail-called with all results wanted (no `__call`
+on the way, not a coroutine function: those keep `precall_c`) through the same inline path. Tier 1 (cycles per operation, before -> after):
+`max(1, floor(x))` 104 -> 96, `return floor(x)` 90 -> 83, `return select('#', ...)` 151 -> 143, `insert(t, sub(s, 1, 5))` 169 -> 165,
+`fmt('%s!', tostring(k))` 231 -> 222. Sample instructions: scheme_interp -0.77 %, everything else within +-0.3 %. Ceiling (`selectn`'s 57-cycle gap
+to LuaJIT's interpreter): realised 0.14. Not knob-gated (no behaviour change). Test `tests/vm/r6_01_multret.lua` (vm_corpus against the
+reference: result counts 0 to 300, beyond `LUA_MINSTACK`, constructors, tail-called C functions that raise, call metamethods, run with a hook,
+inside coroutines; checked by hand on 5.5 and 5.4 in the interpreter, tier 1, traces, GC stress 1 / 2 in both collector modes).
+
+### 54.5 Measured and not built
+
+* **Coroutine bodies in tier 1** (the largest ceiling: the interpreter + `coro_direct` are about 1900 Mcyc over the gap programs, co_yield's round
+  trip 127 against LuaJIT's 67.5 cycles). Experiment (scratch, `RUSTYNAIL_CORO_T1`): after the fused resume finishes the `yield` call, flag the
+  coroutine's Lua frame `TRAP_JIT` so the interpreter enters its tier-1 code at the resume point. co_yield 176.0 -> 203.9 Mcyc (+16 %),
+  programs/coroutines 1377 -> 1653 (+20 %): `rt::enter` costs 35 cycles per resume and a `yield` from tier 1 leaves through the error exit, more
+  than interpreting the five bytecodes between two yields. A win needs a resume entry without the `enter` protocol and a `yield` that returns
+  from compiled code directly; not attempted.
+* **E9 return cells** (`t1call=1`) on the interpreter-shaped programs: text_adventure +0.4 %, parser_combinator +0.6 %, json_rxi -0.4 %, lua_interp
+  +2.0 %, events -2.6 %, inspect_lua -1.0 % cycles (same binary): the return stub's walk is not where `RETURN` spends its time.
+* **`t1ccall=1`** (lean tier-1 call of light C functions): text_adventure -0.1 %, parser_combinator -4.0 % cycles at +0.2 % instructions, json_rxi
+  +1.6 % at +0.4 %, inspect_lua +0.5 %: formation-dependent, left off.
+* **`table.concat`, `tostring`, positional `table.insert` fast paths**: 1.24-1.45x LuaJIT's interpreter, but executed 36-224 k times in the target
+  programs (ceilings 0.1-0.7 %).
+* **tremove_pop** (1.79x): not runtime. The inner loop's trace is installed, then flushed by the nest rule because the outer loop's
+  `table.move(base, 1, 50, 1, {})` (50 > `MAX_MOVE` = 16) aborts `CFunc` at 7 recorded steps (too short to stitch); the inner loop then runs in
+  tier 1 with `remove` through `jit_call` (80 cycles against 14 in LuaJIT's trace). `table.move` itself is 1.11x LuaJIT's.
+
+### 54.6 All four against the control (44 programs, 5.5 and 5.4)
+
+Cycles base -> new (Mcyc), instructions (new against base), and the same new binary with every knob of this section off (`STR_FAST=07`, `t1g=0`;
+R5 / R6 and the four-result move have no knob, so this column is "binary layout + the unknobbed changes"):
+
+| program | 5.5 cycles base -> new | 5.5 instr | 5.5 knobs off (cyc / instr vs base) | 5.4 cycles base -> new | 5.4 instr | 5.4 knobs off |
+|---|---|---:|---:|---|---:|---:|
+| awfy/bounce | 58.4 -> 58.9 (+0.8 %) | -0.02 % | +0.4 % / -0.02 % | 63.4 -> 63.3 (-0.2 %) | -0.01 % | +0.3 % / -0.01 % |
+| awfy/cd | 231.8 -> 231.2 (-0.3 %) | -0.02 % | -0.1 % / -0.02 % | 252.9 -> 254.8 (+0.8 %) | -0.03 % | +0.5 % / -0.03 % |
+| awfy/deltablue | 102.9 -> 102.7 (-0.2 %) | -0.04 % | -0.1 % / -0.04 % | 111.8 -> 111.1 (-0.7 %) | -0.07 % | -0.5 % / -0.07 % |
+| awfy/havlak | 157.0 -> 153.2 (-2.4 %) | -0.06 % | +0.3 % / -0.02 % | 172.2 -> 174.8 (+1.5 %) | +0.03 % | +0.3 % / +0.02 % |
+| awfy/json | 135.2 -> 135.7 (+0.4 %) | -0.07 % | +0.4 % / -0.07 % | 149.9 -> 148.0 (-1.2 %) | -0.03 % | -1.0 % / -0.03 % |
+| awfy/list | 92.7 -> 92.4 (-0.3 %) | -0.00 % | -0.4 % / -0.00 % | 94.5 -> 94.4 (-0.1 %) | -0.01 % | +0.0 % / -0.01 % |
+| awfy/mandelbrot | 272.1 -> 271.8 (-0.1 %) | -0.00 % | -0.1 % / -0.00 % | 272.0 -> 272.1 (+0.0 %) | +0.00 % | +0.2 % / +0.00 % |
+| awfy/nbody | 90.4 -> 90.5 (+0.1 %) | -0.00 % | -0.0 % / -0.00 % | 94.0 -> 93.6 (-0.4 %) | -0.00 % | -0.8 % / -0.00 % |
+| awfy/permute | 35.8 -> 35.2 (-1.6 %) | -0.00 % | -1.8 % / -0.00 % | 36.8 -> 36.6 (-0.5 %) | -0.00 % | -0.3 % / -0.00 % |
+| awfy/queens | 93.6 -> 93.3 (-0.3 %) | -0.00 % | -0.4 % / -0.00 % | 80.0 -> 79.6 (-0.5 %) | +0.00 % | -0.4 % / +0.00 % |
+| awfy/richards | 56.5 -> 56.1 (-0.8 %) | -0.02 % | -1.1 % / -0.02 % | 57.6 -> 57.5 (-0.1 %) | -0.01 % | -0.2 % / -0.01 % |
+| awfy/sieve | 110.9 -> 110.4 (-0.5 %) | -0.00 % | +0.3 % / -0.00 % | 116.5 -> 114.7 (-1.6 %) | -0.00 % | -0.4 % / -0.00 % |
+| awfy/storage | 102.4 -> 102.3 (-0.1 %) | -0.00 % | -0.6 % / -0.00 % | 147.4 -> 145.5 (-1.3 %) | -0.00 % | -1.1 % / -0.00 % |
+| awfy/towers | 44.2 -> 43.4 (-1.7 %) | -0.02 % | -1.9 % / -0.02 % | 44.9 -> 45.4 (+1.0 %) | -0.03 % | +0.3 % / -0.02 % |
+| apps/events | 163.2 -> 161.5 (-1.1 %) | +0.00 % | +1.1 % / -0.00 % | 177.6 -> 184.4 (+3.8 %) | +0.00 % | +1.0 % / -0.00 % |
+| apps/expr_lang | 126.6 -> 126.7 (+0.1 %) | -0.01 % | -0.3 % / -0.02 % | 141.7 -> 145.0 (+2.3 %) | -0.01 % | +1.3 % / -0.01 % |
+| apps/lru_cache | 137.5 -> 140.3 (+2.0 %) | -0.01 % | -0.2 % / -0.01 % | 175.6 -> 174.9 (-0.4 %) | -0.01 % | -0.6 % / -0.01 % |
+| apps/markdown | 118.3 -> 119.9 (+1.3 %) | -0.14 % | +1.5 % / -0.19 % | 128.5 -> 127.9 (-0.4 %) | -0.20 % | +0.3 % / -0.25 % |
+| apps/raytrace | 93.2 -> 93.8 (+0.7 %) | -0.03 % | +1.0 % / -0.03 % | 102.7 -> 102.5 (-0.2 %) | -0.01 % | +0.8 % / -0.01 % |
+| corpus2/heldout/bigint_rsa | 1111.2 -> 1110.5 (-0.1 %) | +0.00 % | -0.0 % / +0.00 % | 1361.8 -> 1365.2 (+0.3 %) | +0.00 % | +0.1 % / +0.00 % |
+| corpus2/heldout/dijkstra_routes | 1131.4 -> 1132.8 (+0.1 %) | -0.07 % | -0.6 % / -0.01 % | 1432.5 -> 1440.0 (+0.5 %) | -0.72 % | +0.9 % / +0.00 % |
+| corpus2/heldout/forth_vm | 800.6 -> 796.7 (-0.5 %) | -0.01 % | -0.6 % / -0.01 % | 985.0 -> 993.4 (+0.8 %) | +0.00 % | +0.8 % / +0.00 % |
+| corpus2/dev/oop_mixins | 1109.1 -> 1090.2 (-1.7 %) | +0.01 % | -1.3 % / +0.02 % | 1098.0 -> 1114.4 (+1.5 %) | -0.01 % | +0.1 % / -0.02 % |
+| corpus2/heldout/prototype_objects | 1346.0 -> 1346.7 (+0.0 %) | -0.09 % | +1.8 % / -0.09 % | 1444.8 -> 1450.3 (+0.4 %) | -0.03 % | -0.1 % / -0.03 % |
+| corpus2/heldout/roguelike_turns | 792.2 -> 794.8 (+0.3 %) | -0.04 % | -0.1 % / -0.01 % | 837.5 -> 836.3 (-0.1 %) | -0.61 % | +1.0 % / -0.00 % |
+| corpus2/heldout/scheme_interp | 1427.6 -> 1420.9 (-0.5 %) | -0.78 % | -0.7 % / -0.78 % | 1530.3 -> 1498.5 (-2.1 %) | -0.66 % | -1.4 % / -0.65 % |
+| corpus2/dev/lua_parser | 1182.7 -> 1212.8 (+2.5 %) | -1.09 % | +2.7 % / -0.19 % | 1294.0 -> 1270.0 (-1.9 %) | -1.54 % | -1.2 % / -0.21 % |
+| corpus2/dev/particles_physics | 385.8 -> 387.6 (+0.5 %) | +0.05 % | -0.0 % / -0.02 % | 490.2 -> 490.2 (-0.0 %) | +0.02 % | +0.3 % / -0.02 % |
+| corpus2/dev/regex_nfa | 664.7 -> 652.2 (-1.9 %) | -1.11 % | +3.6 % / -0.04 % | 1359.8 -> 1319.7 (-3.0 %) | -1.54 % | -1.4 % / -0.59 % |
+| corpus2/dev/text_adventure | 2588.6 -> 2558.5 (-1.2 %) | -1.20 % | +0.1 % / -0.61 % | 2788.0 -> 2689.5 (-3.5 %) | -1.31 % | -3.2 % / -0.57 % |
+| corpus2/heldout/stream_closures | 761.2 -> 765.8 (+0.6 %) | +0.05 % | +0.8 % / -0.02 % | 800.2 -> 801.5 (+0.2 %) | +0.08 % | -0.8 % / -0.02 % |
+| lib/find_plain | 122.2 -> 112.6 (-7.9 %) | -11.12 % | +6.0 % / -0.49 % | 121.5 -> 108.8 (-10.4 %) | -11.12 % | +5.2 % / -0.49 % |
+| corpus/lua_lexer | 807.7 -> 819.8 (+1.5 %) | -0.34 % | +0.6 % / -0.21 % | 843.6 -> 843.7 (+0.0 %) | -0.33 % | -0.9 % / -0.19 % |
+| lib/co_yield | 180.7 -> 174.6 (-3.4 %) | +0.00 % | -3.4 % / +0.00 % | 191.0 -> 176.4 (-7.7 %) | -0.00 % | -7.5 % / -0.00 % |
+| lib/tremove_pop | 240.4 -> 237.7 (-1.2 %) | +0.14 % | -0.8 % / +0.14 % | 223.1 -> 226.3 (+1.5 %) | +0.05 % | +1.7 % / +0.05 % |
+| real/lua_interp | 102.1 -> 100.9 (-1.2 %) | -0.17 % | -0.4 % / -0.01 % | 103.7 -> 102.3 (-1.3 %) | -0.17 % | -1.1 % / -0.03 % |
+| lib/fmt_s | 6.4 -> 6.4 (-0.3 %) | -0.06 % | -0.6 % / -0.06 % | 6.4 -> 6.4 (+0.1 %) | -0.06 % | -0.1 % / -0.07 % |
+| programs/string_ops | 1146.3 -> 1137.5 (-0.8 %) | +0.03 % | +0.6 % / +0.03 % | 1088.6 -> 1101.7 (+1.2 %) | +0.02 % | +1.6 % / +0.02 % |
+| corpus/parser_combinator | 2434.5 -> 2318.3 (-4.8 %) | -0.23 % | -5.7 % / -0.21 % | 2508.8 -> 2493.8 (-0.6 %) | -0.24 % | +1.8 % / -0.20 % |
+| corpus/json_rxi | 1818.7 -> 1776.1 (-2.3 %) | -0.55 % | -1.2 % / -0.17 % | 1920.7 -> 1893.6 (-1.4 %) | -0.63 % | -0.3 % / -0.17 % |
+| corpus/inspect_lua | 1532.4 -> 1473.1 (-3.9 %) | -1.09 % | -3.9 % / -0.27 % | 1682.4 -> 1592.8 (-5.3 %) | -1.25 % | -4.4 % / -0.21 % |
+| programs/knucleotide | 1010.1 -> 993.4 (-1.7 %) | -0.46 % | -1.9 % / -0.46 % | 1036.2 -> 1013.0 (-2.2 %) | -0.46 % | -2.5 % / -0.46 % |
+| lib/sub | 124.5 -> 116.0 (-6.8 %) | -3.46 % | -6.2 % / -3.46 % | 126.1 -> 117.2 (-7.1 %) | -3.46 % | -7.3 % / -3.46 % |
+| programs/coroutines | 1408.9 -> 1356.3 (-3.7 %) | +0.45 % | -4.7 % / +0.01 % | 1499.7 -> 1388.6 (-7.4 %) | +0.42 % | -6.8 % / +0.00 % |
+
+Geomean over the 44 programs: **5.5 cycles -0.97 %, instructions -0.51 %; 5.4 cycles -1.08 %, instructions -0.56 %.** New against its own
+knobs-off column: 5.5 -0.54 % / -0.34 %, 5.4 -0.46 % / -0.38 %. Largest gains (5.5 / 5.4 cycles): find_plain -7.9 / -10.4 %, lib/sub -6.8 /
+-7.1 %, parser_combinator -4.8 / -0.6 %, inspect_lua -3.9 / -5.3 %, coroutines -3.7 / -7.4 %, co_yield -3.4 / -7.7 %, json_rxi -2.3 / -1.4 %,
+knucleotide -1.7 / -2.2 %, text_adventure -1.2 / -3.5 %. The coroutine programs gain at equal or higher instruction counts (the R6 / four-result
+paths of `coroutine.wrap` calls and layout); not attributed further.
+
+**Bar** (no program over +1 % instructions or +2 % cycles; geomean not worse). Instructions: met on both versions (worst 5.5 coroutines +0.45 %,
+5.4 coroutines +0.42 %). Geomeans: met. **Cycles: three misses, all at equal or lower instruction counts, re-measured with 11 runs:**
+
+* 5.5 `lua_parser` +2.2 % cycles at -1.09 % instructions. The same binary with every knob off is +2.8 % (at -0.19 % instructions), and the R5
+  binary (before R6) was -0.2 %: it is the binary's code layout after R6 (L1 icache misses 21.6 / 22.0 M with the R5 binary, 27.0 / 24.1 M with
+  the final one, branch misses equal). Binary layout.
+* 5.4 `events` +3.7 % at equal instructions (731.6 M): +1.3 % with every knob off (binary layout), and within the same binary `t1g` bit 1 adds
+  +1.6 % at +0.003 % instructions (`t1g` 0 / 1 / 2 / 3: 179.2 / 179.7 / 182.1 / 182.2 Mcyc; on 5.5 the same bit gives -1.0 %): the bit makes
+  every `TFORCALL` template longer and shifts the tier-1 code of events, which runs 49 % in tier 1 and executes none of the new path. Tier-1 code
+  layout.
+* 5.4 `expr_lang` +2.3 % in the 3-run pass, +0.7 % with 11 runs (knobs off +1.4 %): noise / layout, not a miss at 11 runs.
+* 5.5 `lru_cache` +2.0 % in the 5-run pass, +0.0 % with 11 runs: not a miss.
+
+### 54.7 Gates and what was not run
+
+* Per commit `scripts/gate-light.sh [group] --base HEAD~1 --fast`: R1 (default mutant set; the first run was cut by an outer `timeout` of mine
+  during the mutant step, which was rerun alone: PASS), R2 (`t1g_`; the first run failed `registry_is_the_frozen_list` and
+  `table_covers_the_registry_exactly_once`: the registry count and the TABLE order, fixed and amended; then every step PASS, mutant group 3 / 3
+  caught), R5 and R6 (default sets): every step PASS. `scripts/gen-mutant-map.py` regenerated with R2.
+* Final binaries (5.5 and 5.4): `JITDIFF_MODES="off tr trdef" JITDIFF_ENTERS=1 scripts/jit-diff.sh 1 40`: 0 diffs, 0 timeouts on both (5.5: 35 / 40
+  seeds with traces, 1067 installed; 5.4: 1061); the official suite (`scripts/jit-official.sh`, `RUSTYNAIL_JIT=always RUSTYNAIL_JIT_TRACE=always`):
+  `JIT-OFFICIAL OK` on both. `r2_01_genfor` and `r6_01_multret` against the reference 5.5 and 5.4 binaries under `RUSTYNAIL_JIT=off`, JIT +
+  traces always, tier 1 only with GC stress 2, and GC stress 1 / 2 in generational and incremental mode: identical output.
+* Not run (by instruction): `gate-heavy.sh`, the full mutant runner, the oracle suites, PGO builds, the all-223 benchmark, `bench-fast.sh`; no
+  steady-state runs.
