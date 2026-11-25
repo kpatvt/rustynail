@@ -6353,7 +6353,21 @@ impl Cx<'_> {
     }
 
     /// N1a: [`Self::payload_scaled`] of element `x + c`: `~(x + c) == ~x - c`, so the displacement is `-8 * c` (`ixfuse_pay_disp_pos`: `+8 * c`).
+    /// For `c == -1` (the 1-based `t[i]` of Lua, the common case) `~(x - 1) == -x`: `mov V7, x; neg V7` and no displacement. A
+    /// `[base + 8 * idx + disp]` load with a nonzero displacement next to the tag compares (`cmp byte [..+disp], imm`) and the poll
+    /// (`cmp byte [r15 + disp32], 0`) made the Zen 5 front end the bottleneck of lib/str_eq: +31 % cycles at -8 % instructions
+    /// (docs/JIT_TRACE.md section 56).
     fn payload_scaled_c(&mut self, base: V, idx: V, c: i64) -> Mi {
+        if c == -1 && !mutants::active("ixfuse_pay_disp_pos") && !mutants::active("b2arr_no_not") && !mutants::active("b2arr_off8") {
+            self.push(Op::MovR(7, idx));
+            self.push(Op::Neg(7));
+            return Mi {
+                base,
+                idx: 7,
+                scale: 8,
+                off: 0,
+            };
+        }
         let mut m = self.payload_scaled(base, idx);
         m.off -= 8 * if mutants::active("ixfuse_pay_disp_pos") {
             -c as i32
