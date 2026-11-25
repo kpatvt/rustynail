@@ -969,6 +969,9 @@ pub unsafe extern "C" fn jit_tr_tset(
 
 /// `TSET`: the table's own raw set of the integer key `key` (`ktag == 0`) or of the object whose tag byte is `ktag` and whose address is `key`
 /// (T5; rehash, key write barrier and metamethod-cache invalidation included). `true` when it succeeded.
+/// The integer key inline, the object key out of line: with both arms in one function `set_int` lost its inlining into
+/// `jit_tr_tset` (lib/tinsert_idx +4.8 % instructions, docs/JIT_TRACE.md section 56).
+#[inline(always)]
 fn tset_core(
     st: &mut rn_core::state::State,
     t: rn_core::table::TableRef,
@@ -979,6 +982,19 @@ fn tset_core(
     if ktag as u8 == 0 {
         return t.set_int(st.heap(), key as i64, v).is_ok();
     }
+    tset_obj(st, t, ktag, key, v)
+}
+
+/// T5: [`tset_core`] of an object key.
+#[cold]
+#[inline(never)]
+fn tset_obj(
+    st: &mut rn_core::state::State,
+    t: rn_core::table::TableRef,
+    ktag: u32,
+    key: u64,
+    v: &rn_core::value::Value,
+) -> bool {
     // SAFETY: `Value` is `repr(C)` `{ tag word, payload }` and the pair is an object the trace holds (live: it is a key of a store the
     // interpreter just made a step before).
     let kv = unsafe {
