@@ -1034,6 +1034,10 @@ pub const NAMES: &[&str] = &[
     // N1c (`cloop`): the counted-loop back-edge
     "cloop_cnt_imm2",
     "cloop_no_fixup_cnt",
+    // docs/JIT_TRACE.md section 59 (`budhoist` / `pollk`): the hoisted loop budget
+    "bh_chunk_end_bias_long",
+    "bh_refund_skip",
+    "bh_bias_skip",
     // N1b (`nidx`): the carried negated index
     "nidx_disp_off1",
     "nidx_step_sign",

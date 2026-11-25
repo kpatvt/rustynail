@@ -162,6 +162,10 @@ pub const IXFUSE_PROCESS: u32 = 1;
 pub const CLOOP_PROCESS: u32 = 1;
 /// N1d: the process default of [`TrLimits::leaadd`] (also the struct default).
 pub const LEAADD_PROCESS: u32 = 1;
+/// Section 59: the process default of [`TrLimits::budhoist`] (also the struct default).
+pub const BUDHOIST_PROCESS: u32 = 0;
+/// Section 59: the process default of [`TrLimits::pollk`] (also the struct default).
+pub const POLLK_PROCESS: u32 = 0;
 /// N1b: the process default of [`TrLimits::nidx`] (also the struct default).
 pub const NIDX_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
@@ -834,6 +838,12 @@ pub struct TrLimits {
     /// N1d (`leaadd`): an integer `ADD a, #imm` whose destination is another register than `a` is one `lea d, [a + imm]` instead of `mov d, a; add d, imm`:
     /// 0 = off, 1 = on (default [`LEAADD_PROCESS`]).
     pub leaadd: u32,
+    /// Section 59 (`budhoist`): a call-free `cloop` loop charges its instruction budget once per chunk of iterations at the loop entry instead of once per
+    /// iteration, and every body exit refunds the iterations not run (exact): 0 = off, 1 = on (default [`BUDHOIST_PROCESS`]).
+    pub budhoist: u32,
+    /// Section 59 (`pollk`): with `budhoist`, nonzero `K`: such a loop drops its per-iteration poll and polls at every chunk start, a chunk being at most `K`
+    /// iterations; 0 = the body keeps its poll (default [`POLLK_PROCESS`]).
+    pub pollk: u32,
     /// N1b (`nidx`): in a peeled counted loop the complemented index `~(k + c)` of an `ALOAD` whose index is made of the induction variable `k` (the loop-carried
     /// `ADD k, #s`) is the carried value `-k` (a second PHI, updated `ADD -s` once per iteration) with a displacement, instead of `mov; not` in front of every
     /// access (the `aidx` mechanism for the loop's own induction variable only; `aidx` itself keeps its meaning for every other index): 0 = off, 1 = on
@@ -1061,6 +1071,8 @@ impl Default for TrLimits {
             ixfuse: IXFUSE_PROCESS,
             cloop: CLOOP_PROCESS,
             leaadd: LEAADD_PROCESS,
+            budhoist: BUDHOIST_PROCESS,
+            pollk: POLLK_PROCESS,
             nidx: NIDX_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
@@ -1281,6 +1293,8 @@ impl TrLimits {
                 "ixfuse" => l.ixfuse = v.min(1),
                 "cloop" => l.cloop = v.min(1),
                 "leaadd" => l.leaadd = v.min(1),
+                "budhoist" => l.budhoist = v.min(1),
+                "pollk" => l.pollk = v.min(1 << 20),
                 "nidx" => l.nidx = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,

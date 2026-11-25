@@ -43,6 +43,8 @@ mod s50_progs;
 mod s51_progs;
 #[path = "tr_core/s52_progs.rs"]
 mod s52_progs;
+#[path = "tr_core/s59_progs.rs"]
+mod s59_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -67,6 +69,7 @@ use s4_progs::S4_PROGS;
 use s50_progs::S50_PROGS;
 use s51_progs::S51_PROGS;
 use s52_progs::S52_PROGS;
+use s59_progs::S59_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -191,6 +194,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(H2_PROGS)
         .chain(K4_PROGS)
         .chain(N1_PROGS)
+        .chain(S59_PROGS)
         .chain(S4_PROGS)
         .chain(Y_PROGS)
         .chain(S50_PROGS)
@@ -14459,6 +14463,109 @@ fn n1_programs() {
         }
     }
     compare(jobs);
+}
+
+/// Section 59 knob settings: off, the hoisted budget alone, and with chunk polls of 4 and 64 iterations.
+const S59_LIMITS: [&str; 4] = [
+    "budhoist=0,pollk=0",
+    "budhoist=1,pollk=0",
+    "budhoist=1,pollk=4",
+    "budhoist=1,pollk=64",
+];
+const S59_NAMES: [&str; 7] = [
+    "s59_nested",
+    "s59_break",
+    "s59_error",
+    "s59_hooks",
+    "s59_coro",
+    "s59_counts",
+    "n1_exits",
+];
+
+/// Section 59 (docs/JIT_TRACE.md): the hoisted loop budget and the chunk poll against the interpreter, in the checking modes and under count budgets
+/// that end inside chunks (1, 3, 17, 200). Mutants `bh_*`.
+#[test]
+fn s59_programs() {
+    let mut jobs = Vec::new();
+    for lim in S59_LIMITS {
+        for p in S59_NAMES {
+            for (trace, opts) in [
+                ("always", ""),
+                ("always", "+verify"),
+                ("always", "+exitstorm=3"),
+                ("always", "+emurun +verify"),
+                ("on2", ""),
+            ] {
+                jobs.push(Job::new(p, trace).opts(opts).limits_s(lim));
+            }
+            for b in [1, 3, 17, 200] {
+                jobs.push(Job::new(p, "always").budget(b).limits_s(lim));
+            }
+            jobs.push(
+                Job::new(p, "always")
+                    .opts("+verify")
+                    .env("RUSTYNAIL_GC_STRESS", "2")
+                    .limits_s(lim),
+            );
+        }
+    }
+    compare(jobs);
+}
+
+/// Section 59: the count identity `fetches(off) == fetches(run) + insns(run)` with the hoisted budget, under count budgets that end inside chunks, so
+/// that every budget exit lands at the instruction of the per-iteration form. Mutants `bh_refund_*`, `bh_slow_need_short`, `bh_chunk_end_ignored`.
+#[cfg(feature = "t15_oracle")]
+#[test]
+fn s59_count_identity() {
+    let mut jobs = Vec::new();
+    for lim in S59_LIMITS {
+        for p in S59_NAMES {
+            for b in [None, Some(1), Some(3), Some(17), Some(200)] {
+                for opts in ["", "+exitstorm=7"] {
+                    let mut j = Job::new(p, "always").opts(opts).limits_s(lim);
+                    j.budget = b;
+                    j.ident = true;
+                    jobs.push(j);
+                }
+            }
+        }
+    }
+    let n = jobs.len();
+    let res = run_all(jobs);
+    let mut bad = Vec::new();
+    for (j, o) in &res {
+        if let Err(e) = ident_check(o) {
+            bad.push(format!("{}: {e}", j.tag()));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {n} identity failures:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// Section 59: with the knob on, the `s59` programs still enter their traces, and the hoisted form is taken (fewer executed machine instructions is not
+/// observable here; the trace runs at all).
+#[test]
+fn s59_programs_enter_traces() {
+    let mut js = Vec::new();
+    for p in ["s59_nested", "s59_break", "s59_counts"] {
+        js.push(
+            Job::new(p, "always")
+                .opts("+verify")
+                .limits_s("budhoist=1,pollk=64"),
+        );
+    }
+    for (j, o) in &compare(js) {
+        assert!(
+            o.stats.installed >= 1 && o.stats.entered >= 1,
+            "{}: no trace ran: {}",
+            j.prog,
+            o.stats.line()
+        );
+    }
 }
 
 /// N1: the array-loop programs enter their traces with the three knobs on.

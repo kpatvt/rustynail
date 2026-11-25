@@ -7269,3 +7269,89 @@ The 40 `inconclusive` jobs are all in the same four budget cells (300 s leash, t
 error programs `e1_02`, `e5_02`, `e9_01`, `h7_04`, `k6_04` (the same checkpoint growth, slower instead of over the cap; `e5_02` and
 `h7_04` under `-fold -cse budget=17` also hit the 300 s leash with the a7439fb oracle binary, before every section 50-56 knob). The heavy gate
 would have reported both failures at 7413bff already; it had not been run on this code before.
+
+## 59. Cheaper loop POLL / BUDGET: the hoisted chunk budget (`budhoist`) and the chunk poll (`pollk`) (2026-11-25, base bb9bd4d)
+
+**Task.** The ceiling study (prototype `RN_HACK_NOPB`, branch worktree-agent-a3df8dadf8615ee45 a5800a4) measured dropping both ops from loop bodies at
+-11.4 % cycles on `jit-trace/type_entry`. Goal: get as much as possible of that **exactly** (budget accounting, hooks, count / interrupt / GC
+behaviour identical, including at exits).
+
+### 59.1 Design (`asm.rs`: `BhPlan`, `bh_plan`, `bh_setup`, `bh_wrap`, the trampolines next to the `bud_cold` stubs, `cloop_tail`)
+
+Applies to a peeled root loop that has the `cloop` shape (section 41) and no helper call (`ra::has_call`), no `HSHAPE`, a body that starts with
+`POLL; BUDGET n` (behind the PHIs), a count PHI used only by the loop control, in the count register at every body exit and never spilled, the
+A2 second entry (if any) in front of `LOOP`, and room for the bias slot (extension slot 10). Every body exit is then a guard exit (no helper can
+raise an error, run a hook, yield or collect inside the body), and the count is invisible to Lua code.
+
+* **Chunks.** At the loop entry (behind the entry moves) and at every chunk end, `setup` runs with the count register holding the true FORLOOP count
+  `c` (`c + 1` iterations left) and the budget register in front of the next iteration's charge. A chunk of `k = min(c + 1, kmax)` iterations is
+  charged at once (`budget -= k * n`); the count register runs the chunk (`k - 1 .. 0`) and the bias slot holds `c + 1 - k` (true count = register
+  + bias, modulo 2^64, so a count of 2^64 - 1 is exact too). When the budget cannot pay `k * n`, a chunk of one iteration if it pays `n` (bias `c`),
+  otherwise control leaves through the stub of the loop's own `BUDGET` guard in exactly the state where that guard fails (head snapshot, budget
+  uncharged). So an exhausted budget leaves at the same iteration head as before, with the same budget value: tier 1 then runs out at the same
+  instruction (TR5.6).
+* **Body.** No `BUDGET` instruction. The `cloop` back-edge (`sub cnt, 1; jae head`) ends the chunk; its fall-through checks the bias: zero = the
+  loop really ended (the old fall-through: undo the updates, the loop guard's exit), nonzero = `cnt += bias` (true count of the next head) and back
+  to `setup`.
+* **Exits.** Every body guard (also the `+exitstorm` forced ones, the loop-ending guard and the kept poll) jumps to a per-stub trampoline:
+  `budget += (cnt + extra) * n` (the chunk iterations the per-iteration form would not have charged yet; `extra = 1` for guards in front of the
+  `BUDGET` position, i.e. the poll), `cnt += bias`, `jmp stub`. The exit then sees exactly the budget and count of the per-iteration form. Side
+  traces and E6 direct links attach behind the trampoline (the trampoline's `jmp` is one of the branches `dlink_attach` re-points).
+* **`pollk = K` (b).** The body's `POLL` is dropped; `setup` polls first (before the charge, the per-iteration order) and `kmax = K`, so the poll runs
+  at least every `K` iterations. Exactness argument: the poll word `TRACE_POLL` has two writers, `request_interrupt` (signal handler / another OS
+  thread) and `State::set_hook` (`lua_sethook`). In a call-free body no code of the running thread other than the trace runs, so within the loop the
+  word can only change asynchronously, and an asynchronous event has no defined position in the instruction stream: a poll `j <= K` call-free
+  iterations later is the observation of an execution in which the event arrived `j` iterations later, which the per-iteration form also allows.
+  A synchronous `sethook` before the loop is seen by the `setup` poll in front of the first iteration, as before. The relaxation is therefore
+  latency only (bounded by `K` short iterations), not observable behaviour; if that argument is not accepted, `pollk` stays 0 (it is a separate
+  knob).
+
+### 59.2 Measured (release `rn-cli`, one binary, knob settings `budhoist=0,pollk=0` / `budhoist=1` / `budhoist=1,pollk=64`; `RUSTYNAIL_SEED=0`,
+`taskset -c 5`, `perf stat -e instructions:u,cycles:u`, min cycles of 7 interleaved runs; outputs identical in all three settings)
+
+| program | cycles off (M) | `budhoist` | `+pollk=64` | instructions off (M) | `budhoist` | `+pollk=64` |
+|---|---|---|---|---|---|---|
+| jit-trace/type_entry | 1438 | 1377 (-4.2%) | 1296 (-9.9%) | 8538 | -9.1% | -20.1% |
+| jit-trace/type_entry_stable | 1356 | 1301 (-4.0%) | 1218 (-10.2%) | 8128 | -9.8% | -21.7% |
+| jit-trace/dot | 1216 | 1203 (-1.1%) | 1199 (-1.4%) | 6510 | -12.2% | -22.9% |
+| jit-trace/short_inner | 1087 | 1089 (+0.2%) | 1086 (-0.1%) | 4865 | +0.0% | +0.0% |
+| programs/matmul | 413 | 409 (-0.9%) | 408 (-1.2%) | 1875 | -6.7% | -12.6% |
+| programs/sieve | 532 | 523 (-1.7%) | 512 (-3.8%) | 2546 | -4.1% | -9.0% |
+| awfy/sieve | 111 | 109 (-1.6%) | 108 (-2.6%) | 767 | -2.2% | -6.4% |
+| programs/spectral_norm | 178 | 178 (-0.1%) | 178 (-0.2%) | 1249 | -3.3% | -6.2% |
+| programs/mandelbrot | 532 | 532 (-0.1%) | 532 (-0.0%) | 1637 | +0.0% | +0.0% |
+| programs/nbody | 335 | 335 (+0.1%) | 336 (+0.2%) | 1933 | -0.0% | +0.0% |
+| programs/fannkuch | 1017 | 1006 (-1.0%) | 1014 (-0.3%) | 4581 | +0.1% | -0.9% |
+| programs/heapsort | 1110 | 1093 (-1.5%) | 1093 (-1.5%) | 2619 | -0.1% | -0.2% |
+| programs/queens | 1817 | 1842 (+1.4%) | 1841 (+1.3%) | 4973 | +2.5% | +1.6% |
+| awfy/json | 135 | 136 (+0.2%) | 136 (+0.1%) | 438 | +0.0% | +0.0% |
+| awfy/permute | 35 | 35 (+0.1%) | 35 (+0.1%) | 191 | +0.0% | +0.0% |
+| awfy/towers | 44 | 44 (-0.2%) | 44 (+0.0%) | 168 | -0.0% | -0.0% |
+| programs/binary_trees | 1174 | 1169 (-0.5%) | 1169 (-0.5%) | 5537 | -0.0% | -0.0% |
+
+`pollk=64` reaches 87 % of the ceiling on `type_entry` (-9.9 % of -11.4 %). **Defaults: both 0.** The bar (no cycle regression > 2 %, instructions not
+up) fails on `programs/queens`: +1.4 % cycles, +2.5 % instructions (+1.6 % with `pollk`). Its loops are short (`n = 8`) and mostly left early by a
+guard: each entry pays `setup` (about 8 instructions, against the 2 of the first iteration's charge) and each early exit the trampoline, and the
+iterations saved do not pay for it. A follow-up could keep the per-iteration form for loops whose recorded body exits early or whose entry count is
+small (a run-time `c < 4` test in `setup` that enters an un-hoisted copy is not possible with one body; a static policy from the exit profile is).
+
+### 59.3 The loop body of `type_entry` and the induction updates
+
+Body instructions per iteration: 13 before (`cmp byte [r15+POLL]; jne`, `sub r11, 4; jl`, tag `cmp; jne`, `movsd`, `mulsd`, `addsd`, `add rdi, 1`,
+`add r8, -1`, `sub rsi, 1; jae`), 11 with `budhoist`, **9 with `pollk`** (LuaJIT: 9). The three remaining induction updates are the element index
+`j` (`rdi`, addresses the tag byte `[rdx + rdi + 3]`), the carried negated index (`r8`, addresses the payload `[rdx + 8 * r8]`: the payload part grows
+downwards and x86 has no negative scale) and the FORLOOP count (`rsi`). Reducing them: (1) the count could go if exits derived it (`(limit - j) /
+step`), the seven-consumer snapshot change rejected in 41.2; (2) one of the two indexes could go only with a payload layout that grows upwards
+(an object-layout change) or by addressing the tag from the negated index (`[rdx - r8 + 3]` is not encodable either). Neither is cheap; not built.
+
+### 59.4 Tests and mutants
+
+`tests/tr_core/s59_progs.rs` (6 programs: nested loops of lengths 0..300 around the chunk sizes, steps; early breaks, type changes, holes, an integer
+element in a float loop at every chunk position (the interpreter finishes the loop with the snapshot's count), reads past the end; an error behind a
+body exit, caught; count and line hooks set while the traces run with counts 1 / 3 / 5 / 17, the hook recording line and locals; coroutines yielding
+between loops; counts near 2^64 and long many-chunk loops). `tr_core::s59_programs` (4 knob settings x 7 programs (with `n1_exits`) x {plain,
+`+verify`, `+exitstorm=3`, `+emurun +verify`, `on2`, count budgets 1 / 3 / 17 / 200, GC stress 2}), `s59_count_identity` (`t15_oracle`: the
+`fetches + insns` identity under budgets none / 1 / 3 / 17 / 200, with and without `+exitstorm=7`), `s59_programs_enter_traces`. Mutants:
+`bh_refund_skip` (caught by `s59_count_identity`), `bh_bias_skip`, `bh_chunk_end_bias_long` (caught by all three). Unobservable variants that were
+tried and dropped: ignoring the chunk end (it degrades to an exit through the loop guard with the true count: exact, only slower), a short slow-path
+budget test, the poll of `setup` and the poll's `extra` refund (only an asynchronous poll word reaches them).
