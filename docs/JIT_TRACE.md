@@ -7245,3 +7245,27 @@ from the runtime side (rn-std pattern / FINDM changes between 8cd1f06 and ab7d18
 Verification: `cargo test -p rn-jit --features trace --test tr_ra` (19 passed), `scripts/jit-diff.sh 1 10` with `off tr trdef` (0 diffs),
 `scripts/gen-mutant-map.py` regenerated (line shifts). `scripts/gate-light.sh phi_,cycle_,spill_ --fast` was started but stopped before
 its first test step (it sat in `gate_wait_load` behind the heavy gate on CPUs 8-15, past the time box): still to run.
+
+## 58. First `gate-heavy.sh --fast` oracle run: the 7 failing `oracle_options` jobs are harness artefacts (2026-11-25, base 80d4fa1)
+
+The first heavy gate on 80d4fa1 failed 7 of 4056 `tr_oracle::oracle_options` jobs. Both causes predate every knob added since 7413bff and
+neither is a trace-compiler bug; the two programs join the existing exclusion lists of `crates/rn-jit/tests/tr_oracle.rs`.
+
+- `tests/vm/jit_t5_01_object_keys` (cells `+exitstorm=2`, `+exitstorm=7 budget=3`, `-loop -fwd -abc -sink`; P8A-MISMATCH at pc 147 `ADD`,
+  pc 173 `ADDI`): pc 147 is `for k, v in pairs(strong) do n = n + v end` (line 313), whose keys are tables. Their node positions depend
+  on object addresses, which differ between the oracle's two runs, so the partial sums differ at the same clock (the section 29 class,
+  `ADDR_ORDER`). Evidence: with that loop changed to `n = n + 1` the pc 147 mismatches go away; the same job with traces off
+  (`TR_OR_MODE=t1 TR_OR_BUDGET=3`) shows the same pc 147 mismatch, and the pc 173 one (the `pairs(fs)` loop over closure and thread
+  keys, a constant offset of 5) also shows with traces off. The mismatches are flaky across runs (another layout), they show at a7439fb
+  (the commit that added the program), and `rnlua` prints the same output with traces off and in all three option sets. Now in `ADDR_ORDER`.
+- `tests/vm/e4_02_lazy_loop_errors` (the four `budget=3/17` cells; CRASH `memory allocation of 1048576 bytes failed`): the program
+  overflows the stack in a recursion inside a loop. With a stay budget the traces end at every depth and every stay checkpoint digests
+  the live slots of all frames (`Dig::live`), so the checkpoint log grows with depth squared: the plain `always budget=17` cell fails the
+  same way, more than 6.5 GB (`TR_P8A_AS_MB=6500`) is not enough, while the cells without a budget peak at 88 MB. It fails identically at
+  7413bff and a7439fb, so `codemap` / `memtune` / the new default knobs are not involved. The oracle children's 2 GB `RLIMIT_AS`
+  (`TR_P8A_AS_MB`) is right; the program joins `MEM_HEAVY` beside `err_08_stack_overflow` (vm_corpus and the identity test cover it).
+
+The 40 `inconclusive` jobs are all in the same four budget cells (300 s leash, timeouts): the four `LEASH_PROGS` and the deep-recursion
+error programs `e1_02`, `e5_02`, `e9_01`, `h7_04`, `k6_04` (the same checkpoint growth, slower instead of over the cap; `e5_02` and
+`h7_04` under `-fold -cse budget=17` also hit the 300 s leash with the a7439fb oracle binary, before every section 50-56 knob). The heavy gate
+would have reported both failures at 7413bff already; it had not been run on this code before.
