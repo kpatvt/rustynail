@@ -7133,3 +7133,66 @@ paths of `coroutine.wrap` calls and layout); not attributed further.
 | awfy/towers | 21 | 10.4 / 12.8 | 494 | 0 % | 22.7 % | 25.1 % | 10.3 % | 18.6 % | 16.8 % | 6.5 % |
 
 Why there is no 2x at identical code: the biggest phase is the allocator at 23-26 %, so dropping the allocator and the exit builder entirely would still leave the side pipeline at 62-67 % of its cost. 2x means taking half out of every phase together. The flat profile of cd (`perf record -e instructions:u`) has no compile function above 2.3 % of the run, and malloc / free / `finish_grow` together are about 2.5 % of the run, so an arena is bounded at about 10 % of the side pipeline. The r14 retry allocation never runs on these four programs (`xregs` bit 2 is off), so there is no duplicated allocator run to remove either. The side pipeline is 11.4 % of cd's 686 M instructions, so even 2x would give about -5.7 % on cd. The remaining route is structural and changes the code: emitting x86 straight from the IR in one backward pass that also allocates registers (replacing the allocator, the assembler's micro-op program and the encoder, 55-60 % of the side cost), plus snapshots stored as deltas to the parent's exit (sinking, forwarding and the exits walk the full maps). That is a new back end with its own soundness bar, not a 30-minute prototype.
+
+## 56. Session-m regressions: causes and fixes (2026-11-24, base 4e89dd9)
+
+Regressions of the session-m tables (`bench/results/session-m/tables.md`, "regressions vs 7413bff" / "vs 5a064d7") traced to a cause, one item
+at a time. Method: instruction counts (deterministic) per knob (`RUSTYNAIL_JIT_TRACE_LIMITS=<knob>=0`, `RUSTYNAIL_STR_FAST=15`), a
+commit bisect where no knob moved the count, and cycles as min of 3-5 `perf stat` runs on CPU 4 (`RUSTYNAIL_SEED=0`; plain
+`scripts/release-build.sh --no-pgo` builds; old = the session-l 7413bff binary). Fixes are commits 39e2342, 91a4ecf, 6db451e, 7ada56f.
+
+| program | cause | fix | cycles M: 7413bff / 4e89dd9 / fixed | instructions M: 7413bff / 4e89dd9 / fixed |
+|---|---|---|---|---|
+| lib/str_eq (5.5 and 5.4) | N1a `ixfuse` payload displacement: Zen 5 front-end bound | `neg` for index offset -1 (39e2342) | 159.1 / 209.8 / **134.7** | 1276.0 / 1175.2 / 1175.2 |
+| corpus2/heldout/real_dis_ppc | T8 FINDM (`libcall` bit 11): a `captures()` vector per call, and a formation landing | vector removed (6db451e); landing kept | 2130.9 / 2250.2 / 2238.8 | 7011.0 / 7354.9 / 7309.8 |
+| lib/tinsert_idx | T5 (a7439fb): the object-key arm in `tset_core` stopped `set_int` inlining into `jit_tr_tset` | object arm `#[cold]` out of line (7ada56f) | 171.9 / 183.1 / 175.4 | 1041.4 / 1090.3 / 1070.7 |
+| corpus2/dev/regex_nfa | `heatside` 48 -> 12 (4e1d026, section 40) | none: trade-off (richards, roguelike) | 640.5 / 673.2 / 667.4 | 3452.8 / 3521.5 / 3521.5 |
+| awfy/cd, `cspeed=0` | `uses_gpr(10)` per exit in `stubs_and_tail` (quadratic) | asked once per trace (91a4ecf), identical code | 260.7 / 244.9 (old / new) | 767.7 / 678.3 |
+
+### 56.1 lib/str_eq: fewer instructions, more cycles
+
+The loop is `if S[k] == SR[k]` over two 512-element arrays. N1a (`ixfuse`, 45eb888) folds the `k - 1` into the accesses: the tag compare
+becomes `cmp byte [base + k + 3], 0x44` and the payload load `mov rsi, [base + 8 * ~k + 8]`, one `lea` fewer per iteration (23 instructions
+instead of 24). Cycles per iteration went from 2.7 (`ixfuse=0`) to 4.2. Branch misses are equal (135 k both); the counters say front end:
+`de_no_dispatch_per_slot.no_ops_from_frontend` 458 M slots (7413bff) against 1198 M (8cd1f06), backend stalls 342 M against 125 M, ops all from
+the op cache in both. An asm micro-benchmark of the loop body (scratch, not committed) reproduces it only with the loop head included (the poll
+`cmp byte [r15 + disp32], 0` and the budget `sub r11, 4; jl`), and isolates the trigger: the payload load with a nonzero displacement and a
+scaled index. Same addresses, same instruction count: `lea r10, [r9 - 1]` + `[base + 8 * ~r10]` 129 M cycles, `[base + 8 * ~r9 + 8]` 204 M;
+the tag compares with displacement 3 straight off `r9` are fast (129 M) as long as the payload loads carry no displacement. Not alignment (a
+4-byte nop in place of the `lea` stays slow), not the index register (the same loop through a copy of `r9` stays slow). Most likely the op
+cache's shared immediate / displacement fields: five memory ops with displacements plus immediates in one 64-byte window.
+
+Fix: `payload_scaled_c` emits `mov V7, x; neg V7` and no displacement when the fused offset is -1 (the 1-based `t[i]`, the common case):
+`~(x - 1) == -x`. Same instruction count as before; lib/str_eq 209.8 -> 134.7 M cycles (also 15 % under 7413bff), str_eq_long unchanged
+(34.7 -> 35.5, noise). Other offsets keep the displacement form. Mutants `ixfuse_pay_disp_pos`, `b2arr_no_not`, `b2arr_off8` take the
+old path so they still bite.
+
+### 56.2 real_dis_ppc: T8 FINDM
+
+`libcall=2047` (bit 11 off) gives 7004 M instructions and 2129 M cycles, which is all of the regression. Two parts: (a) `findm_core` built the
+`captures()` `Vec` on every call to read its first element; now it asks `ncaptures` and `get_onecapture(0)` (-45 M instructions, -0.6 %);
+(b) formation: with `s:match(...)` on trace the `out` callback's root trace reaches the `mnem[m]` GETTABLE, whose exit (749 k times) gets
+side traces that abort on `Nyi(Call)` and is blacklisted; without FINDM that exit is covered by a side trace. Part (b) is a formation landing,
+not fixed here (bit 11 still wins on the programs it was built for, section 44.2).
+
+### 56.3 lib/tinsert_idx: T5
+
+No knob moved the count; the commit bisect lands on a7439fb (T5, knob `t5` off by default). The traces are identical before and after (IR and
+code size), the change is `jit_tr_tset`: `tset_core` with both the integer and the object arm. With the object arm moved to a `#[cold]
+#[inline(never)] tset_obj` the helper is again the 7413bff body (inline array store, `set_int_hash` call) plus the key-tag test: 1090.3 ->
+1070.7 M instructions, 183.1 -> 175.4 M cycles. The rest (+29 M against 7413bff) is not in `jit_tr_tset`; sampled profiles move it between the
+helper and TRACE-1 (instruction sampling has skid here, no precise event on this machine). Not chased further.
+
+### 56.4 Skipped: layout, noise or no regression at 4e89dd9
+
+- 5.4 lib/gsub_tbl (+4.3 % cycles at -1.3 % instructions here): the same in interpreter-only mode, no JIT knob moves it, and 5.5 with the same
+  source change is faster (169.4 -> 160.7 M): binary layout of the 5.4 build.
+- 5.4 lib/fmt_q (145.2 old / 141.8 new), programs/table_hash (502.2 / 503.9), programs/pcall_error (1442.9 / 1434.4, fixed build 1457.7
+  at identical instructions), 5.5 lib/error_tbl (277.2 / 276.8): no regression at 4e89dd9 in min-of-5 cycles.
+- 5.4 stream_closures: 3680.6 M instructions at 7413bff and 3612.1 M at 4e89dd9 here (cycles 833.1 / 803.2): no regression in this
+  environment. `blfirst=0` saves 13 % of the instructions (3143.9 M) but not cycles (809.7 M): the blfirst landing is a wash, kept.
+- 5.5 programs/string_ops (26 % spread) and corpus/classic_vector (equal instructions): layout, as the tables say.
+
+Verification: `scripts/jit-diff.sh 1 10` with `off tr trdef` on 5.5 and 5.4 (0 diffs); `ccheck=1` on awfy/cd (278 compared, 0 differ) and
+apps/raytrace (56, 0); `scripts/gate-light.sh ixfuse_,findm_,tset_,b2arr_ --fast`: every step passed (11 mutants killed) except `fmt` and
+`mutant-map`, both fixed in the follow-up commit (rustfmt line break, regenerated `scripts/gate-mutant-map.tsv`; rechecked OK).
