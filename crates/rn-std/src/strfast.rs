@@ -14,9 +14,13 @@ pub const FMTC: u32 = 2;
 pub const PATC: u32 = 4;
 /// S4 `copy`: inline small copies/compares in the string heap chain (reserved, see docs/PERF.md).
 pub const COPY: u32 = 8;
+/// R1 `memfind`: plain substring search 16 start positions at a time, filtered by the needle's first and last bytes (SSE2;
+/// docs/STUDY_RUNTIME_GAP.md). The scalar first-byte search runs with the bit off, for needles of one byte and for haystacks
+/// with fewer than 16 start positions.
+pub const MEMFIND: u32 = 16;
 
 /// The process default (the one place that decides which pieces are on).
-pub const DEFAULT: u32 = FMTC | PAT1 | PATC;
+pub const DEFAULT: u32 = FMTC | PAT1 | PATC | MEMFIND;
 
 const UNINIT: u32 = u32::MAX;
 static MASK: AtomicU32 = AtomicU32::new(UNINIT);
