@@ -15,7 +15,10 @@ end
 
 -- the bytes a construction leaves allocated (collector stopped)
 local mt0 = {}
+-- (`S59_COST`, set by the in-process detector `tr_tlib_fast` only: without GC stress the bytes are exact; under the stress runs of the vm
+-- corpus a collector step inside the measurement frees unrelated garbage, so the vm corpus compares only `true`)
 local function cost(mk)
+  if not S59_COST then return 0, mk() end
   collectgarbage()
   collectgarbage("stop")
   local c0 = collectgarbage("count")
@@ -24,6 +27,8 @@ local function cost(mk)
   collectgarbage("restart")
   return (c1 - c0) * 1024, d
 end
+-- (warm-up of the measurement)
+for _ = 1, 3 do cost(function() return move({ 1, 2 }, 1, 2, 1, setmetatable({}, mt0)) end) end
 
 -- M1: dense sources of every size class, into {} and into a destination that the fast path must not touch (a metatable without
 -- __newindex: the same raw stores, the same growth)

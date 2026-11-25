@@ -7319,7 +7319,7 @@ awfy/havlak 204.8 -> 190.7 (-0.71 %). No program over +1.0 % cycles (json +0.8 %
 instructions); the largest instruction rise is +0.04 %. All four ship on. Every output equals its `.expected`.
 
 **Tests.** `tests/vm/tables_21_move_presize_pop.lua` (dense and holed sources of every size class against a metatabled destination:
-borders, `pairs` order, `collectgarbage("count")`; offsets, sub-ranges, hash-part ranges, non-empty / same-table / empty ranges;
+borders, `pairs` order, and `collectgarbage("count")` when `S59_COST` is set, which only the in-process detector does: under the GC-stress runs of the vm corpus a collector step inside the measurement frees unrelated garbage; offsets, sub-ranges, hash-part ranges, non-empty / same-table / empty ranges;
 `__index` on the source, `__newindex` / `__len` / `__index` on the destination; negative, overflowing and wrapping ranges; `remove` of
 empty, `[0]`-only, holed, appended (`t[#t+1]`), shrinking and sparse tables, positional forms, out-of-bounds and non-table errors,
 `__index` / `__newindex` / `__len` / non-integer `__len` metatables; the hot move + pop loop) and `tests/vm/jit_s59_byte_range_opencall.lua`

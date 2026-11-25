@@ -1,6 +1,7 @@
 //! Section 59 M1 (`table.move` into an empty destination sizes its array part first, rn-std `STR_FAST` bit `TMOVEPRE`) and R1 (`table.remove(t)`
 //! of a table without a metatable, bit `TPOP`): the script `tests/vm/tables_21_move_presize_pop.lua` is run in-process with `print` captured, with
-//! both bits on and off, and its output compared with the reference interpreter's (checked in as `tests/data/s59_tlib.expected`, `...54`).
+//! both bits on and off, and its output compared with the reference interpreter's (checked in as `tests/data/s59_tlib.expected`, `...54`, made with `S59_COST = true`
+//! prepended: the memory comparisons are on only here).
 //! Detector of the mutants `tmove_presize_holes` and `tpop_meta_skip`.
 #![cfg(feature = "trace")]
 
@@ -13,7 +14,7 @@ const EXPECTED: &str = include_str!("data/s59_tlib.expected");
 #[cfg(rustynail_lua54)]
 const EXPECTED: &str = include_str!("data/s59_tlib54.expected");
 
-const PRE: &str = "local __buf = {}\n\
+const PRE: &str = "S59_COST = true\nlocal __buf = {}\n\
 local function print(...) local n = select('#', ...) local t = {} \
 for i = 1, n do t[i] = tostring((select(i, ...))) end __buf[#__buf + 1] = table.concat(t, '\\t') end\n";
 const POST: &str = "\nreturn table.concat(__buf, '\\n') .. '\\n'";
