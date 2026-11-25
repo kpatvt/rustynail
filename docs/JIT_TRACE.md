@@ -7269,3 +7269,63 @@ The 40 `inconclusive` jobs are all in the same four budget cells (300 s leash, t
 error programs `e1_02`, `e5_02`, `e9_01`, `h7_04`, `k6_04` (the same checkpoint growth, slower instead of over the cap; `e5_02` and
 `h7_04` under `-fold -cse budget=17` also hit the 300 s leash with the a7439fb oracle binary, before every section 50-56 knob). The heavy gate
 would have reported both failures at 7413bff already; it had not been run on this code before.
+
+## 59. Library fast paths M1 `tmovepre`, R1 `tpop` and recorder handles B1 `pureb`, B2 `opencall` (2026-11-25, base bb9bd4d)
+
+Production versions of four prototypes of the runtime-gap study (branch `worktree-agent-a943255528a978664`, commits 61dc6bb / f7fbba6 / bebc427,
+which sat behind `RN_PROTO` bits; none of that code is taken). Not built: B3 (dropping the `pc - 1 ..= pc + 1` local neighbourhood of the
+`snapprune` liveness: it changes what `debug.getlocal` sees in a hook), the plain-`find` variants, the one-load `getmetatable` and the tier-1
+doubling ceiling (slower or killed in the study). Every handle is exact: the same results, errors, borders, traversal order and memory as
+with the handle off.
+
+* **M1 `tmovepre`** (rn-std `RUSTYNAIL_STR_FAST` bit 32 `TMOVEPRE`, in the default mask). `table.move(a, f, e, 1, b)` with `b` empty (no
+  metatable, no array part, the dummy node), `a ~= b`, `a[f..e]` in `a`'s array part and **every value non-nil**: `b` first gets the array
+  part the element copy grows to, `2^ceillog2(n)` with no hash part (`TableRef::move_presize`; every insertion of key `k` into the full
+  array `1..k-1` resizes to `2^ceillog2(k)`: 5.5 `rehash_append` / `rehash_dummy_int`, 5.4 `computesizes`), so the N2 bulk copy
+  (`arr_copy_to`) applies. A nil in the range is not inserted by the copy and changes the growth, so holes, a destination offset other than 1,
+  a non-empty or metatabled destination and a range outside the array part keep the element loop. A failed allocation leaves `b` empty
+  (the loop then fails as before). Mutant `tmove_presize_holes` (hole test dropped: `collectgarbage("count")` of the copy differs from the
+  same copy into a metatabled destination).
+* **R1 `tpop`** (`STR_FAST` bit 64 `TPOP`, default on). `table.remove(t)` with one argument and a table without a metatable: raw border,
+  raw read, push, raw store of nil at `size` (also `size == 0`: `t[0]` is read and cleared, as the general code does). Mutant
+  `tpop_meta_skip` (the metatable test dropped).
+* **B1 `pureb`** (knob `pureb`, `PUREB_PROCESS = 1`). A recorded `string.byte(s, i, j)` range of 2..8 results guards `j <= #s` once
+  (a `TLEN`, beside the existing `i >= 1` and `j == i + n - 1` guards) and emits its `LIB BYTE` ops without the per-result `NE 0` guard,
+  flagged `F_PUREB`: not DCE roots in `opt_loop`, so dead results are dropped. With the three guards every position is in the string and
+  the helper never answers 0. Mutant `pureb_len_guard_skip` (no `j <= #s` guard: a shorter string yields `-1` instead of an exit).
+* **B2 `opencall`** (knob `opencall`, `OPENCALL_PROCESS = 1`). In the `snapprune` bytecode liveness (`live.rs`, section F4) a `CALL` with
+  `C == 0` defines every register from `A` up: its results are `A .. top`, the open reader that always follows reads only those, and the
+  registers above are free temporaries the code generator writes before reading. Only dead numeric temporaries can become prunable, the
+  F4 relaxation unchanged (locals and their neighbourhood stay protected). The per-prototype cached analysis is the one of the process
+  default; a state with the other value computes its own. Mutant `opencall_defs_low` (defines from `A - 2`: kills the pending operand of
+  an enclosing expression).
+
+**Measurements** (one release binary, `perf stat` cycles:u / instructions:u, min of 5, `taskset -c 4`, `RUSTYNAIL_SEED=0`, equal-length
+environment: `RUSTYNAIL_STR_FAST=023|055|087|119`, `RUSTYNAIL_JIT_TRACE_LIMITS=pureb=0,opencall=0|pureb=1,opencall=1`; `off` = all four off):
+
+| program | off Mcyc / Mins | handles | on Mcyc / Mins | cycles |
+|---|---|---|---|---|
+| lib/tremove_pop | 243.0 / 1482.7 | M1 | 174.0 / 1039.8 | -28.4 % |
+| | | R1 | 205.7 / 1252.5 | -15.4 % |
+| | | M1+R1 | 135.8 / 809.6 | -44.1 % |
+| lib/byte_multi | 38.78 / 268.5 | B1 | 34.65 / 251.3 | -10.6 % |
+| | | B1+B2 | 33.41 / 248.4 | -13.8 % (B2 -3.6 % on B1) |
+
+Regression sample, all four off -> on (Mcyc; instructions): lib/byte 44.49 -> 44.31 (-0.05 %), lib/tmove 101.57 -> 101.43 (+0.003 %),
+lib/tmove_1k 97.55 -> 98.18 (+0.04 %: ~19 instructions per `table.move` into a non-empty destination, the bit and table tests),
+lib/tremove_front 145.13 -> 145.33 (-0.01 %), programs/json 1810 -> 1825 (-0.01 %), programs/string_ops 1373 -> 1310 (-0.01 %),
+programs/table_array 358.8 -> 358.3 (-0.10 %), programs/fasta 1275 -> 1287 (-0.02 %), awfy/deltablue 106.1 -> 104.0 (-0.89 %),
+awfy/havlak 204.8 -> 190.7 (-0.71 %). No program over +1.0 % cycles (json +0.8 %, fasta +1.0 %, tmove_1k +0.6 %: layout noise at flat
+instructions); the largest instruction rise is +0.04 %. All four ship on. Every output equals its `.expected`.
+
+**Tests.** `tests/vm/tables_21_move_presize_pop.lua` (dense and holed sources of every size class against a metatabled destination:
+borders, `pairs` order, `collectgarbage("count")`; offsets, sub-ranges, hash-part ranges, non-empty / same-table / empty ranges;
+`__index` on the source, `__newindex` / `__len` / `__index` on the destination; negative, overflowing and wrapping ranges; `remove` of
+empty, `[0]`-only, holed, appended (`t[#t+1]`), shrinking and sparse tables, positional forms, out-of-bounds and non-table errors,
+`__index` / `__newindex` / `__len` / non-integer `__len` metatables; the hot move + pop loop) and `tests/vm/jit_s59_byte_range_opencall.lua`
+(ranges with dead results, `i > j`, out of range, negative positions, strings shrinking below `j` under a hot trace; open calls inside
+expressions with callees from a table so that the callee guard exits at the `CALL`; a line hook reading every local with
+`debug.getlocal` while the open-call loop runs): both equal to the 5.5 reference (vm corpus). `rn-jit` tests `tr_tlib_fast::
+tlib_fast_paths_match_reference` (the first script in-process, bits on and off, against `tests/data/s59_tlib{,54}.expected` from the
+references) and `tr_core::s59_byte_opencall_programs` (the second as `s59_byte_opencall`, knobs on / off / lockstep, `+verify`, exit
+storms, budgets, `-loop`, `+emurun`, GC stress 1 and 2, stack-move stress). Each of the four mutants is caught by its test.
