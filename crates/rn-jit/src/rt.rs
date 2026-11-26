@@ -2357,10 +2357,13 @@ fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
     #[cfg(feature = "trace")]
     {
         // SAFETY: the per-state data is live (see `set_mode`).
+        // SAFETY: the per-state data is live (see `set_mode`); read-only.
+        let wcall = unsafe { &*data_ptr(st) }.tr.cfg.limits.wgcall;
         let len = proto_of(st, ci).map_or(8, |cl| {
-            crate::tr::cache::loop_len(
+            crate::tr::cache::loop_len_w(
                 cl.proto().code(),
                 ((pc as usize).wrapping_sub(cl.proto().code_ptr() as usize)) / 4,
+                wcall,
             )
         });
         unsafe { &mut *data_ptr(st) }.tr.warm_touch(len);

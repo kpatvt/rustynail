@@ -451,6 +451,7 @@ are ignored with a warning at `RUSTYNAIL_JIT_VERBOSE>=1`.
 | `allocguard` | 1 | 0-1 | P-B: the allocation storm guard (1 = on): a recording that allocates strings in every iteration aborts `AllocStorm` when the ... |
 | `warm` | 0 | any | P-G: time-stamp-counter ticks that must pass between the first loop activity of the state (the first sampling tick of the ... |
 | `wgate` | 30000 (tests: 0) | any | BUNDLE-1: deterministic start gate: back-edges (loop sampling ticks count as `tick_period` each, a head's hot firing as ... |
+| `wgcall` | 0 | 0-1024 | Section 64 (built, off): the work gate `wgate` weighs every `CALL` / `TAILCALL` / `TFORCALL` / `CONCAT` / `SELF` of a loop body as `1 + wgcall` bytecodes (only the moment of the first recording moves). |
 | `tailhook` | 1 | 0-2 | BUNDLE-1: the interpreter's tail call (`pre_tail_call`) counts calls of its Lua callee like a call does (the callee is compiled ... |
 | `hdrlib` | 2 | 0-4 | BUNDLE-1: header-safe peeling: loops with string `TLEN` and read-only `LIB` kinds are peeled (see `opt_mem::header_safe_ins`). |
 | `sinkmt` | 1 | 0-1 | BUNDLE-2: allocation sinking of tables that are given a metatable (`setmetatable({...}, V)`, the object-constructor idiom): the ... |

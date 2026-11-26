@@ -4879,6 +4879,11 @@ const TABLE: &[Row] = &[
         owner: "S59",
         dets: &[d("tr_core", "s60_reroot_programs")],
     },
+    Row {
+        name: "wgcall_weight_skip",
+        owner: "S64",
+        dets: &[d("tr_core", "s64_wgcall_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
