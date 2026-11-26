@@ -7490,3 +7490,48 @@ between loops; counts near 2^64 and long many-chunk loops). `tr_core::s59_progra
 `bh_refund_skip` (caught by `s59_count_identity`), `bh_bias_skip`, `bh_chunk_end_bias_long` (caught by all three). Unobservable variants that were
 tried and dropped: ignoring the chunk end (it degrades to an exit through the loop guard with the true count: exact, only slower), a short slow-path
 budget test, the poll of `setup` and the poll's `extra` refund (only an asynchronous poll word reaches them).
+
+## 62. lib/find_pat +3.3 % instructions since session-m: the pattern-cache set hash (2026-11-25, base 4f15581)
+
+Flagged in the session-n report, never bisected. Method: plain `cargo build --release -p rn-cli` binaries of each commit copied to paths of equal
+length, `perf stat -e instructions:u,cycles:u` on CPU 5, environment padded equally, min of 2-3 runs (instructions repeat to within a few thousand).
+
+Bisect (find_pat instructions M): 7413bff 1624.9 (session-l; T8 FINDP not yet on trace) / 8cd1f06 1292.5 (session-m) / 9fc21a7 1292.2 /
+**6cf88d6 1335.2** / ab7d185 1335.2 / bb9bd4d 1335.2 / 4f15581 1335.2. Guilty: 6cf88d6 (section 53, "set index from the pattern's bytes").
+
+Mechanism: `patc::lookup` runs once per `string.find` / `match` / `gmatch` / `gsub` with a general pattern. 6cf88d6 replaced the set index
+`(addr >> 4) ^ len` (5 instructions) with a hash of the first and last eight bytes; patterns under eight bytes (most: `"j%a+s"` is five) were
+assembled byte by byte, which LLVM unrolled into a load, shift, or, compare and branch per byte: 30 instructions for a five-byte pattern, +27 per
+call measured (43 M / 1.59 M calls), and data-dependent exits (cycles +6.7 %). Not a JIT or recorder change; T8 FINDP calls the same lookup.
+
+Fix (exact; the set only places a program, hits still compare address, length and bytes):
+- `set_of`: the first and last four bytes (overlapping), else first / middle / last byte below four, xor the length, one 32-bit `imul` by an
+  immediate, top byte: 11 instructions, no loop, still independent of addresses (apps/markdown 378.7-379.1 M under this layout, as in section 53).
+  Alone: find_pat 1304.95 M (+8 per call over 9fc21a7).
+- `LAST`: a thread-local pointer to the slot of the last compiled hit, probed first with the slot test (address, length, `S_OK`, bytes); a loop
+  over one pattern skips the set hash and the array address computation. Cleared with the array (`CacheGuard`). An alternating pattern pays one
+  failed probe (about 5 instructions).
+
+| program | instructions M: 4f15581 -> fixed | cycles M: 4f15581 -> fixed |
+|---|---|---|
+| lib/find_pat | 1335.2 -> **1277.8** (-4.3 %; 9fc21a7 1292.2) | 216.9 -> 188.1 |
+| lib/match | 273.2 -> 269.3 | 50.4 -> 43.8 |
+| lib/gsub_fn | 950.6 -> 945.6 | 200.9 -> 170.9 |
+| lib/gmatch_words | 1062.9 -> 1010.0 | 180.4 -> 170.9 |
+| lib/find_cap | 1639.5 -> 1623.0 | 318.0 -> 255.2 |
+| lib/gsub_str / gsub_tbl | 937.2 / 854.0 -> 928.0 / 848.3 | 164.6 / 182.0 -> 159.0 / 160.9 |
+| lib/find_plain (no lookup) | 698.4 -> 698.4 | 111.6 -> 111.6 |
+| apps/markdown | 378.9 -> 379.0 | 121.9 -> 119.5 |
+| real/template_engine, real/wordfreq | 2973.1 / 448.0 -> 2956.4 / 439.8 | 758.0 / 115.2 -> 734.3 / 113.6 |
+| corpus/template_etlua, csv_ini_yaml, lua_lexer | 6823.3 / 6639.3 / 3278.3 -> 6762.2 / 6627.9 / 3274.0 | 1580.6 / 1651.8 / 805.8 -> 1523.9 / 1617.5 / 831.1 |
+| programs/json, real/json_roundtrip | 6938.0 / 2234.7 -> 6723.7 / 2214.2 | 1809.8 / 590.0 -> 1783.7 / 565.1 |
+
+Regression sample without pattern calls (programs/string_ops, nbody, fannkuch, binary_trees, knucleotide, real/game_loop, apps/expr_lang, events,
+awfy/json): instructions equal within the run-to-run steps of the programs whose counts are not deterministic (knucleotide moves in 32 M steps,
+awfy/json and events by up to 2 % with the same binary), cycles within noise (lua_lexer +3.1 % cycles at -0.1 % instructions; repeat runs of
+single programs swing 2-4 %). Outputs of the 100 bench/lib + bench/apps programs equal their `.expected`.
+
+Tests (`crates/rn-std/src/pattern/patc.rs`): `set_of_depends_on_bytes_only` (every length 1..=48, two addresses, even and in range, spread of
+short patterns), `last_hit_is_checked_like_a_slot` (alternating patterns both hit; a `LAST` hit is the slot of the normal path; a string rewritten
+in place with the same address and length never gets the old program, which a `LAST` probe without the byte compare would return; `LAST` null
+in a new thread). No knob: no semantic branch (the `STR_FAST` bit `PATC` still turns the whole cache off).

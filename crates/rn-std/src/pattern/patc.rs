@@ -445,6 +445,7 @@ impl Drop for CacheGuard {
     fn drop(&mut self) {
         let p = CACHE.get();
         CACHE.set(std::ptr::null_mut());
+        LAST.set(std::ptr::null());
         if !p.is_null() {
             // SAFETY: `p` came from `Box::into_raw` of a boxed slice of SLOTS programs in `cache_alloc`, and only this
             // guard (one per thread, at thread exit) frees it; the pointer was just cleared so nothing can reach it.
@@ -456,6 +457,8 @@ impl Drop for CacheGuard {
 thread_local! {
     // Accessed only by `lookup` / `miss` below; they never re-enter (compiling does not touch the cache).
     static CACHE: Cell<*mut Prog> = const { Cell::new(std::ptr::null_mut()) };
+    // The slot of the last compiled hit of `lookup` (null, or a slot of the array `CACHE` points to).
+    static LAST: Cell<*const Prog> = const { Cell::new(std::ptr::null()) };
     static RR: Cell<usize> = const { Cell::new(0) };
     static PINS: Cell<u32> = const { Cell::new(0) };
     // Only its destructor matters: registered by the first `cache_alloc` of the thread.
@@ -502,20 +505,22 @@ impl Drop for PinGuard {
 /// section 53.) Short patterns are interned strings (one address per content), so the address-keyed slots see the same strings as before.
 #[inline(always)]
 fn set_of(pat: &[u8]) -> usize {
-    // (the first and the last eight bytes, overlapping for short patterns, and the length: two loads and a multiply per lookup)
+    // (the first and the last four bytes, overlapping for short patterns, and the length; below four bytes the first, middle
+    // and last byte: two or three loads and one 32-bit multiply, no byte loop. The first version assembled patterns under eight
+    // bytes byte by byte, unrolled with a compare per byte: lib/find_pat ran 27 instructions per call more, +3.3 %;
+    // docs/JIT_TRACE.md section 62. SLOTS = 256: the sets take the top byte of the product.)
+    const _: () = assert!(SLOTS == 256);
     let n = pat.len();
-    let (a, b) = if n >= 8 {
-        let w = |i: usize| u64::from_le_bytes(pat[i..i + 8].try_into().expect("eight bytes"));
-        (w(0), w(n - 8))
+    let x = if n >= 4 {
+        let w = |i: usize| u32::from_le_bytes(pat[i..i + 4].try_into().expect("four bytes"));
+        w(0) ^ w(n - 4).rotate_left(16)
+    } else if n > 0 {
+        u32::from(pat[0]) | (u32::from(pat[n / 2]) << 8) | (u32::from(pat[n - 1]) << 16)
     } else {
-        let mut v = 0u64;
-        for (k, &c) in pat.iter().enumerate() {
-            v |= u64::from(c) << (8 * k);
-        }
-        (v, 0)
+        0
     };
-    let h = (a ^ b.rotate_left(29) ^ n as u64).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
-    ((h >> 40) as usize) & (SLOTS - 1) & !1
+    let h = (x ^ n as u32).wrapping_mul(0x9e37_79b1);
+    ((h >> 24) as usize) & (SLOTS - 1) & !1
 }
 
 /// The compiled form of `pat` once it was seen before (at the same address and length), else `None` (the caller runs
@@ -529,6 +534,17 @@ pub(super) fn lookup(pat: &[u8]) -> Option<&'static Prog> {
     if len > MAX_KEY || len == 0 {
         return None;
     }
+    // The slot of the last compiled hit first (`LAST`, docs/JIT_TRACE.md section 62): a loop calling one pattern skips the
+    // set computation. The same test as a slot hit below, so a slot rewritten since (another string, `Seen`) never hits.
+    let last = LAST.get();
+    if !last.is_null() {
+        // SAFETY: `LAST` is null or a slot of this thread's live array (`CacheGuard` clears it before freeing the array);
+        // the reference is handed out under the same rules as a slot hit below.
+        let sl = unsafe { &*last };
+        if sl.addr == addr && sl.len == len && sl.state == S_OK && same_bytes(&sl.key[..len], pat) {
+            return Some(sl);
+        }
+    }
     let set = set_of(pat);
     let base = CACHE.get();
     if base.is_null() {
@@ -541,6 +557,7 @@ pub(super) fn lookup(pat: &[u8]) -> Option<&'static Prog> {
         if sl.addr == addr && sl.len == len && sl.state >= S_OK && same_bytes(&sl.key[..len], pat) {
             // a program that does not fit is remembered as such (the general matcher runs)
             if sl.state == S_OK {
+                LAST.set(sl as *const Prog);
                 // SAFETY: slots are rewritten only by `miss`, never while a pin of this thread is alive, and the
                 // callers that outlive foreign code hold a pin (see `CacheGuard`); the reference does not leave the thread.
                 return Some(unsafe { &*(sl as *const Prog) });
@@ -891,6 +908,64 @@ mod tests {
             h.join().unwrap();
         }
         std::thread::spawn(|| assert!(CACHE.get().is_null()))
+            .join()
+            .unwrap();
+    }
+
+    /// Section 62: the set is a function of the bytes and length only (every length class: under four, four to seven,
+    /// eight and up), even, and inside the array.
+    #[test]
+    fn set_of_depends_on_bytes_only() {
+        let src: Vec<u8> = (0..MAX_KEY as u8).map(|k| b'a' + k % 26).collect();
+        for n in 1..=MAX_KEY {
+            let copy = src[..n].to_vec();
+            let s = set_of(&src[..n]);
+            assert_eq!(s, set_of(&copy), "length {n}");
+            assert!(s + 1 < SLOTS && s % 2 == 0);
+        }
+        let sets: std::collections::HashSet<usize> = (0..64u8)
+            .map(|k| set_of(&[b'%', b'a' + k % 26, k]))
+            .collect();
+        assert!(
+            sets.len() > 8,
+            "short patterns spread over the sets: {}",
+            sets.len()
+        );
+    }
+
+    /// Section 62: the last-hit slot (`LAST`) is checked like any slot: a string rewritten in place (same address and
+    /// length, other bytes) never gets the old program, two alternating patterns both hit, and the slot is cleared with
+    /// the array.
+    #[test]
+    fn last_hit_is_checked_like_a_slot() {
+        std::thread::spawn(|| {
+            let key = |pg: &Prog| pg.key[..pg.len].to_vec();
+            let mut buf = *b"%d+x";
+            let a: &[u8] = b"[%a_]+";
+            for _ in 0..2 {
+                assert!(lookup(&buf).is_none());
+                assert!(lookup(a).is_none());
+            }
+            for _ in 0..3 {
+                // alternating: each lookup misses LAST and hits its slot
+                assert_eq!(key(lookup(&buf).expect("compiled")), b"%d+x");
+                assert_eq!(key(lookup(a).expect("compiled")), a);
+            }
+            // a LAST hit returns the slot of the normal path
+            let p1 = lookup(&buf).expect("compiled") as *const Prog;
+            assert_eq!(LAST.get(), p1);
+            assert_eq!(lookup(&buf).expect("compiled") as *const Prog, p1);
+            // same address and length, other bytes: never the program of "%d+x"
+            buf.copy_from_slice(b"%s+y");
+            if let Some(pg) = lookup(&buf) {
+                assert_eq!(key(pg), b"%s+y");
+            }
+            buf.copy_from_slice(b"%d+x");
+            assert_eq!(key(lookup(&buf).expect("compiled")), b"%d+x");
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(|| assert!(LAST.get().is_null()))
             .join()
             .unwrap();
     }
