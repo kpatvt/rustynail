@@ -7684,3 +7684,101 @@ available from counters); (iii) re-record the root without flushing the family (
   interpreter in every job. Asserts: `s60_worse` is reverted, `s60_phases` is kept, and `rerootchk=0` never checks.
 * Mutants (registry 883 -> 885): `rerootchk_keep_always`, `rerootchk_revert_always`, both caught by `s60_reroot_programs`
   (`scripts/gate-mutant-map.tsv` regenerated).
+
+## 65. String creation of `string.sub` keys on lua_lexer: kill test (2026-11-25, base 4f15581; nothing built)
+
+**Both candidates as specified die; the only lever with a ceiling above 4 % needs sunk strings in snapshots and is not built.** corpus/lua_lexer
+is 821 / 448 Mcyc against LuaJIT; a profile puts `short_core<false>` at 11-13.5 %, `jit_tr_lib_sub` at 7.5-8 %, `jit_tr_alloc` at 2.9 %. Measured
+with scratch builds (not committed), `perf stat` cycles:u / instructions:u, min of 7, `taskset -c 12`, `RUSTYNAIL_SEED=0`, release build of 4f15581
+(base: 802-806 Mcyc / 3280 M instructions).
+
+* **(a) string-table probe** (load factor, hash, chain walk). Instrumented: the lexer makes 2.36 M `short_core<false>` interns per run and
+  **99.8 % find the existing string** (2 355 049 of 2 359 296), so allocation is not the cost. `perf annotate`: the hot samples are the
+  load of the bucket head (15.4 % of the function on the `test` after it) and the first chain entry's header compare (17.2 %), two
+  dependent cache misses per probe, not a long walk. A 4x larger table (grow at `nuse * 4 >= size`, shrink below `size / 64`):
+  808 Mcyc / 3273 M against 802 / 3280 (+0.7 % cycles, -0.2 % instructions): a bigger bucket array only moves the miss. A prefetch has
+  nothing to overlap (one probe, its address is known only after the hash). **Killed** (ceiling ~0 %).
+* **(b) as specified** (`sub` fused into the table get: look the bytes up in the string table without creating, then a normal get or a
+  miss). With 99.8 % of the probes hitting, the fused op does the same probe and saves only the allocation of the 0.2 % and part of the
+  helper frame. **Killed** (ceiling well under 4 %; the probe is the cost).
+* **(b') probe the target table by bytes** (hash the substring with the string-table hash, walk the *table's* chain, compare a key only
+  when its value is non-nil; a found key is the interned string itself, a miss with the metatable guard the trace already has is an exact
+  nil). Ceiling emulated at Lua level (`ops3[sub(s,i,i+2)]` / `ops2[sub(s,i,i+1)]` replaced by integer-keyed byte tables, same output):
+  **747 Mcyc / 3063 M (-7.3 % cycles, -6.6 % instructions)**. Only the op-token miss path qualifies (1.65 M of the 2.4 M subs);
+  `keywords[word]` returns `word`, so that sub stays. Not built: `t3` / `t2` are locals, and the trace keeps them in every later
+  snapshot (trace 17: `%111` and `%122` in S39-S49 and beyond; `snapprune` protects locals for `debug.getlocal`), so the string must be
+  materialised at any exit in its scope: a new sunk-string snapshot entry (operands `s, i, j` kept live for the allocator) in the exit
+  handler's `materialise`, the inline exit stubs, the `resink` side-trace replay and the `interp` model, with its own mutants. Beside
+  that, a substring that is not interned anywhere is then never created, so `collectgarbage("count")` can be lower than the
+  interpreter's (rare here: 0.2 %). Parked as a structural item.
+
+## 66. Lead (b') of section 62: `t[string.sub(s, i, j)]` probed by bytes with sunk strings: kill test (2026-11-25, base 4f15581; parked, not merged)
+
+**Killed at the prototype stage: lua_lexer +0.8 % cycles, +1.4 % instructions (the bar was -5 % cycles).** Section 62 (branch
+`worktree-agent-a9273a175b69ae4a8`, d89b0ce) emulated a -7.3 % ceiling by removing the `sub` call entirely; a probe by bytes still needs a call
+whose cost equals the `sub` it replaces. The prototype is on branch `subkey-proto-a41842` (1b0863f, knob `subkey`, default 0, no tests, mutant
+names not registered).
+
+**Design (as built in the prototype).**
+* IR: `LIB SUBKEY` (kind 28): operands `s`, `i | j << 32` (recorder guards `ULT i, 2^31`, `ULT j, 2^31`: exact positions for the helper), third =
+  the table. Lean entry `jit_tr_lib_subkey`: `string.sub`'s position rules, the PUC hash `lua_hash(bytes, seed)`, the walk of the table's chain
+  (`TableRef::short_str_node_bytes`: key a short string with the same hash, length and bytes and a non-nil value) -> the node or `NIL_NODE`; the
+  typed `HLOAD nil` after it is unchanged; read-only (header-safe). Emitted by `hash_get_chain` for a dynamic key whose recorded value was nil
+  (under the `__index` guard it already has) when the key is a short `LIB SUB`; the `LIB SUB` gets `F_SUBKEY`.
+* Sunk string: pass `sink::subsink` (first pass, root and side traces): an `F_SUBKEY` `LIB SUB` whose only other use is its `NE 0` guard and
+  that the writeback names only for dead slots (the `sink` rule) becomes two dead `ADD i, 0`; every snapshot entry naming it becomes
+  `SNAP_SSTR` (`r` = `s`) + two `SNAP_SFVAL` pseudo entries (`i`, `j`), the RA keeps the three operands as snapshot uses. Entries in slots at or
+  above the innermost frame's extent (popped inlined frames, D7 (c)) are dropped instead.
+* Exit: `ExitSnap::sunk` holds the sunk string as a `SunkTable` with `sub: Some(SunkSub)`, so every rule keyed on "the snapshot has sunk
+  objects" (generic restore, `jit_tr_mat` stubs, no direct link) applies unchanged; `materialise` makes `string.sub` with `Heap::new_str` under
+  `GCSTP_GC` (no virtual bytes); `sunk_save_ops` / the stub scratch choice read `SunkTable::srcs()`. `resink`: `replay_tabs` declines an exit
+  with a sunk string (the side trace starts after materialisation). Interp model: `SUBKEY` yields `NIL_CELL` (no string contents in the model;
+  emitted only for keys recorded absent, the `HREF_ABS` convention).
+* Documented exception it would have carried: a substring used only as a table key and interned nowhere is never created, so
+  `collectgarbage("count")` can be lower than the interpreter's by those strings' bytes.
+
+**Measurements** (lua_lexer, `RUSTYNAIL_SEED=0`, `taskset -c 15`, min of 9, cycles:u / instructions:u, equal-length binaries): base 806.6 Mcyc /
+3281.2 M; prototype (`subkey=1`) 813.2 / 3327.2; `subkey=0` = base (3282.2 M). Applied as intended in trace 17: both `LIB SUB`s of the op-token
+miss path gone, `SUBKEY` + `HLOAD nil` in their place. Cycle profile (sampled, Mcyc): `short_core<false>` 91.2 -> 29.1 and `jit_tr_lib_sub`
+52.4 -> 25.3 (-89.2), but `jit_tr_lib_subkey` +82.0: **about 50 cycles per probe against about 54 per `sub`** (call boundary and register
+save/reload, the long source's header, the position rules, the hash loop, the dependent loads of node, key header and seed: no single hot spot).
+The exits at the `ops3` / `ops2` hits (`...`, `==`, `..`, ...) now materialise the sunk `t3` / `t2` (270 k strings; 105 k through the sunk-frame
+stub, the rest through the handler, which also costs the direct side link): `materialise` 9.3 + extra `new_str` 11.8 + `jit_tr_mat` 3.0 + table
+sets ~8 = ~+30 Mcyc. A first version kept the dead popped-frame slots in later snapshots (no change: those exits were not the hot ones) and called
+the generic `jit_tr_alloc` (836 Mcyc, 3383 M: its 0x348-byte frame).
+
+**Ceiling of the full design.** Probe -7 Mcyc net, exits +30 Mcyc. A `resink` replay of sunk strings (side trace re-creates `t2` with a real
+`LIB SUB`, `t3` stays sunk) would remove most of the +30 but leaves the probe at about -1 %. Reaching -5 % needs the probe without a call (the
+hash loop and chain walk as an inline micro-op sequence, ~15 cycles: estimated -6 to -7 % with the replay), which is machinery beyond the
+section 62 list (assembler sequence with a loop, emulator and mutants for it). Not built.
+
+## 67. S1: text_adventure in tier 1, the stitch structure (kill test; 2026-11-25, base 4f15581; nothing built)
+
+**Question.** corpus2/dev/text_adventure is 2.21x LuaJIT (2620 vs 1187 Mcyc); the profile reported 228 `StartRefused` (`ContNotRecursive`) and 42
+`FnShort`. Does a structural change that lets its tier-1 code trace move it by >= 5 % cycles?
+
+**Where the cycles are** (`RUSTYNAIL_JIT_VERBOSE=1 RUSTYNAIL_JIT_SAMPLE=on`, perf): runtime (helpers, string library, GC) 55-61 %, tier 1 34 %, traces
+5.7 %. perf by DSO: rnlua 61.7 % (`new_str` 5.0, `gmatch_aux` 4.0, `table::resize` 2.9, `jit_call` 2.8, `list_remove_after` 2.6, `ccall` 2.3,
+`gmatch` 2.2, pattern `lookup` 2.1, `format_at` 2.0, ...), JIT code 36.5 %. Our runtime part alone (~1600 Mcyc) is more than LuaJIT's whole run.
+
+| tier-1 share | head / construct | why it is not traced | LuaJIT |
+|---|---|---|---|
+| parse (L79) 10.2 % | `for w in line:lower():gmatch("%a+")` | root loop trace (L0 pc 261) stitches at the `CALL` of `string.gmatch` (closure creation, `CFunc`); its side traces (other commands) abort `CFunc` at the same `CALL` (side recordings of loop roots never stitch at C functions); the gmatch loop trace (L79 pc 8) cannot record the end of the iteration (`LeaveLoop`), so nothing continues behind the loop | stitches at the C call, the gmatch end and the code behind it trace |
+| say (L65) 7.1 % | vararg method, `string.format(fmt, ...)`, `table.remove` | only reached from the tier-1 tail of an iteration (behind the stitch) | inlined in the stitched continuation |
+| exec (L178) 3.7 %, handlers (L95/105/116/126/141/157/168) ~4 % | `handlers[verb](self, noun)` polymorphic, `return g:say(..)` tail calls | the same: tier-1 tail; their entry heads are probes that abort `FnShort` (6 x each, blacklisted) at `Call`/`Tailcall`/`Return`: a non-recursive function never gets an entry trace by design | stitched trace through the returns |
+| genCommand (L194), rnd (L6) 3.8 % | `rnd` through an upvalue | continuation heads after every upvalue call (`recany`) refused `ContNotRecursive` (cheap refusals, not the cost) | inlined into the loop trace |
+
+The 228 `ContNotRecursive` refusals and 42 `FnShort` aborts are symptoms: they cost nothing measurable; the tier-1 time is the tail of each iteration
+behind the stitch at `string.gmatch`.
+
+**Prototype** (scratch knob `gmside`, reverted): bit 0 = a side recording of the gmatch loop's frame records the end of the iteration (an end-only
+`GMATCH` helper form: commits the interpreter's end state only when no match is left, else answers 0 with nothing changed; the first attempt reused the
+committing helper and skipped matches: `dance wildly` parsed without its noun, caught by the output) and goes on behind the loop; bit 1 = side
+recordings of loop roots stitch at an unrepresentable C call (`sidecfmin` 8 steps) like root recordings. Outputs equal. With bit 0 the continuation
+still ends at parse's `RETURN`: the family is a function-entry family and `retfsel` refuses (exec has no loop); `retf=7` / `retfmax=2` on top change
+nothing (instructions 7650-7653 M).
+
+**Measured** (CPU 4, min of 7, interleaved, Mcyc / M instructions): `gmside=0` 2559-2568 / 8036; `gmside=1` 2616 / 8121; `gmside=2` 2499 / 7688;
+`gmside=3` 2480-2488 / 7651 (**-3.1 % cycles, -4.8 % instructions**); json, stream_closures, lua_interp: instructions identical (no gmatch-ended
+loops, no side `CFunc` aborts on their hot paths). **Killed** (< 5 % cycles on text_adventure). The remaining gap is the runtime (string creation,
+pattern matching, table resize, C-call protocol), not trace formation.
