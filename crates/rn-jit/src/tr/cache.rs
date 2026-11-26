@@ -3567,8 +3567,7 @@ pub fn prune_cached(
     opencall: bool,
 ) -> Option<std::sync::Arc<super::ir::PruneInfo>> {
     let jp = p.jit.get() as usize;
-    if jp > rt::NOJIT && !locals && !super::snap::prune_faulty()
-    {
+    if jp > rt::NOJIT && !locals && !super::snap::prune_faulty() {
         // SAFETY: as in `landing_cached`.
         if let Some(tp) = unsafe { (*(jp as *const JitProto)).tr.as_deref() } {
             return tp.prune[usize::from(opencall)]
