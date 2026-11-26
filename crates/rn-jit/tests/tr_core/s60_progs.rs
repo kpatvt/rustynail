@@ -131,4 +131,34 @@ end
 print(table.concat(out, ","))
 "#,
     },
+    Prog {
+        name: "s60_worse",
+        small: false,
+        src: r#"
+-- section 62: every direction of the three-way branch is a minority, so the re-record steered away from the root's direction leaves through its
+-- pre-roll as often as the flushed root did: the probation check flushes it and the head records unconstrained. Observers behind the revert: a
+-- collection, an error raised and caught on one direction late in the loop, a float type change at the end
+local function f(v, x)
+  if v == 0 then return x + 1
+  elseif v == 1 then return (x * 3) % 1000003
+  else return x - 7 end
+end
+local seq = { 0, 1, 2, 1, 0, 2 }
+local acc, n, errs = 0, 0, 0
+for i = 1, 40000 do
+  local v = seq[i % 6 + 1]
+  acc = f(v, acc)
+  if v == 2 then n = n + 1 end
+  if i == 20000 then collectgarbage() end
+  if i > 36000 and v == 1 and i % 7 == 0 then
+    local ok, e = pcall(error, { i = i })
+    if not ok then errs = errs + e.i % 3 end
+  end
+end
+for i = 1, 3000 do
+  acc = f(seq[i % 6 + 1], acc + 0.5)
+end
+print(acc, n, errs)
+"#,
+    },
 ];

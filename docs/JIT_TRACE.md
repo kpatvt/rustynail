@@ -7490,3 +7490,66 @@ between loops; counts near 2^64 and long many-chunk loops). `tr_core::s59_progra
 `bh_refund_skip` (caught by `s59_count_identity`), `bh_bias_skip`, `bh_chunk_end_bias_long` (caught by all three). Unobservable variants that were
 tried and dropped: ignoring the chunk end (it degrades to an exit through the loop guard with the true count: exact, only slower), a short slow-path
 budget test, the poll of `setup` and the poll's `extra` refund (only an asynchronous poll word reaches them).
+
+## 62. Probation check of a `reroot` re-record (`rerootchk`, `rerootkeep`; 2026-11-25, base 4f15581)
+
+Task: make `reroot` (section 60) safe to ship default ON with an exact check that keeps a re-recorded root only when it is better than the flushed one.
+**Result: the check is built and separates the programs cleanly, but it cannot fix awfy/cd: cd's cost is the reroot flush itself, not a worse
+re-recorded body, and reverting adds a second flush. `reroot` stays default OFF.**
+
+### 62.1 Design (`cache::pre_exit_check`, `HeadData::reroot_old`)
+
+* When the `reroot` rule fires it stores the flushed root's pre-roll exit fraction (all pre-roll exits per mille of the entries, `p_all / e`) in the head.
+* The next root of that head is on probation. Its check runs in the same place as every pre-roll rule (`pre_exit_check`, called each time a pre-roll site
+  reaches another multiple of `INEFF_EXITS` = 1024 exits). The check runs once, at the first call with `e >= rerootchk` entries since install (default 1024;
+  0 = no check). The re-record is **kept** when its fraction is below `rerootkeep` percent (default 75) of the old one. Otherwise it is **reverted**:
+  flushed (`FlushWhy::Dom`, no penalty), the path constraint is cleared and the head records unconstrained. `reroot_done` stays set, so the rule
+  never fires at that head again. A re-record that rarely leaves in its pre-roll never reaches the check and is kept, which is the good outcome.
+* Exactness: counters only (deterministic). The check only decides whether a compiled root is flushed; no guard, snapshot or link changes.
+* Counters: `[trace] reroot: roots R drops D given up G kept K reverted V`. `RUSTYNAIL_JIT_VERBOSE=2` logs each decision (`rerootchk: ...`).
+
+### 62.2 Why this metric (release `rn-cli`, `reroot=50,rerootchk=1024`, verbose logs)
+
+| program | old root pre-roll / entries | re-record pre-roll / entries (at check) | ratio | decision |
+|---|---|---|---:|---|
+| awfy/queens | 882 per mille | 379 (3684 entries) | 0.43 | kept |
+| corpus/containers_lru_heap | 897 | 321 (4432) | 0.36 | kept |
+| corpus2/heldout/stream_closures root 1 / root 2 | 842 / 1089 | 1006 (2049) / 76 (38215) | 1.19 / 0.07 | reverted / kept |
+| corpus/penlight_mix | 992 | 780 (1424) | 0.79 | reverted |
+| awfy/cd | 928 | 914 (1510) | 0.98 | reverted |
+
+The fraction separates queens (0.43) from cd (0.98) by a wide margin. The other candidates were not needed. Machine-code size is ASLR-noisy (identical
+recordings differ by about 10 B), and side exits per entry follow the pre-roll fraction on these roots.
+
+### 62.3 Why it does not save cd
+
+The cd head (`cd.lua:122`, `RBT:get`'s `while` loop) gets 71102 root entries in the whole run, and the rule fires at 66483 of them (`domn` = 65536). The
+re-record lives for about 4600 entries (6 % of the loop's life), so how good or bad its body is cannot matter. What costs is flushing a family of 17
+traces and rebuilding it, plus the formation changes that follow; a revert repeats both. Measured (CPU 4, min of 9, `RUSTYNAIL_SEED=0`, one binary):
+
+| program | `reroot=0` cycles / instr M | `reroot=50,rerootchk=0` | `reroot=50,rerootchk=1024` |
+|---|---|---|---|
+| awfy/cd | 237.57 / 641.24 | 240.72 (+1.3 %) / 645.99 (+0.7 %) | 243.25 (+2.4 %) / 649.85 (+1.3 %) |
+| awfy/queens | 93.74 / 496.94 | 75.51 (-19.4 %) / 387.57 (-22.0 %) | 75.30 (-19.7 %) / 387.57 (-22.0 %) |
+| corpus2/heldout/stream_closures | 814.28 / 3513.30 | 806.51 (-1.0 %) / 3513.40 | 805.89 (-1.0 %) / 3513.40 |
+| corpus/containers_lru_heap | 1274.34 / 5435.20 | 1305.24 (+2.4 %) / 5384.69 (-0.9 %) | 1294.72 (+1.6 %) / 5383.90 (-0.9 %) |
+| corpus/penlight_mix | 2223.70 / 10302.47 | 2211.09 (-0.6 %) / 10296.65 | 2225.94 (+0.1 %) / 10306.32 |
+
+(An earlier pair on cd, cycles / instructions M: 231.56 / 641.23 against 236.14 / 645.95, +2.0 % / +0.7 %. stream_closures has the same instruction count in all three columns,
+so under `RUSTYNAIL_SEED=0` the rule probably did not fire there. lru_heap's cycles go up while its instructions go down: formation noise.)
+
+**Decision: `reroot` stays default OFF.** cd's instructions go up with and without the check, so the bar fails. `REROOTCHK_PROCESS = 1024` and
+`REROOTKEEP_PROCESS = 75` take effect only when `reroot` is on. The rule's decision comes too late in the loop's life on cd. What could fix that:
+(i) fire earlier, at a smaller `domn`, which also changes queens' timing; (ii) a rule that also needs the head's entry rate to still be rising (not
+available from counters); (iii) re-record the root without flushing the family (keep the old root's side traces for the exits they still serve).
+
+### 62.4 Tests, mutants
+
+* `tr_core::s60_reroot_programs`: new program `s60_worse` (`tests/tr_core/s60_progs.rs`). It is a three-way round-robin branch inside an inlined callee,
+  so every direction is a minority and the re-record leaves through its pre-roll as often as the flushed root did. It also has a collection, an error
+  raised and caught by `pcall` late in the loop, and a float type change at the end. It runs in the existing matrix (`always` / `on2`; `+verify`,
+  `+exitstorm=3 +verify`, budgets 3 / 17, GC stress 1 / 2 in both collector modes, stack moves, oracle identity), with the knobs set explicitly
+  (`reroot=1,domn=64,rerootall=0|80,rerootchk=1024,rerootkeep=75`), plus `rerootchk=0` jobs of `s60_worse` and `s60_queens`. Outputs match the
+  interpreter in every job. Asserts: `s60_worse` is reverted, `s60_phases` is kept, and `rerootchk=0` never checks.
+* Mutants (registry 883 -> 885): `rerootchk_keep_always`, `rerootchk_revert_always`, both caught by `s60_reroot_programs`
+  (`scripts/gate-mutant-map.tsv` regenerated).

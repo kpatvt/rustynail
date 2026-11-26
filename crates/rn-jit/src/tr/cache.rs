@@ -217,6 +217,12 @@ pub const REROOT_PROCESS: u32 = 0;
 /// Section 59 (`rerootall`): process value of [`TrLimits::rerootall`]: the `reroot` rule also needs this percent of the entries to leave through any pre-roll
 /// site (0 = no such condition).
 pub const REROOTALL_PROCESS: u32 = 80;
+/// Section 62 (`rerootchk`): process value of [`TrLimits::rerootchk`]: entries of the re-recorded root after which its pre-roll exit fraction is compared
+/// with the flushed root's (0 = no check: the re-record is always kept).
+pub const REROOTCHK_PROCESS: u32 = 1024;
+/// Section 62 (`rerootkeep`): process value of [`TrLimits::rerootkeep`]: the re-recorded root is kept when its pre-roll exits are below `rerootkeep` percent
+/// of the flushed root's pre-roll fraction; otherwise it is flushed and the head records unconstrained (the rule never fires there again).
+pub const REROOTKEEP_PROCESS: u32 = 75;
 /// P2 fix (`pollr15`): process value of [`TrLimits::pollr15`]. **2 = on except in traces of native self-recursion** (regression fix of 2026-11-12: the P2 fix had made it 0, which cost 1 instruction per loop iteration of every other trace: lib/m_*, int_sum +5..13 %). 0 = off, 1 = on everywhere. The r15-addressed poll makes `programs/fib` 7-9 % slower in cycles than the
 /// `movabs` form at every loop-head offset (docs/PERF.md "P2 loop-top placement fix"); `RUSTYNAIL_JIT_TRACE_LIMITS=pollr15=1` turns it on (all 223 programs 0.985 / 0.971 on, 0.989 / 0.983 off).
 pub const POLLR15_PROCESS: u32 = 2;
@@ -652,6 +658,10 @@ pub struct TrLimits {
     /// Section 59: the `reroot` rule fires only when all pre-roll exits together are at least `rerootall` percent of the entries (0 = no condition; default
     /// [`REROOTALL_PROCESS`]).
     pub rerootall: u32,
+    /// Section 62: entries of a `reroot` re-record before the keep-or-revert check (0 = no check).
+    pub rerootchk: u32,
+    /// Section 62: keep a `reroot` re-record when its pre-roll exit percent is below `rerootkeep` percent of the flushed root's.
+    pub rerootkeep: u32,
     /// P3: after an entry-failure flush of a root whose entry segment holds a callee identity guard (TR6d), the head is recorded again with callee guards kept out of the entry segment
     /// (0 = off; default [`NCALLEE_PROCESS`] (process and tests)).
     pub ncallee: u32,
@@ -1041,6 +1051,8 @@ impl Default for TrLimits {
             domn: DOMN_PROCESS,
             reroot: REROOT_PROCESS,
             rerootall: REROOTALL_PROCESS,
+            rerootchk: REROOTCHK_PROCESS,
+            rerootkeep: REROOTKEEP_PROCESS,
             ncallee: NCALLEE_PROCESS,
             chainre: CHAINRE_PROCESS,
             chainn: CHAINN_PROCESS,
@@ -1267,6 +1279,8 @@ impl TrLimits {
                 "domn" => l.domn = v,
                 "reroot" => l.reroot = v.min(100),
                 "rerootall" => l.rerootall = v.min(100),
+                "rerootchk" => l.rerootchk = v,
+                "rerootkeep" => l.rerootkeep = v.min(100),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -1640,6 +1654,8 @@ pub struct HeadData {
     pub dom_done: Cell<bool>,
     /// Section 59: the head had its `reroot` re-record (once per head).
     pub reroot_done: Cell<bool>,
+    /// Section 62: while the head's `reroot` re-record is on probation, the flushed root's pre-roll exits in per mille of its entries, plus 1 (0 = none).
+    pub reroot_old: Cell<u32>,
     /// Section 59: the path prefix a root recording of this head must not complete (pc, prototype, depth per step) and the drops left; cleared when a root
     /// recording of the head closes or the drops run out.
     pub reroot_avoid: RefCell<Option<(std::rc::Rc<Vec<(u32, usize, u8)>>, u8)>>,
@@ -1789,6 +1805,7 @@ impl HeadData {
             ident_kept: Cell::new(false),
             dom_done: Cell::new(false),
             reroot_done: Cell::new(false),
+            reroot_old: Cell::new(0),
             reroot_avoid: RefCell::new(None),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
@@ -2935,6 +2952,10 @@ pub struct TrStats {
     pub reroot_drops: u64,
     /// See `reroots`.
     pub reroot_gaveup: u64,
+    /// Section 62: `reroot` re-records kept / flushed by the probation check.
+    pub reroot_kept: u64,
+    /// See `reroot_kept`.
+    pub reroot_reverts: u64,
     /// P3: chain re-orders (child subtrees flushed by [`chain_check`]).
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
@@ -7398,6 +7419,33 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
     // Section 59 (`reroot`): a root through whose busiest pre-roll site `reroot` percent of the entries hop into one side trace was recorded on the
     // minority direction of a branch of its loop: flush it once and re-record it steered away from the path it took there (counters only: deterministic)
     let rr = d.tr.cfg.limits.reroot;
+    // Section 62: probation of a `reroot` re-record: after `rerootchk` entries its pre-roll exit fraction must be below `rerootkeep` percent of the flushed
+    // root's; otherwise it is flushed (no penalty) and the head records unconstrained (`reroot_done` stays set: the rule never fires there again)
+    let old = h.reroot_old.get();
+    let chk = d.tr.cfg.limits.rerootchk;
+    if old != 0 && chk != 0 && e >= u64::from(chk) {
+        h.reroot_old.set(0);
+        let old_pm = u64::from(old - 1);
+        let new_pm = p_all * 1000 / e.max(1);
+        let keep = new_pm * 100 < old_pm * u64::from(d.tr.cfg.limits.rerootkeep)
+            && !mutants::active("rerootchk_revert_always");
+        let keep = keep || mutants::active("rerootchk_keep_always");
+        vlog(d, || {
+            format!(
+                "rerootchk: root slot {} pre-roll exits {new_pm}/1000 of {e} entries against {old_pm}/1000 before: {}",
+                id.slot,
+                if keep { "kept" } else { "reverted" }
+            )
+        });
+        if keep {
+            d.tr.stats.reroot_kept += 1;
+        } else {
+            d.tr.stats.reroot_reverts += 1;
+            h.reroot_avoid.borrow_mut().take();
+            request_flush(st, id, FlushWhy::Dom);
+            return true;
+        }
+    }
     if rr != 0
         && !h.reroot_done.get()
         && e >= u64::from(d.tr.cfg.limits.domn)
@@ -7419,6 +7467,12 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             if let Some(av) = reroot_avoid_path(&d.tr.rr_paths, id, sid, meta, k) {
                 let n = av.len();
                 *h.reroot_avoid.borrow_mut() = Some((av, REROOT_TRIES));
+                h.reroot_old.set(
+                    u32::try_from(p_all * 1000 / e.max(1))
+                        .unwrap_or(u32::MAX - 1)
+                        .min(u32::MAX - 1)
+                        + 1,
+                );
                 d.tr.stats.reroots += 1;
                 vlog(d_of(st), || {
                     format!("reroot: root slot {} had {}% of its {e} entries through pre-roll exit {k} ({c}; all pre-roll exits {}%): re-record avoiding its first {n} steps", id.slot, c * 100 / e.max(1), p_all * 100 / e.max(1))

@@ -540,6 +540,9 @@ struct TStats {
     /// Section 59: `reroot: roots R drops D given up G`.
     reroots: u64,
     reroot_drops: u64,
+    /// Section 62: `... kept K reverted V` of the same line.
+    reroot_kept: u64,
+    reroot_reverts: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -784,6 +787,8 @@ impl TStats {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.reroots = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.reroot_drops = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.reroot_kept = w.get(7).and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.reroot_reverts = w.get(9).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("dlink: attached ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.dlink_attached = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -14666,6 +14671,8 @@ fn n1_programs_enter_traces() {
 /// `on2` x `reroot` 0 / 1 (`domn=64`: the rule may fire in short runs) / 1 with every pre-roll condition dropped, `+verify`, exit storms, budgets,
 /// GC stress 1 / 2 in both collector modes, stack moves; with the oracle feature the instruction-count identity. Asserts that the rule fired in the
 /// queens program (`rerootall=0`: at the test thresholds its pre-roll exits stay below 80 %) and in no job with `reroot=0`. Detector of `reroot_never`.
+/// Section 62: the probation check reverts the re-record of `s60_worse` and keeps those of `s60_phases` (detectors of `rerootchk_keep_always`,
+/// `rerootchk_revert_always`); `rerootchk=0` never checks.
 #[test]
 fn s60_reroot_programs() {
     let progs = [
@@ -14674,11 +14681,12 @@ fn s60_reroot_programs() {
         "s60_phases",
         "s50_frame_sides",
         "r1_type_flip",
+        "s60_worse",
     ];
     let lims = [
         "reroot=0",
-        "reroot=1,domn=64",
-        "reroot=1,domn=64,rerootall=0",
+        "reroot=1,domn=64,rerootall=80,rerootchk=1024,rerootkeep=75",
+        "reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=75",
     ];
     let mut jobs = Vec::new();
     for p in progs {
@@ -14719,8 +14727,17 @@ fn s60_reroot_programs() {
             }
         }
     }
+    // section 62: the probation check off (the re-record is always kept)
+    for trace in ["always", "on2"] {
+        jobs.push(
+            Job::new("s60_worse", trace).limits_s("reroot=1,domn=64,rerootall=0,rerootchk=0"),
+        );
+        jobs.push(
+            Job::new("s60_queens", trace).limits_s("reroot=1,domn=64,rerootall=0,rerootchk=0"),
+        );
+    }
     let res = compare(jobs);
-    let mut fired = std::collections::BTreeMap::<String, (u64, u64)>::new();
+    let mut fired = std::collections::BTreeMap::<String, (u64, u64, u64, u64)>::new();
     for (j, o) in &res {
         if j.limits == "reroot=0" {
             assert_eq!(o.stats.reroots, 0, "{}: reroot with the knob off", j.tag());
@@ -14730,12 +14747,32 @@ fn s60_reroot_programs() {
             let e = fired.entry(format!("{} {}", j.prog, j.limits)).or_default();
             e.0 += o.stats.reroots;
             e.1 += o.stats.reroot_drops;
+            e.2 += o.stats.reroot_kept;
+            e.3 += o.stats.reroot_reverts;
+        }
+        if j.limits.contains("rerootchk=0") {
+            assert_eq!(
+                o.stats.reroot_reverts + o.stats.reroot_kept,
+                0,
+                "{}: probation check with rerootchk=0",
+                j.tag()
+            );
         }
     }
-    eprintln!("s60 reroot (roots, drops): {fired:?}");
-    for (k, (n, _)) in &fired {
-        if k == "s60_queens reroot=1,domn=64,rerootall=0" {
-            assert!(*n > 0, "{k}: the reroot rule never fired");
-        }
-    }
+    eprintln!("s60 reroot (roots, drops, kept, reverted): {fired:?}");
+    let get = |k: &str| fired.get(k).copied().unwrap_or_default();
+    let all0 = "reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=75";
+    assert!(
+        get(&format!("s60_queens {all0}")).0 > 0,
+        "s60_queens: the reroot rule never fired"
+    );
+    // section 62: the re-record of the three-way loop is no better and is reverted; the re-records of the phase program are better and are kept
+    assert!(
+        get(&format!("s60_worse {all0}")).3 > 0,
+        "s60_worse: the probation check never reverted"
+    );
+    assert!(
+        get(&format!("s60_phases {all0}")).2 > 0,
+        "s60_phases: the probation check never kept a re-record"
+    );
 }

@@ -354,8 +354,8 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     if s.reroots > 0 || s.reroot_drops > 0 {
         let _ = writeln!(
             o,
-            "[trace] reroot: roots {} drops {} given up {}",
-            s.reroots, s.reroot_drops, s.reroot_gaveup
+            "[trace] reroot: roots {} drops {} given up {} kept {} reverted {}",
+            s.reroots, s.reroot_drops, s.reroot_gaveup, s.reroot_kept, s.reroot_reverts
         );
     }
     if s.retried > 0 || s.ident_kept > 0 {

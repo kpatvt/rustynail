@@ -1080,6 +1080,9 @@ pub const NAMES: &[&str] = &[
     "t1g_next_fn_skip",
     // docs/JIT_TRACE.md section 59 (`reroot`): a root on the minority direction of its loop is re-recorded once with a path constraint
     "reroot_never",
+    // docs/JIT_TRACE.md section 62 (`rerootchk`): the probation check of a `reroot` re-record
+    "rerootchk_keep_always",
+    "rerootchk_revert_always",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1168,7 +1171,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 883);
+        assert_eq!(NAMES.len(), 885);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
