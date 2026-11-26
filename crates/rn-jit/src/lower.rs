@@ -796,6 +796,12 @@ pub fn lower(code: &[u32], cfg: LowerCfg<'_>) -> Option<Lowered> {
     lower_ex(code, cfg, None, false)
 }
 
+thread_local! {
+    /// S73 (`landfix`): the registers that are dead at each pc (`live::prunable_with`), set by the compile that calls [`lower_ex`]; `None`: every
+    /// typed landing label checks every known register.
+    pub(crate) static LAND_DEAD: std::cell::RefCell<Option<Vec<crate::live::Set>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// [`lower`] plus an optional tier 1.5 region hook.
 pub(crate) fn lower_ex(
     code: &[u32],
@@ -1390,6 +1396,7 @@ pub(crate) fn lower_ex(
     cx.emit_cold();
     // P-X: the landing labels of the typed mid-block pcs: verify the tags tier 1 assumes there, else leave to the
     // interpreter at `pc` (refunding the pre-paid count, as a failing guard of the template at `pc` does)
+    let land_dead = LAND_DEAD.with(|c| c.borrow().clone());
     for (pc, l, known) in &land_checks {
         cx.op(Op::Bind(*l));
         #[cfg(feature = "trace")]
@@ -1404,8 +1411,26 @@ pub(crate) fn lower_ex(
                 } else {
                     rn_core::value::LUA_VNUMFLT
                 };
-                cx.ld(0, W::B1, fr(slot, 0));
-                cx.br(Cc::Ne, 0, Src::Imm(i32::from(tag)), x);
+                #[cfg(feature = "trace")]
+                let all = land_dead.is_some() && crate::tr::snap::land_live_rewrite();
+                #[cfg(not(feature = "trace"))]
+                let all = false;
+                let dead = all
+                    || land_dead
+                        .as_ref()
+                        .and_then(|d| d.get(*pc))
+                        .is_some_and(|d| crate::live::has(d, slot));
+                if dead {
+                    // S73: dead here, never read before written: make the tag what tier 1 assumes (the payload is never looked at)
+                    let ok = cx.p.label();
+                    cx.ld(0, W::B1, fr(slot, 0));
+                    cx.br(Cc::Eq, 0, Src::Imm(i32::from(tag)), ok);
+                    cx.st_imm(W::B1, fr(slot, 0), i32::from(tag));
+                    cx.op(Op::Bind(ok));
+                } else {
+                    cx.ld(0, W::B1, fr(slot, 0));
+                    cx.br(Cc::Ne, 0, Src::Imm(i32::from(tag)), x);
+                }
             }
         }
         cx.op(Op::Jmp(cx.pcl[*pc]));

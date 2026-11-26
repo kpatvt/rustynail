@@ -1524,6 +1524,34 @@ fn fill_jret_cells(cells: &mut [usize], code: &[u32], resume: &[u32], base: usiz
     debug_assert_eq!(k, cells.len());
 }
 
+/// S73 (`landfix`): publishes the dead registers of `p` for the typed landing labels of the lowering that follows (`lower::LAND_DEAD`).
+fn set_land_dead(d: &JitData, p: &rn_core::func::Proto) {
+    #[cfg(feature = "trace")]
+    let v = (d.tr.cfg.limits.landfix != 0).then(|| {
+        crate::live::prunable_with(
+            p,
+            crate::live::Faults {
+                open_call_defs: d.tr.cfg.limits.opencall != 0,
+                ..Default::default()
+            },
+        )
+    });
+    #[cfg(not(feature = "trace"))]
+    let v: Option<Option<Vec<crate::live::Set>>> = {
+        let _ = (d, p);
+        None
+    };
+    crate::lower::LAND_DEAD.with(|c| *c.borrow_mut() = v.flatten());
+}
+
+/// Clears `lower::LAND_DEAD` when the compile that set it ends (every path).
+struct LandDeadGuard;
+impl Drop for LandDeadGuard {
+    fn drop(&mut self) {
+        crate::lower::LAND_DEAD.with(|c| *c.borrow_mut() = None);
+    }
+}
+
 fn compile_inner(
     st: &mut State,
     p: &Proto,
@@ -1603,6 +1631,8 @@ fn compile_inner(
         .with_nests(nests, d.tr.cfg.pref == crate::tr::cache::TrPref::Region)
         .all_black(d.tr.cfg.opts.allblack)
     });
+    set_land_dead(d, &p);
+    let _land_guard = LandDeadGuard;
     #[cfg(feature = "trace")]
     let low = match dis.as_mut() {
         Some(dis) => {
@@ -1940,6 +1970,8 @@ fn recompile_inner(
             .collect(),
         sites: Vec::new(),
     };
+    set_land_dead(d, &p);
+    let _land_guard = LandDeadGuard;
     #[cfg(feature = "trace")]
     let low = {
         let mut hook;

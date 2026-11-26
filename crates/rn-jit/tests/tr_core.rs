@@ -4449,6 +4449,37 @@ fn p2_xregs_programs() {
     }
 }
 
+/// Section 73 (`landfix`): the typed tier-1 landing labels rewrite the tag of a *dead* known register (a pruned snapshot entry holds a stale tag) instead of
+/// leaving to the interpreter, and still verify every live one: the nest of `s73_landfix_nest` and the two P-X float-landing programs (a live register
+/// whose tag differs from tier 1's static type: a rewrite there would corrupt it), with the knob on and `opencall` 0 / 1, in the trace modes with `+verify`
+/// and small budgets. Mutant `landfix_live_rewrite`.
+#[test]
+fn s73_landfix_programs() {
+    let mut jobs = Vec::new();
+    for prog in ["px_typed_landing", "px_rec_landing", "s73_landfix_nest"] {
+        for trace in ["always", "on2"] {
+            for limits in [
+                "landfix=1,opencall=1,recnat=1",
+                "landfix=1,opencall=0,recnat=1",
+            ] {
+                for (opts, budget) in [("", 0), ("+verify", 0), ("", 17)] {
+                    let mut j = Job::new(prog, trace).opts(opts).limits_s(limits);
+                    if budget != 0 {
+                        j = j.budget(budget);
+                    }
+                    jobs.push(j);
+                }
+            }
+        }
+    }
+    let res = compare(jobs);
+    assert!(
+        res.iter()
+            .any(|(j, o)| j.prog == "px_typed_landing" && o.stats.side_recorded >= 1),
+        "px_typed_landing: no side trace recorded"
+    );
+}
+
 /// Section 59: B1 (`pureb`: `string.byte` ranges with one `j <= #s` guard and DCE-able loads) and B2 (`opencall`: open-result `CALL`s define
 /// the registers from `A` up in the `snapprune` liveness), with the knobs on (shipped) and off, in the trace modes with lockstep, exit storms,
 /// budgets, GC stress and the stack-move stress. Mutants `pureb_len_guard_skip`, `opencall_defs_low`.

@@ -195,6 +195,11 @@ pub fn land_check_skipped() -> bool {
     mutants::active("land_type_check_skip")
 }
 
+/// S73: mutant `landfix_live_rewrite` (with `landfix`, a typed landing label rewrites the tag of every known register, live ones included).
+pub fn land_live_rewrite() -> bool {
+    mutants::active("landfix_live_rewrite")
+}
+
 /// The instructions tier 1 counts for the interpreter step at `pc` (TR5.1 `fetches`, docs/JIT_TRACE.md 9.5): the
 /// instruction itself (`Lowered::fetches`: none for a `Dead` follower) plus the instructions the interpreter executes
 /// *without fetching* them: `TFORPREP` runs the `TFORCALL` and that the `TFORLOOP` (+2), `TFORCALL` runs the

@@ -12,6 +12,12 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
+        name: "s73_landfix_nest",
+        small: true,
+        // section 73 (`landfix`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s73_landfix_nest.lua"),
+    },
+    Prog {
         name: "s59_byte_opencall",
         small: true,
         // section 59 B1 (`pureb`) and B2 (`opencall`): the vm-corpus program, also compared with the reference there

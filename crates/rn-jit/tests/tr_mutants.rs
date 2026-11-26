@@ -2186,6 +2186,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s59_byte_opencall_programs")],
     },
     Row {
+        name: "landfix_live_rewrite",
+        owner: "S73",
+        dets: &[d("tr_core", "s73_landfix_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

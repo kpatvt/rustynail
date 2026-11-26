@@ -8103,3 +8103,64 @@ Scratch control: the same scratch binary with the lever off was within +0.2..+1.
    cost; (b) a cheaper bail-out for cd's 30 FnShort and raytrace's TooLong recordings (2-3 %); (c) a predictor that uses the identity of the exit
    site across flushes (the oracle's key), e.g. one that remembers that a site's previous side trace stayed cold. That needs per-site history that
    survives flushes, and it helps only programs that re-form (cd).
+
+## 73. `landfix`: the typed landing label ends the stay at every loop-end exit of a pruned snapshot (2026-11-26, base bcd0088)
+
+**What section 72 got wrong.** `lib/rep_sep` with `opencall=1` (+9.5 to +16 % instructions, run to run) is not a `Wait` exit that fails to count the outer head. The
+outer head (pc 58) is never counted because the compiled stay *ends in the interpreter at every inner-loop exit*, and the interpreter does not count heads. The exit
+is not a trace policy at all (`RUSTYNAIL_JIT_EXITDUMP`, a per-stay debug print and a debug word stored by the tier-1 exit stubs, all removed again):
+
+* every one of the 1038 stays ends at savedpc 71 (the inner `FORLOOP`) through the lazily created tier-1 exit stub `exit_r(71)` (refund 1), while the budget is
+  positive (so not a failed `CountSub`) and `ci.trap` is 0 (so not the back-edge poll);
+* the stub is branched to from the **typed mid-block landing label** of pc 71 (`lower.rs`, P-X `land_checks`): tier 1 writes only the payload of a register whose tag
+  its static types know (`LEN 19 18; ADD 11 11 19` types slot 19 as `Int`), so the label verifies the tag of every known register, dead ones included
+  (section 59 / F4 note: "check live registers only" is unsound);
+* with `opencall=1` the snapshot of the loop-end exit (side trace 2, `S4 pc=71`) no longer restores slots 19 and 20 (`[11 18 22]` instead of `[11 18 19 22]`): the
+  open-result `CALL` after the loops makes them dead. Slot 19 then holds the stale tag of the string `T3[k]` loaded earlier, the check fails, `exit_r(71)` leaves to the
+  interpreter, the interpreter runs the outer loop head 58 and ~130 inner iterations until the `rearm` tick re-enters the inner head (1049 OSR stays), and the
+  outer head is never counted. With `opencall=0` slot 19 is live (the open reader above keeps it), is restored, the check passes, tier 1 runs on into the outer
+  loop, counts head 58, forms the outer root, and the nest stays in traces (2 roots). `snapprune=0` has the same effect as `opencall=0` for the same reason.
+
+**Fix (`landfix=1`, default 0).** A known register that is **dead at the label** by the same liveness the snapshot pruning uses (`live::prunable_with`, with
+the state's `opencall`; active locals are never in that set) gets its tag *rewritten* to the type tier 1 assumes instead of being checked (`ld tag; cmp; je ok;
+mov tag, T; ok:`): a dead register is never read before it is written, and the payload-only stores of tier 1 then find the tag they assume; a stale collectable
+tag (string) becomes a number tag, which the collector does not follow. Live registers are checked as before. The set is passed to `lower_ex` through the
+thread-local `lower::LAND_DEAD` that `rt::set_land_dead` sets around the two tier-1 compiles (plain and tier 1.5 recompile; guard `LandDeadGuard`). Mutant
+`landfix_live_rewrite` (rewrite live registers too); detector `tr_core::s73_landfix_programs` (the two P-X float-landing programs, which fail with the mutant, and
+`tests/vm/s73_landfix_nest.lua`, in `always`/`on2`, `+verify`, budget 17, `landfix=1` with `opencall` 0 and 1).
+
+**Kill criterion.** `lib/rep_sep` (instructions, `RUSTYNAIL_SEED=0`, taskset 8-11, 3 runs each, deterministic to 4 digits):
+
+| config | instructions | cycles |
+|---|---|---|
+| opencall=0 (shipped) | 430.5 M | 90.4 M |
+| opencall=1 | 499.9 M (+16.1 %) | 102.0 M |
+| opencall=1, landfix=1 | 431.6 M (**+0.26 %**) | 89.7 M |
+| opencall=0, landfix=1 | 430.6 M (+0.02 %) | 90.2 M |
+
+**All 134 programs** of `bench/{lib,programs,awfy}`, one run each (`perf stat instructions:u / cycles:u`, `RUSTYNAIL_SEED=0`), against `opencall=0,landfix=0`. The
+cycle column of a single run is noisy here (sieve +10 %, string_ops -13 % with unchanged instructions), only instructions are listed; rows with a change above 0.3 %:
+
+| program | opencall=1 | opencall=1, landfix=1 | opencall=0, landfix=1 |
+|---|---|---|---|
+| lib/rep_sep | +9.5 % (+16 % in the run above) | +0.26 % | +0.02 % |
+| lib/it_next | -3.39 % | -3.38 % | +0.01 % |
+| lib/len_op | -8.70 % | -8.68 % | +0.01 % |
+| lib/byte_multi | -1.09 % | -1.05 % | 0 |
+| lib/sel_loop | -0.58 % | -0.58 % | 0 |
+| lib/load_small | 0 | -0.90 % | -0.90 % |
+| awfy/cd | +1.46 % | +1.61 % | +0.17 % |
+| awfy/havlak | +0.84 % | +1.13 % | +0.39 % |
+| awfy/bounce | +0.59 % | +0.63 % | +0.04 % |
+| awfy/json | +0.55 % | +0.68 % | 0 |
+| awfy/deltablue | +0.35 % | +0.52 % | 0 |
+| awfy/richards | 0 | +0.36 % | 0 |
+| awfy/towers | +0.22 % | 0 | 0 |
+| lib/fmt_s (28 M) | 0 | +0.44 % | +0.31 % |
+
+**Verdict.** The `rep_sep` loss is entirely this mechanism and `landfix` removes it, and keeps the `it_next` / `len_op` / `byte_multi` / `sel_loop` wins of
+`opencall=1`. The awfy rises of `opencall=1` (cd, havlak, bounce, json, deltablue) are **not** this mechanism: `landfix` does not touch them (slightly more with it:
+havlak 0.84 -> 1.13 %), they come from the snapshot shape itself. So neither default moves: `OPENCALL_PROCESS` stays 0 (awfy instructions up, the bar), and
+`LANDFIX_PROCESS` stays 0 (`opencall=0,landfix=1` is not worse than +0.4 % on any program and gains on `load_small`, but havlak +0.39 % and cd +0.17 % are above
+"instructions not up"; it matters only together with `opencall=1` or `snapprune` experiments, where it is needed). Next step if wanted: find why `opencall=1` costs
+awfy cd / havlak 1-1.5 % (not formation: instructions repeat to 6 digits).
