@@ -4884,6 +4884,16 @@ const TABLE: &[Row] = &[
         owner: "S59",
         dets: &[d("tr_core", "s60_reroot_programs")],
     },
+    Row {
+        name: "rerootchk_keep_always",
+        owner: "S62",
+        dets: &[d("tr_core", "s60_reroot_programs")],
+    },
+    Row {
+        name: "rerootchk_revert_always",
+        owner: "S62",
+        dets: &[d("tr_core", "s60_reroot_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
