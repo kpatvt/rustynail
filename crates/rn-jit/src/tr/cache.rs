@@ -2026,7 +2026,8 @@ pub struct TrProto {
     landing: RefCell<Option<std::rc::Rc<Lowered>>>,
     /// F4: the pruning data of the prototype (`snap::prune_info` with no fault and no locals), computed by the first recording that closes: the liveness analysis is
     /// quadratic in the locals of a long chunk and every recording of the prototype (side traces included) needs the same answer.
-    prune: std::cell::OnceCell<Option<std::sync::Arc<super::ir::PruneInfo>>>,
+    /// (one cell per value of the `opencall` knob: a state whose knob differs from the process default must not recompute the analysis at every recording, S74)
+    prune: [std::cell::OnceCell<Option<std::sync::Arc<super::ir::PruneInfo>>>; 2],
     /// BUNDLE-C: the prototype's function-entry head was promoted to a generic function root (`TrLimits::fnpromo`).
     fnpromo: Cell<bool>,
     /// BUNDLE-J (`centry`): the prototype was first hot when a C function called it; its function-entry head is a C-entered function root (no `fnmin`, no recursion probe).
@@ -2101,7 +2102,7 @@ impl TrProto {
             idfold_uv: Cell::new(0),
             idfold_live: Cell::new(0),
             landing: RefCell::new(None),
-            prune: std::cell::OnceCell::new(),
+            prune: [std::cell::OnceCell::new(), std::cell::OnceCell::new()],
             fnpromo: Cell::new(false),
             cent: Cell::new(false),
             cent_off: Cell::new(false),
@@ -3566,16 +3567,11 @@ pub fn prune_cached(
     opencall: bool,
 ) -> Option<std::sync::Arc<super::ir::PruneInfo>> {
     let jp = p.jit.get() as usize;
-    // (the cached copy is the analysis of the process default of `opencall`; a state with the other value computes its own)
-    if jp > rt::NOJIT
-        && !locals
-        && opencall == (OPENCALL_PROCESS != 0)
-        && !super::snap::prune_faulty()
+    if jp > rt::NOJIT && !locals && !super::snap::prune_faulty()
     {
         // SAFETY: as in `landing_cached`.
         if let Some(tp) = unsafe { (*(jp as *const JitProto)).tr.as_deref() } {
-            return tp
-                .prune
+            return tp.prune[usize::from(opencall)]
                 .get_or_init(|| super::snap::prune_info(p, false, opencall))
                 .clone();
         }

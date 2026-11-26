@@ -8164,3 +8164,32 @@ havlak 0.84 -> 1.13 %), they come from the snapshot shape itself. So neither def
 `LANDFIX_PROCESS` stays 0 (`opencall=0,landfix=1` is not worse than +0.4 % on any program and gains on `load_small`, but havlak +0.39 % and cd +0.17 % are above
 "instructions not up"; it matters only together with `opencall=1` or `snapprune` experiments, where it is needed). Next step if wanted: find why `opencall=1` costs
 awfy cd / havlak 1-1.5 % (not formation: instructions repeat to 6 digits).
+
+## 74. The awfy rises of `opencall=1` are the liveness analysis recomputed, not the snapshot shape (2026-11-26, base 89e92a5)
+
+**Mechanism.** `cache::prune_cached` cached the per-prototype pruning data (`snap::prune_info`, the bytecode liveness of `live.rs`, quadratic in the locals of a long
+chunk) only when the state's `opencall` equalled the process default (`OPENCALL_PROCESS`, 0). With `opencall=1` set by the knob, **every recording** (roots, side
+traces, aborted ones) of a prototype ran the analysis again. Evidence on awfy/bounce:
+
+* `VERBOSE=2` event streams of `opencall=0` and `1` are identical (same traces, same code sizes, same exits, same order): the pruned shape changes nothing about
+  formation or the exits there, so it is not a snapshot-shape effect;
+* `perf record -e instructions:u` shows `rn_jit::live::prunable_with` at **1.46 %** of the instructions with `opencall=1` and absent with `opencall=0`
+  (the rest of the profile is the same trace code);
+* `landfix=1` computed `prunable_with` again at every tier-1 compile (`rt::set_land_dead`), which is why `landfix` made the awfy rises larger (havlak 0.84 -> 1.13 %) and
+  why `opencall=0,landfix=1` showed havlak +0.39 %, cd +0.17 %.
+
+**Fix (no knob, no semantics change).** The cache holds one cell per value of `opencall` (`TrProto::prune: [OnceCell; 2]`), used for both values; `set_land_dead` reads
+the same cache (`prune_cached`) unless a pruning mutant is active. The result of the analysis is unchanged, so no mutant is meaningful (a state has one fixed
+`opencall`, a wrong cell index cannot be told apart by any program); the check is the counters below.
+
+| program (instructions, `RUSTYNAIL_SEED=0`) | opencall=0 | opencall=1 before | opencall=1 after |
+|---|---:|---:|---:|
+| awfy/bounce | 296.37 M | 298.11 M (+0.59 %) | 296.32 M (-0.02 %) |
+| awfy/json | 430.54 M | 432.95 M (+0.55 %) | 430.59 M (+0.01 %) |
+| awfy/cd | 641.24 M | +1.46 % | 641.13 M (-0.02 %) |
+| awfy/havlak | 503.06 M | +0.84 % | 502.49 M (-0.11 %) |
+
+**Full sweep** (134 programs of `bench/{lib,programs,awfy}`, one run, `opencall=1,landfix=1` against the default, instructions): no program rises by more than +0.05 %. Rows
+beyond 0.3 %: byte_multi -1.10, it_next -3.51, len_op -8.81, sel_loop -0.58, tfront_1k -0.62, load_small -0.44. awfy: every program within +-0.15 %. Cycles of single runs
+move up to +-14 % on programs with unchanged instructions (layout noise); 5-run minimum checks of the four that rose more than 2 %: getmt +1.3 %, m_fmod +0.4 %, binary_trees
++2.0 %, sieve +2.0 % (instructions +0.00..0.05 %, medians within 3 %, same noise as the default build).

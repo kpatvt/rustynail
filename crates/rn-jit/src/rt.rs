@@ -1528,6 +1528,11 @@ fn fill_jret_cells(cells: &mut [usize], code: &[u32], resume: &[u32], base: usiz
 fn set_land_dead(d: &JitData, p: &rn_core::func::Proto) {
     #[cfg(feature = "trace")]
     let v = (d.tr.cfg.limits.landfix != 0).then(|| {
+        // S74: the recorder's per-prototype cache holds the same analysis (no fault, no locals): a long chunk is not analysed again at every compile
+        if !crate::tr::snap::prune_faulty() {
+            return crate::tr::cache::prune_cached(p, false, d.tr.cfg.limits.opencall != 0)
+                .map(|pi| pi.dead.clone());
+        }
         crate::live::prunable_with(
             p,
             crate::live::Faults {
