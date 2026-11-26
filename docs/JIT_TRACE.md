@@ -8020,3 +8020,86 @@ coroutine yields from the called function). `tr_core::s64_wgcall_programs`: both
 plus `+emurun` (with and without exit storm 7), against the interpreter; then the gate itself at `wgate=2400000` (out of reach of the plain lengths:
 nothing records; `wgcall=1024` records). Mutant `wgcall_weight_skip` (the weight ignored; caught by the gate assertion). Registry 883 -> 884,
 `scripts/gate-mutant-map.tsv` regenerated.
+
+## 71. S4: formation as a fixed cost, causal measurement and kill test (2026-11-25, base 4f15581; nothing built)
+
+**Result: killed in step 1.** Most formation goes into side traces that never pay back, and an oracle that does not form them gains 6-8 %
+(cd, raytrace, stream_closures). No predictor that can be computed at the time of the decision came near that without costing `towers` 10-60 %.
+Every candidate failed the bar (at least 5 % cycles on cd and raytrace, no other program of the five worse by more than 2 %). Nothing was committed
+except this section. The scratch builds were not committed and have been removed.
+
+### 68.1 Method
+
+Release `rn-cli`, 5.5, base 4f15581. Binaries had names of equal length. Totals: `perf stat -e cycles:u,instructions:u` on CPU 4 (checked idle),
+200 ms spin before each run, `RUSTYNAIL_SEED=0`, configurations interleaved, environment padded to equal length, min of 9 runs. Phases: aggregated
+leaf samples of `perf record -e cycles:u -c 50021`, 5 runs (3 runs for richards, towers and stream_closures). Samples were classified by the leaf
+symbol's module, from the classes of `scripts/formation-phases.py` refined per module. Cycles come from samples, never from TSC conversions. Per
+attempt, a scratch build printed the TSC of the recorder steps and of the pipeline for each recording, together with its outcome. These numbers
+were used **only as shares** between attempts, never converted to cycles. Per-trace execution: the samples that fall in `TRACE-<n>` and its stubs
+(`RUSTYNAIL_JIT_PERFMAP=2`). Trace numbering is deterministic at a fixed seed (event logs of two runs are identical apart from addresses).
+
+### 68.2 Formation phase split (Mcyc of leaf samples; cd 325 / raytrace 142 Mcyc under `perf record`, 232 / 100 under `perf stat`)
+
+| phase | cd | raytrace |
+|---|---:|---:|
+| recorder (`tr::record`, hooked interpreter) | 14.1 | 8.2 |
+| snapshots (`tr::snap`) | 2.3 | 1.7 |
+| fold (at recording time) | 2.7 | 1.6 |
+| IR buffer (`tr::ir`, shared by recorder and passes) | 7.5 | 4.3 |
+| loop opt / forwarding / CSE (`opt_loop`) | 6.7 | 2.1 |
+| sink | 3.3 | 3.9 |
+| memory opts (`opt_mem`), entry checks / split, presize | 1.9 | 0.9 |
+| register allocator | 16.4 | 9.4 |
+| assembler | 9.7 | 4.4 |
+| x86 encoder (traces and tier 1) | 13.3 | 5.4 |
+| exit / snapshot builder | 10.8 | 4.5 |
+| install, dlink, cache control, pipeline glue | 7.2 | 2.7 |
+| tier-1 compile | 4.4 | 2.3 |
+| code memory (`mem`) | 0.8 | <0.2 |
+| hashbrown / Vec support | 8.9 | 3.7 |
+| libc malloc (named plus unnamed internals, runtime included) | ~26 | ~10 |
+
+There is no hot spot, which confirms sections 53 and 55. The allocator, the encoder and the exit builder are the largest single items.
+
+### 68.3 Wasted and redone formation (shares of formation TSC per attempt)
+
+| | cd | raytrace |
+|---|---:|---:|
+| attempts (root ok / side ok / aborted with a recording / refused before recording) | 25 / 213 / 139 / 160 | 5 / 44 / 24 / 66 (+2 pipeline failures) |
+| formation in installed side traces | 82.3 % | 81.8 % |
+| aborted recordings (cd: FnShort 1.6 %, Depth 0.5 %, SideShort 0.4 %; raytrace: TooLong 3.1 %, InnerLoop 1.1 %) | 3.3 % | 5.2 % (+3.0 % failed pipelines) |
+| traces flushed `Rerec` mid-run (cd: 7 re-records, 52 traces discarded) | 12.0 % | 0 |
+| installed traces with 0 samples of execution | 61 of 238, 20 % | 5 of 49, 7 % |
+| installed traces with at most 1 sample (at most 50k cycles of execution) | 135 of 238 (123 side), 47 % | 25 of 49 (23 side), 42 % |
+| installed traces whose execution is shorter than their own formation | 187 (174 side), 76 % | 34 (32 side), 66 % |
+| pipeline cost spread | top 10 % of compiles = 36 % of pipeline | 25 % |
+
+A side trace that runs only briefly can still be worth having: each of its entries saves an exit and a tier-1 resume. That is why the oracle below
+measures the ceiling directly, so the counts above are not taken as savings.
+
+### 68.4 Ceilings (cycles / instructions against base, min of 9; cd, raytrace, richards, towers, stream_closures)
+
+| candidate | experiment | cd | raytrace | richards | towers | stream_closures | verdict |
+|---|---|---|---|---|---|---|---|
+| oracle: never form the cold side traces | a key per exit site (head line:pc, exit pc, frame call pcs); refuse (as `MaxSide`) the keys whose traces ran at most 1 sample in the base run | -8.3 / -5.4 | -6.5 / -4.4 | +0.2 / +0.1 | -1.1 / -0.3 | -7.9 / -12.2 | ceiling exists, not realizable |
+| (the same, keys with 0 samples) | | -3.5 / -2.6 | -2.2 / -2.1 | -1.9 / -0.6 | -0.7 / -0.3 | +0.6 / +0.4 | |
+| rate-gated side traces: form only if the hot count arrived within `age / D` of the parent's install (else defer and re-stamp) | scratch, `rdtsc` clock, D = 4 / 16 / 64 / 256 | -1.6, +1.0, 0, -1.1 | -2.0, -2.5, -5.1, **-15.9** | -1.3, 0, +2.1, +5.0 | **+10.0, +24.7, +46.2, +57.4** | -9.0, +7.4, +6.3, +6.3 | killed (towers) |
+| defer side compiles: `RUSTYNAIL_JIT_TRACE_HOT=256,32` | existing knob | -3.5 / -1.8 | -1.9 / -2.4 | -0.5 / +0.7 | **+20.3 / +15.1** | +7.6 / +10.3 | killed |
+| per-family side budget `maxside=8` | existing knob | -1.5 / -0.5 | -3.9 / -3.3 | -1.7 / +0.7 | +0.5 / +1.3 | -6.9 / -17.6 | killed (< 5 % on cd) |
+| cheap side traces: no forwarding pass on side traces (an upper bound of "tier-1 quality for cold sides") | scratch | -0.6 / +1.8 | -0.2 / +0.9 | **+10.8 / +14.5** | **+31.4 / +20.7** | +1.9 / -0.1 | killed. Its profile bound is 2.9 % (cd) even at zero cost, and skipping sinking on side traces is not possible: a sunk parent needs it (wrong results) |
+
+Scratch control: the same scratch binary with the lever off was within +0.2..+1.9 % cycles of base (layout) and +0.0..+0.2 % instructions.
+
+### 68.5 Why it is killed, and what is left
+
+1. The step has no hot spot (68.2), so making formation cheaper is the 4-9 % of section 53. The structural back end of section 55 is still the only
+   route to 2x.
+2. The waste is real and large: three quarters of cd's formation goes into traces that execute for less than they cost, and the oracle gets
+   6-8 %. But the deciding information is the future of the exit. Early cold traces in cd are mostly the ones a `Rerec` discards. Late ones in
+   raytrace are formed too close to the end to pay back. Neither the exit's rate nor a later hot count separates them from towers, whose exits must
+   get their side traces at once: every deferral rule costs towers 10-60 %. The one rule that wins big on raytrace (rate D = 256, -15.9 %) is the
+   one that loses most on towers.
+3. Open leads, not built: (a) avoiding cd's `Rerec` discards (12 % of its formation), which is a root-stability question rather than formation
+   cost; (b) a cheaper bail-out for cd's 30 FnShort and raytrace's TooLong recordings (2-3 %); (c) a predictor that uses the identity of the exit
+   site across flushes (the oracle's key), e.g. one that remembers that a site's previous side trace stayed cold. That needs per-site history that
+   survives flushes, and it helps only programs that re-form (cd).
