@@ -214,4 +214,60 @@ end
 print(table.concat(out, " "))
 "#,
     },
+    Prog {
+        name: "s63_policy",
+        small: false,
+        src: r#"
+-- section 63 (`bhmin`): loops whose root recording sees few iterations left keep the per-iteration body, long ones are hoisted; each phase then
+-- runs the other kind of trip (a short-recorded loop run long, a long-recorded loop left early), so both forms meet every count and exit
+local free = {}
+for c = 1, 8 do free[c] = (c % 3 == 0) end
+local hits = 0
+local function hit(c) hits = hits + c end
+-- the queens shape: 8 iterations, mostly left early through a guard into the call path
+local function short(n)
+  local s = 0
+  for c = 1, n do
+    if free[c] then hit(c) else s = s + c end
+  end
+  return s
+end
+local t = {}
+for j = 1, 2000 do t[j] = j % 11 end
+-- a long call-free loop (recorded with many iterations left)
+local function long(m)
+  local s = 0
+  for j = 1, m do s = s + t[j] end
+  return s
+end
+-- a loop recorded short (m = 5 while it gets hot), later run long
+local function grow(m)
+  local s = 0
+  for j = 1, m do s = s + t[j] * 2 end
+  return s
+end
+local out = {}
+local a = 0
+for r = 1, 400 do a = a + short(8) end
+out[#out + 1] = a .. "/" .. hits
+local b = 0
+for r = 1, 60 do b = b + long(1500) end
+-- long loop left early: a hole, then a type change in the middle of a chunk
+t[700] = nil
+local ok1, e1 = pcall(long, 1500)
+t[700] = 700 % 11
+t[1300] = 2.5
+b = b + long(1500) + long(40) + long(1)
+t[1300] = 1300 % 11
+out[#out + 1] = b .. "/" .. tostring(ok1) .. "/" .. tostring(e1 and e1:match("arith") ~= nil)
+local g = 0
+for r = 1, 400 do g = g + grow(5) end
+for r = 1, 20 do g = g + grow(1999) end
+t[1000] = "x"
+local ok2 = pcall(grow, 1999)
+t[1000] = 1000 % 11
+out[#out + 1] = g .. "/" .. tostring(ok2)
+print(table.concat(out, " "))
+"#,
+    },
 ];

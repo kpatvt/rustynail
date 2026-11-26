@@ -540,6 +540,9 @@ struct TStats {
     /// Section 59: `reroot: roots R drops D given up G`.
     reroots: u64,
     reroot_drops: u64,
+    /// Section 63: `budhoist: loops hoisted H kept by bhmin K`.
+    bh_hoisted: u64,
+    bh_kept: u64,
     dstubs: u64,
     dstub_patched: u64,
     dstub_failed: u64,
@@ -780,6 +783,10 @@ impl TStats {
                     s.midfold_traces = t;
                     s.midfold_refused = rf;
                 }
+            } else if let Some(r) = l.strip_prefix("budhoist: loops hoisted ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                s.bh_hoisted = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.bh_kept = w.get(4).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("reroot: roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.reroots = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -14538,13 +14545,17 @@ fn n1_programs() {
 }
 
 /// Section 59 knob settings: off, the hoisted budget alone, and with chunk polls of 4 and 64 iterations.
-const S59_LIMITS: [&str; 4] = [
-    "budhoist=0,pollk=0",
-    "budhoist=1,pollk=0",
-    "budhoist=1,pollk=4",
-    "budhoist=1,pollk=64",
+/// Section 63: `bhmin` set explicitly everywhere (the shipped default is the policy); 0 = every eligible loop hoisted, 16 = the policy (both forms in
+/// one program), 1 << 30 = every loop kept in the per-iteration form while the knob is on.
+const S59_LIMITS: [&str; 6] = [
+    "budhoist=0,pollk=0,bhmin=0",
+    "budhoist=1,pollk=0,bhmin=0",
+    "budhoist=1,pollk=4,bhmin=0",
+    "budhoist=1,pollk=64,bhmin=0",
+    "budhoist=1,pollk=32,bhmin=16",
+    "budhoist=1,pollk=32,bhmin=1073741824",
 ];
-const S59_NAMES: [&str; 7] = [
+const S59_NAMES: [&str; 8] = [
     "s59_nested",
     "s59_break",
     "s59_error",
@@ -14552,6 +14563,7 @@ const S59_NAMES: [&str; 7] = [
     "s59_coro",
     "s59_counts",
     "n1_exits",
+    "s63_policy",
 ];
 
 /// Section 59 (docs/JIT_TRACE.md): the hoisted loop budget and the chunk poll against the interpreter, in the checking modes and under count budgets
@@ -14627,7 +14639,7 @@ fn s59_programs_enter_traces() {
         js.push(
             Job::new(p, "always")
                 .opts("+verify")
-                .limits_s("budhoist=1,pollk=64"),
+                .limits_s("budhoist=1,pollk=64,bhmin=0"),
         );
     }
     for (j, o) in &compare(js) {
@@ -14637,6 +14649,36 @@ fn s59_programs_enter_traces() {
             j.prog,
             o.stats.line()
         );
+    }
+}
+
+/// Section 63 (`bhmin`): the per-loop policy of the hoisted budget. With `bhmin=16` the `s63_policy` program has both kinds of loop (the 8-iteration
+/// loop and the loop recorded with 5 iterations keep the per-iteration body, the long loop is hoisted); with `bhmin=0` nothing is kept; with the knob
+/// off nothing is hoisted. Detector of `bhmin_ignored`.
+#[test]
+fn s63_bhmin_policy() {
+    let lims = [
+        "budhoist=1,pollk=32,bhmin=16",
+        "budhoist=1,pollk=32,bhmin=0",
+        "budhoist=0,pollk=32,bhmin=16",
+    ];
+    let mut js = Vec::new();
+    for lim in lims {
+        // (`always` records the short loops inside the callers' traces: the policy is asserted at the default and the low threshold)
+        js.push(Job::new("s63_policy", "on").limits_s(lim));
+        js.push(Job::new("s63_policy", "on2").limits_s(lim));
+    }
+    for (j, o) in &compare(js) {
+        let (h, k) = (o.stats.bh_hoisted, o.stats.bh_kept);
+        match j.limits.as_str() {
+            "budhoist=1,pollk=32,bhmin=16" => {
+                assert!(h >= 1 && k >= 1, "{}: hoisted {h} kept {k}", j.tag())
+            }
+            "budhoist=1,pollk=32,bhmin=0" => {
+                assert!(h >= 1 && k == 0, "{}: hoisted {h} kept {k}", j.tag())
+            }
+            _ => assert!(h == 0 && k == 0, "{}: hoisted {h} kept {k}", j.tag()),
+        }
     }
 }
 

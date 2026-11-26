@@ -1046,6 +1046,8 @@ pub const NAMES: &[&str] = &[
     "bh_chunk_end_bias_long",
     "bh_refund_skip",
     "bh_bias_skip",
+    // docs/JIT_TRACE.md section 63 (`bhmin`): the per-loop policy of the hoisted budget
+    "bhmin_ignored",
     // N1b (`nidx`): the carried negated index
     "nidx_disp_off1",
     "nidx_step_sign",
@@ -1168,7 +1170,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 883);
+        assert_eq!(NAMES.len(), 884);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

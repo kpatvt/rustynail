@@ -1433,6 +1433,8 @@ struct Rec {
     unr_started: bool,
     /// E2: a `GETUPVAL` was folded to the running closure (the trace relies on the region invariant: `TraceIr::idfold`).
     idfolded: bool,
+    /// Section 63: see [`TraceIr::rec_trip`].
+    rec_trip: u64,
     /// E5: a method `SELF` was folded to the running closure (`TraceIr::midfold`).
     midfolded: bool,
 }
@@ -1704,6 +1706,7 @@ impl Rec {
             tail_args: None,
             unr_started: false,
             idfolded: false,
+            rec_trip: 0,
             midfolded: false,
             segs: Vec::new(),
             retf_sel_ok: false,
@@ -1919,6 +1922,7 @@ impl Rec {
         self.str_allocs = 0;
         self.unr_started = false;
         self.idfolded = false;
+        self.rec_trip = 0;
         self.midfolded = false;
         self.prep_link_ok = false;
         self.prep_link = None;
@@ -2819,6 +2823,7 @@ impl Rec {
         LA_LAST.with(|l| *l.borrow_mut() = self.la_seen.borrow().clone());
         ir.fn_root = self.cfg.fn_root && self.cfg.side.is_none() && ir.rec_call.is_none();
         ir.idfold = self.idfolded;
+        ir.rec_trip = self.rec_trip;
         ir.midfold = self.midfolded;
         Recorded {
             writeback: match self.rec_ret {
@@ -9584,6 +9589,18 @@ impl Rec {
             } else {
                 step
             };
+            if self.cfg.side.is_none() && self.cur_depth == 0 {
+                // Section 63: the trip estimate of this loop instance: the iterations left after this one, this one, and for an upward loop the
+                // iterations done so far assuming the usual start 1 (`(index - 1) / step`; the start itself is gone in 5.5's layout)
+                let left = vm.slot(sl_lim).as_int().unwrap_or(0) as u64;
+                let ixv = vm.slot(sl_ix).as_int().unwrap_or(0);
+                let done = if ks > 0 && ixv >= 1 {
+                    ((ixv - 1) / ks) as u64
+                } else {
+                    0
+                };
+                self.rec_trip = left.saturating_add(1).saturating_add(done);
+            }
             let z = self.kint(0);
             self.guard(TOp::Ne, Ty::I64, cnt, z, 0)?;
             if literal && !mutants::active("forloop_step_guard_skip") {

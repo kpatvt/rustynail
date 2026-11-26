@@ -167,9 +167,11 @@ pub const CLOOP_PROCESS: u32 = 1;
 /// N1d: the process default of [`TrLimits::leaadd`] (also the struct default).
 pub const LEAADD_PROCESS: u32 = 1;
 /// Section 59: the process default of [`TrLimits::budhoist`] (also the struct default).
-pub const BUDHOIST_PROCESS: u32 = 0;
+pub const BUDHOIST_PROCESS: u32 = 1;
 /// Section 59: the process default of [`TrLimits::pollk`] (also the struct default).
-pub const POLLK_PROCESS: u32 = 0;
+pub const POLLK_PROCESS: u32 = 64;
+/// Section 63: the process default of [`TrLimits::bhmin`] (also the struct default).
+pub const BHMIN_PROCESS: u32 = 16;
 /// N1b: the process default of [`TrLimits::nidx`] (also the struct default).
 pub const NIDX_PROCESS: u32 = 1;
 /// S4: the process default of [`TrLimits::shapeguard`] (also the struct default).
@@ -870,6 +872,10 @@ pub struct TrLimits {
     /// Section 59 (`pollk`): with `budhoist`, nonzero `K`: such a loop drops its per-iteration poll and polls at every chunk start, a chunk being at most `K`
     /// iterations; 0 = the body keeps its poll (default [`POLLK_PROCESS`]).
     pub pollk: u32,
+    /// Section 63 (`bhmin`): the per-loop policy of `budhoist`: a loop is hoisted only when the FORLOOP count its root recording observed (the iterations
+    /// left in that loop instance) is at least `bhmin`; a smaller one keeps the per-iteration `POLL; BUDGET` body (0 = every eligible loop is hoisted;
+    /// default [`BHMIN_PROCESS`]).
+    pub bhmin: u32,
     /// N1b (`nidx`): in a peeled counted loop the complemented index `~(k + c)` of an `ALOAD` whose index is made of the induction variable `k` (the loop-carried
     /// `ADD k, #s`) is the carried value `-k` (a second PHI, updated `ADD -s` once per iteration) with a displacement, instead of `mov; not` in front of every
     /// access (the `aidx` mechanism for the loop's own induction variable only; `aidx` itself keeps its meaning for every other index): 0 = off, 1 = on
@@ -1103,6 +1109,7 @@ impl Default for TrLimits {
             leaadd: LEAADD_PROCESS,
             budhoist: BUDHOIST_PROCESS,
             pollk: POLLK_PROCESS,
+            bhmin: BHMIN_PROCESS,
             nidx: NIDX_PROCESS,
             shapeguard: SHAPEGUARD_PROCESS,
             shapedemote: SHAPE_DEMOTE,
@@ -1329,6 +1336,7 @@ impl TrLimits {
                 "leaadd" => l.leaadd = v.min(1),
                 "budhoist" => l.budhoist = v.min(1),
                 "pollk" => l.pollk = v.min(1 << 20),
+                "bhmin" => l.bhmin = v.min(1 << 30),
                 "nidx" => l.nidx = v.min(1),
                 "shapeguard" => l.shapeguard = v.min(1),
                 "shapedemote" if v > 0 => l.shapedemote = v,

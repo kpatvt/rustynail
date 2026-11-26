@@ -351,6 +351,16 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
     if s.inner_retried > 0 {
         let _ = writeln!(o, "[trace] innerretry: rounds started {}", s.inner_retried);
     }
+    {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (h, k) = (
+            super::asm::BH_HOISTED.load(Relaxed),
+            super::asm::BH_KEPT.load(Relaxed),
+        );
+        if h + k > 0 {
+            let _ = writeln!(o, "[trace] budhoist: loops hoisted {h} kept by bhmin {k}");
+        }
+    }
     if s.reroots > 0 || s.reroot_drops > 0 {
         let _ = writeln!(
             o,
