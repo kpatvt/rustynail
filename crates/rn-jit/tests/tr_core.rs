@@ -10058,7 +10058,13 @@ fn b1_hdr_programs() {
 #[test]
 fn hs_sub_ring_matrix() {
     let mut jobs = Vec::new();
-    for l in ["hdrlib=2", "hdrlib=4", "hdrlib=1"] {
+    // (section 68: the lean `sub` entry runs only with `regcall=0`)
+    for l in [
+        "hdrlib=2,regcall=0",
+        "hdrlib=2,regcall=1",
+        "hdrlib=4",
+        "hdrlib=1",
+    ] {
         for trace in ["always", "on2", "on"] {
             for (opts, budget) in [
                 ("", 0),
@@ -10209,7 +10215,12 @@ fn ba_next_matrix() {
 
 #[test]
 fn ba_find_matrix() {
-    assert!(!compare(ba_jobs("ba_find", &["", "libcall=519"])).is_empty());
+    // (section 68: the lean entry of `find` runs only with `regcall=0`)
+    assert!(!compare(ba_jobs(
+        "ba_find",
+        &["", "libcall=519,regcall=0", "libcall=519,regcall=1"]
+    ))
+    .is_empty());
 }
 
 /// BUNDLE-C `tfmt`: `string.format` of constant formats recorded as a `LIB` helper (`tc_fmt`): the program in every trace mode with verification, exit
@@ -10231,7 +10242,8 @@ fn bh_lib_matrix() {
         "bh_lib",
         &[
             "libcall=1",
-            "libcall=7",
+            "libcall=7,regcall=0",
+            "libcall=7,regcall=1",
             "libcall=15",
             "libcall=31",
             "libcall=0"

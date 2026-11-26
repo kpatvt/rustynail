@@ -7528,8 +7528,9 @@ loop value in a callee-saved register (`rbx`, `rbp`, `r12`, `r13`, `r15`), one s
 | + `rapol=7` (`CALLSPILL`) | -0.4 % more | +0.7 % | killed (section 51: lua_lexer formation) |
 | free `r12` / `r13` for allocation (the thread / ci pins) | | | not prototyped: every exit stub, `CallH` and the carry entries read them; a pin change, not a protocol change |
 
-Shared set, `regcall` 0 -> 1 (cycles min of 9): find_plain -6.2 %, sub -6.7 %, match -5.2 %; str_eq_long, getmt, byte unchanged in instructions
-(their hot paths are inline: no `LIB` call is made). The search itself (`memfind_pair` on a 35-45 byte subject) is now the larger half of the
+Shared set, `regcall` 0 -> 1 (cycles min of 9, two passes): find_plain -6.2 / -6.0 %, sub -6.7 / -4.8 %, match -5.2 / -7.3 %; str_eq_long
+(-1.4 %), getmt (-0.5 %), byte (+0.2 %) unchanged in instructions (their hot paths are inline: no `LIB` call is made). Geomean of the six
+about -3.2 % cycles: above the 2 % kill line. The search itself (`memfind_pair` on a 35-45 byte subject) is now the larger half of the
 gap to LuaJIT (120 ops against `lj_str_find`'s whole call); not in scope.
 
 ### 68.3 What was built
@@ -7588,4 +7589,12 @@ operands; format / tostring / random / gmatch / type and a library error behind 
 `xregs=3`, GC stress 1 / 2 in both collector modes, stack moves, `+emurun` and `+emurun +exitstorm=7`, and with the oracle feature the
 instruction-count identity. Mutants (registry 883 -> 885): `regcall_args_rot` (the register entry takes its operands rotated) and
 `regcall_arg2_skip` (the third operand not moved), both caught by `s68_regcall_programs`. No allocator contract
-changed (`tests/tr_asm.rs` only gained the new `AsmEnv` field).
+changed (`tests/tr_asm.rs` only gained the new `AsmEnv` field). With `regcall=1` the lean entries run only for operands in `X` registers, so
+the detectors of their mutants (`libk_lean_char_args`, `libk_lean_cmp_swapped`, `libk_lean_find_swapped`, `libsub_lean_args_swapped`: gate-light
+found them surviving) now name the knob: `bh_lib_matrix` `libcall=7,regcall=0` / `=1`, `ba_find_matrix` `libcall=519,regcall=0` / `=1`,
+`hs_sub_ring_matrix` `hdrlib=2,regcall=0` / `=1`.
+
+Gates: `GATE_CPUS=6-7 GATE_LOAD_MAX=0 scripts/gate-light.sh regcall_,libk_lean_,libsub_lean --fast --base HEAD~1` on the first commit: every
+step PASS (trace suites 5.5 651 s, 5.4 610 s, `vm_corpus`, jit-diff 1-50) except the mutant group (the four lean-entry survivors above); after
+the detector fix `scripts/gate-mutants.sh --only regcall_,libk_lean_,libsub_lean`: 6 ran, 6 caught. Not run: gate-heavy, PGO builds, the
+all-program benchmark on a quiet machine.
