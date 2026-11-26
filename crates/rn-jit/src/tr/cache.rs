@@ -3272,7 +3272,11 @@ fn tsc() -> u64 {
 pub(crate) fn loop_len_w(code: &[u32], head: usize, wcall: u32) -> u64 {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode as O;
-    let wcall = if mutants::active("wgcall_weight_skip") { 0 } else { u64::from(wcall) };
+    let wcall = if mutants::active("wgcall_weight_skip") {
+        0
+    } else {
+        u64::from(wcall)
+    };
     let mut calls = 0u64;
     for (j, &w) in code.iter().enumerate().skip(head) {
         let i = Instruction(w);
