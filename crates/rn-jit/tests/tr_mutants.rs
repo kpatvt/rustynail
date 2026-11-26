@@ -2196,6 +2196,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],
     },
     Row {
+        name: "gmplus_set_neg_skip",
+        owner: "S6",
+        dets: &[d("tr_gmplus", "gmplus_matches_reference")],
+    },
+    Row {
         name: "random_range_off",
         owner: "F2",
         dets: &[d("tr_core", "f2_programs")],

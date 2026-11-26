@@ -7782,3 +7782,59 @@ nothing (instructions 7650-7653 M).
 `gmside=3` 2480-2488 / 7651 (**-3.1 % cycles, -4.8 % instructions**); json, stream_closures, lua_interp: instructions identical (no gmatch-ended
 loops, no side `CFunc` aborts on their hot paths). **Killed** (< 5 % cycles on text_adventure). The remaining gap is the runtime (string creation,
 pattern matching, table resize, C-call protocol), not trace formation.
+
+## 68. S6: runtime handles for string-heavy programs: the grouped text_adventure profile, `gmplus` (rn-std `STR_FAST` bit 128; 2026-11-25, base 4f15581)
+
+**Profile** (corpus2/dev/text_adventure, release 4f15581, `perf record -e cycles:u --call-graph dwarf` on CPU 4, 6611 samples; groups by the
+outermost Rust frame below the compiled code, so a library function's children count with it). Base 2563 Mcyc / 8024 M instructions, LuaJIT 1213 / 3739.
+
+| group | share | items | LuaJIT |
+|---|---:|---|---|
+| `gmatch` iteration | ~22 % | `jit_tforcall` -> `State::call` -> `gmatch_aux` 10.1 (aux self 5.2, `l_checkstack` 0.9, `push_captures` 0.9, `fast_match` 0.9), `run_len` 2.6, `gmatch` (closure) 2.5, `patc::lookup` 2.3, `skip` 1.8, `do_match` 1.4, `start_filter` 1.2, capture interning (part of `push_bytes`) | `gm.lua` micro (1 M lines, 3.2 M steps) 424 vs our 627 Mcyc |
+| string creation | ~11 % | `new_str` self 6.7 (of which the hash 2.3; callers: `push_bytes` 5.0 = gmatch captures, `push_scratch` 4.4 = `format`, `str_lower` 2.7, `intern_concat` 0.5), `jit_tr_alloc` 1.8, `short_core` 2.5 | interns every string too; section 62 measured the probe (99.8 % hits, two dependent misses) |
+| C-call protocol | ~11 % | `jit_call` self 7.3, `ccall` 3.2, `adjust_varargs` 1.2, `get_varargs` 0.4 | stitched / inlined (section 63) |
+| `string.format` | ~6.5 % | `format_at` 2.8, `fmtc::lookup` 1.9 (~48 cycles per call), `tolstring_into` 1.8 (its string `__tostring` probe) | `say.lua` micro 73 vs our 277 Mcyc; `fmt.lua` 61 vs 184 (compiled `STRFMT`) |
+| table growth | ~5 % | `newkey` 1.9, `resize` 2.1, `setnodevector` 0.6, `finish_set` 2.6 (with `newkey`) | `words.lua` micro (`{}` + 2-3 appends): LuaJIT 253 vs our 189 Mcyc: no gap |
+| `table.remove` | 2.4 % | `tremove` (shift by `arr_move` already) | |
+| GC sweep | ~2.8 % | `free_obj` 1.1, `gc_step` 1.2, `list_remove_after` 0.5 (the S1 note's 2.6 % was a flat `perf` view; it is the free of dead tables) | |
+
+**Ceilings and kills.** `gmatch` (prototype = the build below): text_adventure -8.4 % cycles / -7.6 % instructions against base + ad77655's `patc`
+fix (measured that way so as not to count `patc` twice; ad77655 alone: -1.2 % / -1.1 %). String creation: killed by section 62 (the probe is the cost;
+no prototype). C-call protocol: sections 54.5 (`t1ccall`, E9) already measured its levers on this program (-0.1 %, +0.4 %); not re-attempted.
+`format`: `fmtc::lookup` ~48 cycles per call x ~1 M calls = ceiling ~1.9 %, the `__tostring` probe < 1 %: killed (< 3 %, the other users
+(template_engine, markdown) spend under 2 % there). Table growth: no LuaJIT gap (killed). `table.remove` 2.4 % with the bulk move in place: killed.
+GC sweep: killed (< 3 %).
+
+**Built: `gmplus`** (rn-std `STR_FAST` bit `GMPLUS` = 128, default **on**). `gmatch_aux` with a pattern that is exactly `%x+` (a class letter,
+either case) or `[^c]+` / `[^%c]+` (`pattern::gm_plus`; the first byte after `^` is a member even when it is `]`, `-` alone is no range, `[^%x]`
+of a class letter is the complemented class) scans directly (`pattern::gm_plus_run`): the first byte in the set at or after the position, the
+longest run from there; then the same upvalue updates and `push_bytes` as the general path. Exact: such a pattern has no capture, cannot be
+malformed and never matches the empty string, so the match always differs from `lastmatch` (which is at most the position); the one result needs
+no `luaL_checkstack` (a C function has `LUA_MINSTACK` free slots); no allocation besides the captured string (`collectgarbage("count")` identical
+with the bit on and off, checked by hand). The trace `GMATCH` helper is unchanged.
+
+**Measured** (CPU 4, min of 7, interleaved; `b0` = base 4f15581, `new` = this commit, `off` = this commit with `RUSTYNAIL_STR_FAST=119`; Mcyc / M instr):
+
+| program | base | new (cyc / instr) | off (cyc / instr) |
+|---|---|---|---|
+| corpus2/dev/text_adventure | 2562.9 / 8023.8 | **-5.7 % / -8.23 %** | +3.3 % / +0.37 % |
+| real/template_engine | 737.4 / 2984.8 | **-7.9 % / -8.96 %** | +1.6 % / +0.37 % |
+| lib/gmatch_words | 176.9 / 1063.4 | **-5.4 % / -6.57 %** | +2.0 % / +0.36 % |
+| corpus2/dev/wordfreq_wrap | 730.3 / 2363.4 | -2.4 % / -3.14 % | +1.3 % / +0.35 % |
+| awfy/json, programs/json, real/lua_interp, stream_closures, inspect_lua, lua_parser, scheme_interp, forth_vm, train/stringheavy, lib/find_pat | | -0.9 .. +0.8 % / -0.06 .. +0.01 % | |
+| apps/markdown | 121.6 / 380.3 | +1.1 % / +0.13 % | +1.3 % / +0.09 % |
+| corpus/lua_lexer (11 runs) | 811.7 / 3281.6 | +2.1 % / +0.03 % | +1.3 % / +0.02 % |
+| corpus/serpent_ser (11 runs) | 2019.6 / 6860.2 | +1.5 % / -0.00 % | +1.8 % / +0.08 % |
+| corpus/json_rxi (11 runs) | 1872.5 / 6897.6 | +0.3 % / -0.00 % | -0.3 % / +0.00 % |
+| sample: deltablue, havlak, richards, events, expr_lang, raytrace, parser_combinator, csv_ini_yaml | | -1.2 .. +1.1 % / 0.00 .. +0.09 % | |
+
+The lua_lexer / serpent_ser / markdown deltas are the binary's layout (the same with the bit off, instructions unchanged; neither program runs a
+`gmplus` pattern on its hot path); bit on against bit off in the same binary is within +-0.7 % everywhere except the targets.
+
+Tests: `rn-std/tests/strfast_diff.rs::gmplus_matches_the_general_gmatch` (every accepted shape: 22 class escapes in both forms, 21 one-byte
+complements incl. `]`, `^`, `-`, `\0`, `\255`; from every start position of 1500 random subjects over a mixed alphabet, against the general
+`GMatch` with every fast bit off; 17 neighbouring shapes refused); `tests/vm/s6_01_gmplus.lua` (vm_corpus against the reference: all classes and
+complements over 13 subjects, init positions, the iterator past its end, interleaved iterators, neighbouring patterns through the general matcher,
+a malformed `[^%]+`, string `__tostring`, coroutines, collections between matches; checked by hand with the bit on / off, GC stress 1 / 2 in both
+modes, `RUSTYNAIL_JIT_TRACE=off`); detector `rn-jit/tests/tr_gmplus.rs` (the script in process, bit on and off, against
+`tests/data/s64_gmplus.expected`; 5.4 and 5.5 print the same). Mutant `gmplus_set_neg_skip` (`[^%x]+` scanned as `%x+`; caught; registry 883 -> 884).

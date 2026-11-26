@@ -216,7 +216,7 @@ fn mut_tbl_move_meta_skip() -> bool {
 
 /// Test-only mutants of the `table` library fast paths of rn-std (M1 / R1, docs/JIT_TRACE.md section 59; feature `jit_trace_mut`): a bit
 /// mask, `1` `tmove_presize_holes` ([`TableRef::move_presize`] ignores holes of the source range), `2` `tpop_meta_skip` (the `table.remove(t)`
-/// fast path of rn-std ignores the metatable).
+/// fast path of rn-std ignores the metatable), `4` `gmplus_set_neg_skip` (S6: `[^%x]+` scanned as `%x+` by the rn-std `gmatch` direct scan).
 #[cfg(feature = "jit_trace_mut")]
 static MUT_TLIB: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 

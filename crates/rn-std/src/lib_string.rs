@@ -535,6 +535,25 @@ fn gmatch_aux(st: &mut State) -> LuaResult<usize> {
     };
     let (s, p) = (s.get().as_bytes(), p.get().as_bytes());
     let mut src = cl.upvalue(2).as_int().unwrap_or(0) as usize;
+    // S6 `gmplus` (`STR_FAST` bit `GMPLUS`): `%x+` / `[^c]+` without the general matcher. The loop below finds the same match (the first position in
+    // the class, its longest run); the match is never empty, so it always differs from `lastmatch` (which is at most `src`); no error is
+    // possible, and the one result needs no `luaL_checkstack` (a C function has `LUA_MINSTACK` free slots). Mutant `gmplus_set_neg_skip` (in `pattern::gm_plus`).
+    if crate::strfast::on(crate::strfast::GMPLUS) {
+        if let Some(g) = pattern::gm_plus(p) {
+            return match pattern::gm_plus_run(s, src, g) {
+                Some((b, e)) => {
+                    cl.set_upvalue_int(2, e as i64);
+                    cl.set_upvalue_int(3, e as i64);
+                    st.push_bytes(&s[b..e])?;
+                    Ok(1)
+                }
+                None => {
+                    cl.set_upvalue_int(2, s.len() as i64 + 1);
+                    Ok(0)
+                }
+            };
+        }
+    }
     let lastmatch = cl.upvalue(3).as_int().unwrap_or(-1);
     let mut ms = MatchState::new(s, p);
     let f = ms.start_filter();

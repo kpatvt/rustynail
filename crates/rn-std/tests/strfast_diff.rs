@@ -812,3 +812,71 @@ fn memfind_pair_matches_the_scalar_search() {
     }
     strfast::set_mask(saved);
 }
+
+/// S6 `gmplus` (section 64): every pattern [`gm_plus`] accepts yields, from every start position, the matches of the general
+/// `gmatch` iteration; patterns of other shapes are refused.
+#[test]
+fn gmplus_matches_the_general_gmatch() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = strfast::mask();
+    strfast::set_mask(0);
+    let mut pats: Vec<Vec<u8>> = Vec::new();
+    for c in b"acdglpsuwxzACDGLPSUWXZ" {
+        pats.push(vec![b'%', *c, b'+']);
+        pats.push(vec![b'[', b'^', b'%', *c, b']', b'+']);
+    }
+    for c in b"\n,.]^-%a ;\0\xff" {
+        if *c != b'%' {
+            pats.push(vec![b'[', b'^', *c, b']', b'+']);
+        }
+        pats.push(vec![b'[', b'^', b'%', *c, b']', b'+']);
+    }
+    // shapes that must be refused (valid patterns of another meaning, malformed ones)
+    let refused: &[&[u8]] = &[
+        b"%a", b"%a*", b"%a-", b"(%a+)", b"%a+$", b"%b()", b"%f[%a]", b"%1+", b"[^a]", b"[^ab]+",
+        b"[a]+", b"[^a-c]+", b"%q+", b"[^%]+", b"a+", b"%a++", b"[^]+",
+    ];
+    for p in refused {
+        assert_eq!(gm_plus(p), None, "{:?}", String::from_utf8_lossy(p));
+    }
+    let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+    let alpha: &[u8] = b"ab Z9_.,;]^-%\n\t\0\xff\x7f";
+    let iters = if cfg!(miri) { 20 } else { 1500 };
+    for it in 0..iters {
+        let n = if it % 7 == 0 {
+            40 + r.below(60)
+        } else {
+            r.below(16)
+        };
+        let s: Vec<u8> = (0..n).map(|_| alpha[r.below(alpha.len())]).collect();
+        for p in &pats {
+            let g = gm_plus(p)
+                .unwrap_or_else(|| panic!("accepted shape {:?}", String::from_utf8_lossy(p)));
+            for start in 0..=s.len() + 1 {
+                let mut want = Vec::new();
+                let mut gm = GMatch::new(&s, p, start as i64 + 1);
+                while let Ok(Some(c)) = gm.next_match() {
+                    want.push(caps_repr(&c));
+                    if want.len() > 200 {
+                        break;
+                    }
+                }
+                let mut got = Vec::new();
+                let mut pos = start;
+                while let Some((b, e)) = gm_plus_run(&s, pos, g) {
+                    assert!(e > b && b >= pos);
+                    got.push(caps_repr(&[Cap::Str(&s[b..e])]));
+                    pos = e;
+                }
+                assert_eq!(
+                    got,
+                    want,
+                    "{:?} {:?} from {start}",
+                    String::from_utf8_lossy(&s),
+                    String::from_utf8_lossy(p)
+                );
+            }
+        }
+    }
+    strfast::set_mask(saved);
+}

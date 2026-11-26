@@ -27,8 +27,12 @@ pub const TMOVEPRE: u32 = 32;
 /// of nil, without the generic argument checks.
 pub const TPOP: u32 = 64;
 
+/// S6 `gmplus` (docs/JIT_TRACE.md section 64): the `string.gmatch` iterator of a pattern that is exactly `%x+` (one class escape and
+/// `+`) scans the class directly, without the pattern matcher's state, start filter, match dispatch and capture protocol.
+pub const GMPLUS: u32 = 128;
+
 /// The process default (the one place that decides which pieces are on).
-pub const DEFAULT: u32 = FMTC | PAT1 | PATC | MEMFIND | TMOVEPRE | TPOP;
+pub const DEFAULT: u32 = FMTC | PAT1 | PATC | MEMFIND | TMOVEPRE | TPOP | GMPLUS;
 
 const UNINIT: u32 = u32::MAX;
 static MASK: AtomicU32 = AtomicU32::new(UNINIT);

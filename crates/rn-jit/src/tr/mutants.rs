@@ -441,6 +441,8 @@ pub const NAMES: &[&str] = &[
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
     "tpop_meta_skip",
+    // S6 (rn-std `gmplus`): `[^%x]+` is scanned as `%x+` by the direct `gmatch` scan
+    "gmplus_set_neg_skip",
     "random_range_off",
     // C2: tier-1 comparisons of non-numbers (`jit_cmp`)
     "c2cmp_swap",
@@ -1124,7 +1126,9 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
     rn_core::table::set_mut_tlib(
-        u8::from(active("tmove_presize_holes")) | u8::from(active("tpop_meta_skip")) << 1,
+        u8::from(active("tmove_presize_holes"))
+            | u8::from(active("tpop_meta_skip")) << 1
+            | u8::from(active("gmplus_set_neg_skip")) << 2,
     );
     rn_core::table::set_mut_smallins(u8::from(active("smallins_order_swap")));
     rn_core::table::set_mut_presize(u8::from(active("presize_no_free")));
@@ -1173,7 +1177,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 886);
+        assert_eq!(NAMES.len(), 887);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
