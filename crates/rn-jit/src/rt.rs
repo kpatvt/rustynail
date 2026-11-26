@@ -1525,7 +1525,7 @@ fn fill_jret_cells(cells: &mut [usize], code: &[u32], resume: &[u32], base: usiz
 }
 
 /// S73 (`landfix`): publishes the dead registers of `p` for the typed landing labels of the lowering that follows (`lower::LAND_DEAD`).
-fn set_land_dead(d: &JitData, p: &rn_core::func::Proto) {
+pub(crate) fn set_land_dead(d: &JitData, p: &rn_core::func::Proto) {
     #[cfg(feature = "trace")]
     let v = (d.tr.cfg.limits.landfix != 0).then(|| {
         // S74: the recorder's per-prototype cache holds the same analysis (no fault, no locals): a long chunk is not analysed again at every compile
@@ -1550,7 +1550,7 @@ fn set_land_dead(d: &JitData, p: &rn_core::func::Proto) {
 }
 
 /// Clears `lower::LAND_DEAD` when the compile that set it ends (every path).
-struct LandDeadGuard;
+pub(crate) struct LandDeadGuard;
 impl Drop for LandDeadGuard {
     fn drop(&mut self) {
         crate::lower::LAND_DEAD.with(|c| *c.borrow_mut() = None);

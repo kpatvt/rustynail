@@ -11116,6 +11116,9 @@ pub mod support {
                 jpr.tr.as_deref(),
             )
         });
+        // S73: the real compile publishes the dead registers for the typed landing labels; the re-derivation must see the same set
+        rt::set_land_dead(d, p);
+        let _land_guard = rt::LandDeadGuard;
         let low = match dis.as_mut() {
             Some(dis) => {
                 let mut hook = |cx: &mut crate::lower::Cx<'_>,
