@@ -47,6 +47,8 @@ mod s52_progs;
 mod s59_progs;
 #[path = "tr_core/s60_progs.rs"]
 mod s60_progs;
+#[path = "tr_core/s64_progs.rs"]
+mod s64_progs;
 #[path = "tr_core/s68_progs.rs"]
 mod s68_progs;
 #[path = "tr_core/sink_progs.rs"]
@@ -75,6 +77,7 @@ use s51_progs::S51_PROGS;
 use s52_progs::S52_PROGS;
 use s59_progs::S59_PROGS;
 use s60_progs::S60_PROGS;
+use s64_progs::S64_PROGS;
 use s68_progs::S68_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
@@ -210,6 +213,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S59_PROGS)
         .chain(S60_PROGS)
         .chain(S68_PROGS)
+        .chain(S64_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -10033,6 +10037,55 @@ fn b1_wgate_gate_counts_work() {
         res[1].1.stats.line()
     );
     assert!(res[2].1.stats.installed >= 1);
+}
+
+/// S2 / section 64 (`wgcall`): the call-weighted start gate. The programs in every trace mode with exit storms, budgets, GC stress and the
+/// stack-move stress, plus the emulator, with the knob set explicitly (weights 16 and 1024 under the process gate, and 0 as the control),
+/// against the interpreter run. Then the gate itself: at a `wgate` that the plain loop lengths never reach within the program, a weight that
+/// counts the calls opens it (mutant `wgcall_weight_skip`: the weight is ignored, nothing records).
+#[test]
+fn s64_wgcall_programs() {
+    let progs = ["s64_call_loops", "s64_call_observers"];
+    let limits = [
+        "wgcall=16,wgate=30000",
+        "wgcall=1024,wgate=30000",
+        "wgcall=0,wgate=30000",
+    ];
+    let mut jobs = b1_jobs(&progs, &limits);
+    for p in progs {
+        for l in limits {
+            for opts in ["+emurun", "+emurun +exitstorm=7"] {
+                let mut j = Job::new(p, "always").opts(opts);
+                j.limits = l.into();
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().wgcall, 0);
+    assert_eq!(TrLimits::parse("wgcall=16").0.wgcall, 16);
+    let mut gate = Vec::new();
+    for l in [
+        "wgcall=0,wgate=2400000,fnroot=0",
+        "wgcall=1024,wgate=2400000,fnroot=0",
+    ] {
+        let mut j = Job::new("s64_call_loops", "on").opts("+verify");
+        j.limits = l.into();
+        gate.push(j);
+    }
+    let res = compare(gate);
+    assert_eq!(
+        res[0].1.stats.recorded,
+        0,
+        "plain lengths never open the gate: {}",
+        res[0].1.stats.line()
+    );
+    assert!(
+        res[1].1.stats.recorded >= 1,
+        "weighted calls open the gate: {}",
+        res[1].1.stats.line()
+    );
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at

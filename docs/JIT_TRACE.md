@@ -7946,3 +7946,77 @@ Gates: `GATE_CPUS=6-7 GATE_LOAD_MAX=0 scripts/gate-light.sh regcall_,libk_lean_,
 step PASS (trace suites 5.5 651 s, 5.4 610 s, `vm_corpus`, jit-diff 1-50) except the mutant group (the four lean-entry survivors above); after
 the detector fix `scripts/gate-mutants.sh --only regcall_,libk_lean_,libsub_lean`: 6 ran, 6 caught. Not run: gate-heavy, PGO builds, the
 all-program benchmark on a quiet machine.
+
+## 70. S2: where short and call-heavy programs lose, and the call-weighted start gate (`wgcall`; 2026-11-25, base 4f15581)
+
+Task: the fixed / warm-up cost of short and call-heavy programs (lib/fmt_s, awfy/permute, lib/getmt, lib/co_yield, awfy/json). Method: release `rn-cli`
+(5.5, dev build, not PGO), `perf stat -e cycles:u,instructions:u`, `taskset -c 5`, 300 ms spin, `RUSTYNAIL_SEED=0`, min of 9; phases from leaf
+samples (`perf record -c 50021`, 10-40 runs aggregated; shorter periods are throttled on these 2-6 ms programs and lose half the samples) classified
+with `scripts/formation-phases.py`'s classifier (string interning and `ld.so` split out). No TSC conversion was used for any decision.
+
+### 64.1 Measured phases
+
+* **fmt_s** (5.95 Mcyc; LuaJIT 3.06). Outer-count scaling (9 / 1115 / 2231 outer iterations): fixed part 3.26 Mcyc against LuaJIT's 1.35, per
+  inner iteration 3.8 cycles against 3.0 (the `format("%s", s)` call is already folded on trace: the variant without the call costs 3.4). So
+  the gap is fixed cost. Of the full run: trace code 1.79, string interning 0.69 (`new_str` of the format results before the trace exists),
+  library (`format_at`, `fmtc::lookup`, `tolstring_into`) 0.38, interpreter 0.23, trace back end + compile support + recorder 0.99, tier-1
+  compile 0.25 plus most of the encoder's 0.31, `ld.so` 0.32 (startup: the empty program costs 0.84 against LuaJIT's 0.67).
+* **getmt** (13.8 Mcyc; LuaJIT 8.8): steady state, not warm-up: 11.0 Mcyc in the inner-loop trace, 4.3 cycles per iteration (LuaJIT 2.9 in
+  total). The body re-proves the absence of `__metatable` in the metatable's single hash node every iteration, loads the metatable twice and
+  spills it once. Not a warm-up lever; left for a trace-body task.
+* **permute** (35.4 Mcyc): 84 % in trace code (traces 7 / 8 / 3 / 9 / 4), 4.7 % exit stubs (141 768 exits, about 12 cycles each through the
+  direct links), tier-1 code 0.6 %, tier-1 compile 0.6 %. The premise "steady state in tier-1 code of `permute`" does not hold on this base (the
+  verbose `Mcyc_in_jit` of the prototype counts the traces entered from its tier-1 code).
+
+### 64.2 Candidate ceilings (kill bar: 5 % cycles on the lead program)
+
+| candidate | experiment (scratch, removed) | lead | ceiling | verdict |
+|---|---|---|---|---|
+| (a) compile only the hot region of the main chunk | cold instructions forced to exit stubs (`Kind::Stub`) in `lower_ex`: fmt_s pcs 0-22, 49-56 (13.9 -> 10.6 KB) | fmt_s | -3.5 % (getmt -0.6 %) | killed |
+| (a') only the inner loop compiled | pcs 0-38, 48-56 stubbed (6.1 KB; tier-1 compile 0.25 -> 0.15 Mtsc: fixed costs dominate a compile) | fmt_s | +41 % (the setup loop is interpreted) | killed |
+| (b) get permute's hot function traced | it is traced (64.1) | permute | tier-1 code 0.6 % | killed |
+| (c) earlier recording of call loops (R1 tick credit hot/8 -> hot/1, hot/2) | env hack | fmt_s | 0 % (not the gate) | killed |
+| (d) start gate off | `wgate=1` | fmt_s | **-6.8 %** (getmt -1.1, permute -1.8, co_yield -0.7, json +0.7) | survives |
+
+(d) is the BUNDLE-1 work gate (`wgate=30000` back-edges x loop length): fmt_s's inner loop is 9 bytecodes long, so the gate waits about 3300
+iterations, each paying a full `string.format` (about 150 cycles) instead of 3 cycles on trace; `RUSTYNAIL_JIT_TRACE_HOT` does not move it
+(why lowering hot thresholds did nothing). `wgate=6600` and `3000` give the same -6.8 %. A global lower gate is the parked C25 lottery
+(docs/JIT_PARKED.md: every `wgate` tried had a loser above 5 %), so the built lever weighs calls instead.
+
+### 64.3 Built: `wgcall` (knob, default 0 = off)
+
+`TrLimits::wgcall` (`RUSTYNAIL_JIT_TRACE_LIMITS=wgcall=N`, 0-1024, `WGCALL_PROCESS = 0`): the loop length that the start gate charges per
+back-edge (`loop_len_w`, both charge sites: the interpreter's sampling tick in `rt::hot_loop` and a head's hot firing in the gate check)
+counts every `CALL`, `TAILCALL`, `TFORCALL`, `CONCAT` and `SELF` of the body as `1 + wgcall` bytecodes. Exact by construction: only the moment
+of the first recording moves; what is recorded and compiled, errors, hooks, `debug.getlocal`, tracebacks, coroutines and the collector are
+unchanged (the same paths any earlier gate opening takes). `ccheck` is unaffected (no compile path changed).
+
+Measured, same binary, `wgcall=0000` -> `wgcall=0016` (cycles min of 9, instructions):
+
+| program | Mcyc | M instructions |
+|---|---|---|
+| lib/fmt_s | 5.95 -> 5.49 (-7.7 %) | 23.05 -> 21.37 (-7.3 %) |
+| lib/getmt | 13.82 -> 13.63 (-1.4 %) | 91.27 -> 90.21 |
+| lib/type_call | 82.5 -> 73.8 (-10.5 %) | 570.9 -> 525.2 |
+| awfy/cd | 240.6 -> 226.7 (-5.8 %) | 641.3 -> 597.1 |
+| lib/co_yield, awfy/permute, awfy/json, lib/assert_ok, lib/it_next_empty | within +-0.6 % | within +-0.8 % |
+| **awfy/richards** | 55.7 -> 67.7 (**+21.4 %**) | 164.7 -> 195.9 |
+| **awfy/storage** | 103.0 -> 125.8 (**+22.1 %**) | 492.4 -> 632.6 |
+| **awfy/deltablue** | 102.7 -> 108.1 (**+5.3 %**) | 305.5 -> 319.2 |
+
+Sample: one-run instruction scan of all 95 bench/lib programs, the 14 awfy programs and 10 bench/programs (binary_trees, fannkuch, heapsort,
+json, mandelbrot, nbody, queens, oop_methods, string_ops, coroutines); 19 moved by more than 0.2 % instructions, the rows above are their min-of-9
+re-measurements (also +0.96 % instructions on programs/json, +3.6 % / +4.8 % one-run cycles on rawget_set / str_method_len with instructions down).
+**Default off:** three programs regress beyond 2 % — the same recording-order lottery as C25 (richards, storage and deltablue form a different first
+root when call loops open the gate earlier). A per-program win of 6-10 % on four programs is real, but the gate is a global clock: weighing one
+loop's calls moves the start of every other loop's recording too.
+
+### 64.4 Tests and mutant
+
+`tests/tr_core/s64_progs.rs`: `s64_call_loops` (format / Lua callee / method / `ipairs` / `CONCAT` loops in sequence) and `s64_call_observers`
+(an error with `debug.getlocal` and a traceback from the callee at a moving iteration, a full collection per round, a count hook installed mid-loop,
+coroutine yields from the called function). `tr_core::s64_wgcall_programs`: both programs x `wgcall` 16 / 1024 / 0 (with `wgate=30000` named) x
+`always` / `on2` / `on` x {plain, `+verify` (lockstep), exit storms 3 and 7 (`+randra=5`), budgets 3 / 17, `-loop`, GC stress 1 / 2, `stackmove`}
+plus `+emurun` (with and without exit storm 7), against the interpreter; then the gate itself at `wgate=2400000` (out of reach of the plain lengths:
+nothing records; `wgcall=1024` records). Mutant `wgcall_weight_skip` (the weight ignored; caught by the gate assertion). Registry 883 -> 884,
+`scripts/gate-mutant-map.tsv` regenerated.

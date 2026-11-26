@@ -1090,6 +1090,8 @@ pub const NAMES: &[&str] = &[
     // docs/JIT_TRACE.md section 68 (`regcall`): `LIB` calls with register arguments (`Op::CallD`, the register entries)
     "regcall_args_rot",
     "regcall_arg2_skip",
+    // docs/JIT_TRACE.md section 64 (`wgcall`): the call weight of the start gate's loop length is ignored
+    "wgcall_weight_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1180,7 +1182,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 889);
+        assert_eq!(NAMES.len(), 890);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

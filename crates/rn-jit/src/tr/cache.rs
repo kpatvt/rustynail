@@ -358,6 +358,8 @@ pub const DEFAULT_WARM: u32 = 1_200_000;
 pub const WGATE_PROCESS: u32 = 30_000;
 /// BUNDLE-1: process default of [`TrLimits::tailhook`].
 pub const TAILHOOK_PROCESS: u32 = 1;
+/// S2 (docs/JIT_TRACE.md section 64): process default of [`TrLimits::wgcall`] (0 = off).
+pub const WGCALL_PROCESS: u32 = 0;
 /// BUNDLE-C (`t1ccall`): process default of [`TrLimits::t1ccall`] (lean tier-1 call of light C functions).
 pub const T1CCALL_PROCESS: u32 = 0;
 /// BUNDLE-C (`tfmt`): process default of [`TrLimits::tfmt`] (`string.format` of simple constant formats recorded).
@@ -702,6 +704,11 @@ pub struct TrLimits {
     /// time gate `warm`, which makes the trace set of a program vary from run to run). Default 0 here, [`WGATE_PROCESS`] in a process
     /// (unless `warm=` is named: `warm=0` then switches every gate off, `warm=N` selects the time gate as before).
     pub wgate: u32,
+    /// S2 (docs/JIT_TRACE.md section 64): the work gate `wgate` weighs every call-like instruction of a loop body (`CALL`, `TAILCALL`,
+    /// `TFORCALL`, `CONCAT`, `SELF`) as `1 + wgcall` bytecodes instead of 1 (a call is a whole C function or callee body that the loop
+    /// length does not see: `string.format` in a 9-bytecode loop made the gate wait 3300 iterations of about 150 cycles each). Only
+    /// the moment of the first recording changes. 0 = off (as before). Default 0 here, [`WGCALL_PROCESS`] in a process.
+    pub wgcall: u32,
     /// BUNDLE-1: the interpreter's tail call (`pre_tail_call`) counts calls of its Lua callee like a call does (the callee is
     /// compiled and entered when hot); before, a function reached only by `return f(x)` was never counted (0 = as before).
     /// Default 0 here, [`TAILHOOK_PROCESS`] in a process.
@@ -1075,6 +1082,7 @@ impl Default for TrLimits {
             allocguard: 1,
             warm: 0,
             wgate: 0,
+            wgcall: 0,
             tailhook: TAILHOOK_PROCESS,
             hdrlib: HDRLIB_PROCESS,
             sinkmt: SINKMT_PROCESS,
@@ -1305,6 +1313,7 @@ impl TrLimits {
                 "allocguard" => l.allocguard = v.min(1),
                 "warm" => l.warm = v,
                 "wgate" => l.wgate = v,
+                "wgcall" => l.wgcall = v.min(1024),
                 "tailhook" => l.tailhook = v.min(2),
                 "hdrlib" => l.hdrlib = v.min(4),
                 "sinkmt" => l.sinkmt = v.min(1),
@@ -1514,6 +1523,9 @@ impl TrConfig {
             self.limits.wgate = WGATE_PROCESS;
         } else if names_limit(limits_env, "warm") && !names_limit(limits_env, "wgate") {
             self.limits.wgate = 0;
+        }
+        if !names_limit(limits_env, "wgcall") {
+            self.limits.wgcall = WGCALL_PROCESS;
         }
     }
 
@@ -3293,18 +3305,27 @@ fn tsc() -> u64 {
 /// BUNDLE-1: bytecodes of the loop whose head is `head` (head up to its backward edge; 8 when no edge to `head` is found): the weight
 /// of one iteration in the start gate's count of executed work (a back-edge of a 3-instruction loop costs far less than one of a
 /// 60-instruction body, and iteration counts alone made the delay of the first recording vary from 1x to 100x in time).
-pub(crate) fn loop_len(code: &[u32], head: usize) -> u64 {
+/// S2 (`TrLimits::wgcall`): every call-like instruction of the body (`CALL`, `TAILCALL`, `TFORCALL`, `CONCAT`, `SELF`) weighs `1 + wcall`
+/// bytecodes (`wcall` 0 = the plain length). The fallback of a loop without a backward edge to `head` stays 8.
+pub(crate) fn loop_len_w(code: &[u32], head: usize, wcall: u32) -> u64 {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode as O;
+    let wcall = if mutants::active("wgcall_weight_skip") {
+        0
+    } else {
+        u64::from(wcall)
+    };
+    let mut calls = 0u64;
     for (j, &w) in code.iter().enumerate().skip(head) {
         let i = Instruction(w);
         match i.opcode() {
             Some(O::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => {
-                return (j - head + 1) as u64
+                return (j - head + 1) as u64 + calls * wcall
             }
             Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => {
-                return (j - head + 1) as u64
+                return (j - head + 1) as u64 + calls * wcall
             }
+            Some(O::Call | O::Tailcall | O::Tforcall | O::Concat | O::SelfOp) => calls += 1,
             _ => {}
         }
     }
@@ -8560,9 +8581,10 @@ fn hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
         tp.rearm(i);
         return false;
     }
+    let wcall = d.tr.cfg.limits.wgcall;
     let len = st
         .ci_lclosure(ci)
-        .map_or(8, |cl| loop_len(cl.proto().code(), pc as usize));
+        .map_or(8, |cl| loop_len_w(cl.proto().code(), pc as usize, wcall));
     let d = d_of(st);
     if !d.tr.warm_elapsed(len) {
         // P-G: the state has run loops for too short a time for a trace to pay off yet. BUNDLE-1: with the work gate the head fires
