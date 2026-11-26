@@ -496,6 +496,12 @@ pub enum Op {
         /// Fourth argument.
         b: u32,
     },
+    /// Section 68 (`regcall`): `V7 = f(V1, V0, V8, V6, thread)` (C ABI: the arguments are already in `rdi`, `rsi`, `rdx`, `rcx`; the thread
+    /// goes to `r8`; 64-bit result in `rax`). Clobbers what [`Op::CallH`] clobbers; the result is in `V7`, which no reload writes.
+    CallD {
+        /// Address of the `extern "C"` helper.
+        f: u64,
+    },
 }
 
 /// A lowered function: ops plus the number of labels.

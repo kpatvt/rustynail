@@ -296,6 +296,8 @@ pub struct AsmEnv {
     pub lean_sub: bool,
     /// BUNDLE-H (`libcall`): bit 1 = lean direct entries of the `LIB` helpers, bit 2 = inline `type` / string compares / `random` (`TrLimits::libcall`).
     pub libcall: u32,
+    /// Section 68 (`regcall`, `TrLimits::regcall`): bit 0 = `LIB` calls through `Op::CallD` and the register entries ([`libd_entry`]).
+    pub regcall: u32,
     /// J1-2 (`sinkstub`): frameless exits that materialise sunk tables are restored by their inline stub (slot stores, then a `CallH` of
     /// `mat_fn`, then the jump through the exit cell) instead of the generic stub and the exit handler.
     pub sink_stub: bool,
@@ -440,6 +442,7 @@ impl Default for AsmEnv {
             midfold_fn: 0,
             lean_sub: false,
             libcall: 0,
+            regcall: 0,
             sink_stub: false,
             sink_mm: false,
             mat_fn: 0,
@@ -2102,6 +2105,101 @@ fn lean_lib_entry(kind: u32, libcall: u32) -> Option<u64> {
         }
         _ => return None,
     })
+}
+
+/// Section 68 (`regcall`): the register entries of the `LIB` helpers, called by `Op::CallD`: `f(a0, a1, a2, x, thread) -> result` with the
+/// operands in the C argument registers (`x` = kind | flags << 8, the `a >> 8` of [`ALLOC_LIB`]), the result in `rax`. Each runs exactly the
+/// core the lean entry or [`lib_core`] runs for its kind; no exit-area traffic, no `thread -> state -> data` walk for the kinds that do not
+/// use the state.
+macro_rules! libd {
+    ($(#[$m:meta])* $name:ident, |$th:ident, $kind:ident, $fl:ident, $args:ident| $body:expr) => {
+        $(#[$m])*
+        ///
+        /// # Safety
+        /// As [`jit_tr_alloc`] with `ALLOC_LIB` of a kind the entry serves; `th` is the live thread.
+        pub unsafe extern "C" fn $name(a0: u64, a1: u64, a2: u64, x: u64, $th: *mut rn_core::state::Thread) -> u64 {
+            let x = x as u32;
+            let ($kind, $fl) = (x & 0xFF, x >> 8);
+            // MUTANT `regcall_args_rot`: the register entry takes its operands rotated by one
+            let $args = if mutants::active("regcall_args_rot") { [a1, a2, a0] } else { [a0, a1, a2] };
+            let _ = ($kind, $fl, $th);
+            $body
+        }
+    };
+}
+
+libd!(
+    /// Section 68: register entry of `LIB find` / `finds`.
+    jit_tr_libd_find,
+    |th, kind, fl, args| find_core(kind, fl, args)
+);
+libd!(
+    /// Section 68: register entry of `LIB findp` / `findm`.
+    jit_tr_libd_findp,
+    |th, kind, fl, args| if kind == lib::FINDP { findp_core(fl, args) } else { findm_core(fl, args) }
+);
+libd!(
+    /// Section 68: register entry of `LIB streq` / `strlt` / `strle`.
+    jit_tr_libd_cmp,
+    |th, kind, fl, args| cmp_core(kind, fl, args)
+);
+libd!(
+    /// Section 68: register entry of `LIB random` / `randf`.
+    jit_tr_libd_random,
+    // SAFETY: the contract of the entry (`random_core`'s: a live closure of the kind).
+    |th, kind, fl, args| unsafe { random_core(kind, args) }
+);
+libd!(
+    /// Section 68: register entry of `LIB char` / `char2` / `char3`.
+    jit_tr_libd_char,
+    // SAFETY: `th` is the live thread.
+    |th, kind, fl, args| char_core(&mut unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) }, kind, args)
+);
+libd!(
+    /// Section 68: register entry of `LIB lower` / `upper` / `reverse` / `rep` / `reps`.
+    jit_tr_libd_strfn,
+    // SAFETY: `th` is the live thread.
+    |th, kind, fl, args| strfn_core(&mut unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) }, kind, fl, args)
+);
+libd!(
+    /// Section 68: register entry of `LIB sub` (the arm of [`lib_core`], as [`jit_tr_lib_sub`]).
+    jit_tr_libd_sub,
+    |th, kind, fl, args| {
+        let tag = if fl & 1 != 0 {
+            rn_core::value::ctb(rn_core::value::LUA_VLNGSTR)
+        } else {
+            rn_core::value::ctb(rn_core::value::LUA_VSHRSTR)
+        };
+        // SAFETY: the contract of the entry; `Value` is `repr(C)` `{ tag word, payload }`.
+        let v: rn_core::value::Value = unsafe { std::mem::transmute::<[u64; 2], rn_core::value::Value>([u64::from(tag), args[0]]) };
+        match v.as_strref() {
+            // SAFETY: `th` is the live thread.
+            Some(s) => sub_piece(&mut unsafe { rn_core::jit_hooks::state_from_thread(th.cast()) }, s.get().as_bytes(), fl, args),
+            None => 0,
+        }
+    }
+);
+libd!(
+    /// Section 68: register entry of every other `LIB` kind: [`lib_core`], as `jit_tr_alloc` runs it for `ALLOC_LIB`.
+    jit_tr_libd,
+    // SAFETY: `th` is the live thread; the operands meet `lib_core`'s contract (the entry's).
+    |th, kind, fl, args| unsafe { lib_core(&mut rn_core::jit_hooks::state_from_thread(th.cast()), kind | fl << 8, args) }
+);
+
+/// Section 68 (`regcall`): the register entry of `LIB` kind `kind`.
+fn libd_entry(kind: u32) -> u64 {
+    match kind {
+        lib::FIND | lib::FINDS => jit_tr_libd_find as *const () as usize as u64,
+        lib::SUB => jit_tr_libd_sub as *const () as usize as u64,
+        lib::FINDP | lib::FINDM => jit_tr_libd_findp as *const () as usize as u64,
+        lib::STREQ | lib::STRLT | lib::STRLE => jit_tr_libd_cmp as *const () as usize as u64,
+        lib::RANDOM | lib::RANDF => jit_tr_libd_random as *const () as usize as u64,
+        lib::CHAR | lib::CHAR2 | lib::CHAR3 => jit_tr_libd_char as *const () as usize as u64,
+        lib::LOWER | lib::UPPER | lib::REVERSE | lib::REP | lib::REPS => {
+            jit_tr_libd_strfn as *const () as usize as u64
+        }
+        _ => jit_tr_libd as *const () as usize as u64,
+    }
 }
 
 /// The library-call helpers of P-B (`TOp::Lib`; `x` = kind | flags << 8, see [`ALLOC_LIB`]): they do exactly what the C function would do
@@ -7758,6 +7856,49 @@ impl Cx<'_> {
         }
     }
 
+    /// Section 68 (`regcall`): moves the operands (general registers or constants) of a register call into `V1`, `V0`, `V8` (`rdi`, `rsi`, `rdx`)
+    /// as one parallel move (a cycle is broken through `V7`, which the call destroys anyway); constants are materialised last. Runs behind
+    /// `save_live`: every register it writes is caller-saved and either saved or dead.
+    fn regcall_args(&mut self, ops: &[Loc]) {
+        const DST: [u8; 3] = [1, 0, 8];
+        // MUTANT `regcall_arg2_skip`: the third operand is not moved (`rdx` keeps what it held)
+        let ops = if mutants::active("regcall_arg2_skip") && ops.len() > 2 {
+            &ops[..2]
+        } else {
+            ops
+        };
+        let mut mv: Vec<(u8, u8)> = ops
+            .iter()
+            .zip(DST)
+            .filter_map(|(l, d)| match *l {
+                Loc::G(s) if s != d => Some((d, s)),
+                _ => None,
+            })
+            .collect();
+        while !mv.is_empty() {
+            // a move whose destination no pending move still reads
+            if let Some(k) = (0..mv.len()).find(|&k| mv.iter().all(|&(_, s)| s != mv[k].0)) {
+                let (d, s) = mv.remove(k);
+                self.push(Op::MovR(d, s));
+            } else {
+                // a cycle: park one source in `V7`
+                let s = mv[0].1;
+                self.push(Op::MovR(7, s));
+                for m in &mut mv {
+                    if m.1 == s {
+                        m.1 = 7;
+                    }
+                }
+            }
+        }
+        for (l, d) in ops.iter().zip(DST) {
+            if let Loc::Const(r) = *l {
+                let b = self.kbits_of(r);
+                self.push(Op::Mov(d, b));
+            }
+        }
+    }
+
     /// Stores the live registers to the exit area.
     fn save_live(&mut self, c: &CallSite) {
         self.save_vb();
@@ -8159,6 +8300,29 @@ impl Cx<'_> {
                 (ALLOC_TLEN, y, 1)
             }
         };
+        // Section 68 (`regcall`): a `LIB` call with its operands in general registers / constants passes them in the C argument registers
+        // (`V1`, `V0`, `V8` = `rdi`, `rsi`, `rdx`; `x` in `V6` = `rcx`) to the register entry of its kind; the result comes back in `V7`
+        if ins.op == TOp::Lib
+            && self.env.regcall & 1 != 0
+            && self.env.alloc == jit_tr_alloc as *const () as usize as u64
+            && ops
+                .iter()
+                .take(nops)
+                .all(|l| matches!(l, Loc::G(_) | Loc::Const(_)))
+        {
+            self.save_live(&site);
+            self.regcall_args(&ops[..nops]);
+            self.push(Op::Mov(6, u64::from(a >> 8)));
+            self.push(Op::CallD {
+                f: libd_entry(ins.aux & 0xFF),
+            });
+            self.reload_live(&site);
+            self.push(Op::MovR(d, 7));
+            if let Some(l) = fast_done {
+                self.push(Op::Bind(l));
+            }
+            return Ok(());
+        }
         for (k, loc) in ops.iter().take(nops).enumerate() {
             let m = area_m(exit_area::ARGS + 8 * k);
             match *loc {

@@ -7490,3 +7490,102 @@ between loops; counts near 2^64 and long many-chunk loops). `tr_core::s59_progra
 `bh_refund_skip` (caught by `s59_count_identity`), `bh_bias_skip`, `bh_chunk_end_bias_long` (caught by all three). Unobservable variants that were
 tried and dropped: ignoring the chunk end (it degrades to an exit through the loop guard with the true count: exact, only slower), a short slow-path
 budget test, the poll of `setup` and the poll's `extra` refund (only an asynchronous poll word reaches them).
+
+## 68. S3: the helper-call protocol of `LIB` calls: register arguments and register entries (`regcall`; 2026-11-25, base 4f15581)
+
+Task: the call protocol of trace helper calls, measured on lib/find_plain (the study: 18 cycles/call of protocol, 16 of search; causes named: 7 saves +
+7 reloads in caller-saved registers, arguments through the exit area, the lean entry's `thread -> state -> data` walk). **Result: one lever built,
+`regcall` (default 1): a `LIB` call whose operands are in general registers or constants moves them into `rdi` / `rsi` / `rdx` (kind and flags in
+`rcx`, the thread in `r8`) and calls a register entry of its helper (`Op::CallD`, result in `rax`). find_plain -4.6 % instructions / -6.2 % cycles,
+find_pat -7.9 / -13.4, char -8.3 / -14.4, sub -7.2 / -6.7, str_lt -12.0 / -15.2, lua_lexer -3.3 / -5.4; no bench program executes more
+instructions (109 measured, largest +0.00 %).**
+
+### 68.1 Where a call's cycles go (find_plain, 2 940 928 calls; CPU 5, `RUSTYNAIL_SEED=0`)
+
+Whole run 698 M instructions / 110 M cycles (LuaJIT 2.1: 348 M / 68-124 M by machine state; 118 instructions per call in all). IBS op sampling:
+`memfind` 50 % of the ops (about 120 per call, 36 cycles by cycle samples), the trace 26 % (61 instructions per iteration), `jit_tr_lib_find` 22 %
+(51 ops, 16 cycles). The trace's call site, by instruction (one iteration of the loop trace):
+
+| part | instructions | |
+|---|---:|---|
+| operands to `ExitArea.args` (3 stores + a constant `mov`) | 4 | the lean entry loads them back (`read_volatile`) |
+| saves of live caller-saved registers (`r11` budget, `rsi` index, `rdi` pattern, `r8` / `r9` values of snapshot 10, `rcx` / `rdx` array bases) | 7 | |
+| `CallH` (`mov rdi, r12; mov rsi, r13; mov edx, a; mov ecx, b; movabs rax, f; call rax; mov esi, eax`) | 7 | |
+| reloads | 7 | |
+| result (`mov r10, [r15 + ARGS]`, written by the helper just before: a store-forwarding round trip on the result path) | 1 | |
+| lean entry prologue: `push` x 3, `th -> state (+0x20) -> data (+0xa58)` (two dependent loads, a null test), 3 argument loads, the result store, `pop` x 3 | 15 | |
+
+LuaJIT's loop (`-jdump`): 24 instructions around `call lj_str_find`, the arguments built straight into `rdi` / `rsi` / `rdx` / `rcx`, every
+loop value in a callee-saved register (`rbx`, `rbp`, `r12`, `r13`, `r15`), one spill (the `acc` double). We pin `rbx` (frame), `r12` (thread), `r13`
+(ci), `r15` (budget / exit area) and `r14` (constants, allocatable only with `xregs` bit 1), so only `rbp` is a free callee-saved register.
+
+### 68.2 Candidate ceilings (one binary, knobs; min of 9 interleaved cycles, instructions of one run)
+
+| candidate | find_plain instr | find_plain cycles | verdict |
+|---|---:|---:|---|
+| register arguments + register entries (`regcall`) | -4.6 % | -6.2 % | built |
+| + `r14` allocatable (`xregs=3`): two values across the call in callee-saved registers instead of one | -1.3 % more | -3.0 % more | not built: existing knob, < 5 %, its default-off history (BUNDLE-H) not re-examined |
+| + `rapol=7` (`CALLSPILL`) | -0.4 % more | +0.7 % | killed (section 51: lua_lexer formation) |
+| free `r12` / `r13` for allocation (the thread / ci pins) | | | not prototyped: every exit stub, `CallH` and the carry entries read them; a pin change, not a protocol change |
+
+Shared set, `regcall` 0 -> 1 (cycles min of 9): find_plain -6.2 %, sub -6.7 %, match -5.2 %; str_eq_long, getmt, byte unchanged in instructions
+(their hot paths are inline: no `LIB` call is made). The search itself (`memfind_pair` on a 35-45 byte subject) is now the larger half of the
+gap to LuaJIT (120 ops against `lj_str_find`'s whole call); not in scope.
+
+### 68.3 What was built
+
+* `Op::CallD { f }` (micro-op IR): `V7 = f(V1, V0, V8, V6, thread)`: the arguments are already in `rdi`, `rsi`, `rdx`, `rcx`; the lowering adds
+  `mov r8, r12`, `movabs rax, f`, `call rax`. Clobbers what `CallH` clobbers; the result stays in `V7` (the scratch register, which no reload
+  writes), so the reloads run first and one `mov` moves it to the destination. The emulator runs it through `Helpers::call_d` (default: the real
+  function; the `+emuverify` model rejects it like every helper it does not know).
+* `asm::class_a`, `TOp::Lib` with `regcall` bit 0, the real `jit_tr_alloc` and every operand a general register or a constant: `save_live`, a
+  parallel move of the operands into `V1` / `V0` / `V8` (a cycle parked in `V7`, constants last), `mov ecx, kind | flags << 8`, `CallD`,
+  `reload_live`. Operands in `X` registers (numbers of `FMT` kinds) keep the old path.
+* Register entries (`asm::libd_entry`): `find` / `finds`, `findp` / `findm`, `sub`, the compares, `random`, `char*`, the string functions, and
+  `jit_tr_libd` (= `lib_core`, what `jit_tr_alloc` runs for `ALLOC_LIB`) for every other kind. Each runs the same core as the lean entry or
+  `lib_core` (no relaxation: the same "did nothing" answers, no GC step in either, errors and hooks still belong to the interpreter behind the exit).
+  `FINDP` / `FINDM` / `TOSTR` / `FMT*` had no lean entry and went through `jit_tr_alloc`'s large frame: the largest gains (find_pat, tostring_int).
+* `ccheck` (section 49) unaffected: both back-end runs see the same knob (`compared 3 differ 0` on find_pat and the s68 programs).
+
+### 68.4 Measured (release `rn-cli`, one binary, `regcall=0` -> `1`, `RUSTYNAIL_SEED=0`, `taskset -c 5`)
+
+Instructions (one run each) over all 95 lib/ programs, lua_lexer, text_adventure and 12 others: every output identical (and equal to `.expected`);
+21 programs lower, none higher. Cycles min of 7 (9 for the second pass) interleaved, **on a loaded machine** (the SMT sibling CPU 13 ran other
+agents' test suites: programs with identical code moved by up to +-13 % between passes, e.g. getmt +6.7 % then -31 %, deltablue -13 %, richards
++4.0 % then +7.4 % with identical instruction counts); the changed programs:
+
+| program | instructions | cycles |
+|---|---:|---:|
+| lib/str_lt | -11.97 % | -15.2 % (pass 1: +7.7) |
+| lib/str_lt_short | -11.13 % | -13.5 % |
+| lib/sub_1char | -9.78 % | -21.0 % (pass 1: +10.9) |
+| lib/char | -8.29 % | -14.4 % |
+| lib/find_pat | -7.89 % | -13.4 % |
+| lib/sub | -7.15 % | -6.7 % (pass 1: +7.4) |
+| lib/tostring_int | -6.82 % | -18.4 % (pass 1: +0.7) |
+| lib/match | -6.29 % | -5.2 % |
+| lib/fmt_d | -4.93 % | -3.5 % |
+| lib/find_plain | -4.62 % | -6.2 % |
+| lib/gmatch_words | -4.02 % | -7.2 % |
+| lib/it_ipairs | -3.39 % | -4.9 % |
+| corpus/lua_lexer | -3.25 % | -5.4 % |
+| lib/reverse, upper, lower | -2.8, -2.7, -2.7 % | -0.7, -1.6, -1.9 % |
+| lib/fmt_x_pad, rep, rep_sep | -2.2, -2.1, -1.5 % | -3.4, -19.9, -21.4 % |
+| apps/expr_lang | -1.78 % | -9.2 % |
+| programs/string_ops | -0.55 % | -0.8 % |
+| corpus2/text_adventure | -0.15 % | +1.8 % then -0.5 % |
+
+Unchanged in instructions (+-0.01 %): the 10-program sample richards, deltablue, raytrace, towers, heapsort, fib, classic_vector, cd,
+oop_methods, markdown, and lib/ str_eq_long, getmt, byte, gsub_*. **Default 1**: no program executes more instructions, and the cycle increases seen
+are in programs whose instruction count did not move or that reversed sign in the second pass. A clean-machine pass (bench-fast) is still owed.
+
+### 68.5 Tests and mutants
+
+`tests/tr_core/s68_progs.rs` (4 programs: finds in every form with start positions on both sides and a pattern that gains specials, a number
+subject; sub / char / rep / lower / upper / reverse with allocations and a subject that stops being a string; long-string compares with permuted
+operands; format / tostring / random / gmatch / type and a library error behind a traced call, caught). `tr_core::s68_regcall_programs`: those and
+`s51_call_values` in `always` / `on2` x `regcall` 0 / 1 x plain, `+verify`, budget 17; with `regcall=1` `+exitstorm=3 +verify +randra=5`, budget 3,
+`xregs=3`, GC stress 1 / 2 in both collector modes, stack moves, `+emurun` and `+emurun +exitstorm=7`, and with the oracle feature the
+instruction-count identity. Mutants (registry 883 -> 885): `regcall_args_rot` (the register entry takes its operands rotated) and
+`regcall_arg2_skip` (the third operand not moved), both caught by `s68_regcall_programs`. No allocator contract
+changed (`tests/tr_asm.rs` only gained the new `AsmEnv` field).

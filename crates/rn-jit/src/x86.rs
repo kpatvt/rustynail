@@ -332,6 +332,11 @@ pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
                 a.call_r(RAX);
                 a.mov_rr(Size::S32, RSI, RAX); // V0 = eax (zero-extended)
             }
+            Op::CallD { f } => {
+                a.mov_rr(Size::S64, R8, R12);
+                a.mov_ri64(RAX, f);
+                a.call_r(RAX);
+            }
         }
     }
     let label_off = labels.iter().map(|&l| a.label_offset(l)).collect();
