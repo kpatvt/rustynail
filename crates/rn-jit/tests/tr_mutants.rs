@@ -4752,6 +4752,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s59_programs")],
     },
     Row {
+        name: "bhmin_ignored",
+        owner: "S63",
+        dets: &[d("tr_core", "s63_bhmin_policy")],
+    },
+    Row {
         name: "nidx_disp_off1",
         owner: "N1",
         dets: &[d("tr_core", "n1_programs")],

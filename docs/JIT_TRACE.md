@@ -7464,7 +7464,7 @@ raise an error, run a hook, yield or collect inside the body), and the count is 
 | awfy/towers | 44 | 44 (-0.2%) | 44 (+0.0%) | 168 | -0.0% | -0.0% |
 | programs/binary_trees | 1174 | 1169 (-0.5%) | 1169 (-0.5%) | 5537 | -0.0% | -0.0% |
 
-`pollk=64` reaches 87 % of the ceiling on `type_entry` (-9.9 % of -11.4 %). **Defaults: both 0.** The bar (no cycle regression > 2 %, instructions not
+`pollk=64` reaches 87 % of the ceiling on `type_entry` (-9.9 % of -11.4 %). **Defaults: both 0** (superseded by section 63: both ON with `pollk=64` and the per-loop policy `bhmin`). The bar (no cycle regression > 2 %, instructions not
 up) fails on `programs/queens`: +1.4 % cycles, +2.5 % instructions (+1.6 % with `pollk`). Its loops are short (`n = 8`) and mostly left early by a
 guard: each entry pays `setup` (about 8 instructions, against the 2 of the first iteration's charge) and each early exit the trampoline, and the
 iterations saved do not pay for it. A follow-up could keep the per-iteration form for loops whose recorded body exits early or whose entry count is
@@ -7535,3 +7535,89 @@ Tests (`crates/rn-std/src/pattern/patc.rs`): `set_of_depends_on_bytes_only` (eve
 short patterns), `last_hit_is_checked_like_a_slot` (alternating patterns both hit; a `LAST` hit is the slot of the normal path; a string rewritten
 in place with the same address and length never gets the old program, which a `LAST` probe without the byte compare would return; `LAST` null
 in a new thread). No knob: no semantic branch (the `STR_FAST` bit `PATC` still turns the whole cache off).
+
+## 63. `budhoist` + `pollk` default ON: K = 64, the per-loop policy `bhmin` (queens), the induction-update ceiling (2026-11-25, base 4f15581)
+
+**Result: `budhoist=1`, `pollk=64`, `bhmin=16` ship ON** (`BUDHOIST_PROCESS`, `POLLK_PROCESS`, `BHMIN_PROCESS`). The programs/queens regression of
+section 61 is gone (instructions +1.59 % -> 0.00 %), no measured program has more instructions, `type_entry` keeps -9.7 % cycles / -20.1 % instructions.
+
+### 63.1 `pollk`: the argument (accepted) and its limits
+
+The body's `POLL` is dropped and the chunk `setup` polls before every chunk of at most `K` iterations (section 61.1 (b)). **Why this is not observable:**
+the poll word `TRACE_POLL` has two writers, `request_interrupt` (a signal handler or another OS thread) and `State::set_hook` (`lua_sethook`). In a
+call-free counted-loop body (the only loops `budhoist` applies to: no helper call, so no metamethod, hook, error, yield or collection inside the body) no
+code of the running thread other than the trace runs, so the word can change only *asynchronously* while the loop runs, and an asynchronous event has no
+defined position in the instruction stream: a poll up to `K` iterations later is indistinguishable from the event arriving up to `K` iterations later,
+which the per-iteration form also allows. A synchronous `sethook` before the loop (from Lua code or a C function called before the loop) is seen by the
+`setup` poll in front of the first iteration, as before; every exit (guards, budget, the loop's end) restores the exact per-iteration state, so a hook
+that fires after an exit sees the same lines, counts and locals. **Limits:** (1) the latency of an asynchronous interrupt (`Ctrl-C` via
+`request_interrupt`) or of a `lua_sethook` from another thread grows from 1 to at most `K` = 64 iterations of one call-free loop body (on
+`type_entry` 64 iterations are about 130 cycles); (2) the argument needs the body to be call-free, which `bh_plan` checks (`ra::has_call`); a loop with
+any helper call keeps its per-iteration poll; (3) a count-hook budget (`BUDGET`) is not relaxed at all: the chunk charge and the exit refunds keep the
+count exact (section 61.1), so `pollk` changes only *when* an asynchronous poll-word change is seen. `pollk=0` restores the per-iteration poll.
+
+**K by measurement** (`taskset -c 12`, min of 9, `budhoist=1,bhmin=0`, one binary):
+
+| K | type_entry cycles / instructions | type_entry_stable |
+|---|---|---|
+| (no `budhoist`) | 1419.7 M / 8537.9 M | 1357.0 M / 8127.7 M |
+| 0 (budhoist only) | -4.42 % / -9.14 % | -4.20 % / -9.84 % |
+| 16 | -7.24 % / -16.16 % | -5.05 % / -15.38 % |
+| 32 | -8.74 % / -18.15 % (87 % of the K=64 gain) | -8.45 % / -19.56 % (84 %) |
+| 64 | -10.02 % / -20.14 % | -10.11 % / -21.65 % |
+| 128 | -9.84 % / -20.14 % | -10.07 % / -21.65 % |
+
+64 is the smallest K that keeps >= 90 % of the gain (the inner loop has 50 iterations: one chunk at 64, two at 32; 128 adds nothing). Latency bound:
+**64 loop iterations**.
+
+### 63.2 The per-loop policy `bhmin`
+
+The queens loss (section 61.2) comes from short loops that are mostly left early: each entry pays `setup` (about 8 instructions against the 2 of a
+per-iteration charge) and each early exit the refund trampoline. A run-time choice at every entry would need two bodies (the hoisted one has no
+`BUDGET`); the cheapest exact mechanism is static: the recorder keeps a **trip estimate** of the loop instance it recorded (`TraceIr::rec_trip`, taken
+at the last integer `FORLOOP` of the root frame of a root recording: iterations left + 1 + for an upward loop `(index - 1) / step`, the iterations done
+if the loop started at 1, which 5.5's layout no longer stores), and `bh_plan` hoists only when `rec_trip >= bhmin` (16). The plain count alone (the
+iterations left) was tried first and lost `type_entry` completely: its root is re-recorded at a late iteration of a 50-iteration loop. Both forms are
+exact, so the policy can only cost speed: a long loop recorded with a misleading estimate (a loop starting far from 1 with few iterations, or a
+downward loop recorded near its end) keeps the per-iteration body; a short loop starting at a large index is hoisted. Counters: `[trace] budhoist: loops
+hoisted H kept by bhmin K` (`RUSTYNAIL_JIT_VERBOSE=1`). Effect on the sample: kept in programs/queens (13 iterations) and programs/fannkuch; hoisted
+in type_entry(_stable), dot, matmul (4), programs/sieve (4), awfy/sieve (2), heapsort (2), havlak (2), spectral_norm (2).
+
+### 63.3 Measured (release `rn-cli`, one binary, `budhoist=0,pollk=064,bhmin=16` against `budhoist=1,pollk=064,bhmin=16`, `RUSTYNAIL_SEED=0`,
+`taskset -c 12`, min of 9 interleaved runs; every output identical)
+
+| program | cycles off -> on (M) | delta | instructions off -> on (M) | delta |
+|---|---|---:|---|---:|
+| jit-trace/type_entry | 1416.9 -> 1279.7 | -9.69 % | 8537.9 -> 6818.0 | -20.14 % |
+| jit-trace/type_entry_stable | 1359.2 -> 1219.0 | -10.31 % | 8127.7 -> 6367.8 | -21.65 % |
+| jit-trace/dot | 1217.5 -> 1199.0 | -1.52 % | 6509.7 -> 5021.4 | -22.86 % |
+| programs/matmul | | +0.56 % | 1875.3 -> 1639.0 | -12.60 % |
+| programs/sieve | | -4.15 % | 2545.7 -> 2317.8 | -8.95 % |
+| awfy/sieve | | -3.28 % | 767.1 -> 717.8 | -6.42 % |
+| programs/queens | | +0.22 % | 4972.6 -> 4972.6 | 0.00 % (bhmin=0: +1.83 % / +1.59 %) |
+| awfy/queens | | +0.12 % | 496.9 | 0.00 % |
+| programs/fannkuch | | +0.04 % | 4580.7 | 0.00 % (bhmin=0: -0.86 %) |
+| programs/heapsort | 1249.3 -> 1200.3 (min of 15) | -3.92 % (first run +3.31 %, layout noise) | 2619.0 -> 2614.6 | -0.17 % |
+| programs/spectral_norm | | -0.22 % | 1249.1 -> 1171.2 | -6.24 % |
+| programs/mandelbrot, programs/nbody, awfy/mandelbrot | | -0.01 / -0.10 / -0.01 % | | 0.00 % |
+| programs/binary_trees | | +1.05 % | 5639.3 | 0.00 % |
+| awfy/towers, awfy/richards, apps/raytrace | | +0.23 / +0.13 / +0.13 % | | 0.00 % |
+| sample: deltablue, havlak, awfy/json, list, bounce, storage, permute, cd, programs/json, fasta | | -1.31 .. +0.09 % (cd +1.55 %, rerun of 15: 0.00 %) | | -0.02 .. 0.00 % |
+
+No program above +2 % cycles, no instruction count up: the bar of section 61 is met.
+
+### 63.4 The remaining induction updates of `type_entry` (task (4))
+
+The body is 9 instructions per iteration (section 61.3): the tag test, `movsd`, `mulsd`, `addsd`, `add rdi, 1` (index), `add r8, -1` (negated index),
+`sub rsi, 1; jae` (count). Ceiling, measured with an inexact throw-away hack that simply drops one of the two index updates (`RN_HACK_DROPADD`, not
+committed): -2.25 % (index) / -2.40 % (negated index) cycles, -7.0 % instructions; the loop is bound by the `addsd` chain. None of the three is
+removable exactly at low cost (the count needs the seven-consumer snapshot change of 41.2; one index needs an upward-growing payload layout), and the
+ceiling is below the 3 % bar: **not built**.
+
+### 63.5 Tests, mutants
+
+`s63_policy` (`tests/tr_core/s59_progs.rs`): the queens-shaped 8-iteration loop left early into a call path, a long loop then left early by a hole and
+by a float in the middle of a chunk, a loop recorded with 5 iterations and later run with 1999 (the per-iteration body on long trips) and an error behind
+it. `S59_LIMITS` set `bhmin` explicitly (0, 16, 2^30) and `budhoist` / `pollk` explicitly (the defaults flipped), 8 programs x 6 settings x the section
+61 modes (`s59_programs`, `s59_count_identity`). `tr_core::s63_bhmin_policy` asserts the counters: with `bhmin=16` both forms in `s63_policy` (`on`,
+`on2`), with `bhmin=0` none kept, with the knob off none hoisted. Mutant (registry 883 -> 884): `bhmin_ignored`, caught by `s63_bhmin_policy`.

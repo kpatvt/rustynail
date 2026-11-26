@@ -98,6 +98,11 @@ struct BhPlan {
     setup: L,
 }
 
+/// Section 63: loops assembled with the hoisted budget (diagnostics: `[trace] budhoist:` of `RUSTYNAIL_JIT_VERBOSE=1`).
+pub static BH_HOISTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Section 63: eligible loops kept in the per-iteration form by `bhmin`.
+pub static BH_KEPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The spill slot that counts loop iterations when [`AsmEnv::count_iterations`] is on (one below the cycle scratch).
 pub const ITER_SLOT: u16 = SCRATCH_SPILL - 1;
 
@@ -241,6 +246,8 @@ pub struct AsmEnv {
     /// Section 59 (`pollk`): with `budhoist`, nonzero: the per-iteration poll of such a loop is dropped and the chunk is at most `pollk` iterations (the poll
     /// runs at every chunk start). 0: the body keeps its poll.
     pub pollk: u32,
+    /// Section 63 (`bhmin`): `budhoist` applies only to loops whose recorded FORLOOP count ([`TraceIr::rec_trip`]) is at least `bhmin` (0: every loop).
+    pub bhmin: u32,
     /// B4-4: `//` and `%` by a constant use multiplication (`divmagic`).
     pub divmagic: bool,
     /// F2: `string.byte(s, i)` with `1 <= i <= #s` is inline loads (the helper call is the slow path) (`f2byte`).
@@ -415,6 +422,7 @@ impl Default for AsmEnv {
             cloop: false,
             budhoist: false,
             pollk: 0,
+            bhmin: 0,
             lea_add: false,
             hk_fuse: false,
             hk_key64: false,
@@ -5379,6 +5387,13 @@ impl Cx<'_> {
         if kmax < 2 {
             return None;
         }
+        // Section 63 (`bhmin`): a loop whose recording saw fewer than `bhmin` iterations left keeps the per-iteration `POLL; BUDGET` body (both forms are
+        // exact; a short loop that is mostly left early pays `setup` per entry and the refund trampoline per exit and saves little)
+        if u64::from(env.bhmin) > ir.rec_trip && !mutants::active("bhmin_ignored") {
+            BH_KEPT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        BH_HOISTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Some(BhPlan {
             loop_idx: l,
             poll_idx: pi,

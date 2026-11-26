@@ -853,6 +853,9 @@ pub struct TraceIr {
     /// E2 (`idfold`): a `GETUPVAL` of the family's self upvalue was folded to the running closure: the trace relies on the region invariant
     /// (docs/JIT_TRACE.md section 34.3).
     pub idfold: bool,
+    /// Section 63 (`bhmin`): the trip estimate of the loop instance the root recording ran, taken at the last integer `FORLOOP` of the root frame:
+    /// iterations left + 1 + for an upward loop `(index - 1) / step` (the iterations done if the loop started at 1); 0 when none / in a side trace.
+    pub rec_trip: u64,
     /// E5 (`midfold`): a method `SELF` of the family's key on register 0 was folded to the running closure: the trace relies on the region
     /// invariant of section 35.4.
     pub midfold: bool,
@@ -982,6 +985,7 @@ impl TraceIr {
         self.rec_ret = None;
         self.idfold = false;
         self.midfold = false;
+        self.rec_trip = 0;
     }
 
     /// Is `r` an instruction ref?

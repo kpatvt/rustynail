@@ -2635,6 +2635,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         budhoist: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.budhoist } != 0,
         // SAFETY: as above.
         pollk: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.pollk },
+        // SAFETY: as above.
+        bhmin: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.bhmin },
         hk_key64: true,
         budget_sub: vbreg.is_some(),
         // `+emuverify` runs the emulation on a private copy of the header, which the far `[r15 + disp]` poll word is not part of: the trace polls
