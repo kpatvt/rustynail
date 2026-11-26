@@ -256,6 +256,19 @@ pub trait Helpers {
     /// # Safety
     /// The helper may dereference the `env` pointers and `frame` (valid per the contract of [`Emu::run`]).
     unsafe fn call(&mut self, f: u64, a: u32, b: u32, env: &Env, frame: *mut u8) -> HelperOut;
+    /// Section 68 (`regcall`): runs the register-argument helper `f` of a `CallD` (`f(args[0..4], thread) -> u64`, never moves the
+    /// stack). The default calls the real `extern "C"` function.
+    ///
+    /// # Safety
+    /// `f` is the address of an `extern "C" fn(u64, u64, u64, u64, *mut u8) -> u64` whose contract the arguments meet.
+    unsafe fn call_d(&mut self, f: u64, args: [u64; 4], env: &Env) -> u64 {
+        // SAFETY: the contract above.
+        unsafe {
+            let func: unsafe extern "C" fn(u64, u64, u64, u64, *mut u8) -> u64 =
+                std::mem::transmute(f as usize);
+            func(args[0], args[1], args[2], args[3], env.thread)
+        }
+    }
     /// Does this model implement helpers at all (else a call stops the emulation as `Unsupported`)?
     fn supported(&self) -> bool {
         true
@@ -657,6 +670,20 @@ impl Emu {
                         pending = Some(nf);
                         frame.set(STALE_FRAME as *mut u8);
                     }
+                }
+                Op::CallD { f } => {
+                    if !helpers.supported() {
+                        leave!(Until::Stop(Stop::Unsupported));
+                    }
+                    let args = [r[1], r[0], r[8], r[6]];
+                    // SAFETY: per the function contract (the helper of a `CallD` is pure with respect to the frame).
+                    let res = unsafe { helpers.call_d(f, args, env) };
+                    let keep = [r[9], r[10]]; // V9 / V10 (rbp, r14): callee-saved, survive the call
+                    r = [POISON; NV];
+                    r[9] = keep[0];
+                    r[10] = keep[1];
+                    x = [POISON; NX];
+                    r[7] = res;
                 }
                 Op::ReloadFrame { .. } => {
                     if let Some(nf) = pending.take() {

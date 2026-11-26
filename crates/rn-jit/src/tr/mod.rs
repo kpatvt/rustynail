@@ -2665,6 +2665,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         fibdiet: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.fibdiet },
         lean_sub: true,
         libcall: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.libcall },
+        // SAFETY: as above.
+        regcall: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.regcall },
         sink_stub: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkstub != 0 },
         // SAFETY: as above.
         sink_mm: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkmm != 0 },
@@ -3404,6 +3406,9 @@ impl Helpers for VerifyHelpers<'_> {
             result: 0,
             new_frame: None,
         }
+    }
+    unsafe fn call_d(&mut self, f: u64, _args: [u64; 4], _env: &Env) -> u64 {
+        panic!("emuverify: unexpected helper {f:#x}");
     }
 }
 

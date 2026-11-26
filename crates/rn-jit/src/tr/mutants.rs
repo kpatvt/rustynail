@@ -1087,6 +1087,9 @@ pub const NAMES: &[&str] = &[
     // docs/JIT_TRACE.md section 62 (`rerootchk`): the probation check of a `reroot` re-record
     "rerootchk_keep_always",
     "rerootchk_revert_always",
+    // docs/JIT_TRACE.md section 68 (`regcall`): `LIB` calls with register arguments (`Op::CallD`, the register entries)
+    "regcall_args_rot",
+    "regcall_arg2_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1177,7 +1180,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 887);
+        assert_eq!(NAMES.len(), 889);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

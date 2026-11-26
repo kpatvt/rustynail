@@ -47,6 +47,8 @@ mod s52_progs;
 mod s59_progs;
 #[path = "tr_core/s60_progs.rs"]
 mod s60_progs;
+#[path = "tr_core/s68_progs.rs"]
+mod s68_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -73,6 +75,7 @@ use s51_progs::S51_PROGS;
 use s52_progs::S52_PROGS;
 use s59_progs::S59_PROGS;
 use s60_progs::S60_PROGS;
+use s68_progs::S68_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -206,6 +209,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S52_PROGS)
         .chain(S59_PROGS)
         .chain(S60_PROGS)
+        .chain(S68_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -10066,7 +10070,13 @@ fn b1_hdr_programs() {
 #[test]
 fn hs_sub_ring_matrix() {
     let mut jobs = Vec::new();
-    for l in ["hdrlib=2", "hdrlib=4", "hdrlib=1"] {
+    // (section 68: the lean `sub` entry runs only with `regcall=0`)
+    for l in [
+        "hdrlib=2,regcall=0",
+        "hdrlib=2,regcall=1",
+        "hdrlib=4",
+        "hdrlib=1",
+    ] {
         for trace in ["always", "on2", "on"] {
             for (opts, budget) in [
                 ("", 0),
@@ -10217,7 +10227,12 @@ fn ba_next_matrix() {
 
 #[test]
 fn ba_find_matrix() {
-    assert!(!compare(ba_jobs("ba_find", &["", "libcall=519"])).is_empty());
+    // (section 68: the lean entry of `find` runs only with `regcall=0`)
+    assert!(!compare(ba_jobs(
+        "ba_find",
+        &["", "libcall=519,regcall=0", "libcall=519,regcall=1"]
+    ))
+    .is_empty());
 }
 
 /// BUNDLE-C `tfmt`: `string.format` of constant formats recorded as a `LIB` helper (`tc_fmt`): the program in every trace mode with verification, exit
@@ -10239,7 +10254,8 @@ fn bh_lib_matrix() {
         "bh_lib",
         &[
             "libcall=1",
-            "libcall=7",
+            "libcall=7,regcall=0",
+            "libcall=7,regcall=1",
             "libcall=15",
             "libcall=31",
             "libcall=0"
@@ -14817,4 +14833,79 @@ fn s60_reroot_programs() {
         get(&format!("s60_phases {all0}")).2 > 0,
         "s60_phases: the probation check never kept a re-record"
     );
+}
+
+/// Section 68 (`regcall`, docs/JIT_TRACE.md section 68): `LIB` calls through `Op::CallD` and the register entries. The `s68_*` programs (find in
+/// every form, sub / char / rep / lower / upper / reverse, long-string compares, format / tostring / random / gmatch, a library error behind a
+/// traced call) and `s51_call_values` in `always` / `on2` x `regcall` 0 / 1 x plain, `+verify`, budget 17; with `regcall=1` also `+exitstorm=3
+/// +verify +randra=5` (random register choices: the operand moves meet every permutation), budget 3, `xregs=3`, GC stress 1 / 2 in both collector
+/// modes, stack moves, `+emurun` (the emulator's `CallD`), and with the oracle feature the instruction-count identity. Detector of
+/// `regcall_args_rot` and `regcall_arg2_skip`.
+#[test]
+fn s68_regcall_programs() {
+    let progs = [
+        "s68_find_calls",
+        "s68_sub_char_calls",
+        "s68_cmp_calls",
+        "s68_mixed_calls",
+        "s51_call_values",
+    ];
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in ["regcall=0", "regcall=1"] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            }
+            let lim = "regcall=1";
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3 +verify +randra=5")
+                    .limits_s(lim),
+            );
+            jobs.push(Job::new(p, trace).budget(3).limits_s(lim));
+            jobs.push(Job::new(p, trace).limits_s("regcall=1,xregs=3"));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(lim);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(lim),
+            );
+            if trace == "always" {
+                jobs.push(Job::new(p, trace).opts("+emurun").limits_s(lim));
+                jobs.push(
+                    Job::new(p, trace)
+                        .opts("+emurun +exitstorm=7")
+                        .limits_s(lim),
+                );
+            }
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                let mut j = Job::new(p, trace).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    for (j, o) in &res {
+        if j.prog.starts_with("s68_")
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.env.is_empty()
+        {
+            assert!(o.stats.installed > 0, "{}: nothing traced", j.tag());
+        }
+    }
 }

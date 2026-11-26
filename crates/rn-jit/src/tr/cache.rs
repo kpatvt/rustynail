@@ -115,6 +115,8 @@ pub const SLINK_PROCESS: u32 = 2;
 /// **5 = `RAPOL_VICTIM | RAPOL_RBP`** (docs/JIT_TRACE.md 51.4: -1.40 % instructions / -1.22 % cycles over the 33-program sample, no program above
 /// +0.04 % instructions); `RAPOL_CALLSPILL` (2) stays off (lua_lexer's formation at the default hot threshold).
 pub const RAPOL_PROCESS: u32 = 5;
+/// Section 68 (`regcall`): the process default of [`TrLimits::regcall`] (also the struct default).
+pub const REGCALL_PROCESS: u32 = 1;
 /// E9: the process default of [`TrLimits::t1call`] (also the struct default).
 pub const T1CALL_PROCESS: u32 = 0;
 /// Section 38 (`deepprobe`): the process default of [`TrLimits::deepprobe`] (also the struct default).
@@ -934,6 +936,11 @@ pub struct TrLimits {
     /// being saved and reloaded at every call. Bit 2 (`RAPOL_RBP`): `V9` (`rbp`) is allocatable in every trace (the register of `xregs` bit 0).
     /// 0 = every lever off (the allocator of section 50); default [`RAPOL_PROCESS`].
     pub rapol: u32,
+    /// Section 68 (`regcall`, docs/JIT_TRACE.md section 68): the helper-call protocol of `LIB` calls. Bit 0: a `LIB` call whose operands are in
+    /// general registers or constants passes them in the C argument registers (`Op::CallD`) to a register entry of its helper (the thread in
+    /// `r8`, the result in `rax`) instead of through the exit area and the `thread -> state -> data` walk of the lean entries. 0 = off; default
+    /// [`REGCALL_PROCESS`].
+    pub regcall: u32,
     /// E9 (`t1call`, docs/JIT_TRACE.md section 37): the tier-1 call protocol. Bit 0 (`jret`): the tier-1 `CALL` marks the frame it pushes
     /// (`CIST_T1RET`) and stores the address of its per-site resume cell in it; the tier-1 return of such a frame jumps through the cell instead
     /// of looking the caller's resume entry up. Bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`, like
@@ -1133,6 +1140,7 @@ impl Default for TrLimits {
             dlink: DLINK_PROCESS,
             slink: SLINK_PROCESS,
             rapol: RAPOL_PROCESS,
+            regcall: REGCALL_PROCESS,
             t1call: T1CALL_PROCESS,
             cspeed: crate::cspeed::DEFAULT,
             ccheck: 0,
@@ -1362,6 +1370,7 @@ impl TrLimits {
                 "dlink" => l.dlink = v.min(3),
                 "slink" => l.slink = v.min(15),
                 "rapol" => l.rapol = v & super::ra::RAPOL_ALL,
+                "regcall" => l.regcall = v.min(1),
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(15),
