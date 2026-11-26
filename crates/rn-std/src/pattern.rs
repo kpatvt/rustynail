@@ -188,6 +188,79 @@ const CLBIT: [u16; 256] = {
     t
 };
 
+/// S6 `gmplus` (rn-std `STR_FAST` bit `GMPLUS`): a one-item pattern `X+` whose item is a class escape (`%a+`, `%S+`, `%w+`, ...) or the
+/// complement of one byte (`[^\n]+`, `[^%.]+`, `[^,]+`, `[^%a]+`), as accepted by [`gm_plus`]. Such a pattern has no capture, cannot be
+/// malformed and never matches the empty string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GmPlus {
+    /// Bytes `c` with `(CTYPE[c] & mask != 0) == plain`.
+    Class(u16, bool),
+    /// Every byte but this one.
+    NotByte(u8),
+}
+
+/// The [`GmPlus`] shape of `p`, if it has one.
+#[inline]
+pub fn gm_plus(p: &[u8]) -> Option<GmPlus> {
+    match *p {
+        [L_ESC, c, b'+'] if CLBIT[c as usize] != 0 => {
+            Some(GmPlus::Class(CLBIT[c as usize], c.is_ascii_lowercase()))
+        }
+        // `[^c]`: the first byte after `^` belongs to the set even when it is `]` (`classend`); `-` alone is no range
+        [b'[', b'^', c, b']', b'+'] if c != L_ESC => Some(GmPlus::NotByte(c)),
+        [b'[', b'^', L_ESC, c, b']', b'+'] => {
+            let m = CLBIT[c as usize];
+            if m != 0 {
+                // mutant `gmplus_set_neg_skip`: the complement of the set dropped
+                Some(GmPlus::Class(
+                    m,
+                    !c.is_ascii_lowercase() ^ rn_core::table::mut_tlib(4),
+                ))
+            } else {
+                Some(GmPlus::NotByte(c))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The first match of a [`GmPlus`] pattern at or after `s` in `src` (what the general `gmatch` loop finds: the first start position whose
+/// byte is in the set, the longest run from there), `None` when no byte at or after `s` is in the set.
+#[inline]
+pub fn gm_plus_run(src: &[u8], s: usize, g: GmPlus) -> Option<(usize, usize)> {
+    let n = src.len();
+    if s >= n {
+        return None;
+    }
+    match g {
+        GmPlus::Class(m, plain) => {
+            let mut i = s;
+            while i < n && ((CTYPE[src[i] as usize] & m != 0) != plain) {
+                i += 1;
+            }
+            if i >= n {
+                return None;
+            }
+            let mut e = i + 1;
+            while e < n && ((CTYPE[src[e] as usize] & m != 0) == plain) {
+                e += 1;
+            }
+            Some((i, e))
+        }
+        GmPlus::NotByte(b) => {
+            let mut i = s;
+            while i < n && src[i] == b {
+                i += 1;
+            }
+            if i >= n {
+                return None;
+            }
+            let e = find_byte(&src[i..], b).map_or(n, |k| i + k);
+            Some((i, e))
+        }
+    }
+}
+
 #[inline(always)]
 fn match_class(c: u8, cl: u8) -> bool {
     let b = CLBIT[cl as usize];
