@@ -157,9 +157,9 @@ pub const BYTEXT_PROCESS: u32 = 1;
 /// B1 (section 59): the process default of [`TrLimits::pureb`] (also the struct default).
 pub const PUREB_PROCESS: u32 = 1;
 /// B2 (section 59): the process default of [`TrLimits::opencall`] (also the struct default).
-pub const OPENCALL_PROCESS: u32 = 0;
+pub const OPENCALL_PROCESS: u32 = 1;
 /// S73: the process default of [`TrLimits::landfix`] (also the struct default).
-pub const LANDFIX_PROCESS: u32 = 0;
+pub const LANDFIX_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).

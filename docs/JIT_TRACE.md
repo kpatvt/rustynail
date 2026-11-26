@@ -8193,3 +8193,8 @@ the same cache (`prune_cached`) unless a pruning mutant is active. The result of
 beyond 0.3 %: byte_multi -1.10, it_next -3.51, len_op -8.81, sel_loop -0.58, tfront_1k -0.62, load_small -0.44. awfy: every program within +-0.15 %. Cycles of single runs
 move up to +-14 % on programs with unchanged instructions (layout noise); 5-run minimum checks of the four that rose more than 2 %: getmt +1.3 %, m_fmod +0.4 %, binary_trees
 +2.0 %, sieve +2.0 % (instructions +0.00..0.05 %, medians within 3 %, same noise as the default build).
+
+**Defaults (2026-11-26): `opencall=1` and `landfix=1` ship ON** (`OPENCALL_PROCESS = LANDFIX_PROCESS = 1`; `opencall=0,landfix=0` restores the old behaviour; the section 59
+"ships OFF" note is superseded). Basis: instructions of all 134 programs within +0.05 % (wins: len_op -8.8 %, it_next -3.5 %, byte_multi -1.1 %); cycles checked with 15 interleaved
+runs of one binary with the knobs toggled on CPU 4: binary_trees min +0.1 % / median -0.4 %, getmt 0.0 %, sieve min +4.1 % / median +0.4 % (the sieve spread alone is 7 %, fastest
+509 against median 548 M cycles). `landfix` must stay ON with `opencall` (section 73: `rep_sep`).
