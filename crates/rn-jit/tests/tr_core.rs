@@ -4436,7 +4436,12 @@ fn p2_xregs_programs() {
 fn s59_byte_opencall_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for limits in ["", "pureb=0,opencall=0", "lockstep=1"] {
+        for limits in [
+            "opencall=1",
+            "pureb=0,opencall=0",
+            "lockstep=1,opencall=1",
+            "pureb=0,opencall=1",
+        ] {
             for (opts, budget) in [
                 ("", 0),
                 ("+verify", 0),
@@ -4455,13 +4460,25 @@ fn s59_byte_opencall_programs() {
             }
         }
         for gc in ["1", "2"] {
-            jobs.push(Job::new("s59_byte_opencall", trace).env("RUSTYNAIL_GC_STRESS", gc));
+            jobs.push(
+                Job::new("s59_byte_opencall", trace)
+                    .limits_s("opencall=1")
+                    .env("RUSTYNAIL_GC_STRESS", gc),
+            );
         }
-        jobs.push(Job::new("s59_byte_opencall", trace).env("RUSTYNAIL_JIT_STRESS", "stackmove"));
+        jobs.push(
+            Job::new("s59_byte_opencall", trace)
+                .limits_s("opencall=1")
+                .env("RUSTYNAIL_JIT_STRESS", "stackmove"),
+        );
     }
     let res = compare(jobs);
     for (j, o) in &res {
-        if j.trace == "always" && j.opts == "+verify" && j.env.is_empty() && j.limits.is_empty() {
+        if j.trace == "always"
+            && j.opts == "+verify"
+            && j.env.is_empty()
+            && j.limits.contains("opencall=1")
+        {
             assert!(
                 o.stats.installed >= 3 && o.stats.entered >= 1,
                 "s59: traces did not run: {}",

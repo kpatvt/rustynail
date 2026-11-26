@@ -7293,7 +7293,7 @@ with the handle off.
   (a `TLEN`, beside the existing `i >= 1` and `j == i + n - 1` guards) and emits its `LIB BYTE` ops without the per-result `NE 0` guard,
   flagged `F_PUREB`: not DCE roots in `opt_loop`, so dead results are dropped. With the three guards every position is in the string and
   the helper never answers 0. Mutant `pureb_len_guard_skip` (no `j <= #s` guard: a shorter string yields `-1` instead of an exit).
-* **B2 `opencall`** (knob `opencall`, `OPENCALL_PROCESS = 1`). In the `snapprune` bytecode liveness (`live.rs`, section F4) a `CALL` with
+* **B2 `opencall`** (knob `opencall`, `OPENCALL_PROCESS = 0` (shipped OFF, see the session-o note below)). In the `snapprune` bytecode liveness (`live.rs`, section F4) a `CALL` with
   `C == 0` defines every register from `A` up: its results are `A .. top`, the open reader that always follows reads only those, and the
   registers above are free temporaries the code generator writes before reading. Only dead numeric temporaries can become prunable, the
   F4 relaxation unchanged (locals and their neighbourhood stay protected). The per-prototype cached analysis is the one of the process
@@ -7329,6 +7329,11 @@ expressions with callees from a table so that the callee guard exits at the `CAL
 tlib_fast_paths_match_reference` (the first script in-process, bits on and off, against `tests/data/s59_tlib{,54}.expected` from the
 references) and `tr_core::s59_byte_opencall_programs` (the second as `s59_byte_opencall`, knobs on / off / lockstep, `+verify`, exit
 storms, budgets, `-loop`, `+emurun`, GC stress 1 and 2, stack-move stress). Each of the four mutants is caught by its test.
+
+**Session-o note (2026-11-26): `opencall` ships OFF.** The session-o benchmark showed `lib/rep_sep` +8 % cycles and +15.7 % instructions against session-n on all four builds
+(5.5 plain 432.2 -> 471.9 M instructions); `opencall=0` restores 433.2 M and 86.6 M cycles (93.7 M with it on, min of 3). The snapshot at pc 71 keeps 3 slots instead of 4 and the
+side-trace chain of the `rep` loop forms differently (14 traces against 11). B2 gained only 3.6 % on `byte_multi` (B1 alone: -10.6 %), so with the regression bar missed
+the default is OFF; B1 `pureb`, M1 and R1 stay ON. The cause of the different chain (a real loss of the pruned shape or formation luck) is not investigated.
 
 ## 60. Root choice on the minority direction of a loop branch: `reroot` (awfy/queens; 2026-11-25, base bb9bd4d)
 
