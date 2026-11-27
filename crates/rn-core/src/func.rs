@@ -96,6 +96,23 @@ pub struct Proto {
     /// JIT: hotness counter (counts down from `jit_hooks::HOT_THRESHOLD`). Only under `jit`.
     #[cfg(feature = "jit")]
     pub hot: std::cell::Cell<i32>,
+    /// Section 77.3 (`uvk`): closures created from this prototype so far, saturating at 2 (`note_closure`). Only under `jit`.
+    #[cfg(feature = "jit")]
+    pub jitinst: std::cell::Cell<u8>,
+}
+
+impl Proto {
+    /// Section 77.3: counts a closure created from this prototype (saturating at 2).
+    #[inline]
+    pub fn note_closure(&self) {
+        #[cfg(feature = "jit")]
+        {
+            let c = self.jitinst.get();
+            if c < 2 {
+                self.jitinst.set(c + 1);
+            }
+        }
+    }
 }
 
 fn buf_slice<T: Copy>(b: &RawBuf<T>) -> &[T] {
@@ -357,8 +374,9 @@ pub struct LClosure {
     pub(crate) tt: u8,
     pub(crate) marked: u8,
     pub(crate) nupvalues: u8,
-    /// Section 77.3 (`uvk`): nonzero once a trace depends on this closure's identity (the collector then tells the JIT when it
-    /// frees it, `jit_hooks::closure_freed`). In the padding after the count: no size change.
+    /// Section 77.3 (`uvk`): bit 0 set once a trace depends on this closure's identity (the collector then tells the JIT when it
+    /// frees it, `jit_hooks::closure_freed`); bit 1: the closure was created by a main chunk (`push_closure`). In the padding after the
+    /// count: no size change.
     pub(crate) jitdep: u8,
     pub(crate) gclist: *mut GcHeader,
     pub(crate) p: *mut Proto,
@@ -442,7 +460,17 @@ impl Gc<LClosure> {
     /// Section 77.3: marks the closure as one a trace depends on by identity (see `LClosure::jitdep`).
     pub fn set_jitdep(self) {
         // SAFETY: handle invariant; a plain byte of the closure header.
-        unsafe { (*self.as_ptr()).jitdep = 1 }
+        unsafe { (*self.as_ptr()).jitdep |= 1 }
+    }
+    /// Section 77.3: marks a closure created by a main chunk (`linedefined == 0`).
+    pub fn set_mainmade(self) {
+        // SAFETY: as `set_jitdep`.
+        unsafe { (*self.as_ptr()).jitdep |= 2 }
+    }
+    /// Section 77.3: was the closure created by a main chunk?
+    pub fn mainmade(self) -> bool {
+        // SAFETY: as `set_jitdep`.
+        unsafe { (*self.as_ptr()).jitdep & 2 != 0 }
     }
     /// Install the prototype.
     ///
@@ -533,6 +561,7 @@ impl Heap {
             {
                 (&raw mut (*p).jit).write(std::cell::Cell::new(std::ptr::null_mut()));
                 (&raw mut (*p).hot).write(std::cell::Cell::new(crate::jit_hooks::initial_hot()));
+                (&raw mut (*p).jitinst).write(std::cell::Cell::new(0));
             }
             Ok(Gc::from_raw(p))
         }

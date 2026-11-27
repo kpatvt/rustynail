@@ -961,7 +961,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
-        uvk: cfg.limits.uvk != 0 && !cache::uvk_off(st),
+        uvk: if cache::uvk_off(st) {
+            0
+        } else {
+            cfg.limits.uvk
+        },
         avoid: if cfg.limits.reroot != 0 {
             pr.and_then(|pr| cache::head_reroot_avoid(st, pr, pc))
         } else {
@@ -1201,7 +1205,11 @@ pub fn driver_start_side(
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
-        uvk: cfg.limits.uvk != 0 && !cache::uvk_off(st),
+        uvk: if cache::uvk_off(st) {
+            0
+        } else {
+            cfg.limits.uvk
+        },
         ..RecCfg::default()
     };
     let token = record::arm(st, ci, start.pc, rc)?;

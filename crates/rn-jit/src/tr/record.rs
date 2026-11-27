@@ -208,8 +208,10 @@ pub struct RecCfg {
     pub mfdeep: bool,
     /// Section 75.14 (`mfshare`): repeated `mfkeys` lookups of one key share the first value.
     pub mfshare: bool,
-    /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants.
-    pub uvk: bool,
+    /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants (bit 0); bit 1: not in the root frame of the
+    /// recording (no identity guard on the root closure); bit 2: not in side recordings; bit 3: a new identity guard only on a closure created
+    /// by a main chunk.
+    pub uvk: u32,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -569,7 +571,7 @@ impl Default for RecCfg {
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
-            uvk: super::cache::UVK_PROCESS != 0,
+            uvk: super::cache::UVK_PROCESS,
             hrefv: true,
             shape: false,
             fold: true,
@@ -6438,7 +6440,11 @@ impl Rec {
     /// language (`debug.setupvalue`, `debug.setlocal`, the C API) flushes; a closure always captures the variable after its initialisation.
     /// Collectable constants (closures, tables, strings) are reachable from the guarded closure's cells, so they live as long as the trace.
     fn uvk_uload(&mut self, vm: &Vm<'_>, n: usize) -> R<Option<((Ref, Ty), Value)>> {
-        if !self.cfg.uvk || n >= vm.cl.nupvalues() {
+        if self.cfg.uvk & 1 == 0
+            || n >= vm.cl.nupvalues()
+            || (self.cfg.uvk & 2 != 0 && self.cur_depth == 0)
+            || (self.cfg.uvk & 4 != 0 && self.cfg.side.is_some())
+        {
             return Ok(None);
         }
         let p = vm.cl.proto();
@@ -6464,6 +6470,13 @@ impl Rec {
             return Ok(None);
         }
         let d = self.cur_depth;
+        if let Some(c) = v.as_lclosure() {
+            // (a closure of a prototype on the frame stack: a recursion, whose shape rules (E1 / E2) want the upvalue load)
+            let pk = &*c.proto() as *const Proto as usize;
+            if self.frames[..=d].iter().any(|f| f.proto == pk) {
+                return Ok(None);
+            }
+        }
         let cref = if d > 0 {
             self.frames[d].cref
         } else {
@@ -6477,6 +6490,11 @@ impl Rec {
             Some(e) if e.1 == addr => {}
             Some(_) => return Ok(None),
             None => {
+                // (a new identity guard only for a prototype instantiated once so far: closures of a prototype made again and again, or
+                // made anew after a collection, would fail the guard or flush the trace at their collection; a performance rule only)
+                if p.jitinst.get() > 1 || (self.cfg.uvk & 8 != 0 && !vm.cl.mainmade()) {
+                    return Ok(None);
+                }
                 let k = self.b.ir.konst(KVal::Ptr(addr as u64, PtrKind::LClosure));
                 if !mutants::active("uvk_ident_skip") {
                     self.entry_guard(TOp::Eqref, Ty::I64, cref, k, 0)?;

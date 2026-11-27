@@ -177,7 +177,7 @@ pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
-pub const UVK_PROCESS: u32 = 1;
+pub const UVK_PROCESS: u32 = 11;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -895,7 +895,9 @@ pub struct TrLimits {
     /// never assigned after its initialisation) in a frame whose closure the trace holds by identity is the value seen at record time, a constant
     /// (numbers, booleans, nil, light C functions, Lua closures, tables, short strings). The frame's closure is guarded by identity once (`EQREF` with
     /// the closure's address, which a collection of the closure flushes); writes outside the language flush the traces (`jit_hooks::upval_changed`).
-    /// 0 = off, 1 = on (default [`UVK_PROCESS`]).
+    /// Bits: 0 = on; 1 = no folding in the root frame of a recording (no identity guard on the root closure: awfy/cd, real_dis_arm formed worse);
+    /// 2 = none in side recordings; 3 = a new identity guard only on a closure created by a main chunk (closures made per call of a factory are
+    /// re-created and fail the guard: containers_lru_heap). Default 11 = 1 | 2 | 8 ([`UVK_PROCESS`], section 77.3).
     pub uvk: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
@@ -1435,7 +1437,7 @@ impl TrLimits {
                 "mfkeys" => l.mfkeys = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
-                "uvk" => l.uvk = v.min(1),
+                "uvk" => l.uvk = v.min(15),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

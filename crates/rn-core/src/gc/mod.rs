@@ -1971,7 +1971,7 @@ impl Heap {
                 LUA_VLCL => {
                     let n = (*o.cast::<LClosure>()).nupvalues as usize;
                     #[cfg(feature = "jit")]
-                    if (*o.cast::<LClosure>()).jitdep != 0 {
+                    if (*o.cast::<LClosure>()).jitdep & 1 != 0 {
                         // section 77.3: traces that hold this closure by identity are flushed before its address can be reused
                         let r = crate::jit_hooks::closure_freed(o as usize);
                         self.mem.uncharge_ext(r);

@@ -4613,7 +4613,7 @@ fn s75_recinl_programs() {
 fn s77_uvk_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for limits in ["uvk=1", "uvk=0"] {
+        for limits in ["uvk=11", "uvk=1", "uvk=0"] {
             for (opts, budget) in [
                 ("", 0),
                 ("+verify", 0),

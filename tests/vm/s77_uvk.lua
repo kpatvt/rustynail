@@ -178,6 +178,19 @@ local function case9()
 end
 case9()
 
+-- (10) a closure made by the main chunk, recorded while it is the only one of its prototype, then a second one at the same call site
+local function run10(holder)
+  local s = 0
+  for i = 1, 300 do s = holder.f(s) end
+  return s
+end
+local holder10 = {}
+for round = 1, 3 do
+  local K = round * 10
+  holder10.f = function(v) return v + K end
+  print("mainmade", round, run10(holder10))
+end
+
 -- the cases that write read-only variables outside the language run last (each one flushes; the join stops folding for good)
 case3()
 case4()
