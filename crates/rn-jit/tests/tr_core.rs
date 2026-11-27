@@ -1266,7 +1266,13 @@ fn ident_check(o: &Out) -> Result<String, String> {
     };
     let (f0, f1, insns) = (num("off="), num("fetches="), num("insns="));
     if !o.ok || f0 < 0 || f0 != f1 + insns || !line.contains("same_output=true") {
-        Err(format!("{line} {}", tail(&o.stderr)))
+        // (a child killed at the leash has no IDENT line and an empty stderr: say so, section 77.18)
+        let why = if line.is_empty() {
+            o.result.lines().next().unwrap_or("")
+        } else {
+            ""
+        };
+        Err(format!("{line} {} {why}", tail(&o.stderr)))
     } else {
         Ok(format!("off={f0} fetches={f1} insns={insns}"))
     }

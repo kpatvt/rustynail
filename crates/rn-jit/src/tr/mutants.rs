@@ -1151,7 +1151,19 @@ fn names() -> &'static [String] {
 /// Is mutant `name` active? `name` must be in [`NAMES`] (checked in debug builds).
 #[cfg(feature = "tr_mutants")]
 pub fn active(name: &str) -> bool {
-    debug_assert!(NAMES.contains(&name), "unregistered mutant {name}");
+    // (the registry check is a hash lookup: a linear scan of `NAMES` on every call cost a third of a debug child's time in the hot paths that
+    // ask, e.g. `rt::hot_loop` / `loop_len_w`, and grew with every registered mutant until long `instruction_count_identity` jobs such as
+    // `bm_next_ends` hit the 120 s child leash; section 77.18)
+    #[cfg(debug_assertions)]
+    {
+        static REG: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+            std::sync::OnceLock::new();
+        debug_assert!(
+            REG.get_or_init(|| NAMES.iter().copied().collect())
+                .contains(name),
+            "unregistered mutant {name}"
+        );
+    }
     names().iter().any(|n| n == name)
 }
 
@@ -1218,6 +1230,17 @@ pub fn apply_vm_mutants() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Section 77.18: the registry check of `active` (a hash lookup since the linear scan made debug children twice as slow) still rejects an
+    /// unregistered name in debug builds, and still answers registered ones.
+    #[cfg(all(feature = "tr_mutants", debug_assertions))]
+    #[test]
+    #[should_panic(expected = "unregistered mutant")]
+    fn active_rejects_unregistered_names() {
+        let _ = active(NAMES[0]);
+        let _ = active(NAMES[NAMES.len() - 1]);
+        let _ = active("no_such_mutant_77_18");
+    }
 
     #[test]
     fn registry_is_the_frozen_list() {

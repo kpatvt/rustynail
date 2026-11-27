@@ -9042,3 +9042,20 @@ runs). `t1g=7,polyhead=52`: geomean +0.57 % (iter_pipeline +317 %). Cycles (7 ru
 instructions (2748 -> 3358 M); bit 9 changes nothing there (691 = 179). The profile moves from one dominant trace (TRACE-14, 10 %) to several
 (TRACE-19 / 3 / 1, about 5 % each): the bit-2 pops split the lexer's hot loop into several traces. The per-site discriminator was not built.
 **Items 3 (RETF through a caller's `TAILCALL`) and 4 (link entries for sunk allocations): not reached.**
+
+### 77.18 Heavy gate: `instruction_count_identity` failures in `bm_next_ends` were child timeouts; the cause is the mutant registry check
+
+main c707218's heavy gate reported 6 (5.5) and 2 (5.4) identity failures, all `bm_next_ends`. They are exactly the jobs the log lists as
+`tr_core child TIMED OUT after 120.0s`. Their failure text is empty because a killed child prints no `IDENT` line. The count identity itself
+holds: the same jobs pass when they finish. The 20000-round lockstep `next` walk takes 30 to 47 s per job in a debug build, and more under a
+loaded machine. main's binary and this branch's take the same time (39-45 s on one core), and the section 77 handles switched off change nothing
+(36-38 s).
+
+The profile of one child (`always +emurun budget=3`, debug, `tr_mutants`): 34 % in `tr::mutants::active`. Its
+`debug_assert!(NAMES.contains(&name))` scans the whole registry (911 names) on every call, and hot paths ask on every sampled loop tick
+(`rt::hot_loop`, `cache::loop_len_w`'s `wgcall_weight_skip`, ...). Every registered mutant made every debug child slower, until the long jobs
+crossed the 120 s leash. Fix: the registry check is a `HashSet` lookup built once (same guarantee, unit test
+`mutants::tests::active_rejects_unregistered_names`). The child goes from 40-45 s to 19-20 s, and `TR_CORE_ONLY=bm_next_ends`
+`instruction_count_identity` on three CPUs passes with no child above 30 s. `ident_check` now reports the child's `<no result: ...>` line, so a
+timeout is visible as one. The remaining cost of that child is the interpreter (41 %) and `hot_loop` -> `loop_len_w` (26 %: the loop length is
+recomputed on every sampled tick); this was not changed.
