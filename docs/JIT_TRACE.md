@@ -9327,3 +9327,61 @@ Measured (one binary, both off against the settings): permute 121.51 -> 121.02 (
 permute -0.58 %; nothing else beyond 0.2 % (astar_jumper -5.5 %: its noise band). Tests: `tr_core::s79_ret_programs` (`s75_oframe`,
 `s75_recinl`, `s77_rself`, `s79_push`, `s79_mfside` with both knobs 1 / 0 and with `recinl=3,sidepush=1`, the trace modes, `+verify`, exit
 storms, budget 17).
+
+### 79.7 The `dynunroll` policy: bound 8, the adaptive ban `dynmiss`, the policy bits `dynpol`; default stays OFF
+
+Per-site data (a temporary print of every unrolled site: prototype line, `FORPREP` pc, record-time trip count, depth, side or root) of the
+programs that move with `dynunroll=80` against 0 (this base, instructions): winners nbody -46.9 % (one recording unrolls the inner `j` loop at
+trip counts 4, 3, 2, 1, 0 inside the unrolled outer loop: fixed per position), coro_scheduler -16.9 % (trip counts 0 / 1 / 3 / 4, root and side,
+21 recordings of one site), parser_combinator -17.0 %, bigint_rsa -10.1 %, raytrace -3.8 %, regex_nfa -3.8 %, scheme_interp -3.8 %; losers
+expr_compiler +4.9 % (one site, 9 trips, root at the main chunk: formation churn, more blacklisted heads), sha2_base64 +2.75 % (4 trips at depth
+2, 16 recordings), msgpack_pure +1.97 % (one side recording, 3 trips, a Lua call through `packers[type(v)]` in the body), events +1.7 % (1 / 2 / 4
+trips, 9 recordings per site), bignum_arith +1.35 % (6 / 14 / 3 trips, data lengths), havlak +0.5 % (a loop skipped at record time, 13 recordings).
+
+Built (all policy, no semantic effect: a refused site records as with the knob off, every guard of an unrolled loop stays):
+
+* `dynmiss` (`TrLimits::dynmiss`, default 0): the adaptive per-site ban fed by run-time exits. A trace remembers the loops it unrolled
+  (`TraceIr::dyn_sites`: the frame's `Proto.code` address and the `FORPREP` pc); a hot exit whose innermost restored frame stands at that
+  loop's `FORLOOP` (the continuation guard of a copy) or `FORPREP` (count / skip guards) counts against the site (`cache::dyn_miss_check`);
+  after `dynmiss` of them the site is banned for the state (`TrState::dyn_ban`, read by every later recording through `RecCfg::dyn_ban`) and the
+  family is flushed to re-record (`FlushWhy::Unsink`, no penalty).
+* `dynpol` (`TrLimits::dynpol`, default 0): static bits, measured only: 1 no unroll of a loop skipped at record time, 2 none in side
+  recordings, 4 none at depth >= 2, 8 none of a body with a call, 16 none of at most one trip.
+
+Measured on the 13 movers (instructions, against `dynunroll=0` in one binary):
+
+| setting | sha2 | msgpack | bignum | expr_c | events | havlak | nbody | coro | parser_c | bigint_rsa | regex | scheme | raytrace |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 80 | +2.75 | +1.97 | +1.35 | +4.92 | +1.72 | +0.5 | -46.9 | -16.9 | -17.0 | -10.1 | -3.8 | -3.8 | -3.8 |
+| 80, dynmiss=1 | +2.75 | +1.97 | -0.08 | +4.92 | +1.82 | +0.5 | -46.9 | -9.7 | -17.0 | -1.0 | -3.8 | +9.1 | -3.8 |
+| 80, dynmiss=3 | +2.75 | +1.97 | +0.37 | +4.92 | +1.72 | +0.5 | -46.9 | -16.9 | -17.0 | -10.1 | -3.8 | -3.8 | -3.8 |
+| 69 (bound 5) | +2.75 | +1.97 | -0.02 | 0 | +1.72 | +0.6 | -46.9 | -16.9 | -17.0 | -10.1 | 0 | -3.8 | -3.8 |
+| **72 (bound 8)** | +2.75 | +1.97 | +1.40 | **0** | +1.72 | +0.5 | -46.9 | -16.9 | -17.0 | -10.1 | **-6.2** | -3.8 | -3.8 |
+| 72, dynpol=1 | +2.75 | +1.97 | +1.40 | 0 | +1.72 | 0 | +0.6 | -0.6 | -17.0 | -10.1 | -6.2 | -3.7 | -3.8 |
+| 72, dynpol=2 | +2.75 | 0 | +1.40 | 0 | +14.9 | +0.5 | -46.9 | -16.7 | -3.5 | -7.3 | -5.6 | -0.9 | -4.4 |
+| 72, dynpol=4 | +2.68 | +1.97 | +1.40 | 0 | +1.72 | +0.6 | -46.9 | -12.3 | -16.0 | -10.1 | -6.2 | -4.7 | -3.8 |
+| 72, dynpol=8 | 0 | 0 | +2.09 | 0 | 0 | +0.6 | 0 | -16.4 | 0 | 0 | 0 | 0 | 0 |
+| 72, dynpol=16 | +2.75 | +1.97 | +1.40 | 0 | +0.16 | 0 | +0.5 | -0.6 | -17.0 | -10.1 | -6.2 | -2.7 | -3.8 |
+
+Every static bit that removes a loser removes a winner with it (nbody and coro need the zero- and one-trip copies; parser_combinator and
+events need side recordings; every winner but coro has a call in the body), and the exit-fed ban only addresses bignum_arith (its counts vary;
+the other losers' unrolled copies do not exit: sha2's count is always 4, expr_compiler's regression is formation churn, not exits). The best
+setting found is `dynunroll=72,dynmiss=3` (bound 8, recursion rule, adaptive ban after three hot exits): whole set (223 programs) geomean
+**-0.54 %** (80 alone: -0.48 %), nbody -46.9 %, parser_combinator -17.0 %, coro_scheduler -16.9 %, bigint_rsa -10.1 %, regex_nfa -6.2 %,
+raytrace -3.8 %, scheme_interp -3.8 %, deltablue -0.4 %; rises: sha2_base64 +2.75 %, msgpack_pure +1.97 %, events +1.72 %, havlak +0.57 %,
+bignum_arith +0.36 %. The bar (no program up in instructions) is missed, so **`DYNUNROLL_PROCESS` stays 0 and `DYNMISS_PROCESS` 0**; the four
+remaining regressions need a measured comparison of the unrolled trace against the tier-1 stay it replaced (sha2: the unrolled
+`string.byte` loop of `s232num` traced at depth 2 is slower than tier 1's code there; msgpack / events: side recordings whose bodies call Lua
+closures through a table), which is not built.
+
+Tests: `tr_core::s75_dynunroll_programs` also runs `dynunroll=72,dynmiss=1` and `dynunroll=72,dynmiss=3,dynpol=31` (every mode, `+verify`, exit
+storms, budget 17, GC stress 2). No mutant: policy only.
+
+### 79.8 Fixes found by gate-light
+
+* `mfside` (79.4) folded to the root closure after checking the record-time lookup against frame `d`'s own closure: when the root frame runs
+  another closure of the prototype than the receiver's lookup gives (the method replaced mid-run, `s75_mfkeys` on 5.4 under `+verify`), the
+  lockstep oracle caught the folded value. The record-time check now looks up against the root closure (the value the fold uses).
+* `+emuverify`: the verification re-run did not know E5's region-check helper (`jit_tr_midfold_check`), which `mfside` traces reach in
+  `s79_mfside`: it is read-only and now runs for real in `VerifyHelpers::call`.
+* The mutant registry's frozen count (918).

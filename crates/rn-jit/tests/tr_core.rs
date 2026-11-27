@@ -4546,6 +4546,9 @@ fn s75_dynunroll_programs() {
             "dynunroll=0",
             "dynunroll=16,loopunroll=4",
             "dynunroll=80",
+            // section 79.7: the adaptive ban (every hot exit at an unrolled loop's guards bans the site and re-records) and the policy bits
+            "dynunroll=72,dynmiss=1",
+            "dynunroll=72,dynmiss=3,dynpol=31",
         ] {
             for (opts, budget) in [
                 ("", 0),

@@ -202,6 +202,8 @@ pub const MFSIDE_PROCESS: u32 = 1;
 pub const SITEORD_PROCESS: u32 = 1;
 /// Section 79.6 (`retremat`): the process default of [`TrLimits::retremat`] (also the struct default).
 pub const RETREMAT_PROCESS: u32 = 1;
+/// Section 79.7 (`dynmiss`): the process default of [`TrLimits::dynmiss`] (also the struct default).
+pub const DYNMISS_PROCESS: u32 = 0;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -992,6 +994,13 @@ pub struct TrLimits {
     /// is a pointer constant or an unmodified `SLOAD`'s payload; their failure path materialises it again. 0 = off, 1 = on (default
     /// [`RETREMAT_PROCESS`]).
     pub retremat: u32,
+    /// Section 79.7 (`dynmiss`, docs/JIT_TRACE.md section 79.7): the adaptive per-site policy of `dynunroll`: after this many hot exits at the
+    /// `FORLOOP` / `FORPREP` guards of a loop a trace unrolled by `dynunroll`, the site is banned and the family re-recorded. 0 = off (default
+    /// [`DYNMISS_PROCESS`]).
+    pub dynmiss: u32,
+    /// Section 79.7 (`dynpol`): static per-site policy bits of `dynunroll` (1: not a loop skipped at record time; 2: not in side recordings;
+    /// 4: not at depth 2 or more; 8: not a body with a call; 16: not at most one trip). Default 0.
+    pub dynpol: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1303,6 +1312,8 @@ impl Default for TrLimits {
             mfside: MFSIDE_PROCESS,
             siteord: SITEORD_PROCESS,
             retremat: RETREMAT_PROCESS,
+            dynmiss: DYNMISS_PROCESS,
+            dynpol: 0,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1557,6 +1568,8 @@ impl TrLimits {
                 "mfside" => l.mfside = v.min(1),
                 "siteord" => l.siteord = v.min(1),
                 "retremat" => l.retremat = v.min(1),
+                "dynmiss" => l.dynmiss = v.min(1000),
+                "dynpol" => l.dynpol = v.min(255),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -3447,6 +3460,8 @@ struct Trace {
     entry_callee: bool,
     /// BUNDLE-L B: the trace holds hoisted bounds guards ([`TraceIr::hoisted`]).
     hoisted: bool,
+    /// Section 79.7 (`dynmiss`): the loops this trace unrolled by `dynunroll` ([`TraceIr::dyn_sites`]).
+    dyn_sites: Vec<(u64, u32)>,
     /// P3 (`chainre`): per exit, the child subtree of the exit was flushed for re-ordering ([`chain_check`]).
     chain_done: Vec<u8>,
     /// P3 (family roots): chain re-orders of the whole family so far.
@@ -3560,6 +3575,10 @@ pub struct TrState {
     global_k: u8,
     /// Section 77.3 (`uvk`): the traces that read read-only upvalues as constants (flushed by [`upval_changed`]; stale ids are harmless).
     pub(crate) uvk_ids: Vec<TrId>,
+    /// Section 79.7 (`dynmiss`): hot exits seen per `dynunroll` site (`Proto.code` address, `FORPREP` pc).
+    pub(crate) dyn_miss: crate::fx::HashMap<(u64, u32), u32>,
+    /// Section 79.7: the `dynunroll` sites banned by the adaptive policy (recordings refuse to unroll them).
+    pub(crate) dyn_ban: std::rc::Rc<Vec<(u64, u32)>>,
     /// Section 77.3: writes into read-only captured variables seen (`upval_changed`); after an upvalue join or [`UVK_MAX_EVENTS`] of them the
     /// state stops folding (`uvk_off`).
     pub(crate) uvk_events: u32,
@@ -3619,6 +3638,8 @@ impl TrState {
             global_pen: 0,
             global_k: 0,
             uvk_ids: Vec::new(),
+            dyn_miss: Default::default(),
+            dyn_ban: Default::default(),
             uvk_events: 0,
             uvk_off: false,
             warm_t0: 0,
@@ -5308,6 +5329,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         dbl: Vec::new(),
         entry_callee: false,
         hoisted: false,
+        dyn_sites: Vec::new(),
         chain_done: vec![0; nex],
         chain_n: 0,
         shape_miss: 0,
@@ -6220,6 +6242,20 @@ pub fn exit_hot_policy(
         && !meta.cells.is_null()
         && !t.exit_st.is_empty();
     let family = t.family;
+    if out.count == hot && !t.dyn_sites.is_empty() {
+        let sites = t.dyn_sites.clone();
+        if dyn_miss_check(st, family, &sites, snap) {
+            return HotAction::Flushed;
+        }
+    }
+    let d = d_of(st);
+    let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot(id)
+    else {
+        return HotAction::None;
+    };
     if out.count == hot {
         let (e, sd) = (out.entry, sides);
         vlog(d, || {
@@ -8468,6 +8504,69 @@ pub fn set_hoisted(st: &mut State, id: TrId, v: bool) {
     {
         t.hoisted = v;
     }
+}
+
+/// Section 79.7 (`dynmiss`): the loops trace `id` unrolled by `dynunroll`.
+pub fn set_dyn_sites(st: &mut State, id: TrId, v: Vec<(u64, u32)>) {
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d_of(st).tr.slot_mut(id)
+    {
+        t.dyn_sites = v;
+    }
+}
+
+/// Section 79.7 (`dynmiss`): the banned `dynunroll` sites for a recording (`None`: the policy is off or nothing is banned).
+pub fn dyn_ban(st: &mut State) -> Option<std::rc::Rc<Vec<(u64, u32)>>> {
+    let d = d_of(st);
+    (d.tr.cfg.limits.dynmiss != 0 && !d.tr.dyn_ban.is_empty()).then(|| d.tr.dyn_ban.clone())
+}
+
+/// Section 79.7 (`dynmiss`): a hot exit of trace `t` restored inner frames and stands at the `FORLOOP` (continuation guard) or the `FORPREP` (count /
+/// skip guards) of a loop the trace unrolled by `dynunroll`: the unrolled copy's trip count did not hold. After `dynmiss` such hot exits the site is
+/// banned (later recordings refuse to unroll it, as with `dynunroll` off) and the family is flushed to re-record (no penalty). Returns whether it
+/// flushed. A policy decision: no semantic effect (every guard of an unrolled loop stays, a banned site records as with the knob off).
+fn dyn_miss_check(
+    st: &mut State,
+    family: TrId,
+    sites: &[(u64, u32)],
+    snap: &super::exit::ExitSnap,
+) -> bool {
+    let lim = d_of(st).tr.cfg.limits.dynmiss;
+    if lim == 0 || sites.is_empty() {
+        return false;
+    }
+    let Some(f) = snap.frames.last() else {
+        return false;
+    };
+    let code = f.code;
+    if code.is_null() {
+        return false;
+    }
+    // SAFETY: the innermost frame's prototype is a dependency of the trace (alive while it is installed); `pc` is a pc of its code.
+    let w = rn_core::instruction::Instruction(unsafe { *code.add(snap.pc as usize) });
+    let site = match w.opcode() {
+        Some(rn_core::ver::active::OpCode::Forprep) => snap.pc,
+        Some(rn_core::ver::active::OpCode::Forloop) => snap.pc.wrapping_sub(w.bx()),
+        _ => return false,
+    };
+    let key = (code as u64, site);
+    if !sites.contains(&key) {
+        return false;
+    }
+    let d = d_of(st);
+    let n = d.tr.dyn_miss.entry(key).or_insert(0);
+    *n += 1;
+    if *n < lim || d.tr.dyn_ban.contains(&key) {
+        return false;
+    }
+    std::rc::Rc::make_mut(&mut d.tr.dyn_ban).push(key);
+    vlog(d, || {
+        format!("dynmiss: site pc {site} banned after {lim} hot exits: re-record the family")
+    });
+    request_flush(st, family, FlushWhy::Unsink);
+    true
 }
 
 /// S4: zero layout ids the exit handler fills (per state) before the cold paths of the shape guards stop calling it ([`TrLimits::shapedemote`]).

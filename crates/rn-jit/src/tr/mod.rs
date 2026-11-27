@@ -394,6 +394,8 @@ struct EmuTrace {
     entry_fail_fn: u64,
     ci_spare_fn: u64,
     ci_spare_root_fn: u64,
+    /// E5: the region check (a read-only helper the verification re-run calls for real).
+    midfold_fn: u64,
 }
 
 /// The entry state of the trace that runs natively under `+emuverify`.
@@ -965,6 +967,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         chainlive: cfg.limits.chainlive != 0,
         rootproto: cfg.limits.rootproto != 0,
         mfside: cfg.limits.mfside != 0,
+        dyn_ban: cache::dyn_ban(st),
+        dynpol: cfg.limits.dynpol,
         uvk: if cache::uvk_off(st) {
             0
         } else {
@@ -1213,6 +1217,8 @@ pub fn driver_start_side(
         chainlive: cfg.limits.chainlive != 0,
         rootproto: cfg.limits.rootproto != 0,
         mfside: cfg.limits.mfside != 0,
+        dyn_ban: cache::dyn_ban(st),
+        dynpol: cfg.limits.dynpol,
         uvk: if cache::uvk_off(st) {
             0
         } else {
@@ -3243,6 +3249,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     if attached.is_some() && !act.side && ir.hoisted {
         cache::set_hoisted(st, newid, true);
     }
+    if attached.is_some() && !ir.dyn_sites.is_empty() {
+        cache::set_dyn_sites(st, newid, ir.dyn_sites.clone());
+    }
     if attached.is_some() && !act.side {
         // P3 (`ncallee`): does the entry segment of this root hold a callee identity guard (the guards `Asm::entry_kind` treats as entry checks)?
         let lp = ir.loop_at.map(|l| (l - ir::REF_BIAS) as usize);
@@ -3302,6 +3311,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             entry_fail_fn: env.entry_fail_fn,
             ci_spare_fn: env.ci_spare_fn,
             ci_spare_root_fn: env.ci_spare_root_fn,
+            midfold_fn: env.midfold_fn,
         };
         let key = (crate::rt::data_ptr(st) as usize, newid.slot);
         EMU.with(|e| e.borrow_mut().insert(key, Rc::new(t)));
@@ -3588,6 +3598,18 @@ impl Helpers for VerifyHelpers<'_> {
             || f == self.t.ci_spare_root_fn
         {
             // the head counters are restored by the caller
+        } else if f == self.t.midfold_fn && f != 0 {
+            // E5 / section 79.4: the region check only reads the frame (its receiver and closure, which no trace writes): run it for real
+            // SAFETY: as `LiveHelpers::call`: the address of `cache::jit_tr_midfold_check`, the live thread and root frame.
+            let r = unsafe {
+                let func: unsafe extern "C" fn(*mut u8, *mut u8, u32, u32) -> u32 =
+                    std::mem::transmute(f as usize);
+                func(env.thread, env.ci, a, _b)
+            };
+            return HelperOut {
+                result: r,
+                new_frame: None,
+            };
         } else {
             panic!("emuverify: unexpected helper {f:#x}");
         }

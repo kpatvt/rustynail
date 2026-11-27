@@ -188,6 +188,10 @@ impl From<IrAbort> for AbortReason {
 pub struct RecCfg {
     /// Section 59 (`reroot`): a root recording that completes this path prefix (pc, prototype, depth per step) aborts `Reroot`.
     pub avoid: Option<std::rc::Rc<Vec<(u32, usize, u8)>>>,
+    /// Section 79.7 (`dynmiss`): the `dynunroll` sites (`Proto.code` address, `FORPREP` pc) banned by the adaptive policy.
+    pub dyn_ban: Option<std::rc::Rc<Vec<(u64, u32)>>>,
+    /// Section 79.7 (`dynpol`): static per-site policy bits of `dynunroll`.
+    pub dynpol: u32,
     /// F4 (`snapprune`): the snapshots of the root frame leave out the dead numeric temporaries (`snap::prune_snaps`).
     pub snapprune: bool,
     /// F4 experiment (`snapprune=2`): dead *locals* are pruned as well (`debug.getlocal` of a dead local then shows a stale value).
@@ -569,6 +573,8 @@ impl Default for RecCfg {
     fn default() -> RecCfg {
         RecCfg {
             avoid: None,
+            dyn_ban: None,
+            dynpol: 0,
             snapprune: false,
             snapprune_locals: false,
             pureb: super::cache::PUREB_PROCESS != 0,
@@ -6371,10 +6377,18 @@ impl Rec {
         let Some(key) = vm.k.get(kidx as usize).and_then(|v| v.as_strref()) else {
             return Ok(false);
         };
-        let fv = vm.st.get(StkId(vm.base - 1));
-        if !fv
-            .as_lclosure()
-            .is_some_and(|c| c.as_ptr() == vm.cl.as_ptr())
+        // (section 79.4: in a frame that `mfdeep` does not cover the folded value is the ROOT frame's closure, so the record-time lookup must give it,
+        // whatever closure frame `d` runs)
+        let fv = if recv_guard {
+            vm.st.get(StkId(vm.root_base - 1))
+        } else {
+            vm.st.get(StkId(vm.base - 1))
+        };
+        if (!recv_guard
+            && !fv
+                .as_lclosure()
+                .is_some_and(|c| c.as_ptr() == vm.cl.as_ptr()))
+            || fv.as_lclosure().is_none()
             || !method_lookup_is(vm.st, vm.slot(0), key, &fv)
         {
             return Ok(false);
@@ -10368,11 +10382,42 @@ impl Rec {
             let rec_frame = self.dynunroll_norec()
                 && self.frames[..self.cur_depth].iter().any(|f| f.proto == fp);
             let bound = u64::from(self.cfg.dynunroll & 63);
-            if bound == 0 || rec_frame || dyn_trips(vi, vl, vs) > bound {
+            let trips = dyn_trips(vi, vl, vs);
+            if bound == 0 || rec_frame || trips > bound {
+                return Err(AbortReason::InnerLoop);
+            }
+            // Section 79.7 (`dynpol`): per-site policy bits (no semantic effect: a refused site records as with the knob off)
+            let pol = self.cfg.dynpol;
+            let body_calls = || {
+                let end = (idx + 1 + i.bx() as usize).min(vm.code.len());
+                vm.code[idx + 1..end].iter().any(|&w| {
+                    let o = Instruction(w).opcode_raw();
+                    o == OpCode::Call as u8 || o == OpCode::Tailcall as u8
+                })
+            };
+            if (pol & 1 != 0 && trips == 0)
+                || (pol & 2 != 0 && self.cfg.side.is_some())
+                || (pol & 4 != 0 && self.cur_depth >= 2)
+                || (pol & 8 != 0 && body_calls())
+                || (pol & 16 != 0 && trips <= 1)
+            {
                 return Err(AbortReason::InnerLoop);
             }
             prep_link = false;
             dynu = true;
+            // Section 79.7 (`dynmiss`): a site the adaptive policy banned keeps the refusal; the others are recorded in the trace
+            let code = vm.code.as_ptr() as u64;
+            if self
+                .cfg
+                .dyn_ban
+                .as_ref()
+                .is_some_and(|b| b.contains(&(code, idx as u32)))
+            {
+                return Err(AbortReason::InnerLoop);
+            }
+            if !self.b.ir.dyn_sites.contains(&(code, idx as u32)) {
+                self.b.ir.dyn_sites.push((code, idx as u32));
+            }
         }
         if vs == 0 || vs == i64::MIN {
             return Err(self.nyi());

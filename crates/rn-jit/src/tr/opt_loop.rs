@@ -195,6 +195,7 @@ impl<'a> Em<'a> {
         b.ir.idfold = rec.ir.idfold;
         b.ir.rec_trip = rec.ir.rec_trip;
         b.ir.midfold = rec.ir.midfold;
+        b.ir.dyn_sites = rec.ir.dyn_sites.clone();
         // R1: the carried loads of a side trace and where the parent's exit has their values; the pruning info of the recording
         b.ir.carry_in = rec.ir.carry_in.clone();
         b.ir.carry_store = rec.ir.carry_store.clone();

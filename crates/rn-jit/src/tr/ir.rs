@@ -859,6 +859,9 @@ pub struct TraceIr {
     /// E5 (`midfold`): a method `SELF` of the family's key on register 0 was folded to the running closure: the trace relies on the region
     /// invariant of section 35.4.
     pub midfold: bool,
+    /// Section 79.7 (`dynmiss`): the loops of inlined frames this trace unrolled by `dynunroll` (the frame's `Proto.code` address, the `FORPREP`
+    /// pc): a hot exit at one of their guards counts against the site.
+    pub dyn_sites: Vec<(u64, u32)>,
     /// BUNDLE-L B: the pre-roll holds the hoisted bounds guards of a counted loop (`opt_loop::Em::plan_bhoist`): a persistent failure of them
     /// re-records the head without the hoist (`HeadData::nohoist`).
     pub hoisted: bool,
@@ -985,6 +988,7 @@ impl TraceIr {
         self.rec_ret = None;
         self.idfold = false;
         self.midfold = false;
+        self.dyn_sites.clear();
         self.rec_trip = 0;
     }
 
