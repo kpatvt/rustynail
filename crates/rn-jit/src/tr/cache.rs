@@ -162,6 +162,8 @@ pub const OPENCALL_PROCESS: u32 = 1;
 pub const LANDFIX_PROCESS: u32 = 1;
 /// Section 75 (`oframe`): the process default of [`TrLimits::oframe`] (also the struct default).
 pub const OFRAME_PROCESS: u32 = 1;
+/// Section 75 (`retfuse`): the process default of [`TrLimits::retfuse`] (also the struct default).
+pub const RETFUSE_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -846,6 +848,10 @@ pub struct TrLimits {
     /// the innermost frame (`base + maxstacksize`): the registers of inlined callees that have returned. Nothing can read them before a new frame writes
     /// them (the collector marks below `top` and clears above it); the exit / push no longer stores them. 0 = off, 1 = on (default [`OFRAME_PROCESS`]).
     pub oframe: u32,
+    /// Section 75 (`retfuse`, docs/JIT_TRACE.md section 75): a native `RETURN0` whose guards run at the end of the trace (`t4` bit 0) and need no saved
+    /// registers dispatches from the guards' site chain into one tail per site (the tail does not load `previous` / `savedpc` again nor walk the sites
+    /// again). 0 = off, 1 = on (default [`RETFUSE_PROCESS`]).
+    pub retfuse: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1136,6 +1142,7 @@ impl Default for TrLimits {
             opencall: OPENCALL_PROCESS,
             landfix: LANDFIX_PROCESS,
             oframe: OFRAME_PROCESS,
+            retfuse: RETFUSE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1369,6 +1376,7 @@ impl TrLimits {
                 "opencall" => l.opencall = v.min(1),
                 "landfix" => l.landfix = v.min(1),
                 "oframe" => l.oframe = v.min(1),
+                "retfuse" => l.retfuse = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

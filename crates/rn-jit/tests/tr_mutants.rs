@@ -2196,6 +2196,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_oframe_programs")],
     },
     Row {
+        name: "retfuse_site_next",
+        owner: "S75",
+        dets: &[d("tr_core", "s75_oframe_programs")],
+    },
+    Row {
+        name: "retfuse_root_as_nonroot",
+        owner: "S75",
+        dets: &[d("tr_core", "s75_oframe_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

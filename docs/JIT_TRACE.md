@@ -8269,3 +8269,23 @@ slots; `oframe` 1 / 0 and with `recnat=1`, modes `always` / `on2` / `on`, `+veri
 Measured (one binary, `oframe=0` against `=1`, `RUSTYNAIL_SEED=0`, `taskset -c 8`, min of 5): permute 191.22 -> 184.30 M instructions (**-3.62 %**),
 35.40 -> 33.35 M cycles (**-5.8 %**). Whole set (bench/{lib,programs,awfy,corpus,corpus2}, 190 programs, instructions, one run each): movers beyond
 0.3 %: permute -3.61 %, corpus/astar_jumper -2.43 %, programs/varargs -1.15 %, awfy/towers -0.62 %, programs/fib -0.36 %; nothing rises beyond 0.3 %.
+
+### 75.3 `retfuse`: the native return dispatches from its guards (`TrLimits::retfuse`, default 1 = `RETFUSE_PROCESS`)
+
+With `t4` bit 0 (the default) the guards of a native return run at the end of the trace, right before its tail; for a `RETURN0` (empty writeback)
+whose guards need no saved registers nothing lies between them. The tail used to load `ci.previous` and its `savedpc` again, repeat the region-root
+test (lazy families) and walk the continuation sites a second time. Now (`Cx::rec_ret_guards` / `Cx::rec_ret_tail`): the guards' site chain jumps to
+one tail per site (`rec_ret_tail_one(n, Some(k), ..)`), which keeps `V1` = `previous` and `V2` = `savedpc` and ends in site `k`'s pop and cell jump
+without a compare; in a lazy family the guards' root test splits the chain in two: a frame above the region root (no callstatus tests, as before)
+goes to tails without the root test and the root bookkeeping, the root frame (callstatus tests first) to the full tails. The failure path of every
+chain is the guard's exit, as before. Code grows by one tail per site (two in lazy families; a tail is 4-8 instructions, the root one more).
+Not fused: `RETURN1` (its writeback stores the result into the function slot between guards and tail), guards with saved registers (permute's
+trace 7: three registers live at its return), `t4=0`.
+
+Mutants `retfuse_site_next` (site `k`'s tail pops to site `k + 1`'s frame and cell) and `retfuse_root_as_nonroot` (the region root returns through the
+tails of the frames above it), caught by `tr_core::s75_oframe_programs` (its matrix now also runs `retfuse` 0 / 1 and `t4=0`).
+
+Measured (one binary, `retfuse=0` against `=1`, `oframe=1`, `RUSTYNAIL_SEED=0`, `taskset -c 8`, min of 5, two interleaved rounds): permute
+184.31 -> 178.85 M instructions (**-2.96 %**; the site part alone -2.15 %, the root split another -0.8 %), 33.28 / 33.54 -> 32.76 / 32.77 M cycles
+(**-1.6 .. -2.3 %**). Whole set (190 programs, instructions, one run each, site part): permute -2.15 %, awfy/towers -1.18 %, corpus/astar_jumper
+-3.28 % (noise: astar_jumper is not deterministic, 4.27 .. 4.55 G instructions for one binary and setting); nothing rises beyond 0.3 %.

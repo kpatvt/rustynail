@@ -2592,6 +2592,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             && !emuverify,
         // SAFETY: as above.
         rec_late,
+        // SAFETY: as above.
+        rec_fuse: rec_late && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } != 0,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         idfold_uv: idf_env,

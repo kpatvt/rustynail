@@ -4487,7 +4487,12 @@ fn s73_landfix_programs() {
 fn s75_oframe_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for limits in ["oframe=1", "oframe=0", "oframe=1,recnat=1"] {
+        for limits in [
+            "oframe=1,retfuse=1",
+            "oframe=0,retfuse=0",
+            "oframe=1,retfuse=1,recnat=1",
+            "oframe=1,retfuse=1,t4=0",
+        ] {
             for (opts, budget) in [
                 ("", 0),
                 ("+verify", 0),

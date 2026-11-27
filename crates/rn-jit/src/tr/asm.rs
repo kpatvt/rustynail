@@ -284,6 +284,9 @@ pub struct AsmEnv {
     /// T4 (`t4` bit 0, docs/JIT_TRACE.md section 46): the guards of a native return run at the end of the trace (failing through the snapshot of the
     /// `RETURN`) instead of in front of the first charge (failing through the start snapshot).
     pub rec_late: bool,
+    /// Section 75 (`retfuse`): a late native `RETURN0` (no writeback) whose guards need no saved registers dispatches from its guards' site chain
+    /// straight into one tail per site (no second load of `previous` / `savedpc`, no second site chain).
+    pub rec_fuse: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
     pub lazy_cs: Option<u32>,
     /// BUNDLE-K L1: `numparams` of the root prototype (the end of the arguments of a frame just pushed natively).
@@ -443,6 +446,7 @@ impl Default for AsmEnv {
             slink_snaps: false,
             rec_vb_keep: false,
             rec_late: false,
+            rec_fuse: false,
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
@@ -2718,6 +2722,10 @@ struct Cx<'a> {
     defer_g: Vec<(u32, L)>,
     /// S1: the label of the embedded shared exit routine (`Asm::shared_label`).
     shared_l: Option<L>,
+    /// Section 75 (`retfuse`): the per-site tail labels the fused guards of a native return dispatch to (empty: not fused).
+    rf_sites: Vec<L>,
+    /// Section 75 (`retfuse`): the per-site tails of a frame known to be above the region root (lazy families; empty: none).
+    rf_nr: Vec<L>,
     /// S1: assembling a deferred stub ([`assemble_deferred`]): the address of the trace's shared exit routine, which the generic twin jumps to (0: the normal
     /// assembly).
     twin_abs: u64,
@@ -2786,6 +2794,8 @@ impl<'a> Cx<'a> {
             dl_ok: Vec::new(),
             defer_g: Vec::new(),
             shared_l: None,
+            rf_sites: Vec::new(),
+            rf_nr: Vec::new(),
             twin_abs: 0,
             dshared: &NO_SHARED,
             ext_leave_used: [false; 2],
@@ -4624,6 +4634,52 @@ impl Cx<'_> {
         // (without saved registers the guards fail straight to the exit; with them, through a trampoline that restores them)
         let fail = if saved.is_empty() { x } else { self.label() };
         self.ld(1, W::B8, ciw(ci::PREVIOUS));
+        let fuse = late
+            && saved.is_empty()
+            && self.env.rec_fuse
+            && _rr.n == 0
+            && !mutants::active("rec_ret_site_unchecked");
+        if fuse && self.env.lazy && !mutants::active("lazy_ret_root_unchecked") {
+            // Section 75 (`retfuse`): the root test decides the tail too: a frame above the region root returns through a tail without the
+            // root test and the root's bookkeeping; the root frame (callstatus tests first) through the full one
+            let nr = self.label();
+            self.push(Op::Lea(3, ciw(0)));
+            self.push(Op::BrMR {
+                cc: Cc::Ne,
+                m: Self::lroot_m(),
+                src: 3,
+                to: nr,
+            });
+            self.ld(3, W::B4, ciw(ci::CALLSTATUS));
+            self.push(Op::And(3, Src::Imm(ci::CIST_FRESH as i32)));
+            self.br(Cc::Ne, 3, Src::Imm(0), fail);
+            self.ld(3, W::B4, rm(1, ci::CALLSTATUS as i32));
+            self.push(Op::And(3, Src::Imm(ci::CIST_C as i32)));
+            self.br(Cc::Ne, 3, Src::Imm(0), fail);
+            let n = usize::from(self.env.rec_nsites);
+            let root_l: Vec<L> = (0..n).map(|_| self.label()).collect();
+            let nr_l: Vec<L> = (0..n).map(|_| self.label()).collect();
+            // (mutant: the root frame returns through the tails of the frames above it)
+            let root_to = if mutants::active("retfuse_root_as_nonroot") {
+                nr_l.clone()
+            } else {
+                root_l.clone()
+            };
+            for (dst, rl) in [(&root_to, false), (&nr_l, true)] {
+                if rl {
+                    self.bind(nr);
+                }
+                self.ld(2, W::B8, rm(1, ci::SAVEDPC as i32));
+                for (k, &l) in dst.iter().enumerate() {
+                    self.push(Op::Mov(3, self.env.rec_sites[k].0));
+                    self.br(Cc::Eq, 2, Src::V(3), l);
+                }
+                self.push(Op::Jmp(fail));
+            }
+            self.rf_sites = root_l;
+            self.rf_nr = nr_l;
+            return Ok(());
+        }
         if self.env.lazy {
             // BUNDLE-K L1: a frame above the region root was pushed natively by a self-call (never `CIST_FRESH`, its caller a Lua frame): no
             // callstatus tests, and its fields are not complete anyway. The root frame itself (complete, maybe called from C) gets the eager tests.
@@ -4659,6 +4715,19 @@ impl Cx<'_> {
             self.br(Cc::Ne, 3, Src::Imm(0), fail);
         }
         self.ld(2, W::B8, rm(1, ci::SAVEDPC as i32));
+        // Section 75 (`retfuse`): at the end of the trace (nothing between the guards and the tail: no writeback, no saved registers) the site
+        // chain dispatches to one tail per site, which keeps `V1` = `previous` and `V2` = `savedpc`
+        if fuse {
+            let n = usize::from(self.env.rec_nsites);
+            let labels: Vec<L> = (0..n).map(|_| self.label()).collect();
+            for (k, &l) in labels.iter().enumerate() {
+                self.push(Op::Mov(3, self.env.rec_sites[k].0));
+                self.br(Cc::Eq, 2, Src::V(3), l);
+            }
+            self.push(Op::Jmp(fail));
+            self.rf_sites = labels;
+            return Ok(());
+        }
         if !mutants::active("rec_ret_site_unchecked") {
             let ok = self.label();
             for k in 0..usize::from(self.env.rec_nsites) {
@@ -4688,6 +4757,36 @@ impl Cx<'_> {
     /// `RETURN1` does (`thread.top = func + 1`, `thread.ci = previous`, the pinned registers of the caller) and continues at
     /// the dispatch cell of the continuation head the caller is suspended at.
     fn rec_ret_tail(&mut self, n: u8) -> Result<(), AsmError> {
+        if self.rf_sites.is_empty() {
+            return self.rec_ret_tail_one(n, None, false);
+        }
+        // Section 75 (`retfuse`): one tail per site, entered from the guards' site chain with `V1` / `V2` loaded
+        let labels = std::mem::take(&mut self.rf_sites);
+        let nr = std::mem::take(&mut self.rf_nr);
+        for (set, above) in [(labels, false), (nr, true)] {
+            for (k, l) in set.into_iter().enumerate() {
+                self.bind(l);
+                // (mutant: the tail of site `k` pops to the frame and cell of the next site)
+                let k = if mutants::active("retfuse_site_next") {
+                    (k + 1) % usize::from(self.env.rec_nsites)
+                } else {
+                    k
+                };
+                self.rec_ret_tail_one(n, Some(k), above)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The native return's tail (see [`Cx::rec_ret_tail`]); `only = Some(k)`: the fused tail of site `k` (`V1` = `previous` and `V2` = its
+    /// `savedpc` are loaded, the final dispatch is site `k`'s without a compare).
+    /// `above`: the returning frame is known to be above the region root of a lazy family (no root test, no root bookkeeping).
+    fn rec_ret_tail_one(
+        &mut self,
+        n: u8,
+        only: Option<usize>,
+        above: bool,
+    ) -> Result<(), AsmError> {
         let ciw = |o: usize| M {
             base: Base::Ci,
             off: o as i32,
@@ -4697,8 +4796,10 @@ impl Cx<'_> {
             off: o as i32,
         };
         let lazy = self.env.lazy;
-        self.ld(1, W::B8, ciw(ci::PREVIOUS));
-        self.ld(2, W::B8, rm(1, ci::SAVEDPC as i32));
+        if only.is_none() {
+            self.ld(1, W::B8, ciw(ci::PREVIOUS));
+            self.ld(2, W::B8, rm(1, ci::SAVEDPC as i32));
+        }
         if !lazy {
             self.ld(3, W::B8, ciw(ci::FUNC));
             let top_n = if mutants::active("rec_ret_top_off") {
@@ -4709,7 +4810,7 @@ impl Cx<'_> {
             self.push(Op::Add(3, Src::Imm(top_n)));
             self.st(W::B8, thw(thr::TOP), Src::V(3));
             self.st(W::B8, thw(thr::CI), Src::V(1));
-        } else {
+        } else if !above {
             // the root frame returns into its (complete) caller, which becomes the root: the thread follows it as in the eager protocol
             let lz = self.label();
             self.push(Op::Lea(4, ciw(0)));
@@ -4803,9 +4904,12 @@ impl Cx<'_> {
         }
         let n = usize::from(self.env.rec_nsites);
         for k in 0..n {
+            if only.is_some_and(|o| o != k) {
+                continue;
+            }
             let (site, cell, a) = self.env.rec_sites[k];
             let next = self.label();
-            if k + 1 < n {
+            if k + 1 < n && only.is_none() {
                 self.push(Op::Mov(3, site));
                 self.br(Cc::Ne, 2, Src::V(3), next);
             }

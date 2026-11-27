@@ -441,6 +441,10 @@ pub const NAMES: &[&str] = &[
     "landfix_live_rewrite",
     // section 75 (`oframe`): the snapshots of an inlined frame drop the slots above the ROOT frame's top (live callee registers)
     "oframe_root_top",
+    // section 75 (`retfuse`): the fused tail of return site k pops to the frame and cell of site k + 1
+    "retfuse_site_next",
+    // section 75 (`retfuse`): the region root of a lazy family returns through the tail of the frames above it (no root bookkeeping)
+    "retfuse_root_as_nonroot",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1186,7 +1190,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 892);
+        assert_eq!(NAMES.len(), 894);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
