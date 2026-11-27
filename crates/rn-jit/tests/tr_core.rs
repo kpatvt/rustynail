@@ -4643,7 +4643,7 @@ fn s77_rself_programs() {
 /// Section 77.6 (`sloadhome`): `SLOAD`s that live in their own stack slot (no spill store, reloads and exit restores read the stack): moves and swaps
 /// restored from them at exits, sunk tables built from them, link writebacks, loop-carried slots, XMM homes, a towers-shaped recursion with
 /// register-carrying links; `sloadhome` 3 / 1 / 0, the trace modes with `+verify`, `+wb` (TR3b `SSTORE`s), `+randra`, exit storms, budget 17 and
-/// GC stress 2. Mutants `sloadhome_snap_named`, `sloadhome_slot_written`.
+/// GC stress 2. Mutants `sloadhome_snap_named`, `sloadhome_slot_reused` (`sloadhome_carry_src`: `r1_regcarry_programs`).
 #[test]
 fn s77_home_programs() {
     let mut jobs = Vec::new();
@@ -4657,6 +4657,7 @@ fn s77_home_programs() {
                 ("+randra=3 +verify", 0),
                 ("+exitstorm=3 +verify", 0),
                 ("+exitstorm=1", 0),
+                ("-fwd -cse -sink", 0),
                 ("", 17),
             ] {
                 let mut j = Job::new("s77_home", trace).opts(opts).limits_s(limits);
@@ -4671,6 +4672,16 @@ fn s77_home_programs() {
                 .limits_s("sloadhome=3")
                 .env("RUSTYNAIL_GC_STRESS", "2"),
         );
+        // (random allocations: the loop-invariant home of case (5) shares the free-slot list with other spills only under some of them)
+        for seed in 1..=8 {
+            for storm in [3, 7] {
+                jobs.push(
+                    Job::new("s77_home", trace)
+                        .opts(&format!("+exitstorm={storm} +verify +randra={seed}"))
+                        .limits_s("sloadhome=3"),
+                );
+            }
+        }
     }
     compare(jobs);
 }

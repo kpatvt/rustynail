@@ -179,7 +179,7 @@ pub const MFSHARE_PROCESS: u32 = 1;
 /// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default). OFF: wrong results in `tr_core` matrices
 /// with `+randra +exitstorm=7` (bh_next, n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants) and a crash of dm_dynkey (`-fwd -cse -sink`), not
 /// root-caused (they disappear with `guarddiet=0`), docs/JIT_TRACE.md section 77.6.
-pub const SLOADHOME_PROCESS: u32 = 0;
+pub const SLOADHOME_PROCESS: u32 = 3;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).

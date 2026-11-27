@@ -464,8 +464,10 @@ pub const NAMES: &[&str] = &[
     "flink_no_proof",
     // section 77.6 (`sloadhome`): a home is given to an `SLOAD` a sunk / function / carried snapshot entry or (bit 1 off) any entry names
     "sloadhome_snap_named",
-    // section 77.6 bit 1: a home whose slot another snapshot entry writes / a home entry of its own slot kept as a restore
-    "sloadhome_slot_written",
+    // section 77.6: a loop invariant's home slot goes back to the free slots when the scan crosses `LOOP` (another value is then spilled to it)
+    "sloadhome_slot_reused",
+    // section 77.6: the carry entry of a side trace reads a parent spill slot whose number is a home of this trace from the stack
+    "sloadhome_carry_src",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1211,7 +1213,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 906);
+        assert_eq!(NAMES.len(), 907);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

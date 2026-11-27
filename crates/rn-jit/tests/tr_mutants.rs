@@ -2261,9 +2261,14 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s77_home_programs")],
     },
     Row {
-        name: "sloadhome_slot_written",
+        name: "sloadhome_slot_reused",
         owner: "S77",
         dets: &[d("tr_core", "s77_home_programs")],
+    },
+    Row {
+        name: "sloadhome_carry_src",
+        owner: "S77",
+        dets: &[d("tr_core", "r1_regcarry_programs")],
     },
     Row {
         name: "tmove_presize_holes",

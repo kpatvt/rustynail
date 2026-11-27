@@ -79,3 +79,53 @@ for r = 1, 6 do
   t:move(9, 1, 3)
   print("towers", r, t.moves, #t.piles[3])
 end
+
+-- (5) a loop invariant with a home whose slot number must stay reserved after the scan crosses `LOOP` (the `pairs` loops below keep the
+-- table and the iterator invariant; other pre-roll values are spilled): bh_next's `over` with the main chunk's locals before it
+local arr5, hash5, mixed5, empty5 = {}, {}, {}, {}
+for i = 1, 40 do arr5[i] = i end
+local function over(n)
+  local total = 0
+  for i = 1, n do
+    local t = {}
+    for j = 1, 10 do t[j] = j t["s" .. j] = j end
+    for k, v in pairs(t) do t[k] = v * 2 end
+    for k, v in pairs(t) do total = total + v end
+  end
+  return total
+end
+print("over", over(300), #arr5, #hash5 + #mixed5 + #empty5)
+
+-- (6) a side trace that writes back the slot of a loaded value and links through a register-carrying entry, whose moves run after the
+-- writeback (stores through `__newindex` function / table metatables, dm_dynkey's case E): the slot's home would read the new value
+do
+local out6 = {}
+local function emit(...)
+  local t = { ... }
+  for i = 1, select("#", ...) do t[i] = tostring(t[i]) end
+  out6[#out6 + 1] = table.concat(t, ",")
+end
+local function loader(src, ...) return assert(load(src))(...) end
+local names = {}
+for i = 1, 300 do names[i] = "k" .. i end
+-- E: stores through __newindex (function and table), present / absent / nil-valued keys
+local logs = 0
+local sink = {}
+local nt = setmetatable({}, { __newindex = function(t, k, v) logs = logs + 1; rawset(t, k, v) end })
+local nt2 = setmetatable({}, { __newindex = sink })
+local STORE = [==[
+local names = ...
+return function(t, n, m)
+  for i = 1, n do t[names[i % m + 1]] = i end
+end]==]
+local store = loader(STORE, names)
+for r = 1, 6 do
+  store(nt, 70, 10 + r * 3)
+  store(nt2, 70, 10 + r * 3)
+  if r == 3 then for i = 1, 40 do nt[names[i]] = nil end end
+  local s1, s2 = 0, 0
+  for i = 1, 60 do s1 = s1 + (rawget(nt, names[i]) or 0); s2 = s2 + (sink[names[i]] or 0) + (rawget(nt2, names[i]) or 0) end
+  emit("E", r, logs, s1, s2)
+end
+print(table.concat(out6, "\n"))
+end
