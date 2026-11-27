@@ -204,6 +204,8 @@ pub struct RecCfg {
     pub recinl: u32,
     /// Section 75.10 (`sidepush`): native pushes from side recordings that start inside chain frames.
     pub sidepush: bool,
+    /// Section 75.13 (`mfdeep`): E5's fold in chain frames called with the root closure on the root receiver.
+    pub mfdeep: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -561,6 +563,7 @@ impl Default for RecCfg {
             dynunroll: super::cache::DYNUNROLL_PROCESS,
             recinl: super::cache::RECINL_PROCESS,
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
+            mfdeep: super::cache::MFDEEP_PROCESS != 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -6193,10 +6196,22 @@ impl Rec {
         let Some(kidx) = self.cfg.midfold else {
             return Ok(false);
         };
-        if b != 0 || self.cur_depth != 0 || (cfg!(rustynail_lua54) && i.k() == 0) {
+        if b != 0 || (cfg!(rustynail_lua54) && i.k() == 0) {
             return Ok(false);
         }
-        if i.c() as usize != kidx as usize || a + 1 >= self.frames[0].nslots {
+        let d = self.cur_depth;
+        if d != 0 {
+            // Section 75.13 (`mfdeep`): an inlined chain frame called with the root closure's ref (so it runs that very closure) on the root's
+            // receiver (checked below: register 0 is the root's entry load): every frame of the region shares that pair, so the fact holds for it
+            if !self.cfg.mfdeep
+                || !self.frames[d].unr
+                || self.func_ref == NOREF
+                || self.frames[d].cref != self.func_ref
+            {
+                return Ok(false);
+            }
+        }
+        if i.c() as usize != kidx as usize || a + 1 >= self.frames[d].nslots {
             return Ok(false);
         }
         let Some(key) = vm.k.get(kidx as usize).and_then(|v| v.as_strref()) else {

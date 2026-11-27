@@ -8521,3 +8521,21 @@ inlined `swap` of a family shaped like awfy/permute), `tr_core::s75_mfkeys_progr
 region check ignores the extra keys) is caught. A family-rule mutant (stores of the extra keys allowed) was **not** caught: the test program's
 families that make those stores natively are decided eager (their first trace is a loop root, `midfold_eager`), so no folded trace runs beside
 the store; the rule's argument is E5's (35.5) for one more key set, and E5's own store mutants (`e5_01`) cover the mechanism. Dropped, not claimed.
+
+### 75.13 `mfdeep`: E5's fold of the family key in chain frames (`TrLimits::mfdeep`, default 1)
+
+E5 folds `SELF A 0 K` of the family key only in the root frame of a recording (35.4). With `recinl`, trace 7 inlines the callee as a chain frame,
+whose own `self:permute(n1)` walked the whole chain again (33 instructions per run of trace 7: `HMISS` on the receiver, metatable, `__index`
+slot, the class's `permute` slot, the closure compare). Now `Rec::midfold_self` also folds it in an inlined chain frame (`unr`) that was called
+with the root closure's ref (`cref == func_ref`) and whose register 0 is the root's entry load (`slot0_entry`, ref equality: the receiver the
+region check verified). Sound for the same reason as at depth 0: the fact `lookup(R0, K) == region closure` is a property of the receiver, every
+frame of the region (inlined or pushed) has the root's receiver, and the family rule keeps every lookup of `K` unchanged inside the region.
+(The closure condition is conservative: the fact concerns the receiver, so a chain frame running another closure of the prototype on the same
+receiver would get the same value; a mutant that drops it is equivalent and was dropped.) Side traces' seeded chain frames have no closure ref
+and their register 0 is another slot load: they never fold.
+
+Measured (one binary, `mfdeep=0` against `=1`, SEED 0, CPU 8, min of 5, two interleaved rounds): permute 132.01 -> 126.97 M instructions
+(**-3.82 %**), 25.46 / 25.59 -> 24.59 / 24.74 M cycles (**-3.3 .. -3.4 %**). Whole set (190 programs, one run each): permute -3.82 %,
+astar_jumper -1.3 % (its noise); geomean -0.03 %. Tests: `tr_core::s75_mfkeys_programs` now also runs `mfdeep=1` and `mfdeep=1,recinl=3` on
+`s75_mfkeys` and `s75_recinl` (every trace mode, `+verify`, exit storms, budget 17, GC stress 2). The share of the remaining `swap` lookups through
+the builder's CSE (a second `KPTR` of the same table) was measured too: no change (126.97 M both ways), not kept.

@@ -4617,6 +4617,8 @@ fn s75_mfkeys_programs() {
             "mfkeys=0",
             "mfkeys=1,recinl=3,sidepush=1",
             "mfkeys=1,sidepush=0",
+            "mfdeep=1",
+            "mfdeep=1,recinl=3",
         ] {
             for (opts, budget) in [
                 ("", 0),
@@ -4641,6 +4643,9 @@ fn s75_mfkeys_programs() {
                 .opts("+verify")
                 .limits_s("mfkeys=1"),
         );
+        for l in ["mfdeep=1", "mfdeep=1,recinl=3,sidepush=1"] {
+            jobs.push(Job::new("s75_recinl", trace).opts("+verify").limits_s(l));
+        }
     }
     compare(jobs);
 }
