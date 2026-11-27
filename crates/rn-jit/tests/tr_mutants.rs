@@ -2201,26 +2201,6 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_oframe_programs")],
     },
     Row {
-        name: "sideback_no_wait",
-        owner: "S76",
-        dets: &[d("tr_core", "s76_sideback_programs")],
-    },
-    Row {
-        name: "sideblf_never",
-        owner: "S76",
-        dets: &[d("tr_core", "s76_sideblf_programs")],
-    },
-    Row {
-        name: "carena_recycle_live",
-        owner: "S76",
-        dets: &[d("tr_core", "s76_carena_blocks")],
-    },
-    Row {
-        name: "carena_grow_any",
-        owner: "S76",
-        dets: &[d("tr_core", "s76_carena_blocks")],
-    },
-    Row {
         name: "retfuse_site_next",
         owner: "S75",
         dets: &[d("tr_core", "s75_oframe_programs")],
@@ -4978,6 +4958,26 @@ const TABLE: &[Row] = &[
         name: "wgcall_weight_skip",
         owner: "S64",
         dets: &[d("tr_core", "s64_wgcall_programs")],
+    },
+    Row {
+        name: "sideback_no_wait",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideback_programs")],
+    },
+    Row {
+        name: "sideblf_never",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideblf_programs")],
+    },
+    Row {
+        name: "carena_recycle_live",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
+        name: "carena_grow_any",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
     },
 ];
 
