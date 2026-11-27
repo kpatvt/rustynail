@@ -66,3 +66,14 @@ local function h(n)
   return s
 end
 print("cover", h(400))
+
+-- (4) a callable table in a recursion: `__call` shifts the arguments one slot up, above the calling frame's top
+local cmt = {}
+local cobj = setmetatable({}, cmt)
+cmt.__call = function(self, n) if n == 0 then return 0 end return cobj(n - 1) + 1 end
+local s7 = 0
+for i = 1, 100 do
+  if i == 50 then cmt.__call = function(self, n) if n == 0 then return 5 end return cobj(n - 1) + 2 end end
+  s7 = s7 + cobj(i % 12)
+end
+print("__call", s7)

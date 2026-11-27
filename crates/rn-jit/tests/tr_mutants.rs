@@ -2196,6 +2196,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_oframe_programs")],
     },
     Row {
+        name: "oframe_floor_skip",
+        owner: "S75",
+        dets: &[d("tr_core", "s75_oframe_programs")],
+    },
+    Row {
         name: "retfuse_site_next",
         owner: "S75",
         dets: &[d("tr_core", "s75_oframe_programs")],

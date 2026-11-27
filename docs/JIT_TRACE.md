@@ -8289,3 +8289,22 @@ Measured (one binary, `retfuse=0` against `=1`, `oframe=1`, `RUSTYNAIL_SEED=0`, 
 184.31 -> 178.85 M instructions (**-2.96 %**; the site part alone -2.15 %, the root split another -0.8 %), 33.28 / 33.54 -> 32.76 / 32.77 M cycles
 (**-1.6 .. -2.3 %**). Whole set (190 programs, instructions, one run each, site part): permute -2.15 %, awfy/towers -1.18 %, corpus/astar_jumper
 -3.28 % (noise: astar_jumper is not deterministic, 4.27 .. 4.55 G instructions for one binary and setting); nothing rises beyond 0.3 %.
+
+### 75.4 Fix found by gate-light: arguments above the calling frame's top
+
+`tr_core::e2_idfold_programs` (case (7) of `e2_01_idfold_callee_switch`: a callable table recursing through `__call`) failed with `oframe=1`: `luaD_tryfuncTM`
+shifts the arguments one slot up, so the last one can lie at the calling frame's top, and the native self-call through `__call` pushed it from the
+writeback that `oframe` had just cut. Now a `CALL` whose arguments reach above the frame (`Rec::mm_call`: the shifted arguments; `end_rec_call`: the
+pushed ones, also patched into a snapshot an entry guard of that `CALL` took already) sets `Rec::oframe_floor` (pc, depth, end of the arguments) and
+every snapshot of that instruction, and the push's writeback, keep the slots below it. Mutant `oframe_floor_skip`; `tests/vm/s75_oframe.lua` got the
+`__call` case (4), so `s75_oframe_programs` catches it. The fix only keeps more slots: permute is unchanged (final: 191.22 -> 178.85 M instructions,
+35.40 -> 32.85 M cycles at the default size against 2606226; 1864.9 -> 1740.4 M / 320.3 -> 293.7 M at 1000 iterations).
+
+### 75.5 What remains against LuaJIT
+
+Steady state now 33.5 cycles / 201 instructions per call against LuaJIT's 9.9 / 48 (3.4x / 4.2x; 2.3x cycles at the default size against LuaJIT's
+best run). The rest is items 1-4 and 7 of the table in 75.1: the frame protocol of a call cut out of the trace and the re-validation at every trace
+entry, both of which LuaJIT removes by inlining the recursive calls (with their inner loops) into one loop trace. Recording that shape needs (a) the
+loop of an inlined callee unrolled with a data-dependent trip count (today `InnerLoop` unless the count is a trace constant, `forprep` in
+`record.rs`) and (b) inlined method recursion of a prototype with loops (E1 refuses it, section 34 / the shape rule of `callee_from_upvalue`). Item 2
+alone (facts across trace transitions) needs metatable version stamps (section 28 (b)).

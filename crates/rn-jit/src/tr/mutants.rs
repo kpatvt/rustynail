@@ -441,6 +441,8 @@ pub const NAMES: &[&str] = &[
     "landfix_live_rewrite",
     // section 75 (`oframe`): the snapshots of an inlined frame drop the slots above the ROOT frame's top (live callee registers)
     "oframe_root_top",
+    // section 75 (`oframe`): the arguments of a `CALL` that reach above the frame's top (`__call` shift, native self-call) are dropped too
+    "oframe_floor_skip",
     // section 75 (`retfuse`): the fused tail of return site k pops to the frame and cell of site k + 1
     "retfuse_site_next",
     // section 75 (`retfuse`): the region root of a lazy family returns through the tail of the frames above it (no root bookkeeping)
@@ -1190,7 +1192,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 894);
+        assert_eq!(NAMES.len(), 895);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

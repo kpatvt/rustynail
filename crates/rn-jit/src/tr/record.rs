@@ -1307,6 +1307,9 @@ struct Rec {
     oframe_lims: Vec<(u32, u16)>,
     /// Section 75: the top of the frame that executes the native self-call (its writeback leaves out the slots above it).
     oframe_wb: Option<u16>,
+    /// Section 75: a `CALL` being recorded whose arguments reach above the calling frame's top (`__call` shifts them one slot up, a native
+    /// self-call pushes them): (pc, depth, root-relative end of the arguments); snapshots of that instruction keep the slots below it.
+    oframe_floor: Option<(u32, usize, usize)>,
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1676,6 +1679,7 @@ impl Rec {
             rec_call: None,
             oframe_lims: Vec::new(),
             oframe_wb: None,
+            oframe_floor: None,
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -7247,6 +7251,18 @@ impl Rec {
         let need = (d + 1).saturating_sub(usize::from(d > 0 && mutants::active("h9_maxci_short")));
         self.max_ci = self.max_ci.max(need as u8);
         let code = p.code_ptr() as u64;
+        // (the pushed arguments: from here on the snapshots of this `CALL` keep them, also one an entry guard above took already)
+        let floor = self
+            .oframe_floor
+            .filter(|f| f.0 == self.cur_pc && f.1 == d)
+            .map_or(top_rel, |f| f.2.max(top_rel));
+        self.oframe_floor = Some((self.cur_pc, d, floor));
+        if let Some(cs) = self.cur_snap {
+            let fl = u16::try_from(floor).unwrap_or(u16::MAX);
+            for e in self.oframe_lims.iter_mut().filter(|e| e.0 == cs) {
+                e.1 = e.1.max(fl);
+            }
+        }
         self.oframe_wb = self.oframe_top();
         self.rec_call = Some(RecCall {
             a: a as u16,
@@ -7373,7 +7389,14 @@ impl Rec {
         {
             return None;
         }
-        u16::try_from(f.base_off + f.nslots).ok()
+        let mut top = f.base_off + f.nslots;
+        if let Some((pc, depth, end)) = self.oframe_floor {
+            if pc == self.cur_pc && depth == self.cur_depth && !mutants::active("oframe_floor_skip")
+            {
+                top = top.max(end);
+            }
+        }
+        u16::try_from(top).ok()
     }
 
     /// Section 75 (`oframe`): leaves the slots at or above the innermost frame's top out of the maps of the snapshots `cur_snapshot`
@@ -12611,6 +12634,12 @@ impl Rec {
             refs.push(self.rd(vm, a + j)?.0);
         }
         let (cl, cref) = self.mm_provider(vm, o, Tm::Call)?;
+        // Section 75 (`oframe`): the shifted arguments may lie above the frame's top; the snapshots of this `CALL` keep them
+        self.oframe_floor = Some((
+            self.cur_pc,
+            self.cur_depth,
+            self.frames[self.cur_depth].base_off + a + 2 + nargs,
+        ));
         self.def(a, cref);
         // (`luaD_tryfuncTM` writes the shifted arguments into the frame's registers also for a tail call: they stay behind as stale
         // values above the moved frame)
