@@ -8104,6 +8104,14 @@ Scratch control: the same scratch binary with the lever off was within +0.2..+1.
    site across flushes (the oracle's key), e.g. one that remembers that a site's previous side trace stayed cold. That needs per-site history that
    survives flushes, and it helps only programs that re-form (cd).
 
+## 72. B2 per-site rule `opencall=2`: tried, not kept (2026-11-26, base bcd0088; superseded by sections 73 and 74)
+
+A per-site rule (the open-result `CALL` defines registers only when a backward jump spans it) was built as `opencall=2`. It fixed `lib/rep_sep` (+0.3 % instructions against
+`opencall=0`) but removed the wins of `it_next`, `len_op` and `byte_multi` too, because all four programs have the same kind of site (the final `print(...)` outside every loop),
+so no site rule separates them. Its diagnosis of the `rep_sep` loss (a `Wait` exit whose outer head is never counted) was **wrong**: section 73 finds the real cause (the typed
+landing label), and section 74 finds that the awfy rises it also reported were the pruning liveness recomputed, not the snapshot shape. The code (knob value `opencall=2`,
+mutant `opencall_loop_skip`) is not in the tree; it is kept at the tag `archive/opencall2-b1684f4`.
+
 ## 73. `landfix`: the typed landing label ends the stay at every loop-end exit of a pruned snapshot (2026-11-26, base bcd0088)
 
 **What section 72 got wrong.** `lib/rep_sep` with `opencall=1` (+9.5 to +16 % instructions, run to run) is not a `Wait` exit that fails to count the outer head. The
