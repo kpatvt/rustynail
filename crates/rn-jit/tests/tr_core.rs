@@ -10626,6 +10626,18 @@ fn s78_outerlink_programs() {
     assert!(on > 0, "outer links form with outerlink=1");
 }
 
+/// Section 78.8 (`efkeep`): entry-failure flushes skipped for grown families (at most `EFKEEP_TIMES` per head) do not change any output, in every
+/// mode against the interpreter.
+#[test]
+fn s78_efkeep_programs() {
+    let res = compare(b1_jobs(
+        &["s78_01_stitch", "s78_05_outerlink", "s60_queens"],
+        &["efkeep=1", "efkeep=0"],
+    ));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().efkeep, 0);
+}
+
 /// Section 76.2 (`sideback`): exponential back-off of side recordings at exits whose recordings failed. The program with repeatedly failing side
 /// exits runs identically with the knob at 3 (every fault), 11 (path causes only), 6 (unchangeable causes, shift 2) and 0 (control) in every mode
 /// (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves), and the back-off really waits at 3. Mutant `sideback_no_wait`.

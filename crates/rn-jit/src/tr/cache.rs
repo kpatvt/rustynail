@@ -129,8 +129,10 @@ pub const INNERLINK_PROCESS: u32 = 0;
 pub const T5_PROCESS: u32 = 0;
 /// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
 pub const T7_PROCESS: u32 = 0;
-/// Section 78.5 (`efkeep`): the process default of [`TrLimits::efkeep`] (also the struct default).
-pub const EFKEEP_PROCESS: u32 = 0;
+/// Section 78.8 (`efkeep`): entry-failure flushes one head may skip (then the flush happens as before).
+pub const EFKEEP_TIMES: u8 = 2;
+/// Section 78.5 / 78.8 (`efkeep`): the process default of [`TrLimits::efkeep`] (the struct default is 0).
+pub const EFKEEP_PROCESS: u32 = 4;
 /// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0).
 pub const OUTERLINK_PROCESS: u32 = 1;
 /// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
@@ -1351,7 +1353,7 @@ impl Default for TrLimits {
             fnleaf: 0,
             wgloop: 0,
             outerlink: 0,
-            efkeep: EFKEEP_PROCESS,
+            efkeep: 0,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1749,6 +1751,10 @@ impl TrConfig {
         if !names_limit(limits_env, "fnleaf") {
             self.limits.fnleaf = FNLEAF_PROCESS;
         }
+        // section 78.8 (`efkeep`): likewise
+        if !names_limit(limits_env, "efkeep") {
+            self.limits.efkeep = EFKEEP_PROCESS;
+        }
         // section 78 (`wgloop`, `outerlink`): on in a process; the struct default 0 keeps the tests' formation as it was
         if !names_limit(limits_env, "wgloop") {
             self.limits.wgloop = WGLOOP_PROCESS;
@@ -1927,6 +1933,8 @@ pub struct HeadData {
     /// Section 78.7 (`stitch` bit 6): an installed trace ends with a stitching exit that leads into this continuation head (a stitch at the `CALL`
     /// in front of it, or the stitching exit before a callee's root `RETURN` whose caller was suspended here).
     pub stitch_fed: Cell<bool>,
+    /// Section 78.8 (`efkeep`): entry-failure flushes this head skipped.
+    pub efkeeps: Cell<u8>,
     /// Section 78.7 (`stitch` bit 6): hot firings of this fed continuation head refused while it waits (`STITCH_FED_FIRES`).
     pub fed_fires: Cell<u8>,
     /// R1 (`rearm`): rearm entries still allowed before a short stay refunds nothing ([`REARM_BUDGET`] consecutive short ones end them for a while).
@@ -2066,6 +2074,7 @@ impl HeadData {
             inner_n: Cell::new(0),
             linked_in: Cell::new(false),
             stitch_fed: Cell::new(false),
+            efkeeps: Cell::new(0),
             fed_fires: Cell::new(0),
             ident_kept: Cell::new(false),
             dom_done: Cell::new(false),
@@ -7855,9 +7864,16 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
         {
             // section 78.5 (`efkeep`): a family that has grown side traces is kept (the entries that fail go on to tier 1)
             let keep = d.tr.cfg.limits.efkeep;
+            // (section 78.8: at most `EFKEEP_TIMES` times per head: a root whose entries keep failing has stale entry assumptions (stream_closures:
+            // kept 18458 times, +20 %), its re-record is worth the flush then)
+            let kept = tp.head(i).efkeeps.get();
             if keep != 0
                 && matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.nside >= keep)
+                && kept < EFKEEP_TIMES
             {
+                tp.head(i).efkeeps.set(kept + 1);
+                tp.head(i).entry_fail.set(0);
+                tp.head(i).entry_ok.set(0);
                 d.tr.stats.efkept += 1;
                 return false;
             }

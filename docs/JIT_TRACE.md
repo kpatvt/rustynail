@@ -9372,3 +9372,19 @@ recording path. Not removable at the source.
 **Not done this round:** `efkeep` narrowing per root, the raw-copy materialisation template, the rule for exits landing in `put`'s tier-1 code.
 Mutants (registry 909 -> 910): `stitch_fed_ignored` (caught by `s78_stitch_programs`, which now also runs `stitch=127` and asserts fed roots form,
 fewer than without the rule); two policy mutants of the bit-12 / tail rules were caught by no program and were dropped.
+
+### 78.8 Round 3 (after merging main c707218): `efkeep` narrowed per head and shipped ON (process default `efkeep=4`, struct default 0)
+
+stream_closures' +20.5 % with `efkeep=2` was the rule firing over and over at the same heads (`[trace] efkeep: entry-failure flushes kept 18458`): a
+root whose entries keep failing has stale entry assumptions and was never re-recorded. Now a head skips the flush at most `EFKEEP_TIMES` (2)
+times (its entry counters restart each time), then the flush happens as before. Tried first: keep only while successful entries outnumber failures
+(stream_closures 0.00 %, but cd lost its gain: +0.31 %); `EFKEEP_TIMES = 1`: cd +0.17 %. Measured on the merged base (cd now 606.1 M instructions):
+`efkeep=2`: cd -4.41 %, stream_closures +0.89 %; **`efkeep=4`: cd -4.36 %, stream_closures 0.00 %**; `efkeep=6`: cd +0.39 %. Whole set (148
+programs, one run, `efkeep=0` -> `4`): cd -4.36 %, markdown -1.63 %, astar_jumper -3.5 %, **no program up**. Test `tr_core::s78_efkeep_programs`
+(outputs in every mode with `efkeep=1` / `0`); no mutant (a policy whose only effect is formation; no program detects the per-head cap).
+
+cd's exits (default size, `RUSTYNAIL_JIT_EXITDUMP=1`): 1.30 M exits, of which 152 k leave without a side trace; the largest unlinked ones are the
+stitching exits before `put`'s `RETURN1` (pc 82, 7.3 k / 6.5 k / 5.2 k per trace) and before short `RETURN1`s whose side attempts end `LeaveFrame`.
+Not built this round: a rule for those exits, the raw-copy materialisation template (78.5), and a per-site discriminator for `fnleaf` bit 12 (the
+richards cost comes from the heads themselves, also without the short-body admission; the GETTABUP / GETUPVAL rule trades it for raytrace +2.9 %).
+
