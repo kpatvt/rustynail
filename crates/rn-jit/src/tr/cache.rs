@@ -129,6 +129,12 @@ pub const INNERLINK_PROCESS: u32 = 0;
 pub const T5_PROCESS: u32 = 0;
 /// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
 pub const T7_PROCESS: u32 = 0;
+/// Section 78.5 (`efkeep`): the process default of [`TrLimits::efkeep`] (also the struct default).
+pub const EFKEEP_PROCESS: u32 = 0;
+/// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (also the struct default).
+pub const OUTERLINK_PROCESS: u32 = 1;
+/// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (also the struct default).
+pub const WGLOOP_PROCESS: u32 = 16;
 /// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (also the struct default).
 pub const FNLEAF_PROCESS: u32 = 0;
 /// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (also the struct default).
@@ -1086,6 +1092,19 @@ pub struct TrLimits {
     /// callee (a dynamic leaf: C built-ins and intrinsics recorded inline are allowed), instead of aborting `FnShort` below `fnmin`. 0 = off.
     /// Default [`FNLEAF_PROCESS`].
     pub fnleaf: u32,
+    /// Section 78.3 (`wgloop`, docs/JIT_TRACE.md section 78.3): the per-loop form of `wgcall`. A loop whose body holds exactly one call-like
+    /// instruction, a `CALL` whose callee is a C function at the moment the gate charges (read from the local register or upvalue the callee was
+    /// moved from), weighs that call as `1 + wgloop` bytecodes; every other loop is charged as before. 0 = off. Default [`WGLOOP_PROCESS`].
+    pub wgloop: u32,
+    /// Section 78.4 (`outerlink`, docs/JIT_TRACE.md section 78.4): a side recording that reaches the head of an untraced loop of its root frame
+    /// whose body contains a loop head with an installed trace (the outer loop of a traced inner loop) records on through the outer loop's
+    /// iteration instead of aborting `SideUntraced`, and links at the inner head at any length (not `SideShort`). 0 = off. Default
+    /// [`OUTERLINK_PROCESS`].
+    pub outerlink: u32,
+    /// Section 78.5 (`efkeep`, docs/JIT_TRACE.md section 78.5): the persistent-entry-failure rule does not flush (`Rerec`) a root whose family
+    /// has at least `efkeep` installed side traces: the failing entries keep going to tier 1 (or to the head's prelude) and the family's side
+    /// traces stay (awfy/cd re-records 7 families and discards 52 traces). 0 = off. Default [`EFKEEP_PROCESS`].
+    pub efkeep: u32,
 }
 
 impl Default for TrLimits {
@@ -1254,6 +1273,9 @@ impl Default for TrLimits {
             t7: T7_PROCESS,
             stitch: STITCH_PROCESS,
             fnleaf: FNLEAF_PROCESS,
+            wgloop: WGLOOP_PROCESS,
+            outerlink: OUTERLINK_PROCESS,
+            efkeep: EFKEEP_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1491,6 +1513,9 @@ impl TrLimits {
                 "t7" => l.t7 = v.min(15),
                 "stitch" => l.stitch = v.min(63),
                 "fnleaf" => l.fnleaf = v.min(8191),
+                "wgloop" => l.wgloop = v.min(1024),
+                "outerlink" => l.outerlink = v.min(1),
+                "efkeep" => l.efkeep = v.min(1024),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
@@ -3225,8 +3250,10 @@ pub struct TrStats {
     pub inner_links: u64,
     /// See `inner_links`.
     pub inner_rets: u64,
+    /// Section 78.5 (`efkeep`): entry-failure flushes the rule skipped.
+    pub efkept: u64,
     /// Section 78.1 (`stitch`): installed traces by what they used (the bits of `Recorded::stitch_use`).
-    pub stitch_use: [u64; 5],
+    pub stitch_use: [u64; 6],
 }
 
 /// F2a: a side recording or trace hangs off exit `exit` (a snapshot index) of trace `parent` (7.8).
@@ -3419,6 +3446,65 @@ fn tsc() -> u64 {
 /// 60-instruction body, and iteration counts alone made the delay of the first recording vary from 1x to 100x in time).
 /// S2 (`TrLimits::wgcall`): every call-like instruction of the body (`CALL`, `TAILCALL`, `TFORCALL`, `CONCAT`, `SELF`) weighs `1 + wcall`
 /// bytecodes (`wcall` 0 = the plain length). The fallback of a loop without a backward edge to `head` stays 8.
+/// Section 78.3 (`wgloop`): `w` when the loop at `head` of the running frame `ci` (closure `cl`) holds exactly one call-like instruction, a
+/// `CALL` whose callee is now a C function (moved from a local register or loaded from an upvalue of the closure in the body), else 0.
+pub(crate) fn loop_c_call_weight(
+    st: &State,
+    ci: Ci,
+    cl: &rn_core::value::Gc<rn_core::func::LClosure>,
+    head: usize,
+    w: u32,
+) -> u32 {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode as O;
+    if w == 0 || mutants::active("wgloop_never") {
+        return 0;
+    }
+    let p = cl.proto();
+    let code = p.code();
+    let mut call = None;
+    let mut end = None;
+    for (j, &x) in code.iter().enumerate().skip(head) {
+        let i = Instruction(x);
+        match i.opcode() {
+            Some(O::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => {
+                end = Some(j);
+                break;
+            }
+            Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => {
+                end = Some(j);
+                break;
+            }
+            Some(O::Call) if call.is_none() => call = Some(j),
+            Some(O::Call | O::Tailcall | O::Tforcall | O::Concat | O::SelfOp) => return 0,
+            _ => {}
+        }
+    }
+    let (Some(c), Some(_)) = (call, end) else {
+        return 0;
+    };
+    let a = Instruction(code[c]).a();
+    // the callee load: the nearest instruction of the body before the `CALL` that writes register `A`
+    let Some(ld) = (head..c)
+        .rev()
+        .map(|j| Instruction(code[j]))
+        .find(|i| i.a() == a)
+    else {
+        return 0;
+    };
+    let base = ci.r().func.0 + 1;
+    let v = match ld.opcode() {
+        Some(O::Move) => st.get(rn_core::state::StkId(base + ld.b() as usize)),
+        Some(O::Getupval) if (ld.b() as usize) < cl.nupvalues() => cl.upval(ld.b() as usize).get(),
+        _ => return 0,
+    };
+    if v.tag() == rn_core::value::LUA_VLCF || v.as_cclosure().is_some() {
+        w
+    } else {
+        0
+    }
+}
+
 pub(crate) fn loop_len_w(code: &[u32], head: usize, wcall: u32) -> u64 {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode as O;
@@ -7448,6 +7534,14 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
                 })
             ) =>
         {
+            // section 78.5 (`efkeep`): a family that has grown side traces is kept (the entries that fail go on to tier 1)
+            let keep = d.tr.cfg.limits.efkeep;
+            if keep != 0
+                && matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.nside >= keep)
+            {
+                d.tr.stats.efkept += 1;
+                return false;
+            }
             // P3 (`ncallee`): a persistent entry failure of a root whose entry segment holds a callee identity guard: the callee changes between entries (a call
             // through a table of functions). The re-record keeps the callee guards in the body, where a mismatch is an ordinary exit with a side trace.
             let ec =
@@ -8795,10 +8889,11 @@ fn hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
         tp.rearm(i);
         return false;
     }
-    let wcall = d.tr.cfg.limits.wgcall;
-    let len = st
-        .ci_lclosure(ci)
-        .map_or(8, |cl| loop_len_w(cl.proto().code(), pc as usize, wcall));
+    let (wcall, wloop) = (d.tr.cfg.limits.wgcall, d.tr.cfg.limits.wgloop);
+    let len = st.ci_lclosure(ci).map_or(8, |cl| {
+        let w = wcall + loop_c_call_weight(st, ci, &cl, pc as usize, wloop);
+        loop_len_w(cl.proto().code(), pc as usize, w)
+    });
     let d = d_of(st);
     if !d.tr.warm_elapsed(len) {
         // P-G: the state has run loops for too short a time for a trace to pay off yet. BUNDLE-1: with the work gate the head fires

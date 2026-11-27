@@ -4999,6 +4999,16 @@ const TABLE: &[Row] = &[
         owner: "S78",
         dets: &[d("tr_core", "s78_fnleaf_programs")],
     },
+    Row {
+        name: "wgloop_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_wgloop_programs")],
+    },
+    Row {
+        name: "outerlink_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_outerlink_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

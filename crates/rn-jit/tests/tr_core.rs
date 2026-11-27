@@ -542,7 +542,7 @@ struct TStats {
     ret_late: u64,
     ret_start_sides: u64,
     /// Section 78.1: `stitch: cont roots C side stitches S gmatch ends G pops P tprep links T`.
-    stitch_use: [u64; 5],
+    stitch_use: [u64; 6],
     /// T9: `innerlink: links L rets R linked heads H exits woken W`.
     inner_links: u64,
     inner_rets: u64,
@@ -816,7 +816,7 @@ impl TStats {
                 s.ret_start_sides = w.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("stitch: cont roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
-                for (k, at) in [0usize, 3, 6, 8, 11].into_iter().enumerate() {
+                for (k, at) in [0usize, 3, 6, 8, 11, 14].into_iter().enumerate() {
                     s.stitch_use[k] = w.get(at).and_then(|v| v.parse().ok()).unwrap_or(0);
                 }
             } else if let Some(r) = l.strip_prefix("innerlink: links ") {
@@ -10332,7 +10332,7 @@ fn s78_stitch_programs() {
     let mut seen = [0u64; 5];
     for (j, o) in &res {
         if j.limits == "stitch=0" {
-            assert_eq!(o.stats.stitch_use, [0; 5], "{}: stitch=0", j.tag());
+            assert_eq!(o.stats.stitch_use[..5], [0; 5], "{}: stitch=0", j.tag());
         }
         if j.limits == "stitch=63"
             && j.trace == "always"
@@ -10396,6 +10396,66 @@ fn s78_fnleaf_programs() {
         on > heads,
         "fnleaf roots install: {on} against {heads} with the heads alone"
     );
+}
+
+/// Section 78.3 (`wgloop`): the per-loop start-gate weight of a loop around one C call, in every mode against the interpreter; then the gate: at
+/// a `wgate` the plain lengths never reach, the C-call loops open it with the weight and the Lua-callee loop does not (mutant `wgloop_never`).
+#[test]
+fn s78_wgloop_programs() {
+    let progs = ["s78_03_wgloop", "s78_04_wglua"];
+    let res = compare(b1_jobs(
+        &progs,
+        &["wgloop=16,wgate=30000", "wgloop=0,wgate=30000"],
+    ));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::parse("wgloop=16").0.wgloop, 16);
+    let mut gate = Vec::new();
+    for (p, l) in [
+        ("s78_03_wgloop", "wgloop=0,wgate=2400000,fnroot=0"),
+        ("s78_03_wgloop", "wgloop=1024,wgate=2400000,fnroot=0"),
+        ("s78_04_wglua", "wgloop=1024,wgate=2400000,fnroot=0"),
+    ] {
+        let mut j = Job::new(p, "on").opts("+verify");
+        j.limits = l.into();
+        gate.push(j);
+    }
+    let res = compare(gate);
+    assert_eq!(
+        res[0].1.stats.recorded,
+        0,
+        "plain lengths: {}",
+        res[0].1.stats.line()
+    );
+    assert!(
+        res[1].1.stats.recorded >= 1,
+        "the C-call loop opens the gate: {}",
+        res[1].1.stats.line()
+    );
+    assert_eq!(
+        res[2].1.stats.recorded,
+        0,
+        "a Lua callee keeps the plain weight: {}",
+        res[2].1.stats.line()
+    );
+}
+
+/// Section 78.4 (`outerlink`): side traces of an inner loop's exits pass the untraced head of the outer loop and link into the inner trace, in
+/// every mode against the interpreter, with the knob off as the control (mutant `outerlink_never`: no outer link forms).
+#[test]
+fn s78_outerlink_programs() {
+    let res = compare(b1_jobs(
+        &["s78_05_outerlink"],
+        &["outerlink=1", "outerlink=0"],
+    ));
+    let mut on = 0;
+    for (j, o) in &res {
+        if j.limits == "outerlink=0" {
+            assert_eq!(o.stats.stitch_use[5], 0, "{}", j.tag());
+        } else if j.opts.is_empty() && j.budget.is_none() && j.env.is_empty() {
+            on += o.stats.stitch_use[5];
+        }
+    }
+    assert!(on > 0, "outer links form with outerlink=1");
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at

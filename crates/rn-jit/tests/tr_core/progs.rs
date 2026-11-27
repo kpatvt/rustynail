@@ -16349,6 +16349,21 @@ print(r[1], r[60], #full, #half, #hole)
     },
     // docs/JIT_TRACE.md section 78.1 (`stitch`): continuation traces and stitching for non-recursive code
     Prog {
+        name: "s78_05_outerlink",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_05_outerlink.lua"),
+    },
+    Prog {
+        name: "s78_03_wgloop",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_03_wgloop.lua"),
+    },
+    Prog {
+        name: "s78_04_wglua",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_04_wglua.lua"),
+    },
+    Prog {
         name: "s78_02_fnleaf",
         small: true,
         src: include_str!("../../../../tests/vm/s78_02_fnleaf.lua"),

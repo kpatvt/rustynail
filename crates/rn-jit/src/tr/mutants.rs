@@ -1119,6 +1119,9 @@ pub const NAMES: &[&str] = &[
     "concat_empty_guard_skip",
     // docs/JIT_TRACE.md section 78.2 (`fnleaf`): short dynamic-leaf function roots
     "fnleaf_never",
+    // docs/JIT_TRACE.md sections 78.3 (`wgloop`), 78.4 (`outerlink`)
+    "wgloop_never",
+    "outerlink_never",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1209,7 +1212,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 907);
+        assert_eq!(NAMES.len(), 909);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

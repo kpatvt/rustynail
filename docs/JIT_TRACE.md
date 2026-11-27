@@ -8624,3 +8624,50 @@ that holds everywhere else.
 Bit 12 (4096) of `fnleaf` also gives the entry head to loop-free functions whose only calls are tail calls (`local function vec(x, y, z) return
 setmetatable({...}, V) end`: before, only a `CALL` placed the head). Measured `fnleaf=4112` against 0: raytrace -1.69 % instructions (+1.3 %
 cycles, one run), richards **+29.4 %**, cd **+2.1 %**: kept as a separate bit, off.
+
+### 78.3 `wgloop`: the per-loop work-gate weight (knob `wgloop`, default **16**)
+
+Section 70's `wgcall` weighed every call of every loop and moved the first recording of richards / storage / deltablue (+21 / +22 / +5 %). The
+per-loop form weighs a loop only when its body (head to back-edge) holds exactly one call-like instruction and it is a `CALL` whose callee is a C
+function when the gate charges: the callee load is the nearest instruction of the body before the `CALL` writing its register `A`; a `MOVE`
+reads the source register of the live frame, a `GETUPVAL` the closure's upvalue (`cache::loop_c_call_weight`, both charge sites: the
+interpreter's sampling tick in `rt` and the head's hot firing). Only the moment of the first recording moves (exact, as `wgcall`).
+
+Measured (one binary, `wgloop=0` -> `16`, min of 3): fmt_s **-7.2 %** instructions / -7.1 % cycles, getmt -1.2 %, type_call -8.0 %, rep_sep
+-3.7 %, pcall_ok / assert_ok -0.3 / -1.0 %; richards, storage, deltablue, cd, permute within +0.02 % instructions. All 148 programs (bench/lib,
+programs, awfy, apps and 14 corpus programs, one run): no program up by more than 0.02 % except astar_jumper (+5.4 % in one run, +0.89 % at min
+of 7; its counts vary by 7 % run to run with one configuration, sections 39 / 48). Default ON.
+
+### 78.4 `outerlink`: outer-loop side traces link into the inner loop's trace (knob `outerlink`, default **1**)
+
+The exit at the end of a traced inner loop gets a side recording that runs the outer loop's tail, its back-edge and reaches the outer head: no
+trace there, `SideUntraced` (or, shorter, `SideShort`), so fmt_s's 1116 outer iterations each went through tier 1 and re-entered the inner trace.
+With the knob a side recording that reaches the untraced head of a loop of its root frame whose body holds a loop head with an installed trace
+(`Rec::outer_of_traced`, asked through the side's head query) records on (once per recording) and links when it reaches the traced head, at any
+length. Nothing about guards or snapshots changes (the link is the ordinary side link to a root head).
+
+Measured (`outerlink=0` -> `1`, 148 programs, one run, instructions): fmt_s **-12.2 %**, programs/mandelbrot -8.1 %, awfy/mandelbrot -5.2 %,
+it_ipairs -5.1 %, sel_loop -3.4 %, and about 50 more lib programs -0.1 .. -3 %; **no program up**. Default ON. raytrace's render loop does not
+move (its inner loop is inside a callee, the `innerlink` case).
+
+### 78.5 `efkeep`: entry-failure flushes keep grown families (knob `efkeep`, default 0)
+
+cd's re-records (section 71: 7 families, 52 traces discarded) come from the persistent-entry-failure rule (`entry_fail_hot` -> `Rerec`), not
+from type-guard exits (`typesides` is on). With `efkeep=N` a root whose family has at least N side traces is not flushed (counter `[trace] efkeep:
+entry-failure flushes kept K`). Measured (min of 3): cd **-4.6 %** instructions / -0.9 .. -1.2 % cycles at N = 2 and 4 (+1.5 % at 8), but
+stream_closures **+20.5 %** instructions at every N. **Default OFF**. Not built: presized table templates for sunk-table materialisation (the
+materialisation already sizes the table exactly and inserts without lookups, H5; a node-vector template copy needs a raw copy primitive in
+`rn-core::table` and its GC argument), the re-record of a root that keeps the old root's side traces for the exits they still serve, and a rule
+for the exits landing in `put`'s tier-1 code.
+
+### 78.6 All defaults against the base (release, one binary each, `RUSTYNAIL_SEED=0`, CPU 14)
+
+Targets, min of 15 interleaved (cycles M / instructions M): text_adventure 2340.2 / 7350.0 -> 2333.5 / 7350.2 (-0.3 % / 0.0 %; with `stitch=63`
+2095.6 / 6316.1, **-10.5 % / -14.1 %**); cd 231.2 / 642.6 -> 232.2 / 643.3 (+0.45 % / +0.09 %); fmt_s 6.28 / 23.33 -> **5.41 / 18.79 (-13.9 % /
+-19.5 %)**; raytrace 96.0 / 300.0 -> 97.6 / 300.6 (+1.7 % / +0.20 %). Whole set (148 programs, one run, instructions): geomean **-0.69 %**; up:
+co_wrap +0.21 %, raytrace +0.17 %, deltablue +0.14 %, lru_cache +0.11 %, cd +0.10 %, metamethods +0.09 % (every one also with `wgloop=0,
+outerlink=0`, so a cost of the new code in the recorder or the binary's layout, not of a knob; not attributed further).
+
+Tests: `tests/vm/s78_03_wgloop.lua`, `s78_04_wglua.lua`, `s78_05_outerlink.lua`; `tr_core::s78_wgloop_programs` (every mode, then the gate at
+`wgate=2400000`: the C-call loop opens it, the Lua-callee loop does not), `tr_core::s78_outerlink_programs`. Mutants (registry 907 -> 909):
+`wgloop_never`, `outerlink_never`, both caught.

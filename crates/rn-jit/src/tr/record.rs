@@ -448,6 +448,8 @@ pub struct RecCfg {
     /// Section 78.2 (`fnleaf`): the minimum length of a function-entry recording that entered no Lua callee (`None`: `fn_min` applies to every
     /// recording).
     pub fn_min_leaf: Option<u32>,
+    /// Section 78.4 (`outerlink`): side recordings pass the untraced head of an outer loop of a traced inner loop (see [`super::cache::TrLimits::outerlink`]).
+    pub outer_link: bool,
     /// A1: lower the `NEWREF` of a short-string key into a table allocated by the same trace to stores at record-time-known nodes
     /// (see `Rec::nr_plan`).
     pub nrinline: bool,
@@ -687,6 +689,7 @@ impl Default for RecCfg {
             cont_head: None,
             tprep_link: false,
             fn_min_leaf: None,
+            outer_link: false,
             nrinline: false,
             presize: false,
             pcall: false,
@@ -1473,6 +1476,8 @@ struct Rec {
     stitch_use: u8,
     /// Section 78.2: a step of the recording ran in an inlined Lua frame.
     entered_lua: bool,
+    /// Section 78.4: the recording passed the head of an outer loop (`outer_link`): it links at the inner head at any length.
+    outer_pass: bool,
     /// Section 78.1: the instruction being recorded is a `CALL` followed by such a `TFORPREP` (`string.gmatch` may be recorded in the frame).
     tprep_ahead: bool,
     /// T9: a `RETF` of this recording was taken where the return half allows it.
@@ -1796,6 +1801,7 @@ impl Rec {
             tprep_ahead: false,
             stitch_use: 0,
             entered_lua: false,
+            outer_pass: false,
             inner_ret_used: false,
             inner_linked: false,
             retf_below: Default::default(),
@@ -1934,6 +1940,7 @@ impl Rec {
     fn reset(&mut self) {
         self.stitch_use = 0;
         self.entered_lua = false;
+        self.outer_pass = false;
         self.b = Builder::for_recording(self.cfg.fold, self.cfg.cse);
         self.sm = SlotMap::new(self.nslots);
         self.frames.truncate(1);
@@ -2305,6 +2312,10 @@ impl Rec {
                 .is_some_and(|pr| {
                     !super::cache::proto_lazy(st, pr) && !super::cache::proto_lazy_cand(st, pr)
                 });
+        // section 78.4: asked before the step borrows the state
+        let outer_ok = reached_head == Some(false)
+            && self.cfg.outer_link
+            && self.outer_of_traced(st, code, idx);
         let vm = Vm {
             base: ci.r().func.0 + 1,
             root_base: self.root_func + 1,
@@ -2364,11 +2375,23 @@ impl Rec {
                 {
                     retf_stop = true
                 }
+                // section 78.4 (`outerlink`): the untraced head of an outer loop around a traced inner loop: record on to the inner head
+                Some(false)
+                    if self.cfg.outer_link
+                        && self.segs.is_empty()
+                        && !self.outer_pass
+                        && !mutants::active("outerlink_never")
+                        && outer_ok =>
+                {
+                    self.outer_pass = true;
+                    self.stitch_use |= 32;
+                }
                 Some(false) => return Err(AbortReason::SideUntraced),
                 Some(true) => {
                     let n: u32 = self.cost.iter().sum();
-                    // (T9: a side trace that popped into a linking caller and reaches its loop head closes the nest at any length)
-                    let min = if self.inner_ret_used {
+                    // (T9: a side trace that popped into a linking caller and reaches its loop head closes the nest at any length; section 78.4: so
+                    // does one that passed the outer loop's head)
+                    let min = if self.inner_ret_used || self.outer_pass {
                         0
                     } else {
                         self.cfg.side.as_ref().map_or(0, |s| s.min_len)
@@ -7452,6 +7475,35 @@ impl Rec {
             return Err(why);
         }
         self.end_exit()
+    }
+
+    /// Section 78.4 (`outerlink`): is the loop whose head is `head` (root frame) an outer loop of a loop head with an installed trace (a head
+    /// inside its body, asked through the side recording's head query)?
+    fn outer_of_traced(&self, st: &mut State, code: &[u32], head: usize) -> bool {
+        let Some(q) = self.cfg.side.as_ref().map(|s| s.head_state.clone()) else {
+            return false;
+        };
+        let mut end = None;
+        for (j, &x) in code.iter().enumerate().skip(head) {
+            let i = Instruction(x);
+            match i.opcode() {
+                Some(OpCode::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => {
+                    end = Some(j);
+                    break;
+                }
+                Some(OpCode::Forloop | OpCode::Tforloop)
+                    if j as i64 + 1 - i64::from(i.bx()) == head as i64 =>
+                {
+                    end = Some(j);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            return false;
+        };
+        (head + 1..end).any(|h| q(st, h as u32) == Some(true))
     }
 
     /// Section 78.2 (`fnleaf`): the minimum length of this function-entry recording: `fn_min_leaf` when it entered no Lua callee.

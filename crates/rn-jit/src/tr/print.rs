@@ -274,12 +274,15 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.inner_links, s.inner_rets, s.inner_heads, s.inner_woken
         );
     }
+    if s.efkept > 0 {
+        let _ = writeln!(o, "[trace] efkeep: entry-failure flushes kept {}", s.efkept);
+    }
     if s.stitch_use.iter().any(|&c| c > 0) {
         let u = &s.stitch_use;
         let _ = writeln!(
             o,
-            "[trace] stitch: cont roots {} side stitches {} gmatch ends {} pops {} tprep links {}",
-            u[0], u[1], u[2], u[3], u[4]
+            "[trace] stitch: cont roots {} side stitches {} gmatch ends {} pops {} tprep links {} outer links {}",
+            u[0], u[1], u[2], u[3], u[4], u[5]
         );
     }
     if s.ci_repaired > 0 {

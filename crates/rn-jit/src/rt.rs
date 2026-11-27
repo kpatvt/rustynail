@@ -2397,13 +2397,15 @@ fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
     {
         // SAFETY: the per-state data is live (see `set_mode`).
         // SAFETY: the per-state data is live (see `set_mode`); read-only.
-        let wcall = unsafe { &*data_ptr(st) }.tr.cfg.limits.wgcall;
+        let (wcall, wloop) = {
+            let l = &unsafe { &*data_ptr(st) }.tr.cfg.limits;
+            (l.wgcall, l.wgloop)
+        };
         let len = proto_of(st, ci).map_or(8, |cl| {
-            crate::tr::cache::loop_len_w(
-                cl.proto().code(),
-                ((pc as usize).wrapping_sub(cl.proto().code_ptr() as usize)) / 4,
-                wcall,
-            )
+            let head = ((pc as usize).wrapping_sub(cl.proto().code_ptr() as usize)) / 4;
+            // section 78.3 (`wgloop`): the per-loop weight of a loop around one C call
+            let w = wcall + crate::tr::cache::loop_c_call_weight(st, ci, &cl, head, wloop);
+            crate::tr::cache::loop_len_w(cl.proto().code(), head, w)
         });
         unsafe { &mut *data_ptr(st) }.tr.warm_touch(len);
     }
