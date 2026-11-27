@@ -625,9 +625,68 @@ fn midfold_key(
     None
 }
 
+/// Section 75.12 (`mfkeys`): the other method keys `K` of `SELF A 0 K` (short string constants, not the family key `kc`) whose lookup on the frame's
+/// register 0 finds a Lua closure in a table `T`: `(constant index, key address, address of T)`, at most 4.
+fn midfold_extra_keys(
+    st: &State,
+    ci: Ci,
+    cl: rn_core::value::Gc<rn_core::func::LClosure>,
+    kc: u32,
+    ix: u64,
+) -> Vec<(u32, u64, u64)> {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode;
+    let p = cl.proto();
+    let func = ci.r().func;
+    let recv = st.get(rn_core::state::StkId(func.0 + 1));
+    let idx = st.g().heap.tm_name(rn_core::meta::Tm::Index);
+    let _ = ix;
+    let mut out: Vec<(u32, u64, u64)> = Vec::new();
+    let Some(t0) = recv.as_table() else {
+        return out;
+    };
+    for &w in p.code() {
+        let i = Instruction(w);
+        if i.opcode() != Some(OpCode::SelfOp) || i.b() != 0 || (cfg!(rustynail_lua54) && i.k() == 0)
+        {
+            continue;
+        }
+        let c = i.c();
+        if c == kc || out.iter().any(|e| e.0 == c) || out.len() >= 4 {
+            continue;
+        }
+        let Some(kv) = p.k().get(c as usize) else {
+            continue;
+        };
+        if record::ty_of_value(kv) != Some(ir::Ty::ShrStr) {
+            continue;
+        }
+        let Some(key) = kv.as_strref() else {
+            continue;
+        };
+        let mut t = t0;
+        for _ in 0..cache::MIDFOLD_DEPTH {
+            let v = t.get_short_str(key);
+            if !v.is_nil() {
+                if v.as_lclosure().is_some() {
+                    out.push((c, key.as_ptr() as u64, t.as_ptr() as u64));
+                }
+                break;
+            }
+            let Some(mt) = t.metatable() else { break };
+            match mt.get_short_str(idx).as_table() {
+                Some(n) => t = n,
+                None => break,
+            }
+        }
+    }
+    out
+}
+
 /// E5: the family rule of a method family (section 35.4): every hash store goes through an `HREFK` of a constant key that is neither the method
 /// key nor `__index`, through an insertion (`NEWREF`) of such a key, or through an `HREFV` of a key that is not a string; no `setmetatable`. Array stores and integer-key sets cannot write a short-string key.
-fn midfold_stores_ok(ir: &ir::TraceIr, key: u64, idx: u64) -> bool {
+fn midfold_stores_ok(ir: &ir::TraceIr, key: u64, idx: u64, xkeys: &[u64]) -> bool {
+    let bad = |p: u64| p == key || p == idx || xkeys.contains(&p);
     let kptr = |r: ir::Ref| -> Option<u64> {
         if r != ir::NOREF && r < ir::REF_BIAS {
             if let ir::KVal::Ptr(p, _) = ir.kval(r) {
@@ -642,12 +701,12 @@ fn midfold_stores_ok(ir: &ir::TraceIr, key: u64, idx: u64) -> bool {
                 let h = ir.at(i.a);
                 // (through an insertion: its key is checked at the `NEWREF`; a dynamic key that is not a string cannot be either name)
                 h.op == ir::TOp::Newref
-                    || (h.op == ir::TOp::Hrefk && kptr(h.b).is_some_and(|p| p != key && p != idx))
+                    || (h.op == ir::TOp::Hrefk && kptr(h.b).is_some_and(|p| !bad(p)))
                     || (h.op == ir::TOp::Hrefv
                         && !matches!(ir.ty_of(h.b), ir::Ty::ShrStr | ir::Ty::LngStr))
             }
         }
-        ir::TOp::Newref => kptr(i.b).is_some_and(|p| p != key && p != idx),
+        ir::TOp::Newref => kptr(i.b).is_some_and(|p| !bad(p)),
         ir::TOp::Lib => i.aux & 0xFF != ir::lib::SETMT,
         _ => true,
     })
@@ -728,6 +787,10 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         if cfg.limits.midfold != 0 && cache::midfold_pending(st, pr) {
             let key = midfold_key(st, ci, cl);
             cache::midfold_decide(st, pr, key);
+            if let Some((kc, _, ix)) = key {
+                let x = midfold_extra_keys(st, ci, cl, kc, ix);
+                cache::midfold_set_extra(st, pr, x);
+            }
         }
     }
     let (mf_fold, mf_ident) = pr.map_or((None, None), |pr| cache::midfold_cfg(st, pr));
@@ -819,6 +882,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         idfold_ident: idf_ident.is_some(),
         // E5: folding and the method invariant of the family (`midfold_decide`)
         midfold: mf_fold,
+        mfkeys: if mf_fold.is_some() {
+            pr.map(|pr| std::rc::Rc::new(cache::midfold_extra(st, pr)))
+        } else {
+            None
+        },
         midfold_ident: mf_ident.is_some(),
         fn_min: if pr.is_some_and(|pr| cache::fn_cent(st, pr))
             && !mutants::active("centry_fnmin_kept")
@@ -1100,6 +1168,11 @@ pub fn driver_start_side(
         idfold: idf_fold,
         idfold_ident: idf_ident.is_some(),
         midfold: mf_fold,
+        mfkeys: if mf_fold.is_some() {
+            Some(std::rc::Rc::new(cache::midfold_extra(st, pr)))
+        } else {
+            None
+        },
         midfold_ident: mf_ident.is_some(),
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)
@@ -2428,7 +2501,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     };
     if mf_env.is_some() && !crate::tr::mutants::active("midfold_store_family") {
         let (k, ix) = cache::midfold_keys(st, rpr);
-        if !midfold_stores_ok(&ir, k, ix) {
+        let xk: Vec<u64> = cache::midfold_extra(st, rpr).iter().map(|e| e.1).collect();
+        if !midfold_stores_ok(&ir, k, ix, &xk) {
             cache::midfold_ban(st, rpr);
             return Err(abort_err(
                 "midfold_store",

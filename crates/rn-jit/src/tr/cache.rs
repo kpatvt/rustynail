@@ -170,6 +170,8 @@ pub const DYNUNROLL_PROCESS: u32 = 0;
 pub const RECINL_PROCESS: u32 = 2;
 /// Section 75.10 (`sidepush`): the process default of [`TrLimits::sidepush`] (also the struct default).
 pub const SIDEPUSH_PROCESS: u32 = 1;
+/// Section 75.12 (`mfkeys`): the process default of [`TrLimits::mfkeys`] (also the struct default).
+pub const MFKEYS_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -872,6 +874,11 @@ pub struct TrLimits {
     /// prototype (chain frames, virtual in the trace) may end with the native push of a self-call: the push materialises those frames as lazy frames
     /// first (E1's chain push). Only frames of the `recinl` shape (a prototype with a counted loop, a method self-call). 0 = off, 1 = on (default [`SIDEPUSH_PROCESS`]).
     pub sidepush: u32,
+    /// Section 75.12 (`mfkeys`, docs/JIT_TRACE.md section 75.12): in a method family under E5's invariant, the other method keys `K` of `SELF A 0 K`
+    /// (up to 4) whose lookup on register 0 gives a Lua closure found in a table `T` are verified by the region check too (the chain from register 0 reaches
+    /// `T`, raw `T[K]` is a Lua closure) and kept by the family rule; a recording then reads them as `T[K]` (a constant table) instead of walking the chain.
+    /// 0 = off, 1 = on (default [`MFKEYS_PROCESS`]).
+    pub mfkeys: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1166,6 +1173,7 @@ impl Default for TrLimits {
             dynunroll: DYNUNROLL_PROCESS,
             recinl: RECINL_PROCESS,
             sidepush: SIDEPUSH_PROCESS,
+            mfkeys: MFKEYS_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1403,6 +1411,7 @@ impl TrLimits {
                 "dynunroll" => l.dynunroll = v.min(127),
                 "recinl" => l.recinl = v.min(15),
                 "sidepush" => l.sidepush = v.min(1),
+                "mfkeys" => l.mfkeys = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -2053,6 +2062,8 @@ pub struct TrProto {
     midfold_kidx: Cell<u32>,
     midfold_key: Cell<u64>,
     midfold_idx: Cell<u64>,
+    /// Section 75.12 (`mfkeys`): the other method keys of the family: (constant index, key address, address of the table that holds the method).
+    midfold_x: std::cell::RefCell<Vec<(u32, u64, u64)>>,
     /// E5: installed traces of this prototype that folded a `SELF` (`Trace::midfold`): while any lives, every trace of the family keeps the
     /// checked entries, its pushes pass their own receiver and the family rule holds.
     midfold_live: Cell<u32>,
@@ -2140,6 +2151,7 @@ impl TrProto {
             midfold_kidx: Cell::new(0),
             midfold_key: Cell::new(0),
             midfold_idx: Cell::new(0),
+            midfold_x: std::cell::RefCell::new(Vec::new()),
             midfold_live: Cell::new(0),
             idfold_uv: Cell::new(0),
             idfold_live: Cell::new(0),
@@ -7082,6 +7094,28 @@ pub fn midfold_decide(st: &mut State, pr: ProtoRef, key: Option<(u32, u64, u64)>
     }
 }
 
+/// Section 75.12 (`mfkeys`): stores the other method keys of a family whose E5 decision just turned folding on (nothing when it did not).
+pub fn midfold_set_extra(st: &mut State, pr: ProtoRef, x: Vec<(u32, u64, u64)>) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.mfkeys == 0 {
+        return;
+    }
+    if let Some(tp) = tr_of(d, pr.0) {
+        if tp.midfold_st.get() == 1 && tp.midfold_x.borrow().is_empty() {
+            *tp.midfold_x.borrow_mut() = x;
+        }
+    }
+}
+
+/// Section 75.12: the other method keys of `pr` (empty: none, or `mfkeys` off).
+pub fn midfold_extra(st: &mut State, pr: ProtoRef) -> Vec<(u32, u64, u64)> {
+    let d = d_of(st);
+    if d.tr.cfg.limits.mfkeys == 0 {
+        return Vec::new();
+    }
+    tr_of(d, pr.0).map_or(Vec::new(), |tp| tp.midfold_x.borrow().clone())
+}
+
 /// E5: is the decision of `pr` still pending (the key search of `driver_start` runs only then)?
 pub fn midfold_pending(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
@@ -7198,10 +7232,13 @@ pub unsafe extern "C" fn jit_tr_midfold_check(
     let Some(mut t) = recv.as_table() else {
         return 0;
     };
+    let t0 = t;
+    let mut ok = 0;
     for _ in 0..MIDFOLD_DEPTH {
         let v = t.get_short_str(key);
         if !v.is_nil() {
-            return u32::from(v.raw_equal(&fv));
+            ok = u32::from(v.raw_equal(&fv));
+            break;
         }
         let Some(m) = t.metatable() else {
             return 0;
@@ -7211,7 +7248,51 @@ pub unsafe extern "C" fn jit_tr_midfold_check(
             None => return 0,
         }
     }
-    0
+    if ok == 0 || mutants::active("mfkeys_check_skip") {
+        return ok;
+    }
+    // Section 75.12 (`mfkeys`): every other method key of the family is found, through the same kind of chain, in the very table its recordings read
+    let Some(pr) = proto_ref(&p) else {
+        return ok;
+    };
+    let mut st = st;
+    let d = d_of(&mut st);
+    let Some(tp) = tr_of(d, pr.0) else {
+        return ok;
+    };
+    for &(kc, _, tab) in tp.midfold_x.borrow().iter() {
+        let Some(k2) = p.k().get(kc as usize).and_then(|v| v.as_strref()) else {
+            return 0;
+        };
+        if !extra_found_in(t0, k2, idx, tab) {
+            return 0;
+        }
+    }
+    ok
+}
+
+/// Section 75.12: is short string `k` found, walking raw gets and table `__index` links from `t` (at most [`MIDFOLD_DEPTH`] tables), in the table at
+/// address `tab`, as a Lua closure?
+pub fn extra_found_in(
+    mut t: rn_core::table::TableRef,
+    k: rn_core::string::StrRef,
+    idx: rn_core::string::StrRef,
+    tab: u64,
+) -> bool {
+    for _ in 0..MIDFOLD_DEPTH {
+        let v = t.get_short_str(k);
+        if !v.is_nil() {
+            return t.as_ptr() as u64 == tab && v.as_lclosure().is_some();
+        }
+        let Some(m) = t.metatable() else {
+            return false;
+        };
+        match m.get_short_str(idx).as_table() {
+            Some(n) => t = n,
+            None => return false,
+        }
+    }
+    false
 }
 
 /// E5: the longest `__index` chain of tables [`jit_tr_midfold_check`] follows.

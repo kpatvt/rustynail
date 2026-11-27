@@ -12,6 +12,12 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
+        name: "s75_mfkeys",
+        small: true,
+        // section 75.12 (`mfkeys`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s75_mfkeys.lua"),
+    },
+    Prog {
         name: "s75_recinl",
         small: true,
         // section 75.9 (`recinl`): the vm-corpus program, also compared with the reference there

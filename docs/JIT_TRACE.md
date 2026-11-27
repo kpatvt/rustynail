@@ -8487,3 +8487,37 @@ IR of the hot traces: trace 7 has 61 IR instructions of which 22 are the method 
 chain. Trace 11: 24 IR, 14 the chain. The per-call remainder against LuaJIT is therefore: the method-chain re-validation at every trace entry
 (about 60 % of the IR of traces 7 / 8 / 11), the push / return protocol of the calls that are still cut (one push per call that is not a leaf at the
 recorded level, one native return per frame), and the entry `POLL` / `BUDGET` / slot guards per trace.
+
+### 75.12 `mfkeys`: the other method keys of an E5 family, verified at the region check (`TrLimits::mfkeys`, default 1)
+
+E5 (35.4) removed the lookup chain of the family's *recursive* key (`self:permute`) inside a method region; every other method call
+(`self:swap`) still walked the receiver's `HMISS`, the metatable, its `__index` slot and the class table at every trace entry. Now, at the
+E5 decision (`midfold_extra_keys`, once per prototype), the other `SELF A 0 K` keys (short string constants, at most 4) whose lookup on the
+receiver finds a Lua closure in a table `T` are kept with `T`'s address. They join E5's invariant:
+
+* *Established* at every checked entry: `jit_tr_midfold_check` verifies, after the family key, that each extra key is found walking raw gets and
+  table `__index` links from the receiver **in the table at `T`'s address** and holds a Lua closure (`extra_found_in`); otherwise the entry is not
+  taken (tier 1 runs the frame). The root-return cache (same receiver, same closure) keeps holding: the chain is a property of the receiver.
+* *Kept* inside the region by the family rule: `midfold_stores_ok` now also refuses stores through an `HREFK` of any extra key and insertions
+  (`NEWREF`) of them (a store of the key earlier on the chain, e.g. on the instance, would shadow `T`'s); `__index` stores, string `HREFV` stores and
+  `setmetatable` were refused already.
+* *Used* by the recording (`Rec::mfkey_self`): in the root frame, with register 0 its entry load and the record-time lookup finding the key in `T`,
+  the method is read as `T[K]`: a `KPTR` of `T` (registered with the lockstep model, as P-V's string metatable), `T`'s shape guard, `HREFK`, the
+  typed `HLOAD`. The value itself is loaded, not assumed: rebinding `T[K]` inside the region is seen by the next load; only the *place* of the
+  key on the chain is the invariant. `T` cannot be freed inside the region (it is on the receiver's unchanged chain), and every region entry
+  re-verifies the table at that address.
+
+Measured (one binary, `mfkeys=0` against `=1`, `RUSTYNAIL_SEED=0`, CPU 8, min of 5, two interleaved rounds): permute 135.89 -> 132.00 M
+instructions (-2.86 %), 26.57 / 26.57 -> 25.25 / 25.10 M cycles (**-5.0 .. -5.6 %**). Whole set (190 programs, instructions, one run each):
+permute -2.86 %, astar_jumper +1.9 % (its noise), nothing else beyond 0.3 %; geomean 0.00 %. A first form that passed the constant table as a bare
+constant operand (no `KPTR` instruction) measured 127.46 M / 24.70 M but fails the lockstep oracle (`+verify`: the model has no handle for the table);
+the shipped form registers it.
+
+Tests: `tests/vm/s75_mfkeys.lua` (every mutation that can change a lookup, between region entries and from inside the recursion: the method
+replaced in the class, a key assigned into the `__index` table, `setmetatable` swapping the class, `__index` replaced by a function, the method
+shadowed on the instance and removed again (hot, so that side traces record the stores), a chain level added, and the same mutations made by the
+inlined `swap` of a family shaped like awfy/permute), `tr_core::s75_mfkeys_programs` (`mfkeys` 1 / 0, with `recinl=3,sidepush=1` and
+`sidepush=0`, every trace mode, `+verify`, exit storms, budget 17, GC stress 2, plus `s75_recinl` with `mfkeys=1`). Mutant `mfkeys_check_skip` (the
+region check ignores the extra keys) is caught. A family-rule mutant (stores of the extra keys allowed) was **not** caught: the test program's
+families that make those stores natively are decided eager (their first trace is a loop root, `midfold_eager`), so no folded trace runs beside
+the store; the rule's argument is E5's (35.5) for one more key set, and E5's own store mutants (`e5_01`) cover the mechanism. Dropped, not claimed.

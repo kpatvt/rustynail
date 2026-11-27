@@ -323,6 +323,8 @@ pub struct RecCfg {
     /// E5 (`midfold`, docs/JIT_TRACE.md section 35.4): the constant index of the root prototype's method key whose `SELF` on register 0 of the
     /// root frame folds to the running closure (`None`: no folding).
     pub midfold: Option<u32>,
+    /// Section 75.12 (`mfkeys`): the other method keys of the family (constant index, key address, holding table address), while folding is on.
+    pub mfkeys: Option<std::rc::Rc<Vec<(u32, u64, u64)>>>,
     /// E5: the family's method invariant is in force: every native push passes its frame's own register 0 (unchanged) and is guarded by
     /// identity with the running closure; pushes from inlined frames are not made.
     pub midfold_ident: bool,
@@ -605,6 +607,7 @@ impl Default for RecCfg {
             idfold: None,
             idfold_ident: false,
             midfold: None,
+            mfkeys: None,
             midfold_ident: false,
             max_ins: 0,
             pack: false,
@@ -6218,6 +6221,68 @@ impl Rec {
         Ok(true)
     }
 
+    /// Section 75.12 (`mfkeys`): `SELF A 0 K` of another method key of the family in the root frame: the region check verified that the chain from
+    /// register 0 finds `K` in the table `T` (as a Lua closure) and the family rule keeps it so, so the method is read as `T[K]` from the constant table
+    /// (its shape guards and the value's type guard stay), without the receiver's `HMISS`, the metatable and the `__index` links.
+    fn mfkey_self(&mut self, vm: &Vm<'_>, a: usize, b: usize, i: Instruction) -> R<bool> {
+        let Some(x) = self.cfg.mfkeys.clone() else {
+            return Ok(false);
+        };
+        if self.cfg.midfold.is_none()
+            || b != 0
+            || self.cur_depth != 0
+            || (cfg!(rustynail_lua54) && i.k() == 0)
+        {
+            return Ok(false);
+        }
+        let c = i.c();
+        let Some(&(_, kp, tab)) = x.iter().find(|e| e.0 == c) else {
+            return Ok(false);
+        };
+        if a + 1 >= self.frames[0].nslots {
+            return Ok(false);
+        }
+        let Some(key) = vm.k.get(c as usize).and_then(|v| v.as_strref()) else {
+            return Ok(false);
+        };
+        if key.as_ptr() as u64 != kp {
+            return Ok(false);
+        }
+        let Some(recv) = vm.slot(0).as_table() else {
+            return Ok(false);
+        };
+        let idx = vm.st.g().heap.tm_name(rn_core::meta::Tm::Index);
+        if !super::cache::extra_found_in(recv, key, idx, tab) {
+            return Ok(false);
+        }
+        let t = self.rd(vm, 0)?;
+        if t.1 != Ty::Tab || t.0 != self.slot0_entry()? {
+            return Ok(false);
+        }
+        // SAFETY: `extra_found_in` just found the method in the table at `tab` (a live table of the receiver's chain).
+        let holder = unsafe { rn_core::table::TableRef::from_raw(tab as *mut _) };
+        let kref = self.field_key(vm, c as usize)?;
+        self.touch(&Value::table(holder))?;
+        let kt = self.b.ir.konst(KVal::Ptr(tab, PtrKind::Raw));
+        let mr = self.b.emit_raw(Ins {
+            op: TOp::Kptr,
+            t: Ty::Tab,
+            flags: 0,
+            a: kt,
+            b: NOREF,
+            prev: NOREF,
+            aux: 0,
+        })?;
+        let r = self.hash_get_chain(vm, holder, mr, kref)?;
+        if r == NOREF {
+            return Err(AbortReason::Diverge);
+        }
+        self.def(a + 1, t.0);
+        self.def(a, r);
+        self.midfolded = true;
+        Ok(true)
+    }
+
     /// The ref of the root frame's closure (`SLOAD` of the function slot, emitted once).
     fn func_ref_load(&mut self) -> R<Ref> {
         if self.func_ref == NOREF {
@@ -6664,6 +6729,9 @@ impl Rec {
             }
             O::SelfOp => {
                 if self.midfold_self(vm, a, b, i)? {
+                    return Ok(next);
+                }
+                if self.mfkey_self(vm, a, b, i)? {
                     return Ok(next);
                 }
                 let t = self.rd(vm, b)?;
