@@ -1455,6 +1455,8 @@ struct Rec {
     /// Section 39.1 (T1, `retfsel`): the selector allows the pop at the root `RETURN` this step executes (computed in `on_step`, where the
     /// state is at hand; false at every other step).
     retf_sel_ok: bool,
+    /// Section 77.7 (`retf` bit 6): the caller's innermost loop around its `CALL` has a root trace (computed in `on_step`, at a root `RETURN`).
+    retf_self_traced: bool,
     /// T9 (`inner_link`): the `FORPREP` this step executes may record a data-dependent prep inside an inlined frame (its loop head has an installed root
     /// trace; computed in `on_step`, false at every other step).
     prep_link_ok: bool,
@@ -1778,6 +1780,7 @@ impl Rec {
             midfolded: false,
             segs: Vec::new(),
             retf_sel_ok: false,
+            retf_self_traced: false,
             prep_link_ok: false,
             prep_link: None,
             inner_ret_ok: false,
@@ -2226,6 +2229,17 @@ impl Rec {
                 Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
             )
             && self.retf_sel_check(st, ci);
+        // section 77.7 (`retf` bit 6): the caller's loop around the call is traced
+        self.retf_self_traced = self.cfg.retf & 64 != 0
+            && self.cfg.fn_root
+            && self.cfg.side.is_some()
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && self.caller_loop_traced(st, ci);
         // T9 (`inner_ret`): the same question without the recursion test, for any family whose root head a root trace links into
         self.inner_ret_ok = self.cfg.inner_ret
             && self.cfg.side.is_some()
@@ -8198,7 +8212,8 @@ impl Rec {
                 && (!self.cfg.fn_root
                     || self.cfg.retf & 4 != 0
                     || self.retf_sel_ok
-                    || self.inner_ret_ok)
+                    || self.inner_ret_ok
+                    || (self.cfg.retf & 16 != 0 && self.retf_into_self(vm)))
             {
                 if let Some(r) = self.retf(vm, i, op)? {
                     self.inner_ret_used |= self.inner_ret_ok;
@@ -8271,6 +8286,53 @@ impl Rec {
             return false;
         }
         super::cache::enclosing_loop_head(ccode, call_pc).and_then(|h| q(st, &cp, h)) == Some(true)
+    }
+
+    /// Section 77.7 (`retf` bit 4): the root frame of a function-entry family's side recording returns into a frame of its own prototype (a
+    /// recursion returning into the caller's loop or continuation): the pop is allowed like the selector's. Every other condition of `Rec::retf`
+    /// (I9 `retf_nolazy`, the caller suspended at an `OP_CALL`, the operands, `RetfAlias`) still applies.
+    fn retf_into_self(&self, vm: &Vm<'_>) -> bool {
+        let Some(c_ci) = vm.st.ci().previous() else {
+            return false;
+        };
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return false;
+        }
+        let Some(ccl) = vm.st.ci_lclosure(c_ci) else {
+            return false;
+        };
+        let cp = ccl.proto();
+        // (the very closure: a recursion, not a tree of closures of one prototype calling each other)
+        if &*cp as *const Proto as usize != self.frames[0].proto || ccl.as_ptr() != vm.cl.as_ptr() {
+            return false;
+        }
+        if self.cfg.retf & 32 == 0 {
+            return true;
+        }
+        // (bit 5: only a call inside a loop of the caller, which the pop continues)
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let Some(call_pc) = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1) else {
+            return false;
+        };
+        if call_pc >= ccode.len() {
+            return false;
+        }
+        let Some(h) = super::cache::enclosing_loop_head(ccode, call_pc) else {
+            return false;
+        };
+        // (bit 7: not a generic `for` loop: its iterations are calls the pop would cut into)
+        if self.cfg.retf & 128 != 0
+            && ccode.iter().enumerate().any(|(j, &w)| {
+                let i = Instruction(w);
+                i.opcode() == Some(OpCode::Tforloop)
+                    && j as i64 + 1 - i64::from(i.bx()) == i64::from(h)
+            })
+        {
+            return false;
+        }
+        // (bit 6: and that loop's head has a root trace now)
+        self.cfg.retf & 64 == 0 || self.retf_self_traced
     }
 
     /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?

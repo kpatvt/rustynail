@@ -4605,6 +4605,37 @@ fn s75_recinl_programs() {
     compare(jobs);
 }
 
+/// Section 77.7 (`retf` bits 4-7): function-entry side traces that pop their root frame into a frame of the same closure (a recursion returning into
+/// the caller's loop) and go on in the caller: trees of varying shape, early returns, an error below the pop under `pcall`, a method recursion called
+/// from another function's loop; `retf` 179 (the default) / 51 / 19 / 3 / 7, the trace modes with `+verify`, exit storms, budget 17 and GC stress 2.
+/// No mutant: the bits only choose where the existing `RETF` (N2c, its own mutants and detectors) is used.
+#[test]
+fn s77_rself_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["retf=179", "retf=51", "retf=19", "retf=3", "retf=7"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s77_rself", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s77_rself", trace)
+                .limits_s("retf=179")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+    }
+    compare(jobs);
+}
+
 /// Section 77.6 (`sloadhome`): `SLOAD`s that live in their own stack slot (no spill store, reloads and exit restores read the stack): moves and swaps
 /// restored from them at exits, sunk tables built from them, link writebacks, loop-carried slots, XMM homes, a towers-shaped recursion with
 /// register-carrying links; `sloadhome` 3 / 1 / 0, the trace modes with `+verify`, `+wb` (TR3b `SSTORE`s), `+randra`, exit storms, budget 17 and

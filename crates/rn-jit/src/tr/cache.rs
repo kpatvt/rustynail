@@ -390,8 +390,9 @@ pub const T1CCALL_PROCESS: u32 = 0;
 pub const TFMT_PROCESS: u32 = 1;
 /// BUNDLE-N: process default of [`TrLimits::retf`] = 3: bit 0 (1) = `RETF` in side recordings (the root frame is popped and the recording goes on in the caller), bit 1 (2) = the
 /// frame-linking exit of a side trace is an inline stub (the "re-push"); bit 2 (4) = function-entry families stays OFF (regresses native-recursion families, docs/JIT_PARKED.md C38).
-/// Flipped from 2 to 3 on 2026-11-10 with `retfmax` 1 (docs/PERF.md "RETF flip"); the lua_lexer gate of the N3 plan was waived.
-pub const RETF_PROCESS: u32 = 3;
+/// Flipped from 2 to 3 on 2026-11-10 with `retfmax` 1 (docs/PERF.md "RETF flip"); the lua_lexer gate of the N3 plan was waived. Section 77.7: 179 =
+/// 3 | 16 | 32 | 128 (self-recursion pops into a numeric / `while` loop of the caller).
+pub const RETF_PROCESS: u32 = 179;
 /// BUNDLE-N: process default of [`TrLimits::retfmax`].
 pub const RETFMAX_PROCESS: u32 = 1;
 /// BUNDLE-V V2 (`upbar`): process value of [`TrLimits::upbar`] (K3a: also the struct default). **1:** `SETUPVAL` of a collectable value into an upvalue cell is recorded
@@ -779,7 +780,10 @@ pub struct TrLimits {
     pub libcall: u32,
     /// BUNDLE-N (RETF, docs/JIT_PARKED.md C38): frame-leaving side traces. Bit 0 (value 1): a side recording that reaches the `RETURN` of
     /// its root frame executes `RETF` (the pop is done natively and the trace continues in the caller); bit 1 (value 2): inline re-push
-    /// stub; bit 2 (value 4): function-entry roots. Default [`RETF_PROCESS`] (0 = off, byte-identical IR and machine code).
+    /// stub; bit 2 (value 4): function-entry roots; bit 3 (8): test mode, the recording ends right after a pop. Section 77.7: bit 4 (16) a
+    /// function-entry family's side recording pops when its root returns into a frame of the same closure; bit 5 (32) only into a call inside a
+    /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Default
+    /// [`RETF_PROCESS`] = 179 (0 = off, byte-identical IR and machine code).
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
     pub retfmax: u32,
@@ -1419,7 +1423,7 @@ impl TrLimits {
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
                 "libcall" => l.libcall = v.min(4095),
-                "retf" => l.retf = v.min(15),
+                "retf" => l.retf = v.min(255),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
