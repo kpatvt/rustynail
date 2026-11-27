@@ -9818,7 +9818,13 @@ impl Rec {
         if prep_link && !self.prep_link_ok {
             // Section 75.7 (`dynunroll`): a short loop is unrolled like one with constant bounds: the count is computed and guarded from the
             // bounds at run time below, every `FORLOOP` guards its own continuation, the back edges are charged to `loopunroll`
-            if self.cfg.dynunroll == 0 || dyn_trips(vi, vl, vs) > u64::from(self.cfg.dynunroll) {
+            // (knob bit 6: not in a frame whose prototype is already on the frame stack: a recursive callee's loop is unrolled into one copy per
+            // recursion level and trip count, section 75.8)
+            let fp = self.frames[self.cur_depth].proto;
+            let rec_frame = self.dynunroll_norec()
+                && self.frames[..self.cur_depth].iter().any(|f| f.proto == fp);
+            let bound = u64::from(self.cfg.dynunroll & 63);
+            if bound == 0 || rec_frame || dyn_trips(vi, vl, vs) > bound {
                 return Err(AbortReason::InnerLoop);
             }
             prep_link = false;
@@ -12671,6 +12677,13 @@ impl Rec {
             self.tail_args = Some(refs);
         }
         self.call_lua(vm, idx, a, nargs + 1, wanted, cl, tail)
+    }
+}
+
+impl Rec {
+    /// Section 75.8: bit 6 of `dynunroll` (a policy bit: no semantic effect).
+    fn dynunroll_norec(&self) -> bool {
+        self.cfg.dynunroll & 64 != 0
     }
 }
 

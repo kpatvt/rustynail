@@ -8371,3 +8371,31 @@ gate-light on the first `dynunroll` commit: the 5.5 / 5.4 trace suites failed fo
 (counts `InnerLoop` side aborts, which `dynunroll` removes), `m1_interp_shapes` (side recordings that now reach recursive calls inside an unrolled
 loop abort `Recursion`: 5 > 4), `nr_n3_programs` / `nr_retf_traces_are_installed` (the RETF traces they expect arise from an `InnerLoop` refusal).
 Their asserted jobs now set `dynunroll=0` explicitly (the rest of their matrices run the default), so their mutants keep their detectors.
+
+### 75.8 Round 3: the `dynunroll` regressions, root causes, and the default OFF (`DYNUNROLL_PROCESS = 0`)
+
+Instrumented (a temporary print of every unrolled site: prototype line, pc, record-time trip count, depth, side or root) and compared trace
+formation (`RUSTYNAIL_JIT_VERBOSE=2`) with the knob 0 and 16:
+
+* **awfy/storage** (`for i = 1, size do a[i] = false end` in the leaf case of the recursive `buildTreeDepth`): with 16 the loop root at pc 28
+  (`for i = 1, 4 do arr[i] = buildTreeDepth(...)`) inlines the recursive call and unrolls the size loop: one side trace per size (exits at the
+  `FORLOOP` guards of the copy: traces 5, 7, 9, 11, 15 ..., frames 1), and the continuation head pc 33 is refused (`ContNotRecursive`) until it
+  goes `Black`, so returns into pc 33 run in tier 1. With 0 the loop aborted `InnerLoop`; the function-entry trace and a loop trace at pc 18 (the
+  size loop itself, a real loop) covered it. Cause: unrolling a *recursive* callee's loop. Rule built: knob bit 6 (`dynunroll=80` = 16 + 64): no
+  unroll in a frame whose prototype is already on the frame stack. storage 516.5 -> 492.2 M (back to the knob-off count).
+* **corpus/sha2_base64** (`for j = i, i + 3 do n = n * 256 + byte(s, j) end` in `s232num`, always 4 trips): 16 recordings inline and unroll it
+  (15 of them at depth 2); heads that were `InnerLoop` / `Black` with the knob off (they ran in tier 1) get traces. The trip count is stable, the
+  `loopunroll` budget is not the cause (a fit-the-budget rule changed nothing): the traced code with the unrolled `string.byte` loop is slower than
+  tier 1's code for these functions. Not fixed.
+* **corpus/msgpack_pure** (`for i = 1, n do packers[type(v)](buffer, v) end` of the array packer, one side recording, 3 trips) and
+  **corpus2/dev/bignum_arith** (`for i = 1, math.max(#a, #b)` / `for i = 1, #a`, 3 .. 14 trips, root and side): unrolled copies of data-length
+  loops whose count changes every call. Vetoing side recordings fixes msgpack and loses part of the wins; vetoing roots fixes sha2 and bignum and
+  loses nbody. No single rule found keeps the wins without one of them.
+
+Whole set with the recursion rule (`dynunroll=0` against `=80`, instructions, one run each; geomean -0.46 %): nbody -46.9 %, coro_scheduler
+-16.8 %, bigint_rsa -7.6 %, parser_combinator -6.0 %, regex_nfa -5.0 %, scheme_interp -4.6 %, richards -1.7 %; rises: havlak +0.5 %,
+bignum_arith +1.7 %, msgpack_pure +1.9 %, sha2_base64 +2.8 %, expr_compiler +5.3 %, astar_jumper +6.6 % (noisy program). The bar (no program up in
+instructions, none above 2 % cycles) is missed, so **the default is OFF** (`DYNUNROLL_PROCESS = 0`); `dynunroll=80` is the best measured setting
+for programs that want it. What is left to make it a default: a per-site adaptive policy fed by run-time exits of the unrolled copies (the
+regressing sites are visible only after the trace runs: exit counts at the copy's `FORLOOP` guards, or a measured comparison with the tier-1
+stay it replaced), like `bhmin` for `budhoist`.

@@ -165,7 +165,7 @@ pub const OFRAME_PROCESS: u32 = 1;
 /// Section 75 (`retfuse`): the process default of [`TrLimits::retfuse`] (also the struct default).
 pub const RETFUSE_PROCESS: u32 = 1;
 /// Section 75.7 (`dynunroll`): the process default of [`TrLimits::dynunroll`] (also the struct default).
-pub const DYNUNROLL_PROCESS: u32 = 16;
+pub const DYNUNROLL_PROCESS: u32 = 0;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -856,7 +856,8 @@ pub struct TrLimits {
     pub retfuse: u32,
     /// Section 75.7 (`dynunroll`, docs/JIT_TRACE.md section 75.7): a counted `for` of an inlined callee whose bounds are not trace constants is unrolled
     /// (the count computed and guarded from the run-time bounds, each iteration's `FORLOOP` guarded, the back edges charged to `loopunroll`) when its
-    /// trip count at record time is at most this bound, instead of aborting `InnerLoop` (or linking, T9). 0 = off; default [`DYNUNROLL_PROCESS`].
+    /// trip count at record time is at most this bound (bits 0-5), instead of aborting `InnerLoop` (or linking, T9). Bit 6: not in a frame whose
+    /// prototype is already on the frame stack (section 75.8). 0 = off (default [`DYNUNROLL_PROCESS`]: the whole-set bar is not met, section 75.8).
     pub dynunroll: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
@@ -1384,7 +1385,7 @@ impl TrLimits {
                 "landfix" => l.landfix = v.min(1),
                 "oframe" => l.oframe = v.min(1),
                 "retfuse" => l.retfuse = v.min(1),
-                "dynunroll" => l.dynunroll = v.min(64),
+                "dynunroll" => l.dynunroll = v.min(127),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

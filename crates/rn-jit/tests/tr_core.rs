@@ -4527,6 +4527,7 @@ fn s75_dynunroll_programs() {
             "dynunroll=2",
             "dynunroll=0",
             "dynunroll=16,loopunroll=4",
+            "dynunroll=80",
         ] {
             for (opts, budget) in [
                 ("", 0),
