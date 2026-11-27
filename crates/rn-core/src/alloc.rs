@@ -6,7 +6,7 @@
 //!
 //! `unsafe` is allowed in this module; every block carries a `// SAFETY:` comment.
 use crate::status::{LuaResult, Status};
-use std::alloc::Layout;
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::ptr::NonNull;
 
 /// Alignment of every block handed out by the system allocator (and required of custom allocators).
@@ -74,7 +74,8 @@ pub trait Allocator: std::any::Any {
     }
 }
 
-/// The default allocator: the process global allocator.
+/// The default allocator: the system allocator (`std::alloc::System`, i.e. `malloc`). Section 76.4: not the process global allocator, so
+/// that the Lua heap's blocks do not pass through `rnlua`'s compile-arena wrapper (`carena::CArena`), which serves only JIT compiles.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct SystemAllocator;
 
@@ -84,9 +85,7 @@ impl Allocator for SystemAllocator {
             if !ptr.is_null() && old != 0 {
                 // SAFETY: caller guarantees (ptr, old) describes a live block of this allocator, which
                 // was created with this exact layout.
-                unsafe {
-                    std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(old, BLOCK_ALIGN))
-                };
+                unsafe { System.dealloc(ptr, Layout::from_size_align_unchecked(old, BLOCK_ALIGN)) };
             }
             return std::ptr::null_mut();
         }
@@ -95,12 +94,12 @@ impl Allocator for SystemAllocator {
         };
         if ptr.is_null() || old == 0 {
             // SAFETY: `new_layout` has non-zero size.
-            unsafe { std::alloc::alloc(new_layout) }
+            unsafe { System.alloc(new_layout) }
         } else {
             // SAFETY: (ptr, old) is a live block allocated with alignment BLOCK_ALIGN; `new` is non-zero
             // and `new_layout` proved it does not overflow `isize` when rounded to the alignment.
             unsafe {
-                std::alloc::realloc(
+                System.realloc(
                     ptr,
                     Layout::from_size_align_unchecked(old, BLOCK_ALIGN),
                     new,
@@ -198,9 +197,7 @@ impl PoolAllocator {
             return std::ptr::null_mut();
         }
         // SAFETY: non-zero size.
-        let a = unsafe {
-            std::alloc::alloc(Layout::from_size_align_unchecked(ARENA_SIZE, BLOCK_ALIGN))
-        };
+        let a = unsafe { System.alloc(Layout::from_size_align_unchecked(ARENA_SIZE, BLOCK_ALIGN)) };
         if a.is_null() {
             return a;
         }
@@ -229,7 +226,7 @@ impl Drop for PoolAllocator {
         for &a in &self.arenas {
             // SAFETY: every arena was allocated in `refill` with this layout.
             unsafe {
-                std::alloc::dealloc(
+                System.dealloc(
                     a,
                     Layout::from_size_align_unchecked(ARENA_SIZE, BLOCK_ALIGN),
                 )

@@ -68,6 +68,8 @@ struct Chunk {
 thread_local! {
     /// Nesting depth of compiles on this thread.
     static DEPTH: Cell<u32> = const { Cell::new(0) };
+    /// The arena serves this thread now (on, inside a compile): set by [`enter`] / [`leave`].
+    static ACT: Cell<bool> = const { Cell::new(false) };
     /// The current chunk of this thread (address, 0 = none), its bump pointer, its newest block (for in-place growth, 0 = none).
     static CUR: Cell<usize> = const { Cell::new(0) };
     static TOP: Cell<usize> = const { Cell::new(0) };
@@ -113,13 +115,21 @@ pub fn enabled() -> bool {
 /// A compile starts on this thread.
 #[inline]
 pub fn enter() {
-    DEPTH.with(|d| d.set(d.get() + 1));
+    let n = DEPTH.with(|d| {
+        d.set(d.get() + 1);
+        d.get()
+    });
+    ACT.with(|a| a.set(n != 0 && ENABLED.load(Ordering::Relaxed)));
 }
 
 /// The compile of the matching [`enter`] ends.
 #[inline]
 pub fn leave() {
-    DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    let n = DEPTH.with(|d| {
+        d.set(d.get().saturating_sub(1));
+        d.get()
+    });
+    ACT.with(|a| a.set(n != 0 && ENABLED.load(Ordering::Relaxed)));
 }
 
 /// Blocks served by the arena on this thread / chunks recycled / chunks of the range ever taken (statistics).
@@ -145,7 +155,7 @@ fn mark() -> usize {
 /// Does this thread allocate from the arena now?
 #[inline]
 fn active() -> bool {
-    ENABLED.load(Ordering::Relaxed) && DEPTH.with(|d| d.get()) != 0
+    ACT.with(|a| a.get())
 }
 
 /// Drops one live count of the chunk at `c`: on its owner thread the last one recycles it onto the owner's free list, on another thread it is
