@@ -8703,9 +8703,8 @@ Measured on the binary of commit e028036 (instructions M / Mcyc, min of 15, inte
 with the knobs off, lua_lexer +0.81 % instructions and regex_nfa +0.15 % / +4.3 % cycles against the base; a scratch build of the same tree
 without the `#[global_allocator]` line had the base's instruction counts exactly (regex_nfa 3481.51 M) and ran regex_nfa at 634 Mcyc against the
 base's 656 and the wrapper build's 684-689 (11 runs). The Lua heap (`rn_core::alloc::SystemAllocator`, every GC object, string and table part) went
-through `std::alloc`, i.e. through the wrapper. It now calls `std::alloc::System` directly (the same `malloc` as before in every binary that does not
-register an allocator; an embedder's own `#[global_allocator]` no longer sees the Lua heap, which `lua_newstate` / `Mem::new` with a custom
-`Allocator` still covers), and the arena test is one thread-local flag set by `enter` / `leave`. Final binary (min of 11, interleaved, instructions M /
+through `std::alloc`, i.e. through the wrapper. It now calls `std::alloc::System` directly when `rnlua` asks for it (round 2, 76.8: opt-in through `rn_core::alloc::set_heap_system`;
+embedders keep the global allocator by default), and the arena test is one thread-local flag set by `enter` / `leave`. Final binary (min of 11, interleaved, instructions M /
 Mcyc, base / shipped / knobs off): regex_nfa 3481.52 / 658.50, 3477.25 / 672.60 (-0.1 % / **+2.1 %**), 3480.56 / 677.39; lua_lexer 3206.47 / 791.64,
 3205.25 / 796.22 (-0.04 % / +0.6 %), 3210.56 / 798.10; fmt_s 23.12 / 5.95, 23.05 / 6.09 (-0.3 % / **+2.4 %**), 23.15 / 6.12; cd 642.92 / 235.91,
 623.25 / 220.09 (**-3.1 % / -6.7 %**), 645.74 / 236.62; raytrace 291.98 / 93.01, 283.26 / 89.07 (**-3.0 % / -4.2 %**), 292.80 / 94.57.
@@ -8808,3 +8807,182 @@ final binary (time box); the final commit changes only the Lua heap's allocator 
   5.4, trace suites 5.5 (344 s) / 5.4 (325 s), `vm_corpus` (82 s), jit-diff 1-50 (0 diffs, 0 timeouts), mutant group 4 ran / 4 caught.
 * Not run: `gate-heavy.sh`, the full mutant runner, the oracle suites, jit-diff beyond 1-50, the official suite, PGO builds, `bench-fast.sh`,
   5.4 performance.
+
+### 76.8 Round 2: the Lua heap's allocator made opt-in, the allocator wrapper's fast path, and the fmt_s / regex_nfa cycle question
+
+**Opt-in Lua-heap path (commit 142a849).** Commit 1a4146a made `rn_core::alloc::SystemAllocator` call `std::alloc::System` unconditionally, so an
+embedder's `#[global_allocator]` no longer saw the Lua heap. That is now opt-in: `rn_core::alloc::set_heap_system(bool)` (a process-wide flag,
+default `false`: the default allocator and `PoolAllocator`'s arenas use the global allocator exactly as before); only `rnlua`
+(`crates/rn-cli/src/main.rs`, first statement of `main`, before any state exists) sets it to `true`. `rustynail`, `rn-capi` and library users keep
+the old behaviour. The flag must not change while Lua blocks are live (a block is freed by the allocator the current setting names; documented on
+the function and in `docs/UNSAFE.md`). Test `rn_core::alloc::tests::heap_system_switch` (default off; both allocators allocate, grow and free
+under the switch).
+
+**Cheaper wrapper fast path.** The arena's "serving now" test is one relaxed load of a process-wide flag (`carena::ACT`, set by `enter` / `leave`
+with a plain load / store of the depth, which run once per recorded bytecode: the atomic read-modify-write of the first version cost 0.3 % of
+raytrace in `driver_step`), and `alloc_zeroed` forwards to `calloc` (`System::alloc_zeroed`) instead of the trait default (`malloc` + clearing every
+byte). A thread that allocates while another compiles takes blocks from its own chunks (chunks are per thread), which is as valid as `System`.
+
+**Is the fmt_s / regex_nfa cost layout? Evidence.** Same source, different layouts: (1) environment pad `RUSTYNAIL_PAD` of 0 / 24 / 72 / 136 / 200
+bytes, base and final binary interleaved (7 runs each, CPU 15); (2) the base and the final tree built with `-C llvm-args=-align-all-functions=5`
+and `=6` (all functions aligned to 32 / 64 bytes; instruction counts unchanged); (3) a build of the final tree without the `#[global_allocator]`
+line.
+
+| build | fmt_s Mcyc base / final | regex_nfa Mcyc base / final |
+|---|---|---|
+| default layout, pads 0 / 24 / 72 / 136 / 200 | 5.99 / 6.21, 5.99 / 6.15, 5.97 / 6.17, 6.01 / 6.15, 5.93 / 6.18 | 659.3 / 649.8, 658.9 / 648.2, 659.7 / 651.6, 657.2 / 649.2, 660.6 / 648.9 |
+| `align-all-functions=5` | 5.95 / 6.03 (+1.3 %) | 653.5 / 685.0 (+4.8 %) |
+| `align-all-functions=6` | 5.93 / 6.11 (+3.0 %) | 646.9 / 651.3 (+0.7 %) |
+| same tree, no `#[global_allocator]` | 5.96 / 5.97 | 655.8 / 645.0 |
+| back-to-back `perf stat -r 15` (no spin, means) | 5.349 / 5.362 (+0.2 %) | - |
+
+regex_nfa moves between -1.6 % and +4.8 % across layouts of the same code at the same instruction count: **layout**, not a cost of the lever. fmt_s
+is +1.3 .. +3.6 % in every layout under the spin protocol (300 ms spin, min of N) and +0.2 % in back-to-back runs, and the no-wrapper build is at
+the base: a small real cost of registering a process allocator in a 6 Mcyc program (0.1 Mcyc: the wrapper's code path is cold at start-up when
+most of fmt_s's allocations happen), which no setting of the knob removes. It stays a bar miss.
+
+### 76.9 (b) Cheaper recording: what the line-level profile shows, and the levers built
+
+Method: the inlined frame was split by profiling a frame-pointer build of the round-1 tree (`perf record --call-graph fp`, 3 runs, raytrace and
+cd) and a plain release build at a fine period (`-c 5003`, 6 runs) with `perf report --sort srcline` per recorder symbol.
+Recording is 10.45 % of raytrace's cycles. The callees of `record_one` / `on_step` (inclusive, % of the run): **`hash_get` 2.62** (the constant-key
+table reads: `hash_ref_k` 1.69: guards 0.82, `FLOAD`s 0.50, `fill_node` 0.20), the `on_step` body 1.97 (validation, the per-step bookkeeping, lockstep
+off), `rd` 0.73, `hash_set` 0.58, `light_new` 0.33, the recording's close 0.24, `arith` 0.22. Self time: `fold` 1.02, `on_step` 0.74, `emit_flags`
+0.36, `SlotMap::entries_into` 0.30, `konst` 0.21, `find` 0.20. Line-level: `snap::fixup` summed the step costs from the start once per snapshot
+(`cost[..step].iter().sum()`: snapshots x steps, 0.19 % of raytrace in `close`); `snap::prune_snaps` called the per-entry test (and a type lookup) on
+every entry of every snapshot (`snap.rs:312-313`, 0.28 %); `carena::enter` / `leave` atomics 0.3 %. Everything else is IR emission: a guard is
+`emit_flags` -> `fold` -> CSE `find` -> `Ins` push, with no line above 0.35 %.
+
+Built:
+
+| lever | knob | what | measured (instructions, same binary) |
+|---|---|---|---|
+| `FIXSUM` | `cspeed` bit 1024 (default on) | prefix sums of the step costs in `snap::fixup` | together with `PRUNEQ`: raytrace -0.44 %, cd -0.22 %, towers -0.09 %, json -0.03 % |
+| `PRUNEQ` | `cspeed` bit 2048 (default on) | `prune_snaps` copies a snapshot whole when nothing in it may be dropped (inlined frames, an open top, or no dead set at its pc) | (above) |
+| `hdrcse` (76.11) | `TrLimits::hdrcse` (default 2) | the recorder reuses table header loads | roots and sides: raytrace -1.5 %, cd -1.4 %, json -2.7 %; the default (sides): raytrace -1.1 %, cd -0.6 %, json -0.6 %, lua_parser -5.3 % |
+| arena depth | (part of `carena`) | plain load / store instead of atomic add per recorded bytecode | in the rows above |
+
+Both `cspeed` levers emit the same code as the old paths (`tr_ir::prune_snaps_drops_only_dead_numbers` compares the maps of both paths; the
+fixup is checked by the count-model tests). Mutants `fixsum_shift` (`tr_record::count_model_is_exact`), `pruneq_copy_all`
+(`tr_ir::prune_snaps_drops_only_dead_numbers`).
+
+### 76.10 (d) Smaller tier-1 code: what the code is made of, and `t1exit`
+
+Diagnostic `RUSTYNAIL_JIT_T1SIZE=1` (stderr, per tier-1 compile): bytes per opcode of the main line, the out-of-line sections (MMBIN stubs, cold
+slow paths by kind, landing checks, exit sequences) and the `Ret` count. Raytrace's 237 KB of tier 1: main line 90 KB, cold slow paths 97 KB
+(`__index` chain walks 51 KB in 85 pieces, i.e. 600 bytes each; helper calls 32 KB in 138 pieces; helper-failure exits 11 KB; string `SELF` 8 KB;
+key insertion 7 KB), exit sequences 44 KB (980 of them, 45 bytes each: `movabs` of the pc address, the `savedpc` store, the refund, and the
+thunk's whole epilogue per `Ret`), landing checks 4 KB. cd: main 182 KB, cold 208 KB (chains 119 KB), exits 94 KB.
+
+`TrLimits::t1exit` (default 7):
+
+* bit 0, shared exits: an exit is `mov esi, pc | refund << 20; jmp exit_common` (one sequence per prototype computes the address, adds the refund,
+  stores `savedpc`, returns); the trap variant (after a helper that may have run a finaliser) sets `ci.trap` first. Also the inline stubs of the
+  instructions tier 1 does not compile and the `MMBIN` stubs. pc < 2^20 and refund < 4096, else the old sequence.
+* bit 1, helper trampolines: `CallH` is `mov edx, instr; mov ecx, extra; call tramp_f`, with one `mov rdi, r12; mov rsi, r13; movabs rax, f; jmp rax`
+  per helper and prototype (the helper sees the same stack and return address as with `call rax` at the site).
+* bit 2, rolled `__index` chains: one copy of the level body in a loop counted in `V7` instead of `idx_levels` unrolled copies.
+
+Tier-1 code (bytes, same binary, `t1exit` 0 -> 1 -> 3 -> 7): raytrace 236 947 -> 206 122 -> 202 931 -> **180 510 (-23.8 %)**; cd 489 111 -> 429 286 ->
+422 923 -> **369 779 (-24.4 %)**; fmt_s 27 932 -> 25 444 -> 25 179 -> **20 705 (-25.9 %)**. Fewer micro-ops also make the tier-1 compile cheaper.
+Tests: `tr_core::s76_t1exit_programs` (program `s76_t1_exits`: exit stubs, refunding guard exits, metamethod fallbacks, a three-level `__index`
+chain, a finaliser that installs a count hook whose first firing is printed; plus `s64_call_observers`, `s76_side_fail`; `t1exit` 7 / 3 / 0 in every
+trace mode and 7 / 4 / 2 / 0 with traces off and budgets 3 / 17). Mutants `t1exit_pc_off`, `htramp_swap_args`, `chain_end_nil`. Two mutants were
+dropped as equivalent: skipping the trap store of the shared trap exit (`debug.sethook` sets the trap of every Lua frame itself) and a rolled
+chain that walks fewer levels (a chain that runs out of levels falls back to the helper, which finds the same value).
+
+### 76.11 (d) Smaller trace bodies, (b) less IR: `hdrcse`
+
+The trace dumps show the cause of much of the trace-body volume on allocation-heavy programs: every constant-key read of a table records
+`FLOAD lsizenode`, its `EQ` guard, `FLOAD node` (and the shape guard) again (raytrace trace 87: the same `FLOAD u32 %2 4` eleven times, each with its
+own guard). The loop pass forwards header loads (rule 4 of `opt_mem`), but only on traces without a header barrier, and it gives up on a trace that
+allocates (raytrace's vector code allocates in every loop). `TrLimits::hdrcse` (default 2): the recorder keeps the `FLOAD`s since the last header
+barrier (`(table ref, field, type) -> load`; an instruction for which `opt_mem::header_safe_ins(i, 0)` is false clears it: allocation, key insertion,
+`TSET`, `TLEN`, `CONCAT`, library calls) and returns the earlier load; the guard on it then hits the builder's CSE (guards compare their op bits,
+the earlier guard dominates on the straight path), and so do `HREFK` and the shape guard. Trace code: raytrace 143 402 -> 137 511 B (-4.1 %), cd
+569 085 -> 555 986 B (-2.3 %); instructions raytrace -1.5 %, cd -1.4 %, json -2.7 %, deltablue -0.4 %. Test `tr_core::s76_hdrcse_programs` (program
+`s76_hdr_reuse`: field reads around integer-key insertions that rehash and allocations, plus `s64_call_loops`, `s76_side_fail`, `hdrcse` 1 / 0 in
+every mode). Mutant `hdrcse_no_barrier`.
+
+**Narrowed per recording kind.** On the whole set the first version (roots and sides) cost apps/expr_lang +2.0 % instructions / +4.3 % cycles: a
+different root formation (more `InnerLoop` aborts, `DeepProbe` refusals, 84 instead of 73 side recordings, 223 instead of 198 KB of trace code),
+not a cost of the shorter IR. Bit 0 (roots) and bit 1 (sides) are separate now; instructions M, same binary, `hdrcse` 0 / 1 (roots) / 2 (sides) /
+3 (both): expr_lang 484.0 / 501.3 / **481.8** / 499.1; raytrace 281.4 / 280.1 / 278.4 / 277.1; cd 620.2 / 615.3 / 616.4 / 611.4; json 425.1 / 416.2 / 422.5 /
+413.6; deltablue 300.4 / 299.3 / 300.3 / 299.2; lua_parser 4453.1 / 4431.3 / 4218.9 / 4192.0; lru_cache 298.7 / 297.2 / 294.9 / 293.4; prototype_objects
+3617.6 / 3595.7 / 3565.6 / 3543.8. **Default 2** (sides only: no program worse); 3 is the better setting everywhere except expr_lang
+(raytrace -0.5 %, cd -0.8 %, json -2.1 % more) and stays available.
+
+### 76.12 Round 2 numbers, bars and defaults
+
+**Target programs** (base 6058b77 against the final binary of commit 59e6c1f, shipped defaults: `carena=1`, `sideblf=65`, `cspeed` with
+`FIXSUM` + `PRUNEQ`, `t1exit=7`, `hdrcse=2`; min of 15 interleaved runs, CPU 15, 300 ms spin, instructions M / Mcyc):
+
+| program | base | final | instructions | cycles |
+|---|---|---|---:|---:|
+| apps/raytrace | 291.98 / 92.82 | 278.40 / 86.55 | **-4.65 %** | **-6.75 %** |
+| awfy/cd | 642.93 / 233.04 | 616.36 / 216.81 | **-4.13 %** | **-6.96 %** |
+| awfy/towers | 164.44 / 42.89 | 162.20 / 42.06 | -1.36 % | -1.94 % |
+| awfy/json | 430.60 / 134.72 | 422.53 / 130.36 | -1.87 % | -3.24 % |
+| lib/fmt_s | 23.12 / 6.01 | 22.83 / 6.16 | -1.25 % | **+2.5 %** |
+| apps/expr_lang | 489.46 / 124.01 | 481.87 / 121.32 | -1.55 % | -2.17 % |
+
+Per lever on the same binary (instructions / cycles, min of 15): `t1exit` 0 -> 7: raytrace -0.5 / -0.3 %, cd -0.5 / -1.2 %, json -0.4 / -0.6 %, fmt_s
+-1.0 / -2.1 %; `hdrcse` (both kinds) 0 -> 1: raytrace -1.5 / -0.4 %, cd -1.4 / -1.6 %, json -2.7 / -3.1 %; `cspeed` 1019 -> 4091: raytrace -0.4 %, cd -0.2 %
+instructions (cycles within noise). With `hdrcse=3` instead of the shipped 2 (roots too): raytrace -5.1 % / -6.4 %, cd -4.9 % / -8.3 %, json -4.0 %
+/ -5.8 % against the base, at the cost of expr_lang +2 % / +4 %.
+
+**Whole set** (33 programs, min of 5, interleaved):
+
+| program | base instr M / Mcyc | final instr M / Mcyc | instr | cycles |
+|---|---|---|---:|---:|
+| awfy/bounce | 296.40 / 58.77 | 294.89 / 58.12 | -0.51 % | -1.11 % |
+| awfy/cd | 642.94 / 235.24 | 616.36 / 218.09 | -4.13 % | -7.29 % |
+| awfy/deltablue | 306.50 / 102.38 | 300.31 / 99.67 | -2.02 % | -2.65 % |
+| awfy/havlak | 507.78 / 151.48 | 503.89 / 149.67 | -0.77 % | -1.19 % |
+| awfy/json | 430.59 / 135.36 | 422.53 / 131.29 | -1.87 % | -3.01 % |
+| awfy/list | 377.42 / 92.76 | 375.71 / 91.71 | -0.45 % | -1.13 % |
+| awfy/mandelbrot | 515.31 / 271.63 | 515.02 / 271.46 | -0.06 % | -0.06 % |
+| awfy/nbody | 540.89 / 91.80 | 539.88 / 90.78 | -0.19 % | -1.11 % |
+| awfy/permute | 117.79 / 22.81 | 117.40 / 22.77 | -0.33 % | -0.18 % |
+| awfy/queens | 497.07 / 94.17 | 496.21 / 93.29 | -0.17 % | -0.93 % |
+| awfy/richards | 165.01 / 56.42 | 160.61 / 54.95 | -2.67 % | -2.61 % |
+| awfy/sieve | 717.89 / 108.70 | 717.60 / 107.95 | -0.04 % | -0.69 % |
+| awfy/storage | 492.25 / 101.83 | 491.77 / 100.55 | -0.10 % | -1.26 % |
+| awfy/towers | 164.44 / 43.04 | 162.20 / 42.10 | -1.36 % | -2.18 % |
+| apps/events | 688.46 / 163.44 | 688.40 / 158.15 | -0.01 % | -3.24 % |
+| apps/expr_lang | 489.46 / 124.58 | 481.86 / 122.34 | -1.55 % | -1.80 % |
+| apps/lru_cache | 305.10 / 146.57 | 294.88 / 133.63 | -3.35 % | -8.83 % |
+| apps/markdown | 380.33 / 119.60 | 379.63 / 119.52 | -0.18 % | -0.07 % |
+| apps/raytrace | 291.98 / 92.91 | 278.40 / 87.32 | -4.65 % | -6.02 % |
+| corpus2/heldout/bigint_rsa | 5661.00 / 1117.25 | 5655.86 / 1105.31 | -0.09 % | -1.07 % |
+| corpus2/heldout/dijkstra_routes | 2854.19 / 1136.15 | 2823.26 / 1123.63 | -1.08 % | -1.10 % |
+| corpus2/heldout/forth_vm | 3749.12 / 797.94 | 3729.41 / 780.93 | -0.53 % | -2.13 % |
+| corpus2/heldout/prototype_objects | 3616.72 / 1416.99 | 3565.54 / 1866.40 | -1.42 % | +31.72 % |
+| corpus2/heldout/roguelike_turns | 2679.82 / 808.83 | 2652.23 / 782.71 | -1.03 % | -3.23 % |
+| corpus2/heldout/scheme_interp | 5779.93 / 1479.65 | 5780.40 / 1460.52 | +0.01 % | -1.29 % |
+| corpus2/dev/lua_parser | 4445.13 / 1208.18 | 4219.11 / 1142.41 | -5.08 % | -5.44 % |
+| corpus2/dev/oop_mixins | 3939.24 / 1279.11 | 3857.65 / 1406.53 | -2.07 % | +9.96 % |
+| corpus2/dev/particles_physics | 1321.95 / 398.96 | 1312.68 / 401.65 | -0.70 % | +0.67 % |
+| corpus2/dev/regex_nfa | 3481.54 / 676.25 | 3461.37 / 630.46 | -0.58 % | -6.77 % |
+| corpus/classic_vector | 1307.21 / 306.00 | 1303.04 / 303.15 | -0.32 % | -0.93 % |
+| lib/fmt_s | 23.12 / 6.00 | 22.83 / 6.16 | -1.25 % | +2.67 % |
+| corpus2/heldout/stream_closures | 2886.03 / 771.87 | 2805.97 / 725.17 | -2.77 % | -6.05 % |
+| corpus/lua_lexer | 3206.36 / 800.05 | 3198.48 / 790.40 | -0.25 % | -1.21 % |
+| **geomean (33)** | | | **-1.27 %** | **-1.09 %** |
+
+Geomean -1.27 % instructions, -1.09 % cycles; three cycle outliers of that pass were re-run with 11 interleaved runs (base / final / knobs `t1exit=0,
+hdrcse=0`): oop_mixins 1080.6 / 1059.8 / 1074.3 Mcyc (-1.9 %), prototype_objects 1336.5 / 1277.2 / 1345.8 (-4.4 %), particles_physics 389.0 / 381.9 /
+382.7 (-1.8 %): with those, the cycle geomean is **-2.46 %**. Instructions up: scheme_interp +0.01 % (none other). Cycles up beyond 2 %: lib/fmt_s
++2.5 .. +2.7 % (76.8: the cost of registering the allocator wrapper in a 6 Mcyc program; between +0.2 % and +3.6 % depending on layout and
+protocol, -1.3 % instructions). regex_nfa, a miss in round 1, is -6.8 % cycles in this pass (-0.6 % instructions).
+
+**Defaults after round 2**: `carena=1`, `sideblf=65`, `cspeed` all levers (4091), `t1exit=7`, `hdrcse=2` ON; `sideback=0` OFF; the Lua heap's System
+path only in `rnlua` (`set_heap_system`). Bar misses: lib/fmt_s cycles (+2.5 %, at lower instructions; not removable by any knob setting).
+
+**Not built in round 2**: a shared helper-call protocol for the remaining cold slow paths (helper calls with their failure / hook exits: 32 KB on
+raytrace after `t1exit`; needs a call / return convention inside tier-1 code and emulator support), and trace-body compaction beyond `hdrcse` (the
+trace-body volume left is per-guard instruction selection; inline exit stubs are already deferred). Not measured: L1i misses after the change,
+5.4 builds.
+
+**Gates (round 2)**: per commit the touched groups' mutants (`fixsum_`, `pruneq_`, `t1exit_`, `htramp_`, `chain_end`, `hdrcse_`: 6 / 6 caught) and the
+`s76_` tests of `tr_core` and `tr_ir` / `tr_record`; the final run on the documentation commit: GATE_FINAL
