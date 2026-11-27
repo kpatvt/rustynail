@@ -111,6 +111,8 @@ pub struct Stats {
     pub load_cse: usize,
     /// P2 bundle 2: `NE` upvalue-separation guards emitted (`uvsep`).
     pub uvsep_guards: usize,
+    /// Section 79.11 (`selfst`): array stores of the value the element already holds, dropped.
+    pub self_stores: usize,
 }
 
 struct Em<'a> {
@@ -144,6 +146,8 @@ struct Em<'a> {
     hdrlib: u32,
     /// P2 bundle 2: `TrLimits::uvsep` (see `opt_mem::MemLog::find_sep`).
     uvsep: bool,
+    /// Section 79.11: `TrLimits::selfst`.
+    selfst: bool,
     /// The `LOOP` marker (body copy only).
     loop_ref: Ref,
     stats: Stats,
@@ -212,6 +216,7 @@ impl<'a> Em<'a> {
             keep_snaps: false,
             hdrlib: opts.hdrlib,
             uvsep: opts.uvsep & 1 != 0,
+            selfst: opts.selfst != 0,
             body: false,
             sub: vec![NOREF; rec.ir.ins.len()],
             pre_sub: Vec::new(),
@@ -990,6 +995,21 @@ impl<'a> Em<'a> {
                     prev: NOREF,
                     ..i
                 };
+                // Section 79.11 (`selfst`): an array store of the value the element already holds (the nearest must-alias access is a load that
+                // produced exactly this value, or a store of it, with no may-alias store between) changes nothing any observer sees: not the
+                // heap at an exit, not reachability (no barrier is needed for a reference the table holds already). Outside a peeled loop body
+                // only (the log of a body does not cover the earlier iterations). MUTANT `selfst_any_value`: the store is dropped whatever value the element holds.
+                if self.fwd && self.selfst && !self.body && i.op == TOp::Astore {
+                    if let Some(key) = opt_mem::locate(&self.b.ir, &ins) {
+                        let same = self.log.find(&self.b.ir, &key);
+                        if matches!(same, Some(Found::Load(v) | Found::Store(v)) if v == bb || mutants::active("selfst_any_value"))
+                        {
+                            self.stats.self_stores += 1;
+                            self.sub[n] = NOREF;
+                            return Ok(());
+                        }
+                    }
+                }
                 let r = self.b.emit_raw(ins)?;
                 // an unlocatable store empties the log (fails closed)
                 self.log.record_store(&self.b.ir, &ins, bb);

@@ -9428,3 +9428,20 @@ the first, with full collections in between).
 Measured (one binary, `mfconst=0` against `=1`, SEED 0): permute 120.73 -> **111.22** instructions per call, default size 111.74 -> 103.43 M
 (**-7.4 %**). Whole set: permute -7.44 %; nothing else beyond 0.3 % but the noise programs (astar_jumper -1.8 %, testrunner_luaunit +0.30 %,
 real_dis_x86 +0.6 %, re-measured: 4914 .. 4945 M for either setting); geomean -0.04 %.
+
+### 79.11 `selfst`: array stores of the value the element already holds (`TrLimits::selfst`, default 1)
+
+permute's leaf level calls `swap(n1, i)` with `i == n1`: `tmp = v[i]; v[i] = v[j]; v[j] = tmp` with one element, i.e. two `ASTORE`s of the value
+just loaded from the same element, twice per inlined leaf (four in trace 8, about 4 instructions each). TR13.6 keeps dead stores (every exit
+observes the heap), but a store of the value the element already holds is not a dead store: the heap is the same with or without it at every
+exit, and reachability does not change (no barrier is needed for a reference the table holds already). The forward pass (`opt_loop`, rolled
+traces and pre-rolls; not a peeled body, whose log does not cover earlier iterations) now drops an `ASTORE` whose location's nearest must-alias
+access in the memory log (`MemLog::find`: no may-alias store between) is a load that produced exactly the stored value, or a store of it. A
+`__newindex` / nil-element store is unaffected: the recorder emits the metatable guards separately, and only the raw store goes.
+Mutant `selfst_any_value` (the store is dropped whatever the element holds), caught by `tr_core::s79_selfst_programs` (`tests/vm/s79_selfst.lua`:
+swaps with equal indices, stores between that may alias at run time (the same table under two refs, the same index under two refs), changed
+values, collectables and nil elements under `__newindex`, collections and weak values; `selfst` 1 / 0, `-loop`, `-sink`, the trace modes,
+`+verify`, exit storms, budget 17, GC stress 2).
+
+Measured (one binary, `selfst=0` against `=1`): permute 111.22 -> **104.88** instructions per call, default size 103.44 -> 97.94 M (**-5.3 %**).
+Whole set: permute -5.32 %; nothing else beyond 0.2 % but the noise programs (astar_jumper -1.9 %, real_dis_x86 +0.2 %); geomean -0.03 %.

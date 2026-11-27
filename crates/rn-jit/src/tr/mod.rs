@@ -220,6 +220,8 @@ pub struct TraceOpts {
     pub sinkside: u32,
     /// P2 bundle 2: `TrLimits::uvsep` (set from the limits when a recording starts): guarded disjointness of upvalue cells in the loop optimiser.
     pub uvsep: u32,
+    /// Section 79.11: `TrLimits::selfst` (set from the limits when a recording starts): array stores of the value the element holds are dropped.
+    pub selfst: u32,
     /// BUNDLE-L A: `TrLimits::aidx` (set from the limits when a recording starts): the complemented array index is an IR value.
     pub aidx: u32,
     /// BUNDLE-L B: `TrLimits::bhoist` (set from the limits when a recording starts): array bounds checks of a counted loop hoisted into its pre-roll.
@@ -264,6 +266,7 @@ impl Default for TraceOpts {
             sinkmt: 0,
             sinkside: 0,
             uvsep: 0,
+            selfst: 0,
             aidx: 0,
             bhoist: 0,
             nidx: 0,
@@ -1006,6 +1009,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                         o.sinkmt = cfg.limits.sinkmt;
                         o.sinkside = cfg.limits.sinkside;
                         o.uvsep = 1;
+                        o.selfst = cfg.limits.selfst;
                         o.aidx = cfg.limits.aidx;
                         o.nidx = cfg.limits.nidx;
                         o.bhoist = if pr.is_some_and(|pr| cache::head_nohoist(st, pr, pc)) {
@@ -1255,6 +1259,7 @@ pub fn driver_start_side(
                 o.sinkmt = cfg.limits.sinkmt;
                 o.sinkside = cfg.limits.sinkside;
                 o.uvsep = 1;
+                o.selfst = cfg.limits.selfst;
                 o.aidx = cfg.limits.aidx;
                 o.nidx = cfg.limits.nidx;
                 o.bhoist = cfg.limits.bhoist;

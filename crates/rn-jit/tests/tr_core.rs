@@ -4690,6 +4690,44 @@ fn s77_home_programs() {
     compare(jobs);
 }
 
+/// Section 79.11 (`selfst`): array stores of the value the element holds are dropped: swaps with equal indices, stores between that may alias
+/// (another table / index that is the same at run time), changed values, collectables, nil elements under `__newindex`, collections and weak
+/// values; `selfst` 1 / 0, with `-loop` and `-sink`, the trace modes with `+verify`, exit storms, budget 17 and GC stress 2, plus permute
+/// (`s79_push`). Mutant `selfst_any_value`.
+#[test]
+fn s79_selfst_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["selfst=1", "selfst=0"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("-loop +verify", 0),
+                ("-sink", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s79_selfst", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s79_selfst", trace)
+                .limits_s("selfst=1")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+        jobs.push(
+            Job::new("s79_push", trace)
+                .opts("+verify")
+                .limits_s("selfst=1"),
+        );
+    }
+    compare(jobs);
+}
+
 /// Sections 79.5 / 79.6 (`siteord`, `retremat`): the site chains of native returns and pushes in self-call-first order, and the fused `RETURN0`
 /// guards rematerialising pointer constants and unmodified `SLOAD`s on their failure path: the recursion programs of section 75 / 77 / 79 with
 /// both knobs on / off, the trace modes with `+verify`, exit storms (the failure paths) and budget 17.

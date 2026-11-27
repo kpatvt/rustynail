@@ -206,6 +206,8 @@ pub const RETREMAT_PROCESS: u32 = 1;
 pub const DYNMISS_PROCESS: u32 = 0;
 /// Section 79.10 (`mfconst`): the process default of [`TrLimits::mfconst`] (also the struct default).
 pub const MFCONST_PROCESS: u32 = 1;
+/// Section 79.11 (`selfst`): the process default of [`TrLimits::selfst`] (also the struct default).
+pub const SELFST_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1007,6 +1009,9 @@ pub struct TrLimits {
     /// (`mfkeys`) to the closure seen at the decision, and the recordings use that closure as a constant (no load, no type or prototype guard).
     /// 0 = off, 1 = on (default [`MFCONST_PROCESS`]).
     pub mfconst: u32,
+    /// Section 79.11 (`selfst`, docs/JIT_TRACE.md section 79.11): the forward pass drops an array store of the value the element already holds
+    /// (the nearest must-alias access produced that value, no may-alias store between). 0 = off, 1 = on (default [`SELFST_PROCESS`]).
+    pub selfst: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1321,6 +1326,7 @@ impl Default for TrLimits {
             dynmiss: DYNMISS_PROCESS,
             dynpol: 0,
             mfconst: MFCONST_PROCESS,
+            selfst: SELFST_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1578,6 +1584,7 @@ impl TrLimits {
                 "dynmiss" => l.dynmiss = v.min(1000),
                 "dynpol" => l.dynpol = v.min(255),
                 "mfconst" => l.mfconst = v.min(1),
+                "selfst" => l.selfst = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
