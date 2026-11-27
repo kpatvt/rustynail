@@ -289,6 +289,9 @@ pub struct AsmEnv {
     pub rec_fuse: bool,
     /// Section 79.2 (`pushtag`): the writeback of a native push skips tag stores its `SLOAD`s prove ([`exit::wb_ents_push`]).
     pub push_tags: bool,
+    /// Section 79.6 (`retremat`): the fused `RETURN0` guards rematerialise pointer constants and unmodified `SLOAD`s on their failure path
+    /// instead of saving the registers.
+    pub ret_remat: bool,
     /// Section 75.15 (`retfuse` bit 1): the fused native return also when the late guards saved live registers (the success path needs none of them).
     pub rec_fuse_saved: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
@@ -452,6 +455,7 @@ impl Default for AsmEnv {
             rec_late: false,
             rec_fuse: false,
             push_tags: false,
+            ret_remat: false,
             rec_fuse_saved: false,
             lazy_cs: None,
             lazy_nparams: 0,
@@ -2732,6 +2736,8 @@ struct Cx<'a> {
     rf_sites: Vec<L>,
     /// Section 75 (`retfuse`): the per-site tails of a frame known to be above the region root (lazy families; empty: none).
     rf_nr: Vec<L>,
+    /// Section 79.6 (`retremat`): the registers the fused return's failure path materialises again (register, value).
+    rf_remat: Vec<(V, Ref)>,
     /// S1: assembling a deferred stub ([`assemble_deferred`]): the address of the trace's shared exit routine, which the generic twin jumps to (0: the normal
     /// assembly).
     twin_abs: u64,
@@ -2802,6 +2808,7 @@ impl<'a> Cx<'a> {
             shared_l: None,
             rf_sites: Vec::new(),
             rf_nr: Vec::new(),
+            rf_remat: Vec::new(),
             twin_abs: 0,
             dshared: &NO_SHARED,
             ext_leave_used: [false; 2],
@@ -4629,6 +4636,19 @@ impl Cx<'_> {
         // T4: at the end of the trace (the placeholder guard) only the values of its snapshot and of the writeback are live
         let late = i + 1 == self.ir.ins.len();
         let snap = aux_snap(self.ir.ins[i].aux) as usize;
+        // Section 79.6 (`retremat`): a register the fused `RETURN0` guards clobber whose value is a pointer constant or the payload of an unmodified
+        // `SLOAD` is not saved: the failure path materialises it again (the success path needs none of them)
+        let remat_ok = late
+            && _rr.n == 0
+            && !mutants::active("rec_ret_site_unchecked")
+            && self.env.rec_fuse
+            && self.env.rec_fuse_saved
+            && self.env.ret_remat
+            && self.al.end_locs.is_empty()
+            && self.ir.segs.is_empty()
+            && self.ir.carry.is_empty()
+            && self.ir.carry_in.is_empty();
+        let mut remat: Vec<(V, Ref)> = Vec::new();
         for (k, r) in [1u8, 2, 3].into_iter().enumerate() {
             let live = if late {
                 self.al
@@ -4639,12 +4659,23 @@ impl Cx<'_> {
             } else {
                 self.al.ins[..i].iter().any(|a| a.dst == Loc::G(r))
             };
+            if live && remat_ok {
+                if let Some(x) = self.remat_ref(snap, r) {
+                    remat.push((r, x));
+                    continue;
+                }
+            }
             if live && !mutants::active("rec_ret_regs_unsaved") {
                 let slot = self.ext_slot(4 + k as u16);
                 self.st(W::B8, spill_m(slot), Src::V(r));
                 saved.push((r, slot));
             }
         }
+        if !remat.is_empty() && saved.is_empty() {
+            // (the trampoline below runs only with `saved` entries: a dummy-free path through it for the rematerialised ones)
+            saved.push((0, u16::MAX));
+        }
+        self.rf_remat = remat;
         // (without saved registers the guards fail straight to the exit; with them, through a trampoline that restores them)
         let fail = if saved.is_empty() { x } else { self.label() };
         self.ld(1, W::B8, ciw(ci::PREVIOUS));
@@ -4777,9 +4808,50 @@ impl Cx<'_> {
         }
         self.bind(fail);
         for &(r, slot) in saved {
-            self.ld(r, W::B8, spill_m(slot));
+            if slot != u16::MAX {
+                self.ld(r, W::B8, spill_m(slot));
+            }
+        }
+        // Section 79.6 (`retremat`): the rematerialised registers (exact state at the exit, TR3; a mutant that leaves them clobbered is
+        // equivalent for `RETURN0`, as section 75.15's restore: the interpreter's `RETURN0` discards the returning frame's slots)
+        for (r, x) in std::mem::take(&mut self.rf_remat) {
+            let ins = self.ir.at(x);
+            if ins.op == TOp::Kptr {
+                let b = self.kbits_of(ins.a);
+                self.push(Op::Mov(r, b));
+            } else {
+                self.ld(r, W::B8, fm(ins.a, 8));
+            }
         }
         self.push(Op::Jmp(x));
+    }
+
+    /// Section 79.6 (`retremat`): the value in register `r` at snapshot `snap`, when it can be materialised again at the end of the trace: a `KPTR`,
+    /// or an `SLOAD` of a stack slot that nothing writes before the end (no `SSTORE`, not carried; the callers exclude carrying traces).
+    fn remat_ref(&self, snap: usize, r: V) -> Option<Ref> {
+        let locs = self.al.snap_locs.get(snap)?;
+        let ents = self.ir.snap_entries(snap as u32);
+        let k = locs.iter().position(|l| *l == Loc::G(r))?;
+        let x = ents.get(k)?.r;
+        if !TraceIr::is_ins(x) {
+            return None;
+        }
+        let ins = self.ir.at(x);
+        match ins.op {
+            TOp::Kptr => Some(x),
+            TOp::Sload
+                if ins.a != u16::MAX
+                    && aux_bits(ins.aux) & SLOAD_CARRIED == 0
+                    && !self
+                        .ir
+                        .ins
+                        .iter()
+                        .any(|j| j.op == TOp::Sstore && j.aux as u16 == ins.a) =>
+            {
+                Some(x)
+            }
+            _ => None,
+        }
     }
 
     /// P-M3: the native `RETURN1` after the result was stored into the function slot: pops the frame as tier 1's

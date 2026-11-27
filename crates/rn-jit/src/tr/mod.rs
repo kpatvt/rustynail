@@ -2611,7 +2611,65 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             });
             (sites, c0)
         });
-        let (sites, c0) = found.ok_or_else(|| abort_err("no-sites", "native return"))?;
+        let (mut sites, c0) = found.ok_or_else(|| abort_err("no-sites", "native return"))?;
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.siteord } != 0
+            && (mf_env.is_some() || idf_env.is_some())
+            && sites.len() > 1
+        {
+            // Section 79.5 (`siteord`): in a family under the E5 / E2 region invariant, the site chains compare the self-call sites first (a `CALL` of a register that `SELF R 0 K`
+            // of the E5 key or `GETUPVAL` of the E2 self upvalue loaded), then the sites inside more loops: the returns of a recursive family go
+            // to those (permute: the in-loop self-call). Only the order of the compares changes (each site keeps its cell and `A`), so there is
+            // no new invariant and no mutant.
+            let code = rootp.code();
+            let base = rootp.code_ptr() as u64;
+            // (the loops once: back-edge target and the back edge itself)
+            let loops: Vec<(i64, usize)> = code
+                .iter()
+                .enumerate()
+                .filter_map(|(q, &w)| {
+                    let w = rn_core::instruction::Instruction(w);
+                    match w.opcode() {
+                        Some(
+                            rn_core::ver::active::OpCode::Forloop
+                            | rn_core::ver::active::OpCode::Tforloop,
+                        ) => Some((q as i64 + 1 - i64::from(w.bx()), q)),
+                        Some(rn_core::ver::active::OpCode::Jmp) if w.sj() < 0 => {
+                            Some((q as i64 + 1 + i64::from(w.sj()), q))
+                        }
+                        _ => None,
+                    }
+                })
+                .collect();
+            let rank = |addr: u64| -> (u32, u32) {
+                let pc = ((addr - base) / 4) as usize;
+                let call = rn_core::instruction::Instruction(code[pc - 1]);
+                let a = call.a();
+                let mut selfc = 0;
+                for q in (pc.saturating_sub(9)..pc - 1).rev() {
+                    let w = rn_core::instruction::Instruction(code[q]);
+                    if w.a() != a {
+                        continue;
+                    }
+                    selfc = match w.opcode() {
+                        Some(rn_core::ver::active::OpCode::SelfOp) => {
+                            u32::from(mf_env.is_some_and(|k| w.b() == 0 && w.c() == k))
+                        }
+                        Some(rn_core::ver::active::OpCode::Getupval) => {
+                            u32::from(idf_env.is_some_and(|u| w.b() == u32::from(u)))
+                        }
+                        _ => 0,
+                    };
+                    break;
+                }
+                let depth = loops
+                    .iter()
+                    .filter(|&&(t, q)| t <= pc as i64 && pc <= q)
+                    .count() as u32;
+                (selfc, depth)
+            };
+            sites.sort_by_cached_key(|s| std::cmp::Reverse(rank(s.0)));
+        }
         if cache::verbose_aborts() {
             eprintln!(
                 "[trace] native sites for {}: {:x?} (rec_ret {:?}, rec_call {})",
@@ -2712,6 +2770,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         rec_fuse: rec_late && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } != 0,
         // SAFETY: as above.
         push_tags: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.pushtag } != 0,
+        // SAFETY: as above.
+        ret_remat: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retremat } != 0,
         // SAFETY: as above.
         rec_fuse_saved: rec_late
             && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,

@@ -4687,6 +4687,38 @@ fn s77_home_programs() {
     compare(jobs);
 }
 
+/// Sections 79.5 / 79.6 (`siteord`, `retremat`): the site chains of native returns and pushes in self-call-first order, and the fused `RETURN0`
+/// guards rematerialising pointer constants and unmodified `SLOAD`s on their failure path: the recursion programs of section 75 / 77 / 79 with
+/// both knobs on / off, the trace modes with `+verify`, exit storms (the failure paths) and budget 17.
+#[test]
+fn s79_ret_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for prog in [
+            "s75_oframe",
+            "s75_recinl",
+            "s77_rself",
+            "s79_push",
+            "s79_mfside",
+        ] {
+            for limits in [
+                "siteord=1,retremat=1",
+                "siteord=0,retremat=0",
+                "siteord=1,retremat=1,recinl=3,sidepush=1",
+            ] {
+                for (opts, budget) in [("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17)] {
+                    let mut j = Job::new(prog, trace).opts(opts).limits_s(limits);
+                    if budget != 0 {
+                        j = j.budget(budget);
+                    }
+                    jobs.push(j);
+                }
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// Sections 79.3 / 79.4 (`rootproto`, `mfside`): calls of the root frame's own closure without a prototype guard, and E5's fold in frames that
 /// `mfdeep` does not cover under a receiver guard: permute (side traces inside chain frames), an inlined frame on another receiver whose class
 /// wraps the method, the method replaced between runs and from inside the recursion, a callee from a field that changes, the receiver's class

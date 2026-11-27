@@ -9303,3 +9303,27 @@ instructions per call (both), default size 117.02 -> 112.38 M (-3.97 %). Whole s
 0.3 % but astar_jumper -1.1 %, its noise). Tests: `tests/vm/s79_mfside.lua` (vm_corpus, and `tr_core::s79_mfside_programs`: both knobs 1 / 0,
 with `recinl=3,sidepush=1`, `sidepush=0` and `unroll=3,dynunroll=16`, the trace modes, `+verify`, exit storms, budget 17, GC stress 2, plus
 `s75_mfkeys` / `s75_recinl` with the knobs).
+
+### 79.5 `siteord`: self-call sites first in the site chains (`TrLimits::siteord`, default 1)
+
+A native return (and a push's continuation) compares the caller's `savedpc` against every continuation site of the prototype in head order.
+permute has four (pc 11, 19, 22, 26); its returns go to pc 22 (the in-loop self-call, 58 %) or pc 11 (the first self-call, 42 %), and pc 22 was
+third. In a family under the E5 / E2 region invariant the sites are now sorted (`mod.rs`, once per compile): first the sites whose `CALL` calls
+a register that `SELF R 0 K` of the E5 key or `GETUPVAL` of the E2 self upvalue loaded, then by the number of loops around the site, then head
+order. Only the order of the compares changes (a site keeps its cell and `A`): no new invariant, no mutant. A first form for every family that
+ranked by scanning the whole bytecode per comparison cost compile time (expr_lang +0.4 %, cd +0.24 % instructions); the loops are now collected
+once and the rule applies to E5 / E2 families only (expr_lang / cd: +0.01 %).
+
+### 79.6 `retremat`: the fused `RETURN0` guards do not save rematerialisable registers (`TrLimits::retremat`, default 1)
+
+The late guards of a fused native `RETURN0` (75.15) use `V1`..`V3` and saved the live ones to spill slots on the success path, for the failure
+path's exact restore. permute's trace 8 held the class table (`KPTR`) and `self` (an unmodified `SLOAD`) there: two stores per return. Now a live
+register whose value is a `KPTR` or the payload of an `SLOAD` of a slot nothing writes before the end (no `SSTORE`, not carried, no RETF segments,
+no register-carrying R1 trace) is not saved: the failure path loads the constant or the stack slot again (`Cx::remat_ref`, `rf_trampoline`).
+A mutant that skips the rematerialisation is equivalent for `RETURN0` (75.15: the interpreter's `RETURN0` discards the returning frame's slots);
+the restore stays for TR3's exact state.
+
+Measured (one binary, both off against the settings): permute 121.51 -> 121.02 (`siteord`) -> **120.73** (both) instructions per call. Whole set:
+permute -0.58 %; nothing else beyond 0.2 % (astar_jumper -5.5 %: its noise band). Tests: `tr_core::s79_ret_programs` (`s75_oframe`,
+`s75_recinl`, `s77_rself`, `s79_push`, `s79_mfside` with both knobs 1 / 0 and with `recinl=3,sidepush=1`, the trace modes, `+verify`, exit
+storms, budget 17).

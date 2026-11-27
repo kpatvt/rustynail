@@ -198,6 +198,10 @@ pub const PUSHTAG_PROCESS: u32 = 1;
 pub const ROOTPROTO_PROCESS: u32 = 1;
 /// Section 79.4 (`mfside`): the process default of [`TrLimits::mfside`] (also the struct default).
 pub const MFSIDE_PROCESS: u32 = 1;
+/// Section 79.5 (`siteord`): the process default of [`TrLimits::siteord`] (also the struct default).
+pub const SITEORD_PROCESS: u32 = 1;
+/// Section 79.6 (`retremat`): the process default of [`TrLimits::retremat`] (also the struct default).
+pub const RETREMAT_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -981,6 +985,13 @@ pub struct TrLimits {
     /// not cover (a side trace's seeded chain frames, an inlined frame called with another closure ref), under a guard that the frame's register 0
     /// is the root frame's register 0. 0 = off, 1 = on (default [`MFSIDE_PROCESS`]).
     pub mfside: u32,
+    /// Section 79.5 (`siteord`, docs/JIT_TRACE.md section 79.5): the continuation-site chains of native returns and pushes compare the family's
+    /// self-call sites first, then the sites inside more loops. 0 = off (head order), 1 = on (default [`SITEORD_PROCESS`]).
+    pub siteord: u32,
+    /// Section 79.6 (`retremat`, docs/JIT_TRACE.md section 79.6): the guards of a fused native `RETURN0` do not save a clobbered register whose value
+    /// is a pointer constant or an unmodified `SLOAD`'s payload; their failure path materialises it again. 0 = off, 1 = on (default
+    /// [`RETREMAT_PROCESS`]).
+    pub retremat: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1290,6 +1301,8 @@ impl Default for TrLimits {
             pushtag: PUSHTAG_PROCESS,
             rootproto: ROOTPROTO_PROCESS,
             mfside: MFSIDE_PROCESS,
+            siteord: SITEORD_PROCESS,
+            retremat: RETREMAT_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1542,6 +1555,8 @@ impl TrLimits {
                 "pushtag" => l.pushtag = v.min(1),
                 "rootproto" => l.rootproto = v.min(1),
                 "mfside" => l.mfside = v.min(1),
+                "siteord" => l.siteord = v.min(1),
+                "retremat" => l.retremat = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
