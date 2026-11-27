@@ -4492,6 +4492,8 @@ fn s75_oframe_programs() {
             "oframe=0,retfuse=0",
             "oframe=1,retfuse=1,recnat=1",
             "oframe=1,retfuse=1,t4=0",
+            "oframe=1,retfuse=3",
+            "oframe=1,retfuse=3,recinl=3,sidepush=1",
         ] {
             for (opts, budget) in [
                 ("", 0),

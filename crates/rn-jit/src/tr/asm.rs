@@ -287,6 +287,8 @@ pub struct AsmEnv {
     /// Section 75 (`retfuse`): a late native `RETURN0` (no writeback) whose guards need no saved registers dispatches from its guards' site chain
     /// straight into one tail per site (no second load of `previous` / `savedpc`, no second site chain).
     pub rec_fuse: bool,
+    /// Section 75.15 (`retfuse` bit 1): the fused native return also when the late guards saved live registers (the success path needs none of them).
+    pub rec_fuse_saved: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
     pub lazy_cs: Option<u32>,
     /// BUNDLE-K L1: `numparams` of the root prototype (the end of the arguments of a frame just pushed natively).
@@ -447,6 +449,7 @@ impl Default for AsmEnv {
             rec_vb_keep: false,
             rec_late: false,
             rec_fuse: false,
+            rec_fuse_saved: false,
             lazy_cs: None,
             lazy_nparams: 0,
             idfold_uv: None,
@@ -4635,7 +4638,7 @@ impl Cx<'_> {
         let fail = if saved.is_empty() { x } else { self.label() };
         self.ld(1, W::B8, ciw(ci::PREVIOUS));
         let fuse = late
-            && saved.is_empty()
+            && (saved.is_empty() || self.env.rec_fuse_saved)
             && self.env.rec_fuse
             && _rr.n == 0
             && !mutants::active("rec_ret_site_unchecked");
@@ -4678,6 +4681,7 @@ impl Cx<'_> {
             }
             self.rf_sites = root_l;
             self.rf_nr = nr_l;
+            self.rf_trampoline(&saved, fail, x);
             return Ok(());
         }
         if self.env.lazy {
@@ -4726,6 +4730,7 @@ impl Cx<'_> {
             }
             self.push(Op::Jmp(fail));
             self.rf_sites = labels;
+            self.rf_trampoline(&saved, fail, x);
             return Ok(());
         }
         if !mutants::active("rec_ret_site_unchecked") {
@@ -4751,6 +4756,19 @@ impl Cx<'_> {
             self.bind(done);
         }
         Ok(())
+    }
+
+    /// Section 75.15: the failure path of fused return guards that saved live registers: they are restored before the guard's exit (the success
+    /// paths go to the per-site tails, which need none of them: the trace ends there and a `RETURN0` has no writeback).
+    fn rf_trampoline(&mut self, saved: &[(V, u16)], fail: L, x: L) {
+        if saved.is_empty() {
+            return;
+        }
+        self.bind(fail);
+        for &(r, slot) in saved {
+            self.ld(r, W::B8, spill_m(slot));
+        }
+        self.push(Op::Jmp(x));
     }
 
     /// P-M3: the native `RETURN1` after the result was stored into the function slot: pops the frame as tier 1's

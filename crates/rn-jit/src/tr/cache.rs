@@ -163,7 +163,7 @@ pub const LANDFIX_PROCESS: u32 = 1;
 /// Section 75 (`oframe`): the process default of [`TrLimits::oframe`] (also the struct default).
 pub const OFRAME_PROCESS: u32 = 1;
 /// Section 75 (`retfuse`): the process default of [`TrLimits::retfuse`] (also the struct default).
-pub const RETFUSE_PROCESS: u32 = 1;
+pub const RETFUSE_PROCESS: u32 = 3;
 /// Section 75.7 (`dynunroll`): the process default of [`TrLimits::dynunroll`] (also the struct default).
 pub const DYNUNROLL_PROCESS: u32 = 0;
 /// Section 75.9 (`recinl`): the process default of [`TrLimits::recinl`] (also the struct default).
@@ -862,7 +862,7 @@ pub struct TrLimits {
     pub oframe: u32,
     /// Section 75 (`retfuse`, docs/JIT_TRACE.md section 75): a native `RETURN0` whose guards run at the end of the trace (`t4` bit 0) and need no saved
     /// registers dispatches from the guards' site chain into one tail per site (the tail does not load `previous` / `savedpc` again nor walk the sites
-    /// again). 0 = off, 1 = on (default [`RETFUSE_PROCESS`]).
+    /// again). Bit 1 (with bit 0): also when the guards saved live registers (section 75.15). 0 = off, 1, 3 = on (default 3, [`RETFUSE_PROCESS`]).
     pub retfuse: u32,
     /// Section 75.7 (`dynunroll`, docs/JIT_TRACE.md section 75.7): a counted `for` of an inlined callee whose bounds are not trace constants is unrolled
     /// (the count computed and guarded from the run-time bounds, each iteration's `FORLOOP` guarded, the back edges charged to `loopunroll`) when its
@@ -1419,7 +1419,7 @@ impl TrLimits {
                 "opencall" => l.opencall = v.min(1),
                 "landfix" => l.landfix = v.min(1),
                 "oframe" => l.oframe = v.min(1),
-                "retfuse" => l.retfuse = v.min(1),
+                "retfuse" => l.retfuse = v.min(3),
                 "dynunroll" => l.dynunroll = v.min(127),
                 "recinl" => l.recinl = v.min(15),
                 "sidepush" => l.sidepush = v.min(1),

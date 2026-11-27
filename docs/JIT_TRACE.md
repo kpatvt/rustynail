@@ -8553,3 +8553,17 @@ by `s75_mfkeys_programs` through the new case (7) of `s75_recinl.lua` (a permute
 Measured (one binary, `mfshare=0` against `=1`, SEED 0, CPU 8, min of 5, two rounds): permute 126.97 -> 121.40 M instructions (**-4.38 %**),
 24.70 / 24.58 -> 23.49 / 23.54 M cycles (**-4.2 .. -4.9 %**). Whole set (190 programs, one run each): permute -4.38 %, astar_jumper +2.75 % (its
 noise band, 4.27 .. 4.56 G); geomean -0.01 %.
+
+### 75.15 `retfuse` bit 1: the fused return also when the late guards saved registers (`retfuse=3`, the new default)
+
+75.3 fused the native `RETURN0` only when its late guards saved no registers; traces 8 / 9 / 11 of permute keep values of the placeholder
+snapshot in `V1`..`V3`, so their returns walked the site chain twice and reloaded `previous` / `savedpc` (about 60 instructions per return in
+trace 8, 75.12's path count). With bit 1 the fusion applies there too: the success paths go from the guards' site chain to the per-site tails,
+which need none of the saved registers (the trace ends there and a `RETURN0` has no writeback); only the failure path restores them before the
+guard's exit (`Cx::rf_trampoline`). A mutant that skips the restore is equivalent for `RETURN0`: the registers hold values of the returning
+frame's slots, which the interpreter's `RETURN0` discards right after the exit (only a return hook could read them, and hooks keep traces off),
+so it was dropped; the restore stays (exact state at the exit, TR3).
+
+Measured (one binary, `retfuse=1` against `=3`, SEED 0, CPU 8, min of 5, two rounds): permute 121.40 -> 117.79 M instructions (**-2.98 %**),
+22.97 / 22.80 -> 22.65 / 22.42 M cycles (**-1.4 .. -1.7 %**). Whole set (190 programs, one run each): permute -2.98 %, astar_jumper -3.9 % (noise);
+geomean -0.03 %. `tr_core::s75_oframe_programs` runs `retfuse=3` and `retfuse=3,recinl=3,sidepush=1` in every mode.

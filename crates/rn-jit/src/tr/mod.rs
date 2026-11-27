@@ -2678,6 +2678,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         rec_late,
         // SAFETY: as above.
         rec_fuse: rec_late && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } != 0,
+        // SAFETY: as above.
+        rec_fuse_saved: rec_late
+            && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
         idfold_uv: idf_env,
