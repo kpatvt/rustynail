@@ -8567,3 +8567,145 @@ so it was dropped; the restore stays (exact state at the exit, TR3).
 Measured (one binary, `retfuse=1` against `=3`, SEED 0, CPU 8, min of 5, two rounds): permute 121.40 -> 117.79 M instructions (**-2.98 %**),
 22.97 / 22.80 -> 22.65 / 22.42 M cycles (**-1.4 .. -1.7 %**). Whole set (190 programs, one run each): permute -2.98 %, astar_jumper -3.9 % (noise);
 geomean -0.03 %. `tr_core::s75_oframe_programs` runs `retfuse=3` and `retfuse=3,recinl=3,sidepush=1` in every mode.
+
+## 77. lua_lexer / towers / json / permute against LuaJIT: read-only upvalues as constants (`uvk`), SLOAD homes, cheaper links (2026-11-27, base 6058b77)
+
+Phase-0 numbers of the brief (main 6058b77, `RUSTYNAIL_SEED=0`): lua_lexer 1.77x LuaJIT's cycles; trace code 1412 M instructions against LuaJIT's
+407 M (760 against 219 per token). The main token loop's root (trace 14) is entered 1.86 M times and left 1.87 M times: every token exits, the
+side traces link back to its head, so the head's prologue (stack check, three-level `CallInfo` spare check, entry counter, `POLL`, `BUDGET`) and
+its 24 `SLOAD`s (tag compare, load, spill store) run once per token, and 19 upvalue reads (`UREF` + `UVREL` + `EQ`) of locals that are never
+assigned (`BYTE_*`, `is_alpha`, `sbyte`, `keywords`) stand where LuaJIT has constants.
+
+### 77.1 SLOAD homes / lazy SLOADs: analysed, not built (time box)
+
+After 77.3 the lexer's main-loop root has 12 `SLOAD`s left (48 before), 6 of them in the leading run that every entry executes, each a tag
+compare, a load and a spill store (`ra::evict` gives the lowest-ref values a spill slot under pressure; reverse linear scan). The handle: a
+`SLOAD` of a slot the trace never redefines (no snapshot maps the slot to another ref, no `SSTORE`, no native frames / `RETF` segments, so the
+stack slot keeps the entry value until the exit) needs no spill slot: its reload reads `[base + 16 * slot]` and a snapshot restores it from the
+stack (no parallel-move hazard: an unmodified slot is never a restore target). In the lexer root 3 of the 6 leading `SLOAD`s qualify (slots 40,
+33, 41; 34, 42, 43 are carried), i.e. about 3 stores per entry (~0.5 % of the lexer's instructions); towers' hottest trace (28) has 5 spilled
+leading `SLOAD`s of `self` and arguments (~5 of ~360 instructions per move). The same idea applies to `KPTR` instructions (constants: the folded
+closures / strings of 77.3 are materialised and spilled because snapshots name them; a rematerialised `KPTR` and a snapshot restoring it as an
+immediate with the instruction's type would remove those stores). Not built: every consumer of a spill slot must learn the new location kind
+(`asm` reloads and stores, the exit stubs and the handler's restore, R1's carried leading run and its `CarryDst`s, slink register passing,
+forced renames and slot sharing in `ra`), which did not fit the time box next to 77.2 / 77.3. `SLOAD`s are already emitted at their first read in
+recording order (`Rec::rd_slot`); the prologue placement comes from what the recorded path reads first (the method lookup of `lx:next()`).
+
+### 77.2 `flink`: frameful side traces link through the root's guard-free second entry (`TrLimits::flink`, default 1 = `FLINK_PROCESS`)
+
+The lexer's token loop is entered once per token from a side trace that links back to its head, and 45 of its 58 side traces are *frameful*
+(they start inside the inlined `lx:next()`, S1). A2 offered its guard-free second entry (the leading `SLOAD` run without type checks, the poll
+done by the link) and G1 the entry past the room checks only to frameless side traces, so these links paid the full prologue: stack check, the
+three-level spare `CallInfo` check and the six type checks. Now the offer (`driver_compile`, `link2_cell`) also goes to a frameful side trace
+whose link continues at a root head of the root prototype at depth 0 (not a frame link, no `RETF` segments, not a prelude). Nothing else
+changes: the assembler takes the second entry only when `exit::link_proof` proves every skipped type check from the side trace's writeback,
+its own `SLOAD`s and the chain's entry tags (slots are root-relative in frameful traces too; the proof refuses native frames and segments), and
+the room entry only when the chain's room (`max(parent's, own)`, which covers the parent's inlined frames) is at least the target's. The poll and
+the budget store stay on the link.
+
+Measured (one binary, `flink=0` against `=1`, instructions, one run each, 223 programs): no program rises by more than 0.3 %, geomean
+**-0.09 %**; jit-trace/rec_loop -5.0 %, tail_loop -3.9 %, queens -3.5 %, class_middleclass -2.6 %, bounce -2.0 %, lua_lexer -0.73 % (2772.5 ->
+2752.2 M: only part of its links pass the proof), raytrace -0.6 %, richards -0.6 %, containers_lru_heap -0.5 %, regex_nfa -0.5 %, vending_fsm
+-0.4 %. Default ON.
+
+Tests: `tests/vm/s77_flink.lua` (vm_corpus, and `tr_core::s77_flink_programs`: `flink` 1 / 0, with `guarddiet=0` and `regcarry=0`, the trace
+modes, `+verify`, exit storms, budget 17, GC stress 2): a lexer-shaped loop whose callee exits in rotation, root slots that change type behind
+the links (number, string, float, table), a callee that needs more stack than the root. Mutant `flink_no_proof` (`emit_link` takes the second
+entry without the proof; caught by `s77_flink_programs`, also with `flink=0`, so it guards the proof both kinds of links rely on). A first
+candidate, `flink_frame_link` (the offer also to frame-linking exits), was not caught by any program built for it and was dropped, not claimed.
+
+### 77.3 `uvk`: read-only upvalues as constants under closure identity (`TrLimits::uvk`, default 11 = `UVK_PROCESS`)
+
+**Compiler (rn-compiler `uvk.rs`).** Every variable declaration gets an id, every upvalue descriptor remembers the id of the variable it finally
+captures (through the chain of enclosing upvalues), every assignment target naming a local or an upvalue (`check_readonly`, called for every
+assignment statement and `function x() end`) marks its variable. The descriptors of a nested function are final before the variable's scope ends,
+so the flags are applied once the whole chunk is compiled, walking the prototype tree in open order (preorder). `UpvalDesc::ro` is in memory only:
+not dumped (an undumped prototype has `false`), not part of `ProtoData` equality. Why "never assigned" is enough: after `local x = e` / `local
+function x` the only writes into `x`'s register while it is active are assignments naming `x`; a closure always captures the variable after its
+initialisation (the variable's scope starts after the initialiser; `local function` stores the closure before anything can call it); the loop
+variables of `for` are written by `FORLOOP` / `TFORCALL` only after the body block closed its upvalues (`OP_CLOSE` per iteration). So the value
+seen through a given closure's upvalue never changes, unless written outside the language.
+
+**Writes outside the language** (`jit_hooks::upval_changed`, the P-V hook pattern): `debug.setupvalue` / `lua_setupvalue` of a read-only upvalue,
+`debug.setlocal` / `lua_setlocal` (any; new `State::set_local_value`), `debug.upvaluejoin` / `lua_upvaluejoin` touching a read-only descriptor.
+The JIT (`cache::upval_changed`) drops a recording in progress and flushes every trace that folded (`TrState::uvk_ids`; no penalty, the heads
+re-record and see the new value); a join, or 16 such writes in one state, stops folding in that state for good (`uvk_off`: after a join a cell
+of a read-only variable may be written by code that assigns its new partner). These functions only run off-trace (3.6), so no trace is running
+when they do.
+
+**Recorder (`Rec::uvk_uload`).** A `GETUPVAL` / `GETTABUP` table read of a read-only upvalue whose current value is a number, boolean, nil, light
+C function, Lua closure, table or short string becomes a constant (`KINT` / `KNUM` / `KPRI` / a `Builtin` pointer constant / `KPTR` of the closure
+(registered with the lockstep model like `mfkeys`' table) / `KPTR` table / `KPTR` string) once the trace holds the frame's closure by identity:
+an entry guard `EQREF closure_ref, KPTR(address, LClosure)` the first time a frame's closure ref needs it (`uvk_known`; a closure that is itself a
+folded constant needs none, so `is_alpha`'s own upvalues fold with no further guard), and a callee the trace holds by identity skips its proto
+guard. Soundness: (a) the address cannot be reused by another closure while the trace exists: `LClosure::jitdep` bit 0 (a padding byte, no size
+change) marks a closure registered at install (`cache::uvk_register`, a process-wide map closure -> (state data, trace)), and the collector's
+`free_obj` calls `jit_hooks::closure_freed`, which flushes the traces (`flush_or_defer`, as `free_code` does for TR32); a collection during the
+recording aborts it `DepFreed` (the closures join the recorder's watch list); nothing collects between the close and the install; (b) the cell:
+only an upvalue join replaces it, and that flushes; (c) the value: above. Collectable constants are reachable from the guarded closure's cells.
+
+**Policy (bits; the whole-set evidence below).** Bit 0 on. The first form (`uvk=1`, every frame) moved 15 programs by more than 2 %:
+`iter_pipeline` +1682 %, `particles_physics` +142 %, `vending_fsm` +111 %, `raytrace` +92 %, `lua_parser` +57 %, `memo_cache` +23 %,
+`testrunner_luaunit` +18 %, `stream_closures` +16 %, `expr_compiler` / `cd` / `containers_lru_heap` / `serpent_ser` / `roguelike` +6 %. Causes and
+rules: closures of one prototype made again and again (factories, closures per call) fail the identity guard or flush the trace at their
+collection, so a new guard is placed only for a prototype instantiated once so far (`Proto::jitinst`, counted in `push_closure` and at load:
+always on); a closure of a prototype on the frame stack (recursion through a self upvalue: raytrace's `trace`) keeps its upvalue load, which the
+E1 / E2 shape rules expect (always on); bit 1 (2): no folding in the root frame of a recording (the identity guard on the root closure is an entry
+guard that is not a type check, so the root loses the guard-free second entry of A2 and the tier-1 entries: awfy/cd +7 %, real_dis_arm +2 %); bit 3
+(8): a new identity guard only on a closure created by a main chunk (`LClosure::jitdep` bit 1, set in `push_closure` when the creating function's
+`linedefined` is 0): containers_lru_heap's `lru.new` makes its closures once per cache, +3.8 % with bit 3 off. Bit 2 (4, no folding in side
+recordings) was measured and not kept (lua_lexer -7.4 % only, cd still +2.6 %).
+
+Measured (one binary, `uvk=0` against the setting, `RUSTYNAIL_SEED=0`, instructions, one run each; 223 programs of corpus, corpus2/dev,
+corpus2/heldout, awfy, programs, jit-trace, lib, apps, real): with `uvk=11` **no program rises by more than 0.3 %**, geomean **-0.30 %**; movers:
+lua_lexer 3206.5 -> 2772.5 M (**-13.5 %**), programs/fasta -10.4 %, forth_vm -10.3 %, jit-trace/tail_loop -7.0 %, particles_physics -3.8 %,
+richards -2.9 %, deltablue -2.4 %, sha2_base64 -1.8 %, bounce -1.6 %, raytrace -1.5 %, cd -1.4 %, roguelike -1.1 %, metamethods -1.0 %,
+json -0.9 %, class_middleclass -0.7 %; towers and permute unchanged (their hot reads are table fields). lua_lexer's main loop trace: 243 -> 169 IR
+instructions, 48 -> 12 `SLOAD`s, 38 -> 0 `UREF` / `UVREL`, 12 -> 4 `EQREF`. Cycles: 77.5.
+
+Tests: `tests/vm/s77_uvk.lua` (vm_corpus against the reference, and `tr_core::s77_uvk_programs`: `uvk` 11 / 1 / 0, the trace modes, `+verify`,
+exit storms, budget 17, GC stress 1 / 2): a chain of read-only closures with table / string / float / boolean / nil constants, a factory hot site,
+closures collected with their addresses reused, a variable assigned only in a nested function, captured loop variables, a late assignment, a
+recursive local function, a main-made closure replaced by a second instance at the same site, then `debug.setupvalue` between and inside hot
+loops, `debug.setlocal` of an open upvalue's register, `debug.upvaluejoin` to an assigned variable (the cases that flush last: a join stops
+folding for the state). Mutants (all caught by `s77_uvk_programs`): `uvk_flush_skip` (no flush on a write outside the language),
+`uvk_ident_skip` (no identity guard), `uvk_any_upvalue` (every upvalue folded), `uvk_dep_skip` (the closure is not marked: its collection is not
+reported).
+
+### 77.4 `new_str` self time on text_adventure: not a regression
+
+The brief's 6.7 % -> 14.8 % since section 68 is not reproduced on this base: perf record of corpus2/dev/text_adventure (6058b77 release,
+`RUSTYNAIL_SEED=0`, CPU 11) gives `Heap::new_str` 5.7 % of `instructions:u` and 6.4 % of `cycles:u` self. The absolute count does not move with
+section 68's `gmplus` (rn-std `STR_FAST` bit 128): 158 samples of 2.7 K with the default mask 247 against 156 of 3.1 K with 119 (bit 128 off);
+`gmplus` removes about 600 M instructions elsewhere (7.99 -> 7.39 G), so `new_str`'s share rises with the same work (the direct `gmatch` scan
+creates each match string through `new_str`, which the old path also did). Nothing to fix; measured with low sample counts (default perf
+frequency), the conclusion rests on the totals.
+
+### 77.5 Cycles, the bar, and what is left against LuaJIT
+
+One binary (f794667 release `rn-cli`), `uvk=0,flink=0` against the defaults `uvk=11,flink=1`, `RUSTYNAIL_SEED=0`, `taskset -c 8`, runs
+interleaved, minimum of 10 (targets) / 5 (the others; real_dis_arm 8):
+
+| program | instructions M | cycles M |
+|---|---|---|
+| corpus/lua_lexer | 3206.47 -> 2752.21 (**-14.2 %**) | 811.19 -> 711.18 (**-12.3 %**) |
+| awfy/towers | 164.44 -> 164.44 (0) | 44.04 -> 44.14 (+0.2 %, noise) |
+| awfy/json | 430.67 -> 426.61 (-0.9 %) | 138.29 -> 138.13 (-0.1 %) |
+| awfy/permute | 117.80 -> 117.80 (0) | 23.45 -> 23.40 (-0.2 %) |
+| corpus2/heldout/forth_vm | 3749.63 -> 3361.79 (-10.3 %) | 802.07 -> 564.53 (-29.6 %) |
+| jit-trace/tail_loop | 1071.58 -> 957.84 (-10.6 %) | 236.79 -> 212.95 (-10.1 %) |
+| programs/fasta | 4427.26 -> 3965.47 (-10.4 %) | 1275.91 -> 1257.16 (-1.5 %) |
+| jit-trace/rec_loop | 415.26 -> 394.66 (-5.0 %) | 77.65 -> 75.10 (-3.3 %) |
+| corpus/class_middleclass | 2178.79 -> 2107.31 (-3.3 %) | 475.92 -> 456.96 (-4.0 %) |
+| awfy/queens | 497.08 -> 479.81 (-3.5 %) | 94.73 -> 91.97 (-2.9 %) |
+| awfy/bounce, richards, deltablue | -3.6 / -3.5 / -2.4 % | -2.0 / -1.9 / -1.5 % |
+| corpus2/dev/particles_physics, apps/raytrace | -3.8 / -2.1 % | -1.7 / -1.3 % |
+| awfy/cd, corpus/containers_lru_heap | -1.6 / -0.7 % | 0.0 / -1.7 % |
+| corpus2/dev/real_dis_arm | +0.03 % | -0.5 % (a first 5-run round gave +4.9 %: noise, re-measured) |
+
+The bar holds for both defaults: no program of the 223 rises in instructions by more than 0.3 %, none of the measured movers rises in cycles.
+towers and permute are untouched: their hot reads are table fields and method chains (towers' trace 28: `self` / argument `SLOAD`s, three method
+lookups per move), which neither handle addresses. lua_lexer after both: trace code ~1.16 G instructions (perf, 42.7 % of 2.72 G) against 1.41 G
+before and LuaJIT's 0.41 G; the remaining per-token costs are the token loop's pre-roll (the `lx:next()` method lookup, `self.pos` / `self.src`
+loads, 6 leading `SLOAD`s), the `string.sub` / `string.char` helpers (`short_core` 14 % of all instructions) and the links that do not pass the
+A2 proof (77.2). Not built: 77.1.
