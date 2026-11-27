@@ -8985,4 +8985,9 @@ trace-body volume left is per-guard instruction selection; inline exit stubs are
 5.4 builds.
 
 **Gates (round 2)**: per commit the touched groups' mutants (`fixsum_`, `pruneq_`, `t1exit_`, `htramp_`, `chain_end`, `hdrcse_`: 6 / 6 caught) and the
-`s76_` tests of `tr_core` and `tr_ir` / `tr_record`; the final run on the documentation commit: GATE_FINAL
+`s76_` tests of `tr_core` and `tr_ir` / `tr_record`; the first final run (on 0c91867) failed 10 `tr_asm` e2e tests: the trace pipeline's
+re-derivation of tier-1 code (identity check) emitted without the helper trampolines ("re-derived tier-1 code is larger than the placed block");
+fixed in 3239c2d (the re-derivation and `tier1_bytes` emit with the same `t1exit` bit 1). The final run on 3239c2d (`gate-light.sh
+carena_,sideblf_,sideback_,fixsum_,pruneq_,t1exit_,htramp_,chain_end,hdrcse_ --base 6058b77`, `GATE_CPUS=12-15`): every step PASS (fmt, mutant-map,
+clippy x3, core 5.5 / 5.4, trace suites 5.5 329 s / 5.4 312 s, `vm_corpus` 138 s, jit-diff 1-50 with 0 diffs and 0 timeouts, mutant group 11 ran / 11
+caught). The measured binary (59e6c1f) does not contain 3239c2d, which only changes the identity checks.
