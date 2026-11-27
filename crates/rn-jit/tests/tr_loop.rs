@@ -321,6 +321,7 @@ impl Rb {
             inner_link: false,
             inner_ret: false,
             stitch_use: 0,
+            stitch_feeds: None,
         }
     }
 }

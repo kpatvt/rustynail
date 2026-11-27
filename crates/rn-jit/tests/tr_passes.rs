@@ -711,6 +711,7 @@ fn forwarding_preserves_the_interpreter_result() {
             inner_link: false,
             inner_ret: false,
             stitch_use: 0,
+            stitch_feeds: None,
         };
         let mut opt = rec.clone();
         let o = rn_jit::tr::TraceOpts {
