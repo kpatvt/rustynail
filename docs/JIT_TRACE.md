@@ -9388,3 +9388,21 @@ stitching exits before `put`'s `RETURN1` (pc 82, 7.3 k / 6.5 k / 5.2 k per trace
 Not built this round: a rule for those exits, the raw-copy materialisation template (78.5), and a per-site discriminator for `fnleaf` bit 12 (the
 richards cost comes from the heads themselves, also without the short-body admission; the GETTABUP / GETUPVAL rule trades it for raytrace +2.9 %).
 
+### 78.9 The 223-program run: four defaults back to OFF
+
+The whole set of bench_fast's nine sets (223 programs, one binary, final defaults against all five knobs at 0, instructions) found regressions in
+programs outside the 148-program sample of the earlier rounds; attributed knob by knob (each alone against all off):
+
+| knob | rises | gains (selection) |
+|---|---|---|
+| `fnleaf=16` | **template_etlua +22.6 %** | json -2 %, class_middleclass -0.3 % |
+| `stitch=95` | **dijkstra_routes +5.1 %, msgpack_pure +3.0 %**, csv_ini_yaml +0.4 % | text_adventure -14.3 %, roguelike_turns -2.4 %, queens, wordfreq_wrap, json_rxi |
+| `efkeep=4` | **roguelike_turns +4.4 %** | cd -4.7 %, markdown -1.6 %, astar_jumper |
+| `outerlink=1` | **class_middleclass +0.79 %**, dijkstra_routes +0.69 % | fmt_s -12 %, mandelbrot -8 %, it_ipairs -5 %, ~50 lib programs |
+| `wgloop=16` | none | fmt_s -7 %, type_call -8 %, getmt, rep_sep |
+
+So `stitch`, `fnleaf`, `efkeep` and `outerlink` miss the bar and ship OFF (process defaults 0; the recommended settings are in docs/JIT.md);
+`wgloop=16` stays ON. The combined run with all five on: geomean -0.65 % over 223, text_adventure -14.3 %, fmt_s -19.7 %, cd -4.7 %. The causes of the
+five rises are not investigated (budget). The light gate on 8261dcb passed every step but two load timeouts (h2_newkey under GC stress 2 + verify on
+5.4, 120 s leash at load 44: passes alone in 16 s; the mutant runner's baseline `instruction_count_identity`; all 223 selected mutants caught).
+
