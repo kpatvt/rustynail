@@ -8567,3 +8567,60 @@ so it was dropped; the restore stays (exact state at the exit, TR3).
 Measured (one binary, `retfuse=1` against `=3`, SEED 0, CPU 8, min of 5, two rounds): permute 121.40 -> 117.79 M instructions (**-2.98 %**),
 22.97 / 22.80 -> 22.65 / 22.42 M cycles (**-1.4 .. -1.7 %**). Whole set (190 programs, one run each): permute -2.98 %, astar_jumper -3.9 % (noise);
 geomean -0.03 %. `tr_core::s75_oframe_programs` runs `retfuse=3` and `retfuse=3,recinl=3,sidepush=1` in every mode.
+
+## 78. Gaps to LuaJIT on text_adventure, cd, fmt_s, raytrace: stitching, short leaf roots, per-loop gates, outer links, cd's exits (2026-11-27, base 445feeb)
+
+Phase 0 (release `rn-cli`, `RUSTYNAIL_SEED=0`, CPU 14, min of 3): text_adventure 2367 Mcyc / 7350 M instructions (LuaJIT 1253 / 3732), cd 236.8 / 642.7
+(108.8 / 312.2), fmt_s 6.53 / 23.33 (3.45 / 10.24), raytrace 99.8 / 300.0 (41.6 / 165.8).
+
+### 78.1 `stitch`: continuation traces and stitching for non-recursive code (knob `stitch`, default 0)
+
+Section 67 measured stitching alone at -3.1 % because the continuation died at parse's `RETURN`. All three pieces are built together:
+
+| bit | what |
+|---|---|
+| 0 (1) | A continuation head (the instruction behind a `CALL`, P-M3 / R2 placement) of a prototype that never recursed records as a generic root instead of the `ContNotRecursive` refusal: no recursion-only restriction (`rec_only`), no root-frame unrolling (`cont_unroll`: it links at the traced loop heads of its frame, `nest`), stitches at C calls after `STITCH_CONT_MIN` (8) steps, ends with the stitching exit before its root `RETURN` / `TAILCALL`. Only once the entry head's recursion probe gave up (`cache::fn_probe_settled`: the entry head is black, promoted or recorded 2 leaf samples) and the prototype is not self-referential (`selfref`). A hot type-guard exit of such a family that cannot get a side trace (an exit inside a vararg frame) stays an exit instead of the `Rerec` flush (a straight-line polymorphic path, not an unstable loop: the flushes blacklisted exec's head). |
+| 1 (2) | Side recordings of loop roots stitch at a C call they cannot record after `STITCH_SIDE_MIN` (8) steps (only function-root sides did). |
+| 2 (4) | The end of a `gmatch` iteration in a side recording of the loop's frame: `LIB GMATCH_END` (a probe without effects; when no match is left it advances the position as the C function does and answers 1, else 0 and the guard exits), the variables nil, `TFORLOOP` falls through. The end guard `NE %gm, 1` of the `GMATCH` step is no longer an allocation site (`TraceIr::gm_end_site`), so the loop's end gets its side trace at all. |
+| 3 (8) | At the root `RETURN` of a generic continuation root or of any side recording: when the caller's loop around the `CALL` is traced or the caller's continuation head behind it has a trace (`cache::cont_head_traced`), pop (`RETF`; I9's static "may be lazy-aware" is replaced by the caller's actual state: table present, neither lazy nor a candidate) and link into that head at the first step behind the pop; else the stitching exit before the `RETURN` (tier 1 returns into the caller's continuation head). A generic `for` of an inlined frame whose loop head has a root trace records its `TFORPREP` and first iterator call and links at the head (`prep_link`, as `innerlink` for `FORPREP`). |
+| 4 (16) | Library calls of stitched paths: `string.format(f)` of a short `f` without `%` is `f` (the register guarded to the recorded string), `"" .. s` / `s .. ""` of a string is `s` (`luaV_concat`'s shortcut), `string.gmatch(s, p)` of two strings is `LIB GMATCH_NEW` (allocates the iterator closure; root frame, or an inlined frame whose `TFORPREP` links). |
+| 5 (32) | Bit 0 without waiting for the entry head's probe (no native recursion and no self-reference suffice). |
+
+Counters: `[trace] stitch: cont roots C side stitches S gmatch ends G pops P tprep links T` (installed traces by what they used).
+
+**Measured** (release, one binary, `stitch=0` against the setting, min of 5 interleaved, CPU 14): text_adventure `stitch=31` 2361 -> 2255 Mcyc
+(**-4.5 %**), 7350 -> 6711 M instructions (**-8.7 %**); `stitch=63` 2338 -> 2116 Mcyc (**-9.5 %**), 6322 M instructions (**-14.0 %**). The chain per
+command: the loop root stitches at parse's `gmatch` call, the continuation trace behind it links into the `gmatch` loop's trace (frame link),
+the loop's end side trace records the end and parse's tail, pops into exec and links into exec's continuation trace, which inlines the handler
+and `say` and ends at exec's `RETURN`.
+
+Whole set (33 programs, one run, instructions): `stitch=31`: deltablue +2.97 %, towers +2.62 %, havlak +1.80 %, lua_lexer +0.07 %, cd +0.17 %,
+list +0.13 %; `stitch=63`: deltablue +7.4 %, havlak +10.9 %, towers +3.4 %, lua_lexer +1.9 %, list +0.13 % (the self-reference test keeps list's
+recursion: without it +65 %); gains json_rxi -5.6 %, wordfreq_wrap -5.4 %, programs/json -3.1 %, gmatch_words -4.2 %, queens -14.7 % (the
+`stitch=31` and `=63` columns of these were taken with intermediate builds). Bits 1-4 alone (`stitch=30`) move no program by more than 0.1 %
+instructions. **Default OFF**: bit 0 misses the bar on deltablue, havlak and towers in both forms; the per-site rule that separates them from
+text_adventure (the continuation heads there are reached behind stitch exits and pops) is not built.
+
+Tests: `tests/vm/s78_01_stitch.lua` (a text_adventure-shaped command loop, formats without `%` at one call site that gains `%%`, `"" .. s` with an
+operand that stops being empty, `gmatch` iterators made on trace over empty / long / capture subjects, a side stitch at `table.concat`, an
+iterator advanced outside its loop, errors in handlers under `pcall`, collections); `tr_core::s78_stitch_programs` (`stitch=63` / `31` / `0` in
+every mode of `b1_jobs`, the counters). Mutants (registry 899 -> 906): `stitch_cont_refused`, `stitch_side_never`, `stitch_tprep_never`,
+`gm_end_probe_skip`, `gmnew_swapped`, `fmt0_guard_skip`, `concat_empty_guard_skip`, all caught by `s78_stitch_programs`. Two policy mutants of a
+draft (the pop into a traced continuation head, the end guard's site class) were caught by no program and were dropped.
+
+### 78.2 `fnleaf`: per-function `FnShort` policy for short leaf roots (knob `fnleaf`, default 0)
+
+A function-entry head that `fnpromo` promoted to a generic function root records a body of any length (no `FnShort` below `fnmin`) when the
+prototype has at most `fnleaf` instructions, does not read the global `error` (`proto_names_error`: checking helpers such as towers' `pushDisk`,
+whose roots made their callers stitch, section 48.6) and the recording entered no Lua callee (a dynamic leaf: C built-ins recorded inline are
+allowed, unlike T7's static leaf).
+
+Measured (one run, instructions; `fnleaf=0` -> `16`): awfy/json **-6.41 %**, programs/json -0.49 %, deltablue -0.64 %, markdown **+0.38 %**,
+events +0.14 %, astar_jumper +2.28 % (a lottery program), every other of the 33 within 0.02 %. `fnleaf=64`: text_adventure -1.89 %, json -6.26 %,
+richards +0.97 %, markdown +1.13 %; without the `error` rule towers +4.15 %. raytrace's `vec` / `V:norm` do not move (they are inlined by the
+traces that call them; the calls from tier 1 are not the cost). **Default OFF** (markdown's instructions rise); `fnleaf=16` is the setting
+that holds everywhere else.
+
+Bit 12 (4096) of `fnleaf` also gives the entry head to loop-free functions whose only calls are tail calls (`local function vec(x, y, z) return
+setmetatable({...}, V) end`: before, only a `CALL` placed the head). Measured `fnleaf=4112` against 0: raytrace -1.69 % instructions (+1.3 %
+cycles, one run), richards **+29.4 %**, cd **+2.1 %**: kept as a separate bit, off.

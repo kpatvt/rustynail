@@ -1127,6 +1127,29 @@ pub fn jit_format(st: &State, fmt: &[u8], args: &[Value], out: &mut Vec<u8>) -> 
     format::format_into(fmt, &mut J { st, args }, out).is_ok()
 }
 
+/// Section 78.1 (`stitch` bit 4, JIT `GMATCH_NEW`): the address of `string.gmatch` itself.
+#[cfg(feature = "jit")]
+pub fn jit_gmatch_new_addr() -> usize {
+    gmatch as *const () as usize
+}
+
+/// Section 78.1 (JIT `GMATCH_NEW`): what `string.gmatch(s, p)` (two arguments) allocates and returns: the iterator closure with the upvalues
+/// `s`, `p`, position 0 and `lastmatch` -1. `None` when the allocation fails (nothing is allocated; the interpreter's call then raises).
+#[cfg(feature = "jit")]
+pub fn jit_gmatch_new(
+    st: &mut State,
+    s: StrRef,
+    p: StrRef,
+) -> Option<rn_core::value::Gc<rn_core::func::CClosure>> {
+    let cl = st.try_alloc(|h| h.new_cclosure(gmatch_aux, 4)).ok()?;
+    let heap = st.heap();
+    cl.set_upvalue(heap, 0, Value::string(s));
+    cl.set_upvalue(heap, 1, Value::string(p));
+    cl.set_upvalue(heap, 2, Value::int(0));
+    cl.set_upvalue(heap, 3, Value::int(-1));
+    Some(cl)
+}
+
 /// The address of the `gmatch` iterator function (`gmatch_aux`, the function of the C closure `gmatch` returns).
 #[cfg(feature = "jit")]
 pub fn jit_gmatch_addr() -> usize {

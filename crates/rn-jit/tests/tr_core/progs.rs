@@ -16347,6 +16347,17 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t4_01_late_ret.lua"),
     },
+    // docs/JIT_TRACE.md section 78.1 (`stitch`): continuation traces and stitching for non-recursive code
+    Prog {
+        name: "s78_02_fnleaf",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_02_fnleaf.lua"),
+    },
+    Prog {
+        name: "s78_01_stitch",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_01_stitch.lua"),
+    },
     // T9 (docs/JIT_TRACE.md section 47): nested-loop trace linking (`innerlink`)
     Prog {
         name: "t9_01_innerlink",

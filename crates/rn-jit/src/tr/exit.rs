@@ -416,7 +416,14 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
             && matches!(
                 ir.at(i.a).op,
                 TOp::Tnew | TOp::Snew | TOp::Concat | TOp::Lib
-            );
+            )
+            // (section 78.1: the end guard `NE %gm, 1` of a `GMATCH` step is a site of its own: its side trace records the end of the iteration)
+            && !(ir.gm_end_site
+                && ir.at(i.a).op == TOp::Lib
+                && ir.at(i.a).aux & 0xFF == super::ir::lib::GMATCH
+                && i.b != NOREF
+                && i.b < super::ir::REF_BIAS
+                && matches!(ir.kval(i.b), super::ir::KVal::Int(1)));
         if !alloc_guard {
             all_alloc[s] = false;
         }

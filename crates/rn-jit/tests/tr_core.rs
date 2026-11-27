@@ -541,6 +541,8 @@ struct TStats {
     /// T4: `t4: late returns L start sides S`.
     ret_late: u64,
     ret_start_sides: u64,
+    /// Section 78.1: `stitch: cont roots C side stitches S gmatch ends G pops P tprep links T`.
+    stitch_use: [u64; 5],
     /// T9: `innerlink: links L rets R linked heads H exits woken W`.
     inner_links: u64,
     inner_rets: u64,
@@ -812,6 +814,11 @@ impl TStats {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.ret_late = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.ret_start_sides = w.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("stitch: cont roots ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                for (k, at) in [0usize, 3, 6, 8, 11].into_iter().enumerate() {
+                    s.stitch_use[k] = w.get(at).and_then(|v| v.parse().ok()).unwrap_or(0);
+                }
             } else if let Some(r) = l.strip_prefix("innerlink: links ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.inner_links = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -10304,6 +10311,90 @@ fn s64_wgcall_programs() {
         res[1].1.stats.recorded >= 1,
         "weighted calls open the gate: {}",
         res[1].1.stats.line()
+    );
+}
+
+/// Section 78.1 (`stitch`): continuation traces after non-recursive calls, side stitches at C calls, the end of `gmatch` iterations, pops
+/// into the caller's continuation, frame links behind a `TFORPREP` and the library forms (`string.format` without `%`, `"" .. s`,
+/// `string.gmatch`), in every trace mode with exit storms, budgets, GC stress and stack moves against the interpreter, with the knob off
+/// as the control. The counters show that each piece formed with the knob on and none with it off (mutants `stitch_cont_refused`,
+/// `stitch_side_never`, `stitch_tprep_never`; the semantic mutants `gm_end_probe_skip`,
+/// `gmnew_swapped`, `fmt0_guard_skip`, `concat_empty_guard_skip` are caught by the outputs).
+#[test]
+fn s78_stitch_programs() {
+    let progs = ["s78_01_stitch"];
+    let limits = ["stitch=63", "stitch=31", "stitch=0"];
+    let jobs = b1_jobs(&progs, &limits);
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().stitch, 0);
+    assert_eq!(TrLimits::parse("stitch=63").0.stitch, 63);
+    let mut seen = [0u64; 5];
+    for (j, o) in &res {
+        if j.limits == "stitch=0" {
+            assert_eq!(o.stats.stitch_use, [0; 5], "{}: stitch=0", j.tag());
+        }
+        if j.limits == "stitch=63"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.budget.is_none()
+            && j.env.is_empty()
+        {
+            for k in 0..5 {
+                seen[k] += o.stats.stitch_use[k];
+            }
+        }
+    }
+    for (k, what) in [
+        "cont roots",
+        "side stitches",
+        "gmatch ends",
+        "pops",
+        "tprep links",
+    ]
+    .iter()
+    .enumerate()
+    {
+        // (5.4: `RETF` is off, C63, so neither the pops nor the frame links behind a `TFORPREP` form there)
+        if cfg!(rustynail_lua54) && k >= 3 {
+            continue;
+        }
+        assert!(seen[k] > 0, "stitch=63 forms {what}: {seen:?}");
+    }
+}
+
+/// Section 78.2 (`fnleaf`): short dynamic-leaf function roots (and, bit 12, entry heads of tail-call-only functions) in every mode against the
+/// interpreter; with the size limit on, more roots install than with the heads alone (mutant `fnleaf_never`).
+#[test]
+fn s78_fnleaf_programs() {
+    let progs = ["s78_02_fnleaf"];
+    let limits = [
+        "fnleaf=4112,fnpromow=0",
+        "fnleaf=4096,fnpromow=0",
+        "fnleaf=16,fnpromow=0",
+        "fnleaf=0",
+    ];
+    let res = compare(b1_jobs(&progs, &limits));
+    assert_eq!(TrLimits::default().fnleaf, 0);
+    let inst = |l: &str| -> u64 {
+        res.iter()
+            .filter(|(j, _)| {
+                j.limits == l
+                    && j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.installed)
+            .sum()
+    };
+    let (on, heads) = (
+        inst("fnleaf=4112,fnpromow=0"),
+        inst("fnleaf=4096,fnpromow=0"),
+    );
+    assert!(
+        on > heads,
+        "fnleaf roots install: {on} against {heads} with the heads alone"
     );
 }
 

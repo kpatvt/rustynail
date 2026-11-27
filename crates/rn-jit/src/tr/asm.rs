@@ -2369,6 +2369,33 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
                 _ => 0,
             }
         }
+        lib::GMATCH_NEW => {
+            let (Some(sv), Some(pv)) = (strv(args[0], fl & 1 != 0), strv(args[1], fl & 8 != 0))
+            else {
+                return 0;
+            };
+            // MUTANT `gmnew_swapped`: subject and pattern trade places
+            let (sv, pv) = if mutants::active("gmnew_swapped") {
+                (pv, sv)
+            } else {
+                (sv, pv)
+            };
+            rn_std::lib_string::jit_gmatch_new(st, sv, pv).map_or(0, |c| c.as_ptr() as u64)
+        }
+        lib::GMATCH_END => {
+            // SAFETY: caller contract: a live C closure (the trace's type guard on the operand); `Value` is `repr(C)` `{ tag word, payload }`.
+            let v: Value = unsafe {
+                std::mem::transmute::<[u64; 2], Value>([u64::from(ctb(LUA_VCCL)), args[0]])
+            };
+            // a probe without effects first: a match left (the callback refuses it, nothing is committed) or anything else answers 0
+            match rn_std::lib_string::jit_gmatch_step(&v, false, &mut |_| false) {
+                rn_std::lib_string::GmStep::End => {
+                    let _ = rn_std::lib_string::jit_gmatch_step(&v, true, &mut |_| false);
+                    1
+                }
+                _ => 0,
+            }
+        }
         lib::CCALLS => {
             let used =
                 u64::from(rn_core::state::get_ccalls(st.ncalls_raw())) + args[0] + CCALLS_MARGIN;
@@ -8339,6 +8366,7 @@ impl Cx<'_> {
                         | lib::FINDS
                         | lib::FINDP
                         | lib::FINDM
+                        | lib::GMATCH_NEW
                 ) && self.ir.ty_of(ins.b) == Ty::LngStr
                 {
                     fl |= 8;
@@ -8375,6 +8403,7 @@ impl Cx<'_> {
                     | lib::REPS => 3,
                     lib::BYTE
                     | lib::TYPE
+                    | lib::GMATCH_NEW
                     | lib::IPAIRS_END
                     | lib::SETMT
                     | lib::STREQ
@@ -8388,6 +8417,7 @@ impl Cx<'_> {
                     | lib::TOSTR
                     | lib::CCALLS
                     | lib::GMATCH
+                    | lib::GMATCH_END
                     | lib::RANDF
                     | lib::LOWER
                     | lib::UPPER
@@ -11234,6 +11264,7 @@ pub mod support {
                     fn_loops: d.tr.cfg.limits.recany != 0,
                     rec_any: d.tr.cfg.limits.recany != 0,
                     c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
+                    fn_tail: d.tr.cfg.limits.fnleaf & 4096 != 0,
                 },
                 jpr.tr.as_deref(),
             )

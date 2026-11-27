@@ -1109,6 +1109,16 @@ pub const NAMES: &[&str] = &[
     "regcall_arg2_skip",
     // docs/JIT_TRACE.md section 64 (`wgcall`): the call weight of the start gate's loop length is ignored
     "wgcall_weight_skip",
+    // docs/JIT_TRACE.md section 78.1 (`stitch`): continuation traces and stitching for non-recursive code
+    "stitch_cont_refused",
+    "stitch_side_never",
+    "stitch_tprep_never",
+    "gm_end_probe_skip",
+    "gmnew_swapped",
+    "fmt0_guard_skip",
+    "concat_empty_guard_skip",
+    // docs/JIT_TRACE.md section 78.2 (`fnleaf`): short dynamic-leaf function roots
+    "fnleaf_never",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1199,7 +1209,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 899);
+        assert_eq!(NAMES.len(), 907);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

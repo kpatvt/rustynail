@@ -543,8 +543,15 @@ pub mod lib {
     /// the span answered is that of the result (the capture, or the whole match when there is none); the recorder follows it with `SUB(s, start, end)`, which makes the
     /// result string. 0 = "did nothing" (several captures, a position capture, a pattern error, a string of 2^31 bytes or more).
     pub const FINDM: u32 = 27;
+    /// Section 78.1 (`stitch` bit 2): the end of a `gmatch` iteration (`TFORCALL` of `gmatch_aux` when no match is left): `a` = the iterator
+    /// closure. The helper answers 1 and advances the position upvalue as the C function's final step does when no match is left; when a match
+    /// is left (or the closure is another one) it answers 0 and changes nothing (the guard exits and the interpreter runs the step).
+    pub const GMATCH_END: u32 = 28;
+    /// Section 78.1 (`stitch` bit 4): `string.gmatch(s, p)` of two strings: `a` = `s`, `b` = `p` (flag bits 0 / 3: long). The helper allocates the
+    /// iterator closure the C function returns (upvalues `s`, `p`, 0, -1) and returns it (a C closure); 0 when the allocation fails.
+    pub const GMATCH_NEW: u32 = 29;
     /// Number of kinds (below [`FMT_BASE`]).
-    pub const COUNT: u32 = 28;
+    pub const COUNT: u32 = 30;
     /// The names `TYPENAME` produces, by index.
     pub const TYPENAMES: [&str; 10] = [
         "nil", "boolean", "number", "string", "table", "function", "thread", "userdata", "integer",
@@ -856,6 +863,9 @@ pub struct TraceIr {
     /// Section 63 (`bhmin`): the trip estimate of the loop instance the root recording ran, taken at the last integer `FORLOOP` of the root frame:
     /// iterations left + 1 + for an upward loop `(index - 1) / step` (the iterations done if the loop started at 1); 0 when none / in a side trace.
     pub rec_trip: u64,
+    /// Section 78.1 (`stitch` bit 2): the end guard behind a `GMATCH` helper (`NE %gm, 1`) is an ordinary site, not an allocation site, so the loop's
+    /// end gets a side trace (which records the end with `GMATCH_END`).
+    pub gm_end_site: bool,
     /// E5 (`midfold`): a method `SELF` of the family's key on register 0 was folded to the running closure: the trace relies on the region
     /// invariant of section 35.4.
     pub midfold: bool,

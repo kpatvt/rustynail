@@ -129,6 +129,17 @@ pub const INNERLINK_PROCESS: u32 = 0;
 pub const T5_PROCESS: u32 = 0;
 /// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
 pub const T7_PROCESS: u32 = 0;
+/// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (also the struct default).
+pub const FNLEAF_PROCESS: u32 = 0;
+/// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (also the struct default).
+pub const STITCH_PROCESS: u32 = 0;
+/// Section 78.1 (`stitch` bit 1): fewest recorded steps of a side recording before it stitches at a C call.
+pub const STITCH_SIDE_MIN: usize = 8;
+/// Section 78.1 (`stitch` bit 0): leaf samples (`FnShort` recordings) of a prototype's function-entry head after which its continuation heads
+/// record as generic roots (when the prototype never recursed and does not reach itself through an upvalue or a method).
+pub const STITCH_SETTLE_SAMPLES: u8 = 2;
+/// Section 78.1 (`stitch` bit 0): fewest recorded steps of a generic continuation root that ends at its root `RETURN`.
+pub const STITCH_CONT_MIN: usize = 8;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
@@ -1058,6 +1069,23 @@ pub struct TrLimits {
     /// head waits four times as many entries (`fnpromow` + 2) before its first recording. Bit 3: only for a static leaf (no `CALL` / `TAILCALL` / `TFORCALL` in the
     /// prototype). 0 = off. Default [`T7_PROCESS`].
     pub t7: u32,
+    /// Section 78.1 (`stitch`, docs/JIT_TRACE.md section 78.1): continuation traces and stitching for non-recursive code. Bit 0 (1): a continuation
+    /// head (the instruction behind a `CALL`) of a prototype that never recursed records as a generic root (not refused `ContNotRecursive`, not
+    /// restricted to recursion); it ends at its root `RETURN` (bit 3: a native return or a pop, else the stitching exit), at C calls it cannot
+    /// record (stitch) or at a traced loop head of its frame (link). Bit 1 (2): side recordings of loop roots stitch at C calls they cannot record
+    /// (after [`STITCH_SIDE_MIN`] steps). Bit 2 (4): the end of a `gmatch` iteration is recorded in side recordings of the loop's frame (the
+    /// end-only `GMATCH_END` helper) and the recording goes on behind the loop. Bit 3 (8): a recording that reaches the `RETURN` of its root frame
+    /// where nothing else applies pops it (`RETF`) when the caller's loop around the `CALL` is traced, else ends with the stitching exit before the
+    /// `RETURN` (tier 1 returns into the caller's continuation head, whose trace runs on). Bit 4 (16): `string.format(f)` of a short constant
+    /// format without `%`, `"" .. s` and `string.gmatch(s, p)` (root frame, or an inlined frame whose `TFORPREP` links) are recorded. Bit 5 (32):
+    /// bit 0 without waiting for the entry head's recursion probe (only no native recursion and no self-reference). 0 = off.
+    /// Default [`STITCH_PROCESS`].
+    pub stitch: u32,
+    /// Section 78.2 (`fnleaf`, docs/JIT_TRACE.md section 78.2): per-function `FnShort` policy. A function-entry head that `fnpromo` promoted to a
+    /// generic function root, of a prototype of at most `fnleaf` instructions, records a body of any length when the recording entered no Lua
+    /// callee (a dynamic leaf: C built-ins and intrinsics recorded inline are allowed), instead of aborting `FnShort` below `fnmin`. 0 = off.
+    /// Default [`FNLEAF_PROCESS`].
+    pub fnleaf: u32,
 }
 
 impl Default for TrLimits {
@@ -1224,6 +1252,8 @@ impl Default for TrLimits {
             innerlink: INNERLINK_PROCESS,
             t5: T5_PROCESS,
             t7: T7_PROCESS,
+            stitch: STITCH_PROCESS,
+            fnleaf: FNLEAF_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1459,6 +1489,8 @@ impl TrLimits {
                 "innerlink" => l.innerlink = v.min(15),
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
+                "stitch" => l.stitch = v.min(63),
+                "fnleaf" => l.fnleaf = v.min(8191),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
@@ -3193,6 +3225,8 @@ pub struct TrStats {
     pub inner_links: u64,
     /// See `inner_links`.
     pub inner_rets: u64,
+    /// Section 78.1 (`stitch`): installed traces by what they used (the bits of `Recorded::stitch_use`).
+    pub stitch_use: [u64; 5],
 }
 
 /// F2a: a side recording or trace hangs off exit `exit` (a snapshot index) of trace `parent` (7.8).
@@ -5955,7 +5989,25 @@ pub fn exit_hot_policy(
             )
         });
     }
+    // section 78.1 (`stitch` bit 0): a family rooted at a continuation head of a non-recursive prototype is a straight-line trace of a polymorphic
+    // call path (handlers, receivers): a type-guard exit there is another path, not an unstable loop: no `Rerec` flush (it would end in a blacklisted
+    // head), the exit stays an ordinary one
+    let cont_family = d.tr.cfg.limits.stitch & 1 != 0
+        && match d.tr.slot(family) {
+            Some(Slot {
+                body: Body::Trace(f),
+                ..
+            }) => tr_of(d, f.root)
+                .is_some_and(|tp| tp.is_cont_head(tp.head(f.head).pc) && !tp.recursive.get()),
+            _ => false,
+        };
     match out.site {
+        ExitSite::TypeGuard if cont_family && !sides => {
+            if out.count == hot {
+                d.tr.stats.exit_type_hot += 1;
+            }
+            return HotAction::None;
+        }
         ExitSite::TypeGuard => {
             let protected = (t.side.is_none() && meta.peeled)
                 || (d.tr.cfg.limits.typesides != 0 && !mutants::active("typesides_ignored"));
@@ -6701,6 +6753,14 @@ pub fn head_linked_in(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
     .unwrap_or(false)
 }
 
+/// Section 78.1 (`stitch`): counts an installed trace by the bits of `Recorded::stitch_use`.
+pub fn note_stitch_use(st: &mut State, used: u8) {
+    let d = d_of(st);
+    for (k, c) in d.tr.stats.stitch_use.iter_mut().enumerate() {
+        *c += u64::from(used >> k & 1);
+    }
+}
+
 /// T9 (`innerlink`): counts an installed trace of bit 0 (`link`) / bit 1 (`ret`).
 pub fn note_inner(st: &mut State, link: bool, ret: bool) {
     let d = d_of(st);
@@ -7341,6 +7401,19 @@ pub fn head_is_fn(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
 /// F2a: is the head at `pc` of `pr` a loop head whose root trace is installed (`Some(true)`), a head without one
 /// (`Some(false)`), or not a head (`None`)? The side recorder's question when it reaches a pc of the root frame.
 /// (The function-entry head of P-E2 is not a loop head: `None`.)
+/// Section 78.1 (`stitch` bit 3): the state of the continuation head at `pc` of a prototype that never recursed (installed trace or not);
+/// `None` for any other pc.
+pub fn cont_head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
+    with_tr(st, pr, |tp| {
+        if !tp.is_cont_head(pc) || tp.recursive.get() {
+            return None;
+        }
+        tp.head_index(pc)
+            .map(|i| tp.head(i).state.get() == HeadState::Traced)
+    })
+    .flatten()
+}
+
 pub fn head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
     with_tr(st, pr, |tp| {
         if tp.is_fn_head(pc) || tp.is_cont_head(pc) {
@@ -9078,6 +9151,8 @@ pub(crate) struct DispatchCfg {
     pub rec_any: bool,
     /// BUNDLE-J (`centry`): the prototype was first hot when called from C: it gets the function-entry head although it has no `CALL`, as a generic function root.
     pub c_entered: bool,
+    /// Section 78.2 (`fnleaf`): a loop-free function whose only calls are tail calls (`return setmetatable{...}`) gets the entry head too.
+    pub fn_tail: bool,
 }
 
 fn mem(base: crate::ir::V, off: i32) -> M {
@@ -9117,6 +9192,7 @@ pub(crate) fn emit_dispatch(
         && !env.follower[0]
         && (env.ops.iter().any(|o| matches!(o, Some(OpCode::Call)))
             || (c.c_entered && !mutants::active("centry_no_head"))
+            || (c.fn_tail && env.ops.iter().any(|o| matches!(o, Some(OpCode::Tailcall))))
             || mutants::active("fn_head_calls_ignored"))
         && (!env.ops.iter().any(|o| matches!(o, Some(OpCode::Tbc)))
             || mutants::active("fn_head_tbc_ignored"));
@@ -9594,6 +9670,7 @@ pub fn lower_probe(st: &mut State, trace: bool) -> Option<Probe> {
             fn_loops: false,
             rec_any: false,
             c_entered: false,
+            fn_tail: false,
         },
         None,
     );
@@ -9649,6 +9726,25 @@ pub fn fn_cent(st: &mut State, pr: ProtoRef) -> bool {
 }
 
 /// BUNDLE-C: is the function-entry head of `pr` promoted to a generic function root (`fnpromo`)?
+/// Section 78.1 (`stitch` bit 0): has the recursion probe of the prototype's function-entry head given up (the head is blacklisted, was
+/// promoted to a generic function root or recorded [`STITCH_SETTLE_SAMPLES`] leaf samples) without the prototype ever recursing natively or
+/// being marked self-referential?
+/// `any` (`stitch` bit 5): no probe evidence needed, only the absence of recursion and self-reference.
+pub fn fn_probe_settled(st: &mut State, pr: ProtoRef, pc: u32, any: bool) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| {
+        !tp.recursive.get()
+            && !tp.selfref.get()
+            && (tp.fn_promoted()
+                || (any && pc != 0)
+                || tp.head_index(0).is_some_and(|i| {
+                    tp.is_fn_head(0)
+                        && (tp.head(i).state.get() == HeadState::Black
+                            || tp.head(i).kl.get() >= STITCH_SETTLE_SAMPLES)
+                }))
+    })
+}
+
 pub fn fn_promoted(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
     tr_of(d, pr.0).is_some_and(|tp| tp.fn_promoted())

@@ -549,6 +549,21 @@ fn proto_is_leaf(p: &rn_core::func::Proto) -> bool {
     })
 }
 
+/// Section 78.2 (`fnleaf`): does the prototype read the global `error` (a `GETTABUP` of the constant key `error`)? Such short functions are
+/// checking helpers (awfy/towers' `pushDisk`): a root of their own makes their traced callers stitch where they inlined them.
+fn proto_names_error(p: &rn_core::func::Proto) -> bool {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode;
+    p.code().iter().any(|&w| {
+        let i = Instruction(w);
+        i.opcode() == Some(OpCode::Gettabup)
+            && p.k()
+                .get(i.c() as usize)
+                .and_then(|k| k.as_strref())
+                .is_some_and(|k| k.get().as_bytes() == b"error")
+    })
+}
+
 /// BUNDLE-C: does the closure reach itself through one of its upvalues (`local function f ... f() ... end`)? Such a function recurses: `fnpromo` leaves it to the
 /// recursion machinery (a function root of `tail` in awfy/list costs 25% instructions).
 /// K2: is the prototype of the frame `ci` already running in one of the `depth` nearest caller frames? (Direct recursion that does not go through an upvalue:
@@ -797,7 +812,20 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
     // function with calls would get continuation traces whose return guard fails when no recursion is involved)
     let cok = cfg.limits.contok >= 1 && record::cont_ok(root);
+    // section 78.1 (`stitch` bit 0): a continuation head of a prototype that never recursed records as a generic root
+    let cont_gen = cfg.limits.stitch & 1 != 0
+        && !lazy_root
+        && !cok
+        && pr.is_some_and(|pr| {
+            cache::head_is_cont(st, pr, pc)
+                && !cache::proto_recursive(st, pr)
+                // (only once the recursion probe of the function's entry head gave up: a recursive function keeps its continuation heads
+                // for the recursion machinery)
+                && cache::fn_probe_settled(st, pr, pc, cfg.limits.stitch & 32 != 0)
+        })
+        && !mutants::active("stitch_cont_refused");
     if cfg.limits.recany != 0
+        && !cont_gen
         && pr.is_some_and(|pr| {
             cache::head_is_cont(st, pr, pc) && !cache::proto_recursive(st, pr) && !cok
         })
@@ -814,14 +842,17 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     } else {
         None
     };
-    let nest_frame: Option<record::FrameHeadQuery> =
-        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 || cfg.limits.innerlink & 1 != 0 {
-            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
-                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
-            }))
-        } else {
-            None
-        };
+    let nest_frame: Option<record::FrameHeadQuery> = if cfg.limits.nest >= 2
+        || cfg.limits.sidenest != 0
+        || cfg.limits.innerlink & 1 != 0
+        || cfg.limits.stitch & 8 != 0
+    {
+        Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+            cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+        }))
+    } else {
+        None
+    };
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
         shape: cfg.limits.shapeguard != 0,
@@ -873,6 +904,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         rec_only: cfg.limits.recnat != 0
             && cfg.limits.fnroot == 0
             && !promoted
+            && !cont_gen
             && (pc == 0 || cfg.limits.recany != 0),
         rec_cont: pr.is_some_and(|pr| cache::head_is_cont(st, pr, pc)),
         // E1: the unroll factor of a function-entry recording (1 everywhere else, and for prototypes the policy demoted)
@@ -946,6 +978,32 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         side_stitch: true,
         side_stitch_min: cfg.limits.sidestitchmin,
         stitch0: cfg.limits.stitch0 != 0,
+        cont_gen,
+        tprep_link: cfg.limits.stitch & 8 != 0,
+        // section 78.2 (`fnleaf`): a promoted function root of a small prototype records its dynamic-leaf bodies at any length
+        fn_min_leaf: (promoted
+            && cfg.limits.fnleaf & 4095 != 0
+            && proto.code().len() <= (cfg.limits.fnleaf & 4095) as usize
+            && !proto_names_error(&proto)
+            && !mutants::active("fnleaf_never"))
+        .then_some(0),
+        cont_ret: cont_gen && cfg.limits.stitch & 8 != 0,
+        fmt0: cfg.limits.stitch & 16 != 0,
+        cont_head: if cfg.limits.stitch & 8 != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::cont_head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
+        } else {
+            None
+        },
+        // (section 78.1: the pop of a generic continuation root asks the caller's loop heads)
+        retf_head: if cont_gen && cfg.limits.stitch & 8 != 0 && cfg.limits.retf & 1 != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
+        } else {
+            None
+        },
         nrinline: true,
         presize: cfg.limits.presize != 0,
         pcall: true,
@@ -1154,6 +1212,18 @@ pub fn driver_start_side(
         side_stitch: true,
         side_stitch_min: cfg.limits.sidestitchmin,
         stitch0: cfg.limits.stitch0 != 0,
+        side_cstitch: cfg.limits.stitch & 2 != 0,
+        gm_end: cfg.limits.stitch & 4 != 0,
+        cont_ret: cfg.limits.stitch & 8 != 0,
+        tprep_link: cfg.limits.stitch & 8 != 0,
+        fmt0: cfg.limits.stitch & 16 != 0,
+        cont_head: if cfg.limits.stitch & 8 != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::cont_head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
+        } else {
+            None
+        },
         nrinline: true,
         presize: cfg.limits.presize != 0,
         pcall: true,
@@ -3044,6 +3114,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         cache::note_nest(st, side.is_some_and(|s| s.frame_link));
     }
     cache::note_inner(st, rec.inner_link && !act.side, rec.inner_ret);
+    cache::note_stitch_use(st, rec.stitch_use);
     // T9 (`innerlink`): the head this root's frame-linking exit enters (the return half reads it)
     if let Some(si) = side.filter(|s| s.frame_link && !act.side) {
         // SAFETY: an inlined callee of the trace, registered as a dependency (TR32) and live.

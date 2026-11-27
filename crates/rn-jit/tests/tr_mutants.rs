@@ -4959,6 +4959,46 @@ const TABLE: &[Row] = &[
         owner: "S64",
         dets: &[d("tr_core", "s64_wgcall_programs")],
     },
+    Row {
+        name: "stitch_cont_refused",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "stitch_side_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "stitch_tprep_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "gm_end_probe_skip",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "gmnew_swapped",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "fmt0_guard_skip",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "concat_empty_guard_skip",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "fnleaf_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_fnleaf_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

@@ -1630,6 +1630,7 @@ fn compile_inner(
                 fn_loops: d.tr.cfg.limits.recany != 0,
                 rec_any: d.tr.cfg.limits.recany != 0,
                 c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
+                fn_tail: d.tr.cfg.limits.fnleaf & 4096 != 0,
             },
             None,
         )
@@ -1903,6 +1904,7 @@ fn recompile_inner(
                         fn_loops: d.tr.cfg.limits.recany != 0,
                         rec_any: d.tr.cfg.limits.recany != 0,
                         c_entered: d.tr.centry.contains(&(p.code_ptr() as usize)),
+                        fn_tail: d.tr.cfg.limits.fnleaf & 4096 != 0,
                     },
                     Some(tp),
                 )
