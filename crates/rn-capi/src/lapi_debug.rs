@@ -148,7 +148,7 @@ lua_api!(lua_setlocal(st, ar: *const lua_Debug, n: c_int) -> *const c_char {
     match st.find_local(ci_of(ar), n) {
         Some((name, pos)) => {
             let v = st.get(st.top() - 1);
-            st.set(pos, v);
+            st.set_local_value(pos, v);
             let t = st.top();
             st.set_top(t - 1);
             intern(&name)

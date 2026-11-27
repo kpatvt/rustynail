@@ -208,6 +208,8 @@ pub struct RecCfg {
     pub mfdeep: bool,
     /// Section 75.14 (`mfshare`): repeated `mfkeys` lookups of one key share the first value.
     pub mfshare: bool,
+    /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants.
+    pub uvk: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -567,6 +569,7 @@ impl Default for RecCfg {
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
+            uvk: super::cache::UVK_PROCESS != 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -803,11 +806,22 @@ pub fn take_retf_used() -> bool {
     RETF_USED.with(|c| c.replace(false))
 }
 
+thread_local! {
+    /// Section 77.3 (`uvk`): the closures the recording closed last holds by identity (`None`: it read no read-only upvalue as a constant).
+    static UVK_CLOSED: std::cell::RefCell<Option<Vec<usize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Section 77.3: the closures (addresses) the recording closed last holds by identity, `Some` when it folded read-only upvalues (and clears it).
+pub fn take_uvk_closures() -> Option<Vec<usize>> {
+    UVK_CLOSED.with(|c| c.borrow_mut().take())
+}
+
 /// Arms a recording rooted at the Lua frame `ci` for the loop whose head is `head` (a pc of the frame's proto). Returns
 /// the token (also given to the callbacks), or `None` when nothing was armed (not a Lua frame, hook installed,
 /// recording already armed, the proto does not lower).
 pub fn arm(st: &mut State, ci: Ci, head: u32, cfg: RecCfg) -> Option<u64> {
     RETF_USED.with(|c| c.set(false));
+    UVK_CLOSED.with(|c| *c.borrow_mut() = None);
     let why = super::diag::set_why;
     let cl = st.ci_lclosure(ci).or_else(|| {
         why("NoLuaFrame");
@@ -870,6 +884,9 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
         }
         Ok(Flow::Closed(done)) => {
             st.heap().unwatch_all();
+            if rec.uvk_used {
+                UVK_CLOSED.with(|c| *c.borrow_mut() = Some(rec.uvk_cl.clone()));
+            }
             if rec.atg_flipped() {
                 NOATG.with(|n| n.borrow_mut().insert((rec.entry_proto, rec.head)));
                 finish_with(token, RecOutcome::Aborted(AbortReason::AtouchFlip));
@@ -1330,6 +1347,15 @@ struct Rec {
     oframe_floor: Option<(u32, usize, usize)>,
     /// Section 75.14 (`mfshare`): the value refs of the `mfkeys` lookups made so far in this recording, by constant index.
     mfk_seen: Vec<(u32, Ref)>,
+    /// Section 77.3 (`uvk`): closure refs whose identity the trace knows (guarded by `EQREF` with the closure's address, or a `KPTR` constant read
+    /// from a read-only upvalue), with the address.
+    uvk_known: Vec<(Ref, usize)>,
+    /// Section 77.3: the addresses of the closures guarded by identity (watched while recording, registered at install).
+    uvk_cl: Vec<usize>,
+    /// Section 77.3: how many of `uvk_cl` are on the collector's watch list.
+    uvk_watched: usize,
+    /// Section 77.3: a read-only upvalue was read as a constant.
+    uvk_used: bool,
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1701,6 +1727,10 @@ impl Rec {
             oframe_wb: None,
             oframe_floor: None,
             mfk_seen: Vec::new(),
+            uvk_known: Vec::new(),
+            uvk_cl: Vec::new(),
+            uvk_watched: 0,
+            uvk_used: false,
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -1899,6 +1929,10 @@ impl Rec {
         self.oframe_wb = None;
         self.oframe_floor = None;
         self.mfk_seen.clear();
+        self.uvk_known.clear();
+        self.uvk_cl.clear();
+        self.uvk_watched = 0;
+        self.uvk_used = false;
         self.inl_back.set(0);
         self.la_seen.borrow_mut().clear();
         self.first_store = None;
@@ -3427,6 +3461,15 @@ impl Rec {
                 return Ok((0, false));
             }
             // P-V: the constant string metatable: its model handle (registered by `string_method`)
+            TOp::Kptr if ins.t == Ty::Lcf => {
+                let p = self.val_bits(ins.a);
+                let h = self
+                    .cl_reg
+                    .get(&(p as usize))
+                    .copied()
+                    .ok_or(AbortReason::Diverge)?;
+                return Ok((h, false));
+            }
             TOp::Kptr if ins.t == Ty::Tab => {
                 let p = self.val_bits(ins.a);
                 let h = self
@@ -3445,7 +3488,10 @@ impl Rec {
         if ins.op == TOp::Eqref
             && bref != NOREF
             && bref < REF_BIAS
-            && matches!(self.b.ir.kval(bref), KVal::Ptr(_, PtrKind::Proto))
+            && matches!(
+                self.b.ir.kval(bref),
+                KVal::Ptr(_, PtrKind::Proto | PtrKind::LClosure)
+            )
         {
             bref = ins.a;
         }
@@ -3822,6 +3868,11 @@ impl Rec {
             st.heap().watch_object(t.as_ptr().cast());
         }
         self.pinned = self.tabs.len();
+        // section 77.3: the closures held by identity (their addresses are constants of the trace)
+        for &a in &self.uvk_cl[self.uvk_watched.min(self.uvk_cl.len())..] {
+            st.heap().watch_object(a as *mut _);
+        }
+        self.uvk_watched = self.uvk_cl.len();
     }
 
     /// TR17: the instruction recorded last, checked against the VM's frame (the successor pc is checked by the validation of
@@ -6377,6 +6428,103 @@ impl Rec {
         Ok(Some(((r, Ty::Lcf), v)))
     }
 
+    /// Section 77.3 (`uvk`, docs/JIT_TRACE.md section 77.3): `GETUPVAL` of an upvalue the compiler marked read-only (`UpvalDesc::ro`) is the value
+    /// the closure sees now, as a constant, once the trace holds the frame's closure by identity. Sound because (a) the closure is the recorded
+    /// one: its ref is guarded `EQREF closure, KPTR(address)` (once per closure ref; a ref that is itself such a constant needs none), and the
+    /// address cannot be reused by another closure while the trace exists (the collection of a closure registered at install flushes its
+    /// traces, `cache::uvk_closure_freed`; a collection during the recording aborts it through the watch list); (b) its upvalue `n` is the
+    /// recorded cell: only `debug.upvaluejoin` / `lua_upvaluejoin` replaces a cell, and that flushes (`jit_hooks::upval_changed`); (c) the cell's
+    /// value is the recorded one: the variable is never assigned after its initialisation (the compiler's mark) and every write outside the
+    /// language (`debug.setupvalue`, `debug.setlocal`, the C API) flushes; a closure always captures the variable after its initialisation.
+    /// Collectable constants (closures, tables, strings) are reachable from the guarded closure's cells, so they live as long as the trace.
+    fn uvk_uload(&mut self, vm: &Vm<'_>, n: usize) -> R<Option<((Ref, Ty), Value)>> {
+        if !self.cfg.uvk || n >= vm.cl.nupvalues() {
+            return Ok(None);
+        }
+        let p = vm.cl.proto();
+        if !p.upvalue_descs().get(n).is_some_and(|u| u.ro) && !mutants::active("uvk_any_upvalue") {
+            return Ok(None);
+        }
+        let v = vm.cl.upval(n).get();
+        let Some(ty) = ty_of_value(&v) else {
+            return Ok(None);
+        };
+        if !matches!(
+            ty,
+            Ty::Int
+                | Ty::Num
+                | Ty::Nil
+                | Ty::False
+                | Ty::True
+                | Ty::Lfn
+                | Ty::Lcf
+                | Ty::Tab
+                | Ty::ShrStr
+        ) {
+            return Ok(None);
+        }
+        let d = self.cur_depth;
+        let cref = if d > 0 {
+            self.frames[d].cref
+        } else {
+            self.func_ref_load()?
+        };
+        if cref == NOREF {
+            return Ok(None);
+        }
+        let addr = vm.cl.as_ptr() as usize;
+        match self.uvk_known.iter().find(|e| e.0 == cref) {
+            Some(e) if e.1 == addr => {}
+            Some(_) => return Ok(None),
+            None => {
+                let k = self.b.ir.konst(KVal::Ptr(addr as u64, PtrKind::LClosure));
+                if !mutants::active("uvk_ident_skip") {
+                    self.entry_guard(TOp::Eqref, Ty::I64, cref, k, 0)?;
+                }
+                self.uvk_known.push((cref, addr));
+                self.uvk_cl.push(addr);
+            }
+        }
+        self.touch(&v)?;
+        let kptr = |s: &mut Self, bits: u64, kind: PtrKind, t: Ty| -> R<Ref> {
+            let a = s.b.ir.konst(KVal::Ptr(bits, kind));
+            Ok(s.b.emit_raw(Ins {
+                op: TOp::Kptr,
+                t,
+                flags: 0,
+                a,
+                b: NOREF,
+                prev: NOREF,
+                aux: 0,
+            })?)
+        };
+        let r = match ty {
+            Ty::Int => self.kint(v.as_int().unwrap_or(0)),
+            Ty::Num => self.b.ir.knum(v.as_float().unwrap_or(0.0)),
+            Ty::Nil | Ty::False | Ty::True => self.b.ir.konst(KVal::Pri(ty)),
+            Ty::Lfn => self
+                .b
+                .ir
+                .konst(KVal::Ptr(payload_bits(&v, ty), PtrKind::Builtin)),
+            Ty::Lcf => {
+                let c = v.as_lclosure().expect("closure tag");
+                let ca = c.as_ptr() as usize;
+                let r = kptr(self, ca as u64, PtrKind::LClosure, Ty::Lcf)?;
+                self.uvk_known.push((r, ca));
+                r
+            }
+            Ty::Tab => kptr(self, payload_bits(&v, ty), PtrKind::Raw, Ty::Tab)?,
+            _ => kptr(self, payload_bits(&v, ty), PtrKind::Raw, Ty::ShrStr)?,
+        };
+        self.uvk_used = true;
+        Ok(Some(((r, ty), v)))
+    }
+
+    /// Section 77.3: does the trace hold `r` by identity as the closure at `addr`?
+    fn uvk_holds(&self, r: Ref, addr: usize) -> bool {
+        r != NOREF && self.uvk_known.iter().any(|e| e.0 == r && e.1 == addr)
+    }
+
     /// Whether upvalue `n` of the current closure is an open upvalue at a slot of the root frame (N1; no emission).
     fn uv_is_slot(&self, vm: &Vm<'_>, n: usize) -> bool {
         n < vm.cl.nupvalues() && self.in_root_frame(vm.cl.upval(n).value_ptr() as usize)
@@ -6391,6 +6539,9 @@ impl Rec {
     /// alias reads the register).
     fn uload(&mut self, vm: &Vm<'_>, n: usize) -> R<((Ref, Ty), Value)> {
         if let Some(r) = self.idfold_uload(vm, n)? {
+            return Ok(r);
+        }
+        if let Some(r) = self.uvk_uload(vm, n)? {
             return Ok(r);
         }
         let acc = self.uref(vm, n)?;
@@ -7365,6 +7516,8 @@ impl Rec {
         };
         if mutants::active("callee_guard_skip") || (running != NOREF && cref == running) {
             // (mutant: no guard; E2: the callee is the running closure's own ref, a folded `GETUPVAL`)
+        } else if self.uvk_holds(cref, cl.as_ptr() as usize) {
+            // (section 77.3: the callee is a closure the trace holds by identity)
         } else if running != NOREF {
             self.entry_guard(TOp::Eq, Ty::I64, cref, running, 0)?;
         } else {
@@ -7807,6 +7960,8 @@ impl Rec {
             if cref != run {
                 self.entry_guard(TOp::Eq, Ty::I64, cref, run, 0)?;
             }
+        } else if self.uvk_holds(cref, cl.as_ptr() as usize) {
+            // (section 77.3: the callee is a closure the trace holds by identity: its proto is the recorded one)
         } else if !mutants::active("callee_guard_skip") {
             if let Some(k) = known {
                 if !mutants::active("cloreuse_guard_skip") {

@@ -573,6 +573,42 @@ pub fn type_fn_addr() -> usize {
 }
 
 static TYPE_MT_HOOK: AtomicUsize = AtomicUsize::new(0);
+static UPVAL_HOOK: AtomicUsize = AtomicUsize::new(0);
+static CLOSURE_FREE_HOOK: AtomicUsize = AtomicUsize::new(0);
+
+/// Section 77.3 (`uvk`): registers the compiler's reaction to a write into a captured variable outside the language
+/// (`debug.setupvalue` / `debug.setlocal` / `debug.upvaluejoin` and the C API forms): the argument is 1 for an upvalue join.
+pub fn set_upval_hook(f: fn(&mut State, u8)) {
+    UPVAL_HOOK.store(f as usize, Ordering::Relaxed);
+}
+
+/// Section 77.3: called after a write into a captured variable that the language does not make (see [`set_upval_hook`]):
+/// traces that read a read-only upvalue as a constant are flushed. A no-op while the compiler has created no data.
+pub fn upval_changed(st: &mut State, join: bool) {
+    let f = UPVAL_HOOK.load(Ordering::Relaxed);
+    if f != 0 && !st.g().jit.data.is_null() {
+        // SAFETY: the value was stored by `set_upval_hook` from a `fn(&mut State, u8)`.
+        let f: fn(&mut State, u8) = unsafe { std::mem::transmute::<usize, fn(&mut State, u8)>(f) };
+        f(st, u8::from(join));
+    }
+}
+
+/// Section 77.3: registers the compiler's reaction to the collection of a closure marked with `set_jitdep` (returns the bytes
+/// to refund with `Mem::uncharge_ext`).
+pub fn set_closure_free_hook(f: fn(usize) -> usize) {
+    CLOSURE_FREE_HOOK.store(f as usize, Ordering::Relaxed);
+}
+
+/// Section 77.3: the collector frees a closure that a trace holds by identity.
+pub(crate) fn closure_freed(addr: usize) -> usize {
+    let f = CLOSURE_FREE_HOOK.load(Ordering::Relaxed);
+    if f == 0 {
+        return 0;
+    }
+    // SAFETY: the value was stored by `set_closure_free_hook` from a `fn(usize) -> usize`.
+    let f: fn(usize) -> usize = unsafe { std::mem::transmute::<usize, fn(usize) -> usize>(f) };
+    f(addr)
+}
 
 /// P-V: registers the compiler's reaction to a replaced string metatable (traces embed it as a constant).
 pub fn set_type_mt_hook(f: fn(&mut State)) {

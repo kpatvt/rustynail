@@ -176,6 +176,8 @@ pub const MFKEYS_PROCESS: u32 = 1;
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
+/// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
+pub const UVK_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -889,6 +891,12 @@ pub struct TrLimits {
     /// Section 75.14 (`mfshare`, docs/JIT_TRACE.md section 75.14): a second `mfkeys` lookup of the same key in one recording reuses the first one's value
     /// (the family rule admits no store of the key in any family trace, so `T[K]` is constant inside the region). 0 = off, 1 = on (default [`MFSHARE_PROCESS`]).
     pub mfshare: u32,
+    /// Section 77.3 (`uvk`, docs/JIT_TRACE.md section 77.3): a `GETUPVAL` of an upvalue the compiler marked read-only (`UpvalDesc::ro`: the variable is
+    /// never assigned after its initialisation) in a frame whose closure the trace holds by identity is the value seen at record time, a constant
+    /// (numbers, booleans, nil, light C functions, Lua closures, tables, short strings). The frame's closure is guarded by identity once (`EQREF` with
+    /// the closure's address, which a collection of the closure flushes); writes outside the language flush the traces (`jit_hooks::upval_changed`).
+    /// 0 = off, 1 = on (default [`UVK_PROCESS`]).
+    pub uvk: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1186,6 +1194,7 @@ impl Default for TrLimits {
             mfkeys: MFKEYS_PROCESS,
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
+            uvk: UVK_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1426,6 +1435,7 @@ impl TrLimits {
                 "mfkeys" => l.mfkeys = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
+                "uvk" => l.uvk = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -3423,6 +3433,12 @@ pub struct TrState {
     live_traces: u32,
     global_pen: i64,
     global_k: u8,
+    /// Section 77.3 (`uvk`): the traces that read read-only upvalues as constants (flushed by [`upval_changed`]; stale ids are harmless).
+    pub(crate) uvk_ids: Vec<TrId>,
+    /// Section 77.3: writes into read-only captured variables seen (`upval_changed`); after an upvalue join or [`UVK_MAX_EVENTS`] of them the
+    /// state stops folding (`uvk_off`).
+    pub(crate) uvk_events: u32,
+    pub(crate) uvk_off: bool,
     /// P-G: time stamp of the first loop activity (0: none yet) and whether `TrLimits::warm` has elapsed.
     pub(crate) warm_t0: u64,
     pub(crate) warm_open: bool,
@@ -3477,6 +3493,9 @@ impl TrState {
             live_traces: 0,
             global_pen: 0,
             global_k: 0,
+            uvk_ids: Vec::new(),
+            uvk_events: 0,
+            uvk_off: false,
             warm_t0: 0,
             warm_open: false,
             warm_n: 0,
@@ -5713,6 +5732,83 @@ pub fn type_mt_changed(st: &mut State) {
         finish_abort(st, aid, "Off", AbortKind::Drop);
     }
     flush_all(st, FlushWhy::Dep);
+}
+
+/// Section 77.3: writes into read-only captured variables after which a state stops folding them (each one flushes the folding traces).
+pub const UVK_MAX_EVENTS: u32 = 16;
+
+/// Section 77.3 (`uvk`): a captured variable was written outside the language (`debug.setupvalue` of a read-only upvalue, `debug.setlocal`,
+/// `debug.upvaluejoin` touching a read-only upvalue: `join`). Every trace that read a read-only upvalue as a constant is flushed and a recording
+/// in progress is dropped (no penalty: the heads re-record and see the new value). A join breaks the read-only property for good (the
+/// joined cell may now be written by code that assigns it), so the state stops folding; so does a state that keeps writing such variables.
+pub fn upval_changed(st: &mut State, join: u8) {
+    if mutants::active("uvk_flush_skip") {
+        return;
+    }
+    let d = d_of(st);
+    d.tr.uvk_events = d.tr.uvk_events.saturating_add(1);
+    if join != 0 || d.tr.uvk_events >= UVK_MAX_EVENTS {
+        d.tr.uvk_off = true;
+    }
+    if let Some(aid) = d.tr.active {
+        finish_abort(st, aid, "Off", AbortKind::Drop);
+    }
+    let ids = std::mem::take(&mut d_of(st).tr.uvk_ids);
+    for id in ids {
+        request_flush(st, id, FlushWhy::Dep);
+    }
+}
+
+/// Section 77.3: whether the state stopped folding read-only upvalues (see [`upval_changed`]).
+pub fn uvk_off(st: &mut State) -> bool {
+    d_of(st).tr.uvk_off
+}
+
+type UvkReg = std::collections::HashMap<usize, Vec<(usize, TrId)>>;
+
+/// Section 77.3: closure address -> (owning `JitData`, trace) for every closure a trace holds by identity. Process-wide because the collector's
+/// free path has no state handle (as `free_code`, which reaches its owner through the descriptor).
+fn uvk_reg() -> &'static std::sync::Mutex<UvkReg> {
+    static R: OnceLock<std::sync::Mutex<UvkReg>> = OnceLock::new();
+    R.get_or_init(|| std::sync::Mutex::new(UvkReg::new()))
+}
+
+/// Section 77.3: trace `id` (just installed) holds the closures `cls` by identity and reads read-only upvalues as constants: each closure is
+/// marked (`LClosure::jitdep`) and registered, so that its collection flushes the trace before the address can be reused; the trace joins
+/// the set [`upval_changed`] flushes.
+pub fn uvk_register(st: &mut State, id: TrId, cls: &[usize]) {
+    let dp = rt::data_ptr(st) as usize;
+    d_of(st).tr.uvk_ids.push(id);
+    if cls.is_empty() {
+        return;
+    }
+    let mut reg = uvk_reg().lock().unwrap_or_else(|e| e.into_inner());
+    for &a in cls {
+        // SAFETY: `a` is the address of a closure the recording held by identity and watched until it closed (a collection of it aborts
+        // the recording `DepFreed`), and nothing collects between the close and the install.
+        let c = unsafe { rn_core::value::Gc::from_raw(a as *mut rn_core::func::LClosure) };
+        if !mutants::active("uvk_dep_skip") {
+            c.set_jitdep();
+        }
+        reg.entry(a).or_default().push((dp, id));
+    }
+}
+
+/// Section 77.3: the collector frees a closure marked by [`uvk_register`]: its traces are flushed (deferred while an exit handler runs, TR18).
+/// Returns the bytes to refund.
+pub fn uvk_closure_freed(addr: usize) -> usize {
+    let list = {
+        let mut reg = uvk_reg().lock().unwrap_or_else(|e| e.into_inner());
+        reg.remove(&addr).unwrap_or_default()
+    };
+    let mut refund = 0;
+    for (dp, id) in list {
+        // SAFETY: the owning data outlives its heap (the heap, which frees the closure, is dropped before the per-state slot), as for
+        // `free_code`.
+        let d = unsafe { &mut *(dp as *mut JitData) };
+        refund += flush_or_defer(d, id, FlushWhy::Dep);
+    }
+    refund
 }
 
 /// `jit.flush()`: a recording in progress is dropped and every trace is flushed (no penalty: the heads re-record).

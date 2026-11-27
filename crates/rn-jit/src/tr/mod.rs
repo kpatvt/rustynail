@@ -961,6 +961,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
+        uvk: cfg.limits.uvk != 0 && !cache::uvk_off(st),
         avoid: if cfg.limits.reroot != 0 {
             pr.and_then(|pr| cache::head_reroot_avoid(st, pr, pc))
         } else {
@@ -1200,6 +1201,7 @@ pub fn driver_start_side(
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
+        uvk: cfg.limits.uvk != 0 && !cache::uvk_off(st),
         ..RecCfg::default()
     };
     let token = record::arm(st, ci, start.pc, rc)?;
@@ -1266,6 +1268,8 @@ pub const DRIVER_VTABLE: RecVTable = RecVTable {
 /// registration wins; a test that installed its own recorder first is not disturbed).
 pub fn install_driver() -> bool {
     jit_hooks::set_type_mt_hook(cache::type_mt_changed);
+    jit_hooks::set_upval_hook(cache::upval_changed);
+    jit_hooks::set_closure_free_hook(cache::uvk_closure_freed);
     let a = jit_hooks::install_rec(DRIVER_VTABLE);
     let b = cache::install_recorder(driver_start);
     cache::install_side_recorder(driver_start_side);
@@ -1276,6 +1280,8 @@ pub fn install_driver() -> bool {
 /// switches traces on).
 pub fn attach_driver(st: &mut State) {
     jit_hooks::set_type_mt_hook(cache::type_mt_changed);
+    jit_hooks::set_upval_hook(cache::upval_changed);
+    jit_hooks::set_closure_free_hook(cache::uvk_closure_freed);
     cache::set_starter(st, Some(driver_start));
     cache::set_side_starter(st, Some(driver_start_side));
 }
@@ -3032,6 +3038,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         detail: format!("install: {e:?}"),
     })?;
     phase::add(phase::INSTALL, t_inst);
+    // Section 77.3 (`uvk`): the closures the trace holds by identity flush it when collected; writes into read-only variables flush it
+    if let Some(cls) = record::take_uvk_closures() {
+        cache::uvk_register(st, newid, &cls);
+    }
     // Section 52 (`resink`): the parent's exit enters this side trace without materialising the tables it replays
     if act.side {
         cache::set_rcell(

@@ -9,6 +9,7 @@ pub mod lexer;
 pub mod listing;
 pub mod testhost;
 pub mod undump;
+pub(crate) mod uvk;
 
 #[cfg(rustynail_lua54)]
 pub mod v54;

@@ -454,6 +454,12 @@ pub const NAMES: &[&str] = &[
     "mfkeys_check_skip",
     // section 75.14 (`mfshare`): a later lookup reuses the first lookup of ANY extra key
     "mfshare_any_key",
+    // section 77.3 (`uvk`): writes into read-only variables flush nothing / the closure's identity is not guarded / any upvalue is folded /
+    // the collection of a closure held by identity is not reported
+    "uvk_flush_skip",
+    "uvk_ident_skip",
+    "uvk_any_upvalue",
+    "uvk_dep_skip",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable

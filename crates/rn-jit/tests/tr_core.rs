@@ -4605,6 +4605,39 @@ fn s75_recinl_programs() {
     compare(jobs);
 }
 
+/// Section 77.3 (`uvk`): read-only upvalues read as constants by traces that hold the closure by identity, with every way the value seen through
+/// a closure can change made mid-run (another closure of the prototype, `debug.setupvalue`, `debug.setlocal`, `debug.upvaluejoin`, collected
+/// closures whose addresses are reused, variables assigned in a nested function, captured loop variables); `uvk` 1 / 0, the trace modes with
+/// `+verify`, exit storms, budget 17 and GC stress 1 / 2. Mutants `uvk_flush_skip`, `uvk_ident_skip`, `uvk_any_upvalue`, `uvk_dep_skip`.
+#[test]
+fn s77_uvk_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["uvk=1", "uvk=0"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s77_uvk", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        for gc in ["1", "2"] {
+            jobs.push(
+                Job::new("s77_uvk", trace)
+                    .limits_s("uvk=1")
+                    .env("RUSTYNAIL_GC_STRESS", gc),
+            );
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 75.12 (`mfkeys`): the other method keys of an E5 method family are verified by the region check and kept by the family rule, with every
 /// mutation that can change their lookup made mid-run (method replaced in the class, a key assigned into the `__index` table from inside the
 /// recursion, `setmetatable` swapping the class inside the recursion, `__index` replaced by a function, a shadowing instance field, a chain level
