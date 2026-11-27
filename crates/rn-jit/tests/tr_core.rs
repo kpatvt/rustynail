@@ -4515,6 +4515,41 @@ fn s75_oframe_programs() {
     compare(jobs);
 }
 
+/// Section 75.7 (`dynunroll`): inlined `for` loops with run-time bounds unrolled up to a trip-count bound (counts that change between calls,
+/// 0 / 1 / many / beyond the bound, negative and non-unit steps, nested loops, bounds from a table, early returns), knob 16 / 2 / 0, in the trace
+/// modes with `+verify`, exit storms, budget 17 and GC stress 2. Mutants `dynunroll_count_const`, `dynunroll_skip_unguarded`.
+#[test]
+fn s75_dynunroll_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "dynunroll=16",
+            "dynunroll=2",
+            "dynunroll=0",
+            "dynunroll=16,loopunroll=4",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s75_dynunroll", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new("s75_dynunroll", trace)
+                    .limits_s(limits)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 59: B1 (`pureb`: `string.byte` ranges with one `j <= #s` guard and DCE-able loads) and B2 (`opencall`: open-result `CALL`s define
 /// the registers from `A` up in the `snapprune` liveness), with the knobs on (shipped) and off, in the trace modes with lockstep, exit storms,
 /// budgets, GC stress and the stack-move stress. Mutants `pureb_len_guard_skip`, `opencall_defs_low`.

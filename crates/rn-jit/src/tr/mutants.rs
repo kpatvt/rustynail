@@ -447,6 +447,9 @@ pub const NAMES: &[&str] = &[
     "retfuse_site_next",
     // section 75 (`retfuse`): the region root of a lazy family returns through the tail of the frames above it (no root bookkeeping)
     "retfuse_root_as_nonroot",
+    // section 75.7 (`dynunroll`): an inlined `for` with run-time bounds keeps the recorded count as a constant / its skip is not guarded
+    "dynunroll_count_const",
+    "dynunroll_skip_unguarded",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1192,7 +1195,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 895);
+        assert_eq!(NAMES.len(), 897);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -2211,6 +2211,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_oframe_programs")],
     },
     Row {
+        name: "dynunroll_count_const",
+        owner: "S75",
+        dets: &[d("tr_core", "s75_dynunroll_programs")],
+    },
+    Row {
+        name: "dynunroll_skip_unguarded",
+        owner: "S75",
+        dets: &[d("tr_core", "s75_dynunroll_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

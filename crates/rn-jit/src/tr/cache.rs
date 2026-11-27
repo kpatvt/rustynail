@@ -164,6 +164,8 @@ pub const LANDFIX_PROCESS: u32 = 1;
 pub const OFRAME_PROCESS: u32 = 1;
 /// Section 75 (`retfuse`): the process default of [`TrLimits::retfuse`] (also the struct default).
 pub const RETFUSE_PROCESS: u32 = 1;
+/// Section 75.7 (`dynunroll`): the process default of [`TrLimits::dynunroll`] (also the struct default).
+pub const DYNUNROLL_PROCESS: u32 = 16;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -852,6 +854,10 @@ pub struct TrLimits {
     /// registers dispatches from the guards' site chain into one tail per site (the tail does not load `previous` / `savedpc` again nor walk the sites
     /// again). 0 = off, 1 = on (default [`RETFUSE_PROCESS`]).
     pub retfuse: u32,
+    /// Section 75.7 (`dynunroll`, docs/JIT_TRACE.md section 75.7): a counted `for` of an inlined callee whose bounds are not trace constants is unrolled
+    /// (the count computed and guarded from the run-time bounds, each iteration's `FORLOOP` guarded, the back edges charged to `loopunroll`) when its
+    /// trip count at record time is at most this bound, instead of aborting `InnerLoop` (or linking, T9). 0 = off; default [`DYNUNROLL_PROCESS`].
+    pub dynunroll: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1143,6 +1149,7 @@ impl Default for TrLimits {
             landfix: LANDFIX_PROCESS,
             oframe: OFRAME_PROCESS,
             retfuse: RETFUSE_PROCESS,
+            dynunroll: DYNUNROLL_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1377,6 +1384,7 @@ impl TrLimits {
                 "landfix" => l.landfix = v.min(1),
                 "oframe" => l.oframe = v.min(1),
                 "retfuse" => l.retfuse = v.min(1),
+                "dynunroll" => l.dynunroll = v.min(64),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

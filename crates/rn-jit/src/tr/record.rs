@@ -198,6 +198,8 @@ pub struct RecCfg {
     pub opencall: bool,
     /// Section 75 (`oframe`): snapshots leave out the slots at or above the top of their innermost frame.
     pub oframe: bool,
+    /// Section 75.7 (`dynunroll`): the trip-count bound of an inlined `for` whose bounds are not trace constants (0: none).
+    pub dynunroll: u32,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -550,6 +552,7 @@ impl Default for RecCfg {
             pureb: super::cache::PUREB_PROCESS != 0,
             opencall: super::cache::OPENCALL_PROCESS != 0,
             oframe: super::cache::OFRAME_PROCESS != 0,
+            dynunroll: super::cache::DYNUNROLL_PROCESS,
             hrefv: true,
             shape: false,
             fold: true,
@@ -9805,15 +9808,22 @@ impl Rec {
         // P-E: a loop of an inlined callee is unrolled only when its trip count is a trace constant (e.g. `select('#', ...)`
         // of an inlined vararg frame); a data-dependent count keeps the prototype's `InnerLoop` abort
         // (T9, `inner_link`: unless its loop head has a root trace: the prep is recorded and the next step links into that trace)
-        let prep_link = self.cur_depth > 0 && (init >= REF_BIAS || lim >= REF_BIAS);
-        if prep_link && !self.prep_link_ok {
-            return Err(AbortReason::InnerLoop);
-        }
+        let mut prep_link = self.cur_depth > 0 && (init >= REF_BIAS || lim >= REF_BIAS);
         let (vi, vl, vs) = (
             vm.slot(a).as_int().unwrap_or(0),
             limv.as_int().unwrap_or(0),
             vm.slot(a + 2).as_int().unwrap_or(0),
         );
+        let mut dynu = false;
+        if prep_link && !self.prep_link_ok {
+            // Section 75.7 (`dynunroll`): a short loop is unrolled like one with constant bounds: the count is computed and guarded from the
+            // bounds at run time below, every `FORLOOP` guards its own continuation, the back edges are charged to `loopunroll`
+            if self.cfg.dynunroll == 0 || dyn_trips(vi, vl, vs) > u64::from(self.cfg.dynunroll) {
+                return Err(AbortReason::InnerLoop);
+            }
+            prep_link = false;
+            dynu = true;
+        }
         if vs == 0 || vs == i64::MIN {
             return Err(self.nyi());
         }
@@ -9856,7 +9866,10 @@ impl Rec {
                 return Err(AbortReason::InnerLoop); // (T9: only an entered loop links)
             }
             let op = if vs > 0 { TOp::Gt } else { TOp::Lt };
-            self.guard(op, Ty::I64, init, lim, 0)?;
+            // (mutant: the skip of a loop unrolled by `dynunroll` is not guarded)
+            if !(dynu && mutants::active("dynunroll_skip_unguarded")) {
+                self.guard(op, Ty::I64, init, lim, 0)?;
+            }
             return Ok(idx + i.bx() as usize + 2);
         }
         // P-F: a difference that does not fit a signed integer (`-5 .. maxinteger`) would make the `count >= 0` guard below fail
@@ -9886,6 +9899,12 @@ impl Rec {
         } else {
             let km = self.kint(mag as i64);
             self.guard(TOp::Idiv, Ty::Int, sub, km, 0)?
+        };
+        // (mutant: a loop unrolled by `dynunroll` keeps the count of the recording as a constant)
+        let count = if dynu && mutants::active("dynunroll_count_const") {
+            self.kint((diff as u64 / mag) as i64)
+        } else {
+            count
         };
         if cfg!(rustynail_lua54) {
             self.def(a + 1, count);
@@ -12652,6 +12671,26 @@ impl Rec {
             self.tail_args = Some(refs);
         }
         self.call_lua(vm, idx, a, nargs + 1, wanted, cl, tail)
+    }
+}
+
+/// Section 75.7 (`dynunroll`): the trip count of `for i = vi, vl, vs` (`u64::MAX`: a zero step or a span beyond the signed range, never unrolled).
+fn dyn_trips(vi: i64, vl: i64, vs: i64) -> u64 {
+    if vs == 0 || vs == i64::MIN {
+        return u64::MAX;
+    }
+    if (vs > 0 && vi > vl) || (vs < 0 && vi < vl) {
+        return 0;
+    }
+    let d = if vs > 0 {
+        vl.wrapping_sub(vi)
+    } else {
+        vi.wrapping_sub(vl)
+    };
+    if d < 0 {
+        u64::MAX
+    } else {
+        d as u64 / vs.unsigned_abs() + 1
     }
 }
 

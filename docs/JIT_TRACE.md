@@ -8308,3 +8308,61 @@ entry, both of which LuaJIT removes by inlining the recursive calls (with their 
 loop of an inlined callee unrolled with a data-dependent trip count (today `InnerLoop` unless the count is a trace constant, `forprep` in
 `record.rs`) and (b) inlined method recursion of a prototype with loops (E1 refuses it, section 34 / the shape rule of `callee_from_upvalue`). Item 2
 alone (facts across trace transitions) needs metatable version stamps (section 28 (b)).
+
+### 75.6 (A) Inlined method recursion of a prototype with loops: three forms tried, none kept (experiment diff kept out of the tree)
+
+Goal: one trace that holds permute's subtree, as LuaJIT's loop trace does. Three knob-gated forms were built and measured on permute (one
+binary, `RUSTYNAIL_SEED=0`, CPU 8; base 178.85 M instructions / 33.3 M cycles):
+
+| form | what | permute instr / cycles | why it fails |
+|---|---|---|---|
+| `meth=1` (+ `lazyloop=2`, `unrollk` 2..8) | E1 may unroll a self-call found through a table (the shape rule of section 34 bypassed) | 178.85 / 33.3-33.9 (no change) | E1 applies to function-entry recordings of a prototype that is already lazy-aware; permute becomes lazy-aware at the *compile* of its entry trace (E4 decides at the first compile), and that trace is never recorded again, so no recording ever unrolls |
+| `leafinl=1` | a root-frame self-call is inlined instead of pushed when the callee returns without a loop / call on the recorded path; otherwise the recording aborts and the site is marked (pushes from then on) | 179.83 / 33.5 (+0.5 %) | one call site serves every recursion level; the first recording made at a non-leaf level marks it, so the leaf sites end up pushing anyway. Without the mark (sites retried): **756.9 M / 131.1 M (4.2x worse)**: most recordings abort (`Recursion` / `InnerLoop` inside the speculated callee), heads stay untraced |
+| `leafinl=2` (+ `dynunroll=8`, `unroll` 3 / 4) | a loop root inlines its root-frame self-calls (up to `unroll` activations), inner loops through `dynunroll` | 178.85 / 33.7-34.6 (no gain, cycles +1..4 %) | the hot loop heads of permute are not loop roots: they are continuation roots and the function-entry root (`StartRefused` / `LeaveLoop` at pc 15 / 19); `unroll=4` + `leafinl=1` gave 218.7 M / 40.6 M (+22 %) |
+
+What LuaJIT does and we cannot do with the current protocol: it records the subtree at whatever level got hot first and takes every other level
+as a side exit *inside an inlined frame* whose side trace again inlines or recurses. Our side traces that start inside inlined frames may not make a
+native push (`push_ok` requires a frameless side trace; a push from depth `d` needs the E1 lazy chain, `frames[1..=d]` all `unr`, which only a
+function-entry recording builds), so every non-recorded level becomes a frameful exit into tier 1 (measured: the `leafinl=2,unroll=4` row).
+Making (A) work therefore needs native pushes from frameful side traces (lazy-frame completion of the inlined frames of an arbitrary side trace),
+which is the E1 / lazy-region machinery generalised to side and continuation recordings. It is not a semantic problem (the guards stay: self shape,
+metatable / `__index`, callee identity, stack and `CallInfo` room per pushed frame), it is a protocol extension that did not fit this time box.
+
+### 75.7 (B) `dynunroll`: inlined `for` loops with run-time bounds are unrolled up to a trip-count bound (`TrLimits::dynunroll`, default 16)
+
+Before: a counted `for` of an inlined callee was unrolled only when its bounds were trace constants (P-E); otherwise it aborted `InnerLoop` (or,
+T9, linked to a root trace of the loop head). Now (`Rec::forprep`): when the trip count at record time is at most `dynunroll`, the loop is recorded
+like one with constant bounds: the existing code computes the count from the run-time bounds and guards it (`init <= limit`, `limit - init >= 0`,
+the division by a variable step guarded), every `FORLOOP` guards its own continuation, the back edges are charged to `loopunroll` (16), so a run-time
+count that differs from the recorded one leaves through a guard of the loop (an exit with the exact state; side traces as usual). No guard is
+removed; only the `InnerLoop` refusal is lifted. `dyn_trips` gives the count (a zero step or a span beyond the signed range: never).
+
+Mutants `dynunroll_count_const` (the recorded count kept as a constant: varying counts run the wrong number of iterations) and
+`dynunroll_skip_unguarded` (a loop skipped at record time is not guarded), caught by `tr_core::s75_dynunroll_programs` (`tests/vm/s75_dynunroll.lua`:
+counts 0 / 1 / many / beyond the bound changing between calls, negative and non-unit steps, nested loops, bounds from a table, early returns;
+`dynunroll` 16 / 2 / 0 and with `loopunroll=4`, modes `always` / `on2` / `on`, `+verify`, exit storms, budget 17, GC stress 2). A first candidate
+(`init <= limit` guard left out) was an equivalent mutant: `limit - init >= 0` guards the same condition.
+
+Measured (one binary, `dynunroll=0` against `=16`, instructions, one run each, 190 programs; geomean -0.68 %):
+
+| program | instr M 0 -> 16 | d | cycles M (min of 3, CPU 8) |
+|---|---|---:|---|
+| programs/nbody | 1933.3 -> 1027.3 | -46.9 % | 345.4 -> 256.3 (-26 %) |
+| corpus/parser_combinator | 9313.5 -> 6975.7 | -25.1 % | 2258.8 -> 1954.1 (-13 %) |
+| corpus/coro_scheduler | 6376.5 -> 5308.2 | -16.8 % | |
+| corpus2/heldout/scheme_interp | 5779.3 -> 4923.0 | -14.8 % | |
+| corpus2/heldout/bigint_rsa | 5659.2 -> 5232.1 | -7.6 % | |
+| corpus2/dev/regex_nfa | 3480.0 -> 3306.4 | -5.0 % (bound 8: +16 %) | |
+| awfy/richards, awfy/json | | -1.7 %, -1.6 % | |
+| awfy/havlak | 503.7 -> 507.3 | +0.7 % | |
+| corpus2/dev/bignum_arith | 2600.7 -> 2642.3 | +1.6 % | |
+| corpus/msgpack_pure | 7659.4 -> 7806.6 | +1.9 % | |
+| corpus/sha2_base64 | 1871.0 -> 1922.4 | +2.7 % | 362.2 -> 381.7 (+5.4 %) |
+| awfy/storage | 492.2 -> 516.5 | +4.9 % | 102.5 -> 110.5 (+7.8 %) |
+| awfy/permute | 178.85 -> 178.85 | 0 | 33.0 -> 32.9 |
+
+Per-site gates tried for the regressions, none removes them (so they are not churn; the unrolled traces themselves are slower there):
+(1) only bodies without calls: kills every win too (nbody's body calls `math.sqrt`); (2) a per-site budget of 2 / 4 / 8 recordings that may unroll;
+(3) a per-site limit on distinct recorded trip counts (2 / 3 / 5): storage, sha2, msgpack, bignum unchanged at every setting, wins partly lost.
+storage's site is `for i = 1, size do a[i] = false end` with random sizes in an inlined callee. Default ON (16) for the geomean and the size
+of the wins; the four regressions stay open (with `dynunroll=0` per run as the escape).

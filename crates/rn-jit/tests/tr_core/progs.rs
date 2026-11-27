@@ -12,6 +12,12 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
+        name: "s75_dynunroll",
+        small: true,
+        // section 75.7 (`dynunroll`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s75_dynunroll.lua"),
+    },
+    Prog {
         name: "s75_oframe",
         small: true,
         // section 75 (`oframe`): the vm-corpus program, also compared with the reference there
