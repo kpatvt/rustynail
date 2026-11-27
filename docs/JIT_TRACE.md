@@ -9237,3 +9237,55 @@ Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the 
 With `sloadhome=3` on top (measured before it was switched off): towers -0.44 % / -2.3 % cycles, permute -0.31 %, lua_lexer -0.20 %. Whole set
 (223 programs, instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise
 beyond 0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
+
+## 80. The compile cost of the trace back end: measurement, and the structural levers (2026-11-27, base c707218)
+
+Task: make compiling a trace cost a fraction of today's (stages M0 measure, M1 memory, M2 fused allocation + emission, M3 direct encoding and
+compact exits, M4 what the profiles rank next), each stage behind its own knob with the old path as the oracle.
+
+### 80.0 M0: the compile-cost harness and the baseline
+
+**Counters.** `RUSTYNAIL_JIT_PHASECTR=1` makes the phase timers of `tr::phase` count user-mode instructions of the thread (a `perf_event_open`
+counter read with `read`; deterministic at `RUSTYNAIL_SEED=0`) instead of TSC ticks, independently of `RUSTYNAIL_JIT_VERBOSE`, and prints the
+totals at exit (`[trace] phases (Minstr/calls): ... sizes ins .. snaps .. snapents .. ops .. bytes .. stubops .. sharedops ..`). New phases: `front`
+(`pipeline_front`: sinking, the root passes or the side subset, forwarding, presizing), `pipe_side` (the pipelines of side traces), `res_env` (cells,
+counters, `AsmEnv`); sizes summed over the compiles: IR instructions, snapshots, snapshot entries, micro-ops, code bytes, micro-ops of the stubs and
+cold tails, micro-ops of the embedded shared exit routine. Without the variable nothing changes (one load of a `OnceLock` per timer read).
+
+**Harness.** `scripts/compile-cost.sh phases BIN=name ... [--programs ...]` (one run per binary and program: total instructions, compile
+instructions = recorder steps + pipelines + tier-1 compiles + deferred stubs, their share, k instructions per pipeline and per phase, sizes per
+trace), `cycles` (min of N interleaved `perf stat` runs, 300 ms spin, `RUSTYNAIL_SEED=0`), `whole` (instructions of every program of the 9 sets, one
+run each, geomean against the first binary). Memory cap and timeout are in the wrapper; pin with `--cpu`.
+
+**Baseline** (base c707218 + the counters, release `rn-cli`, 5.5, CPU 5; instructions):
+
+| program | instr M | compile M | share | recording M | pipelines M | n | k / pipeline | side n | k / side | tier 1 M | n | stubs M |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| apps/raytrace | 274.56 | 70.36 | 25.6 % | 27.83 | 32.46 | 42 | 773 | 35 | 554 | 9.01 | 15 | 1.06 |
+| awfy/cd | 609.84 | 178.95 | 29.3 % | 44.99 | 106.79 | 261 | 409 | 235 | 307 | 18.02 | 40 | 9.15 |
+| awfy/towers | 162.61 | 18.10 | 11.1 % | 4.57 | 11.21 | 27 | 415 | 21 | 452 | 1.48 | 5 | 0.84 |
+| awfy/json | 417.07 | 45.36 | 10.9 % | 12.86 | 21.12 | 64 | 330 | 51 | 247 | 10.28 | 15 | 1.10 |
+| lib/fmt_s | 22.87 | 1.62 | 7.1 % | 0.18 | 0.44 | 2 | 220 | 1 | 90 | 0.99 | 1 | 0.01 |
+| awfy/richards | 154.81 | 36.46 | 23.6 % | 10.92 | 17.40 | 31 | 561 | 29 | 571 | 7.30 | 18 | 0.84 |
+| awfy/deltablue | 294.18 | 62.40 | 21.2 % | 26.08 | 20.19 | 47 | 430 | 35 | 218 | 15.14 | 48 | 0.99 |
+| apps/expr_lang | 485.20 | 51.32 | 10.6 % | 10.98 | 27.58 | 66 | 418 | 50 | 321 | 10.79 | 15 | 1.97 |
+
+(The cycle shares of section 76.0 are higher: compile code misses the caches.) Per pipeline (k instructions, per compile that reached the
+assembler) and per trace sizes:
+
+| program | k / pipeline | front | ra | exits | res_env | asm | x86 | hash | install | rest | IR ins | snaps | snap entries | micro-ops | code bytes | stub + tail ops | shared-exit ops | ra+exits+asm+x86 per IR ins |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| apps/raytrace | 773 | 261 | 180 | 98 | 3 | 116 | 80 | 10 | 4 | 21 | 125 | 37 | 491 | 543 | 3436 | 246 | 73 | 3793 |
+| awfy/cd | 409 | 123 | 91 | 47 | 3 | 65 | 54 | 4 | 6 | 17 | 57 | 20 | 205 | 356 | 2248 | 180 | 73 | 4508 |
+| awfy/towers | 415 | 85 | 106 | 41 | 3 | 78 | 81 | 2 | 4 | 14 | 73 | 20 | 179 | 528 | 3188 | 228 | 73 | 4220 |
+| awfy/json | 330 | 49 | 87 | 27 | 2 | 69 | 70 | 5 | 5 | 14 | 65 | 19 | 91 | 449 | 2688 | 199 | 73 | 3911 |
+| lib/fmt_s | 220 | 60 | 50 | 10 | 0 | 35 | 45 | 5 | 5 | 10 | 32 | 8 | 20 | 290 | 1842 | 179 | 73 | 4444 |
+
+What this says: (1) the back end spends **3800-4500 instructions per IR instruction** (allocator ~1500, assembler ~1100, encoder ~150 per micro-op);
+LuaJIT's whole compile is about 70 k cycles per trace. (2) Traces are small (57-125 IR instructions) and **half of the micro-ops are cold stubs and
+tails**; every trace embeds its own copy of the shared exit routine (73 micro-ops, about 480 bytes: 21 % of cd's average trace). (3) The front passes
+are the largest phase on raytrace and cd (`opt_loop::transform` about half of it, sinking 20-47 %). (4) No function dominates inside a phase
+(frame-pointer profile of cd, `perf record -e instructions:u --call-graph fp`, samples classified by the innermost phase function on the chain):
+allocator = main loop 34 %, prologue passes 22 %, `open_snap` 10 %, `pick_free` 8 %; encoder = byte encoding 31 %, the per-op dispatch 30 %;
+assembler = stub planning / `ExitSnap` clones 20 %, instruction selection 25 %; exits = the per-snapshot loop 36 %, `slot_value` 10 %;
+allocation inside the phases 3-6 %.

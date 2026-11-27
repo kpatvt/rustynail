@@ -9894,6 +9894,13 @@ impl Cx<'_> {
     // ---- stubs (7.6) ---------------------------------------------------------------------------------------------------
 
     fn stubs_and_tail(&mut self, entry_fail: L, rec_fail: Option<L>) -> Result<(), AsmError> {
+        let at0 = self.p.ops.len();
+        let r = self.stubs_and_tail_in(entry_fail, rec_fail);
+        super::phase::size(super::phase::SZ_STUBOPS, self.p.ops.len() - at0);
+        r
+    }
+
+    fn stubs_and_tail_in(&mut self, entry_fail: L, rec_fail: Option<L>) -> Result<(), AsmError> {
         // TR6 failures: entry-failure bookkeeping, then tier 1 at pcl[H]
         self.bind(entry_fail);
         self.entry_failure_ops(false, true);
@@ -10225,6 +10232,7 @@ impl Cx<'_> {
                 },
             );
             self.p.ops.insert(at, Op::Bind(l));
+            super::phase::size(super::phase::SZ_SHAREDOPS, self.p.ops.len() - at);
             self.shared_l = Some(l);
         }
     }

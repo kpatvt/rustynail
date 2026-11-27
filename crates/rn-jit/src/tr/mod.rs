@@ -1927,8 +1927,12 @@ fn pipeline(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> 
     // Section 49: the compile-speed levers of this state
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     crate::cspeed::set(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cspeed });
+    let side = rec.side.is_some();
     let r = pipeline_inner(st, act, rec);
     phase::add(phase::PIPELINE, t0);
+    if side {
+        phase::add(phase::PIPE_SIDE, t0);
+    }
     r
 }
 
@@ -2083,7 +2087,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     let ccheck_on = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0;
     let orig = ccheck_on.then(|| rec.clone());
-    pipeline_front(st, act, &mut rec, link_root, stitched)?;
+    let t_front = phase::now();
+    let fr = pipeline_front(st, act, &mut rec, link_root, stitched);
+    phase::add(phase::FRONT, t_front);
+    fr?;
     if let Some(mut o) = orig {
         let slow = crate::cspeed::with(0, || pipeline_front(st, act, &mut o, link_root, stitched));
         if slow.is_err()
@@ -2261,6 +2268,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     let (mut snaps, mut descs) =
         exit::build_exits_ex(ir, &al, &res, exit_tags).map_err(|e| abort_err("exits", e))?;
     phase::add(phase::EXITS, t_ex);
+    let t_env = phase::now();
     // Section 49 (`ccheck`): the allocation and the exits of the old paths, compared now (the snapshots are completed below)
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     let ccheck = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0
@@ -2804,6 +2812,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             || side.is_some_and(|s| s.frameful),
         defer: defer_on,
     };
+    phase::add(phase::RES_ENV, t_env);
     let t_asm = phase::now();
     // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): a side trace attached to an exit that can take a direct link gets a link entry: the parent's exit map
     // stores (the slot part of the parent's inline stub) and the exit's refund
@@ -2903,6 +2912,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     }
     let em = x86::emit_ex(&a.prog, &want).map_err(|e| abort_err("x86", format!("x86: {e:?}")))?;
     phase::add(phase::X86, t_x86);
+    phase::size(phase::SZ_INS, ir.ins.len());
+    phase::size(phase::SZ_SNAPS, ir.snaps.len());
+    phase::size(phase::SZ_SNAPENTS, ir.snapmap.len());
+    phase::size(phase::SZ_OPS, a.prog.ops.len());
+    phase::size(phase::SZ_BYTES, em.code.len());
     if ccheck && !emurun && !emuverify {
         // Section 49 (`ccheck`): the assembler and the encoder of the old paths on the same (checked) allocation and exits
         let same = crate::cspeed::with(0, || {
