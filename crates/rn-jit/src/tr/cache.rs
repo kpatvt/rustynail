@@ -180,6 +180,8 @@ pub const SIDEBLF_PROCESS: u32 = 65;
 pub const CARENA_PROCESS: u32 = 1;
 /// Section 76.10 (`t1exit`): the process default of [`TrLimits::t1exit`] (also the struct default).
 pub const T1EXIT_PROCESS: u32 = 1;
+/// Section 76.11 (`hdrcse`): the process default of [`TrLimits::hdrcse`] (also the struct default).
+pub const HDRCSE_PROCESS: u32 = 1;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
@@ -911,6 +913,12 @@ pub struct TrLimits {
     /// `pc` and leaves (12-20 bytes each); also the inline exit stubs of the instructions tier 1 does not compile and the `MMBIN` stubs.
     /// 0 = off, 1 = on (default [`T1EXIT_PROCESS`]).
     pub t1exit: u32,
+    /// Section 76.11 (`hdrcse`, docs/JIT_TRACE.md section 76.11): the recorder reuses an `FLOAD` of the same table ref and header field emitted
+    /// earlier in the recording when no instruction since may change a table header (`opt_mem::header_safe`, rule 4: allocation, key insertion,
+    /// `TSET`, `TLEN`, library calls are barriers), so the node-count guard and the node / metatable loads of repeated field accesses of one table
+    /// are recorded once (the loop pass, which does this for allocation-free root traces, gives up on traces with a barrier). 0 = off, 1 = on
+    /// (default [`HDRCSE_PROCESS`]).
+    pub hdrcse: u32,
     /// Section 75.13 (`mfdeep`, docs/JIT_TRACE.md section 75.13): E5's fold of the family key also in an inlined chain frame (`unr`) that was called with
     /// the root's closure ref and whose register 0 is the root's entry register 0. 0 = off, 1 = on (default [`MFDEEP_PROCESS`]).
     pub mfdeep: u32,
@@ -1216,6 +1224,7 @@ impl Default for TrLimits {
             sideblf: SIDEBLF_PROCESS,
             carena: CARENA_PROCESS,
             t1exit: T1EXIT_PROCESS,
+            hdrcse: HDRCSE_PROCESS,
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
@@ -1460,6 +1469,7 @@ impl TrLimits {
                 "sideblf" => l.sideblf = v.min(511),
                 "carena" => l.carena = v.min(1),
                 "t1exit" => l.t1exit = v.min(1),
+                "hdrcse" => l.hdrcse = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),

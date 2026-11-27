@@ -10491,6 +10491,17 @@ fn s76_t1exit_programs() {
     assert_eq!(TrLimits::default().t1exit, 1);
 }
 
+/// Section 76.11 (`hdrcse`): the recorder's reuse of header loads (`FLOAD`) until a header barrier. A program that reads fields of one table
+/// around key insertions that rehash and allocations, and the field-heavy programs, run identically
+/// with the knob on and off in every mode (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves). Mutant `hdrcse_no_barrier`.
+#[test]
+fn s76_hdrcse_programs() {
+    let progs = ["s76_hdr_reuse", "s64_call_loops", "s76_side_fail"];
+    let res = compare(b1_jobs(&progs, &["hdrcse=1", "hdrcse=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().hdrcse, 1);
+}
+
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at
 /// the compile-only level, and off (control).
 /// Mutants `tailhook_ignored`, `tailhook_from_jit_enter`.

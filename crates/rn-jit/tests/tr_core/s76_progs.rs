@@ -6,6 +6,28 @@ use super::progs::Prog;
 
 pub const S76_PROGS: &[Prog] = &[
     Prog {
+        name: "s76_hdr_reuse",
+        small: false,
+        src: r##"
+-- repeated field reads of one table around header barriers (section 76.11, `hdrcse`): key insertions that rehash (integer keys in
+-- the hash part) and allocations; a read after the barrier must see the new node vector and size
+local acc = 0
+for r = 1, 200 do
+  local t = { a = 1, b = 2, c = 3 }
+  for i = 1, 40 do
+    acc = acc + t.a + t.b
+    t[1000 + i * 7 + r] = i
+    acc = acc + t.b + t.c
+    local u = { x = t.a, y = i }
+    acc = acc + u.x + t.a + u.y
+    t[2000 + i] = u
+    acc = acc + t.c + t.b
+  end
+end
+print(acc)
+"##,
+    },
+    Prog {
         name: "s76_t1_exits",
         small: false,
         src: r##"
