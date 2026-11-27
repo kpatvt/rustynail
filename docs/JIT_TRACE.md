@@ -8466,3 +8466,24 @@ mid-run, errors from depth under `pcall`, self fields changed in the recursion, 
 `h9_inl_savedpc_off`, `h9_inl_push_skip`, `h9_inl_bump_off` are caught there. Two sidepush-specific mutants were tried and are equivalent:
 pushing from frames that are not chain frames (`end_rec_call` re-checks every frame and aborts `Unroll`), and counting a frame called for open
 results as a chain frame (the lazy completion decodes the caller's `CALL` when the prototype's calls do not share one result count); dropped.
+
+### 75.11 permute after `sidepush` (12f302d): trace structure and where the instructions are
+
+Release, `RUSTYNAIL_SEED=0`, CPU 8, min of 5: default size 135.79 M instructions / 26.9-27.1 M cycles (2606226: 191.22 / 35.40); 1000 iterations
+1293.5 M / 222.0 M (2606226: 1864.9 / 320.3), i.e. **148.6 instructions and 25.1 cycles per call** in steady state (LuaJIT 48 / 9.9: 3.1x / 2.5x).
+Traces (`RUSTYNAIL_JIT_DUMP`, `perf record -e instructions:u` shares per trace at 1000 iterations, times 148.6):
+
+| trace | what | instr / call |
+|---|---|---:|
+| 7 | root pc 22: swap, `FORLOOP`, next iteration's swap, the callee's prologue inlined (chain frame: `count` update, `n ~= 0`, `n - 1`), chain push at frame 1 pc 10 | 49.4 |
+| 8 | root pc 11: `FORPREP`, swap, the callee inlined as a chain frame; a leaf callee returns inside the trace, swap, loop end, native `RETURN0` | 37.5 |
+| 11 | side at frame 1 pc 4 (the chain frame's `n ~= 0` exit of trace 8 / 7): its push from inside the chain frame (`sidepush`) | 23.0 |
+| 3 | function entry: `count` update, `n ~= 0`, self-push loop | 22.5 |
+| 9 | side of the loop-end exit: native `RETURN0` | 9.5 |
+| 4 | side of trace 3 (`n == 0`): native `RETURN0` | 2.5 |
+
+IR of the hot traces: trace 7 has 61 IR instructions of which 22 are the method chain (`HMISS` x2, `FLOAD` x9, `HREFK` x4, `HLOAD` x4 of `__index`
+/ methods, `EQREF` x2, `NE`) and 6 entry `SLOAD`s; the swap bodies are 4 `ALOAD` + 4 `ASTORE` + 3 `ULT`. Trace 8: 42 IR, 21 of them the method
+chain. Trace 11: 24 IR, 14 the chain. The per-call remainder against LuaJIT is therefore: the method-chain re-validation at every trace entry
+(about 60 % of the IR of traces 7 / 8 / 11), the push / return protocol of the calls that are still cut (one push per call that is not a leaf at the
+recorded level, one native return per frame), and the entry `POLL` / `BUDGET` / slot guards per trace.
