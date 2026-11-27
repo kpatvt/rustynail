@@ -217,6 +217,8 @@ pub(crate) struct Parser<'a, H: CompilerHost> {
     /// first `luaM_growvector` limit violation seen by `addk` (which cannot fail); reported by the
     /// next `k_code`
     pub limit_error: Option<Vec<u8>>,
+    /// Section 77.3: read-only upvalue tracking.
+    pub uvk: crate::uvk::UvkTrack,
 }
 
 /// Token helper: is `t` the single-character token `c`?

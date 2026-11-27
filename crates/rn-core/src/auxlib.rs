@@ -1632,6 +1632,10 @@ impl State {
             let uv = cl.upval(n - 1);
             uv.set(v);
             self.heap().barrier(uv.as_ptr().cast(), &v);
+            #[cfg(feature = "jit")]
+            if cl.proto().upvalue_descs().get(n - 1).is_some_and(|d| d.ro) {
+                crate::jit_hooks::upval_changed(self, false);
+            }
             let name = cl
                 .proto()
                 .upvalue_descs()
@@ -1728,6 +1732,23 @@ impl State {
         if let (Some(c1), Some(c2)) = (f1.as_lclosure(), f2.as_lclosure()) {
             let uv = c2.upval(n2 - 1);
             c1.set_upval(self.heap(), n1 - 1, uv);
+            #[cfg(feature = "jit")]
+            {
+                let ro = |c: Gc<crate::func::LClosure>, n: usize| {
+                    c.proto().upvalue_descs().get(n).is_some_and(|d| d.ro)
+                };
+                if ro(c1, n1 - 1) || ro(c2, n2 - 1) {
+                    crate::jit_hooks::upval_changed(self, true);
+                }
+            }
         }
+    }
+
+    /// `lua_setlocal` / `debug.setlocal`: writes the value into the local's stack slot. Section 77.3: the slot may hold a captured
+    /// read-only variable (an open upvalue), so the JIT is told.
+    pub fn set_local_value(&mut self, pos: StkId, v: Value) {
+        self.set(pos, v);
+        #[cfg(feature = "jit")]
+        crate::jit_hooks::upval_changed(self, false);
     }
 }

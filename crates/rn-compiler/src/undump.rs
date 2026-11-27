@@ -272,6 +272,7 @@ mod imp {
                     in_stack,
                     idx,
                     kind,
+                    ro: false,
                 });
             }
             Ok(v)

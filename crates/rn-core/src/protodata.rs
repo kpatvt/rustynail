@@ -16,13 +16,27 @@ pub enum Const<S> {
 }
 
 /// Upvalue descriptor (`Upvaldesc`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct UpvalDesc<S> {
     pub name: Option<S>,
     pub in_stack: bool,
     pub idx: u8,
     /// `kind`: regular / const / compile-time-const (`VDKREG`, `RDKCONST`, `RDKTOCLOSE`, `RDKCTC`).
     pub kind: u8,
+    /// Section 77.3 (`uvk`): the variable this upvalue captures is never assigned after its initialisation anywhere in the source
+    /// (no assignment statement names it in its own function or in any nested one). Set by the compiler only; not dumped (an undumped
+    /// prototype has `false`), not part of equality. The JIT may treat the value seen through a closure it holds by identity as a
+    /// constant (`debug.setupvalue` / `debug.setlocal` / `debug.upvaluejoin` and their C API forms notify it, `jit_hooks::upval_changed`).
+    pub ro: bool,
+}
+
+impl<S: PartialEq> PartialEq for UpvalDesc<S> {
+    fn eq(&self, o: &Self) -> bool {
+        self.name == o.name
+            && self.in_stack == o.in_stack
+            && self.idx == o.idx
+            && self.kind == o.kind
+    }
 }
 
 /// Local variable debug info (`LocVar`).

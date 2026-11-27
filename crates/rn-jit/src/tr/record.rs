@@ -208,6 +208,10 @@ pub struct RecCfg {
     pub mfdeep: bool,
     /// Section 75.14 (`mfshare`): repeated `mfkeys` lookups of one key share the first value.
     pub mfshare: bool,
+    /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants (bit 0); bit 1: not in the root frame of the
+    /// recording (no identity guard on the root closure); bit 2: not in side recordings; bit 3: a new identity guard only on a closure created
+    /// by a main chunk.
+    pub uvk: u32,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -569,6 +573,9 @@ impl Default for RecCfg {
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
+            // (section 77.3: the driver sets it from `TrLimits::uvk`; recorder unit tests replay against handle models that cannot evaluate an
+            // identity guard on a closure address, and tr_core covers the knob)
+            uvk: 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -807,11 +814,22 @@ pub fn take_retf_used() -> bool {
     RETF_USED.with(|c| c.replace(false))
 }
 
+thread_local! {
+    /// Section 77.3 (`uvk`): the closures the recording closed last holds by identity (`None`: it read no read-only upvalue as a constant).
+    static UVK_CLOSED: std::cell::RefCell<Option<Vec<usize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Section 77.3: the closures (addresses) the recording closed last holds by identity, `Some` when it folded read-only upvalues (and clears it).
+pub fn take_uvk_closures() -> Option<Vec<usize>> {
+    UVK_CLOSED.with(|c| c.borrow_mut().take())
+}
+
 /// Arms a recording rooted at the Lua frame `ci` for the loop whose head is `head` (a pc of the frame's proto). Returns
 /// the token (also given to the callbacks), or `None` when nothing was armed (not a Lua frame, hook installed,
 /// recording already armed, the proto does not lower).
 pub fn arm(st: &mut State, ci: Ci, head: u32, cfg: RecCfg) -> Option<u64> {
     RETF_USED.with(|c| c.set(false));
+    UVK_CLOSED.with(|c| *c.borrow_mut() = None);
     let why = super::diag::set_why;
     let cl = st.ci_lclosure(ci).or_else(|| {
         why("NoLuaFrame");
@@ -874,6 +892,9 @@ pub fn step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
         }
         Ok(Flow::Closed(done)) => {
             st.heap().unwatch_all();
+            if rec.uvk_used {
+                UVK_CLOSED.with(|c| *c.borrow_mut() = Some(rec.uvk_cl.clone()));
+            }
             if rec.atg_flipped() {
                 NOATG.with(|n| n.borrow_mut().insert((rec.entry_proto, rec.head)));
                 finish_with(token, RecOutcome::Aborted(AbortReason::AtouchFlip));
@@ -1334,10 +1355,22 @@ struct Rec {
     oframe_floor: Option<(u32, usize, usize)>,
     /// Section 75.14 (`mfshare`): the value refs of the `mfkeys` lookups made so far in this recording, by constant index.
     mfk_seen: Vec<(u32, Ref)>,
+<<<<<<< HEAD
     /// Section 76.11 (`hdrcse`): the `FLOAD`s since the last header barrier, `(table ref, field, type, load ref)`, and how many IR
     /// instructions were checked for barriers.
     hdr_cache: Vec<(Ref, Ref, Ty, Ref)>,
     hdr_scan: usize,
+=======
+    /// Section 77.3 (`uvk`): closure refs whose identity the trace knows (guarded by `EQREF` with the closure's address, or a `KPTR` constant read
+    /// from a read-only upvalue), with the address.
+    uvk_known: Vec<(Ref, usize)>,
+    /// Section 77.3: the addresses of the closures guarded by identity (watched while recording, registered at install).
+    uvk_cl: Vec<usize>,
+    /// Section 77.3: how many of `uvk_cl` are on the collector's watch list.
+    uvk_watched: usize,
+    /// Section 77.3: a read-only upvalue was read as a constant.
+    uvk_used: bool,
+>>>>>>> d52cc24
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1433,6 +1466,8 @@ struct Rec {
     /// Section 39.1 (T1, `retfsel`): the selector allows the pop at the root `RETURN` this step executes (computed in `on_step`, where the
     /// state is at hand; false at every other step).
     retf_sel_ok: bool,
+    /// Section 77.7 (`retf` bit 6): the caller's innermost loop around its `CALL` has a root trace (computed in `on_step`, at a root `RETURN`).
+    retf_self_traced: bool,
     /// T9 (`inner_link`): the `FORPREP` this step executes may record a data-dependent prep inside an inlined frame (its loop head has an installed root
     /// trace; computed in `on_step`, false at every other step).
     prep_link_ok: bool,
@@ -1709,8 +1744,15 @@ impl Rec {
             oframe_wb: None,
             oframe_floor: None,
             mfk_seen: Vec::new(),
+<<<<<<< HEAD
             hdr_cache: Vec::new(),
             hdr_scan: 0,
+=======
+            uvk_known: Vec::new(),
+            uvk_cl: Vec::new(),
+            uvk_watched: 0,
+            uvk_used: false,
+>>>>>>> d52cc24
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -1754,6 +1796,7 @@ impl Rec {
             midfolded: false,
             segs: Vec::new(),
             retf_sel_ok: false,
+            retf_self_traced: false,
             prep_link_ok: false,
             prep_link: None,
             inner_ret_ok: false,
@@ -1909,8 +1952,15 @@ impl Rec {
         self.oframe_wb = None;
         self.oframe_floor = None;
         self.mfk_seen.clear();
+<<<<<<< HEAD
         self.hdr_cache.clear();
         self.hdr_scan = 0;
+=======
+        self.uvk_known.clear();
+        self.uvk_cl.clear();
+        self.uvk_watched = 0;
+        self.uvk_used = false;
+>>>>>>> d52cc24
         self.inl_back.set(0);
         self.la_seen.borrow_mut().clear();
         self.first_store = None;
@@ -2200,6 +2250,17 @@ impl Rec {
                 Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
             )
             && self.retf_sel_check(st, ci);
+        // section 77.7 (`retf` bit 6): the caller's loop around the call is traced
+        self.retf_self_traced = self.cfg.retf & 64 != 0
+            && self.cfg.fn_root
+            && self.cfg.side.is_some()
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && self.caller_loop_traced(st, ci);
         // T9 (`inner_ret`): the same question without the recursion test, for any family whose root head a root trace links into
         self.inner_ret_ok = self.cfg.inner_ret
             && self.cfg.side.is_some()
@@ -3439,6 +3500,15 @@ impl Rec {
                 return Ok((0, false));
             }
             // P-V: the constant string metatable: its model handle (registered by `string_method`)
+            TOp::Kptr if ins.t == Ty::Lcf => {
+                let p = self.val_bits(ins.a);
+                let h = self
+                    .cl_reg
+                    .get(&(p as usize))
+                    .copied()
+                    .ok_or(AbortReason::Diverge)?;
+                return Ok((h, false));
+            }
             TOp::Kptr if ins.t == Ty::Tab => {
                 let p = self.val_bits(ins.a);
                 let h = self
@@ -3457,7 +3527,10 @@ impl Rec {
         if ins.op == TOp::Eqref
             && bref != NOREF
             && bref < REF_BIAS
-            && matches!(self.b.ir.kval(bref), KVal::Ptr(_, PtrKind::Proto))
+            && matches!(
+                self.b.ir.kval(bref),
+                KVal::Ptr(_, PtrKind::Proto | PtrKind::LClosure)
+            )
         {
             bref = ins.a;
         }
@@ -3834,6 +3907,11 @@ impl Rec {
             st.heap().watch_object(t.as_ptr().cast());
         }
         self.pinned = self.tabs.len();
+        // section 77.3: the closures held by identity (their addresses are constants of the trace)
+        for &a in &self.uvk_cl[self.uvk_watched.min(self.uvk_cl.len())..] {
+            st.heap().watch_object(a as *mut _);
+        }
+        self.uvk_watched = self.uvk_cl.len();
     }
 
     /// TR17: the instruction recorded last, checked against the VM's frame (the successor pc is checked by the validation of
@@ -6416,6 +6494,119 @@ impl Rec {
         Ok(Some(((r, Ty::Lcf), v)))
     }
 
+    /// Section 77.3 (`uvk`, docs/JIT_TRACE.md section 77.3): `GETUPVAL` of an upvalue the compiler marked read-only (`UpvalDesc::ro`) is the value
+    /// the closure sees now, as a constant, once the trace holds the frame's closure by identity. Sound because (a) the closure is the recorded
+    /// one: its ref is guarded `EQREF closure, KPTR(address)` (once per closure ref; a ref that is itself such a constant needs none), and the
+    /// address cannot be reused by another closure while the trace exists (the collection of a closure registered at install flushes its
+    /// traces, `cache::uvk_closure_freed`; a collection during the recording aborts it through the watch list); (b) its upvalue `n` is the
+    /// recorded cell: only `debug.upvaluejoin` / `lua_upvaluejoin` replaces a cell, and that flushes (`jit_hooks::upval_changed`); (c) the cell's
+    /// value is the recorded one: the variable is never assigned after its initialisation (the compiler's mark) and every write outside the
+    /// language (`debug.setupvalue`, `debug.setlocal`, the C API) flushes; a closure always captures the variable after its initialisation.
+    /// Collectable constants (closures, tables, strings) are reachable from the guarded closure's cells, so they live as long as the trace.
+    fn uvk_uload(&mut self, vm: &Vm<'_>, n: usize) -> R<Option<((Ref, Ty), Value)>> {
+        if self.cfg.uvk & 1 == 0
+            || n >= vm.cl.nupvalues()
+            || (self.cfg.uvk & 2 != 0 && self.cur_depth == 0)
+            || (self.cfg.uvk & 4 != 0 && self.cfg.side.is_some())
+        {
+            return Ok(None);
+        }
+        let p = vm.cl.proto();
+        if !p.upvalue_descs().get(n).is_some_and(|u| u.ro) && !mutants::active("uvk_any_upvalue") {
+            return Ok(None);
+        }
+        let v = vm.cl.upval(n).get();
+        let Some(ty) = ty_of_value(&v) else {
+            return Ok(None);
+        };
+        if !matches!(
+            ty,
+            Ty::Int
+                | Ty::Num
+                | Ty::Nil
+                | Ty::False
+                | Ty::True
+                | Ty::Lfn
+                | Ty::Lcf
+                | Ty::Tab
+                | Ty::ShrStr
+        ) {
+            return Ok(None);
+        }
+        let d = self.cur_depth;
+        if let Some(c) = v.as_lclosure() {
+            // (a closure of a prototype on the frame stack: a recursion, whose shape rules (E1 / E2) want the upvalue load)
+            let pk = &*c.proto() as *const Proto as usize;
+            if self.frames[..=d].iter().any(|f| f.proto == pk) {
+                return Ok(None);
+            }
+        }
+        let cref = if d > 0 {
+            self.frames[d].cref
+        } else {
+            self.func_ref_load()?
+        };
+        if cref == NOREF {
+            return Ok(None);
+        }
+        let addr = vm.cl.as_ptr() as usize;
+        match self.uvk_known.iter().find(|e| e.0 == cref) {
+            Some(e) if e.1 == addr => {}
+            Some(_) => return Ok(None),
+            None => {
+                // (a new identity guard only for a prototype instantiated once so far: closures of a prototype made again and again, or
+                // made anew after a collection, would fail the guard or flush the trace at their collection; a performance rule only)
+                if p.jitinst.get() > 1 || (self.cfg.uvk & 8 != 0 && !vm.cl.mainmade()) {
+                    return Ok(None);
+                }
+                let k = self.b.ir.konst(KVal::Ptr(addr as u64, PtrKind::LClosure));
+                if !mutants::active("uvk_ident_skip") {
+                    self.entry_guard(TOp::Eqref, Ty::I64, cref, k, 0)?;
+                }
+                self.uvk_known.push((cref, addr));
+                self.uvk_cl.push(addr);
+            }
+        }
+        self.touch(&v)?;
+        let kptr = |s: &mut Self, bits: u64, kind: PtrKind, t: Ty| -> R<Ref> {
+            let a = s.b.ir.konst(KVal::Ptr(bits, kind));
+            Ok(s.b.emit_raw(Ins {
+                op: TOp::Kptr,
+                t,
+                flags: 0,
+                a,
+                b: NOREF,
+                prev: NOREF,
+                aux: 0,
+            })?)
+        };
+        let r = match ty {
+            Ty::Int => self.kint(v.as_int().unwrap_or(0)),
+            Ty::Num => self.b.ir.knum(v.as_float().unwrap_or(0.0)),
+            Ty::Nil | Ty::False | Ty::True => self.b.ir.konst(KVal::Pri(ty)),
+            Ty::Lfn => self
+                .b
+                .ir
+                .konst(KVal::Ptr(payload_bits(&v, ty), PtrKind::Builtin)),
+            Ty::Lcf => {
+                let c = v.as_lclosure().expect("closure tag");
+                let ca = c.as_ptr() as usize;
+                let r = kptr(self, ca as u64, PtrKind::LClosure, Ty::Lcf)?;
+                self.uvk_known.push((r, ca));
+                r
+            }
+            Ty::Tab => kptr(self, payload_bits(&v, ty), PtrKind::Raw, Ty::Tab)?,
+            _ => kptr(self, payload_bits(&v, ty), PtrKind::Raw, Ty::ShrStr)?,
+        };
+        self.uvk_used = true;
+        Ok(Some(((r, ty), v)))
+    }
+
+    /// Section 77.3: does the trace hold `r` by identity as the closure at `addr`?
+    fn uvk_holds(&self, r: Ref, addr: usize) -> bool {
+        r != NOREF && self.uvk_known.iter().any(|e| e.0 == r && e.1 == addr)
+    }
+
     /// Whether upvalue `n` of the current closure is an open upvalue at a slot of the root frame (N1; no emission).
     fn uv_is_slot(&self, vm: &Vm<'_>, n: usize) -> bool {
         n < vm.cl.nupvalues() && self.in_root_frame(vm.cl.upval(n).value_ptr() as usize)
@@ -6430,6 +6621,9 @@ impl Rec {
     /// alias reads the register).
     fn uload(&mut self, vm: &Vm<'_>, n: usize) -> R<((Ref, Ty), Value)> {
         if let Some(r) = self.idfold_uload(vm, n)? {
+            return Ok(r);
+        }
+        if let Some(r) = self.uvk_uload(vm, n)? {
             return Ok(r);
         }
         let acc = self.uref(vm, n)?;
@@ -7404,6 +7598,8 @@ impl Rec {
         };
         if mutants::active("callee_guard_skip") || (running != NOREF && cref == running) {
             // (mutant: no guard; E2: the callee is the running closure's own ref, a folded `GETUPVAL`)
+        } else if self.uvk_holds(cref, cl.as_ptr() as usize) {
+            // (section 77.3: the callee is a closure the trace holds by identity)
         } else if running != NOREF {
             self.entry_guard(TOp::Eq, Ty::I64, cref, running, 0)?;
         } else {
@@ -7846,6 +8042,8 @@ impl Rec {
             if cref != run {
                 self.entry_guard(TOp::Eq, Ty::I64, cref, run, 0)?;
             }
+        } else if self.uvk_holds(cref, cl.as_ptr() as usize) {
+            // (section 77.3: the callee is a closure the trace holds by identity: its proto is the recorded one)
         } else if !mutants::active("callee_guard_skip") {
             if let Some(k) = known {
                 if !mutants::active("cloreuse_guard_skip") {
@@ -8062,7 +8260,8 @@ impl Rec {
                 && (!self.cfg.fn_root
                     || self.cfg.retf & 4 != 0
                     || self.retf_sel_ok
-                    || self.inner_ret_ok)
+                    || self.inner_ret_ok
+                    || (self.cfg.retf & 16 != 0 && self.retf_into_self(vm)))
             {
                 if let Some(r) = self.retf(vm, i, op)? {
                     self.inner_ret_used |= self.inner_ret_ok;
@@ -8135,6 +8334,53 @@ impl Rec {
             return false;
         }
         super::cache::enclosing_loop_head(ccode, call_pc).and_then(|h| q(st, &cp, h)) == Some(true)
+    }
+
+    /// Section 77.7 (`retf` bit 4): the root frame of a function-entry family's side recording returns into a frame of its own prototype (a
+    /// recursion returning into the caller's loop or continuation): the pop is allowed like the selector's. Every other condition of `Rec::retf`
+    /// (I9 `retf_nolazy`, the caller suspended at an `OP_CALL`, the operands, `RetfAlias`) still applies.
+    fn retf_into_self(&self, vm: &Vm<'_>) -> bool {
+        let Some(c_ci) = vm.st.ci().previous() else {
+            return false;
+        };
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return false;
+        }
+        let Some(ccl) = vm.st.ci_lclosure(c_ci) else {
+            return false;
+        };
+        let cp = ccl.proto();
+        // (the very closure: a recursion, not a tree of closures of one prototype calling each other)
+        if &*cp as *const Proto as usize != self.frames[0].proto || ccl.as_ptr() != vm.cl.as_ptr() {
+            return false;
+        }
+        if self.cfg.retf & 32 == 0 {
+            return true;
+        }
+        // (bit 5: only a call inside a loop of the caller, which the pop continues)
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let Some(call_pc) = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1) else {
+            return false;
+        };
+        if call_pc >= ccode.len() {
+            return false;
+        }
+        let Some(h) = super::cache::enclosing_loop_head(ccode, call_pc) else {
+            return false;
+        };
+        // (bit 7: not a generic `for` loop: its iterations are calls the pop would cut into)
+        if self.cfg.retf & 128 != 0
+            && ccode.iter().enumerate().any(|(j, &w)| {
+                let i = Instruction(w);
+                i.opcode() == Some(OpCode::Tforloop)
+                    && j as i64 + 1 - i64::from(i.bx()) == i64::from(h)
+            })
+        {
+            return false;
+        }
+        // (bit 6: and that loop's head has a root trace now)
+        self.cfg.retf & 64 == 0 || self.retf_self_traced
     }
 
     /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?
