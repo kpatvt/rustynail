@@ -2271,6 +2271,21 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "r1_regcarry_programs")],
     },
     Row {
+        name: "t1g_tflat_params_skip",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_tflat_programs")],
+    },
+    Row {
+        name: "t1g_tflat_top_short",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_tflat_programs")],
+    },
+    Row {
+        name: "retf_demote_recursive",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_retf_demote_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

@@ -88,6 +88,9 @@ impl Cx<'_> {
         if tfor {
             self.ipairs_fast(pc, i);
             self.next_fast(pc, i);
+            if self.cfg.calls.is_some_and(|e| e.t1g & 4 != 0) {
+                self.tfor_flat(pc, i);
+            }
         }
         self.helper_call(pc, i, f);
     }

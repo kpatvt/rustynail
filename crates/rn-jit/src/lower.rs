@@ -942,14 +942,15 @@ pub(crate) fn lower_ex(
                 head[t as usize] = true;
                 head[pc + 1] = true;
             }
+            (Some(OpCode::Tforcall), Kind::Guarded) => {
+                head[pc + 1] = true;
+                // section 77.14 (`t1g` bit 2): a flat-called Lua iterator returns here through the resume table
+                if cfg.calls.is_some_and(|e| e.t1g & 4 != 0) {
+                    resume[pc + 1] = pc + 1 < n && kinds[pc + 1] != Kind::Stub;
+                }
+            }
             (
-                Some(
-                    OpCode::Tforcall
-                    | OpCode::Varargprep
-                    | OpCode::Vararg
-                    | OpCode::Close
-                    | OpCode::Tbc,
-                ),
+                Some(OpCode::Varargprep | OpCode::Vararg | OpCode::Close | OpCode::Tbc),
                 Kind::Guarded,
             ) => {
                 head[pc + 1] = true;

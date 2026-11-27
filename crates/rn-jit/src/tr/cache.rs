@@ -632,7 +632,7 @@ pub struct TrLimits {
     /// with `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly) (default [`T1Q_PROCESS`]).
     pub t1q: u32,
     /// R2 (`t1g`): bit mask of the tier-1 generic-`for` paths (1 = `CLOSE` without its helper when nothing is open, 2 = `TFORCALL` of `next` through the lean
-    /// helper); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
+    /// helper, 4 = section 77.14: `TFORCALL` of a compiled Lua closure iterator as a flat frame push, off by default); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
     pub t1g: u32,
     /// BUNDLE-S S2 (`amt`): array reads and stores of a table that has a metatable are recorded (a non-nil element is a raw access; a nil element needs the flag guard of `__index` / `__newindex`) (default [`AMT_PROCESS`]).
     pub amt: u32,
@@ -783,7 +783,8 @@ pub struct TrLimits {
     /// its root frame executes `RETF` (the pop is done natively and the trace continues in the caller); bit 1 (value 2): inline re-push
     /// stub; bit 2 (value 4): function-entry roots; bit 3 (8): test mode, the recording ends right after a pop. Section 77.7: bit 4 (16) a
     /// function-entry family's side recording pops when its root returns into a frame of the same closure; bit 5 (32) only into a call inside a
-    /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Default
+    /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Section 77.15: bit 9 (512) a
+    /// loop-free maybe-lazy caller is popped into when it never recursed (`TrProto::retf_demote`), off by default. Default
     /// [`RETF_PROCESS`] = 179 (0 = off, byte-identical IR and machine code).
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
@@ -1424,7 +1425,7 @@ impl TrLimits {
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
                 "libcall" => l.libcall = v.min(4095),
-                "retf" => l.retf = v.min(255),
+                "retf" => l.retf = v.min(1023),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
@@ -2086,6 +2087,9 @@ pub struct TrProto {
     conts: RefCell<Vec<u32>>,
     /// R2: a native self-call of this prototype was recorded (it recurses, a native return into itself can happen).
     recursive: Cell<bool>,
+    /// Section 77.15 (`retf` bit 9): a `RETF` recording popped into a frame of this lazy-aware (never recursive) prototype while it had a trace:
+    /// no native self-call of it is compiled from now on (its frames must never become lazy under the popping trace).
+    retf_pin: Cell<bool>,
     /// K6: a closure of this prototype reaches itself through an upvalue (seen by `driver_start`): its `FnShort` samples are leaf samples of a recursion.
     selfref: Cell<bool>,
     /// BUNDLE-K L1: every trace of this prototype is lazy-aware (`TrLimits::lazyci`; fixed when the dispatch table is made).
@@ -2186,6 +2190,7 @@ impl TrProto {
             fn_head: Cell::new(false),
             conts: RefCell::new(Vec::new()),
             recursive: Cell::new(false),
+            retf_pin: Cell::new(false),
             selfref: Cell::new(false),
             lazy: Cell::new(false),
             unroll_off: Cell::new(0),
@@ -2776,6 +2781,37 @@ impl TrProto {
             }
             _ => !self.lazy.get(),
         }
+    }
+
+    /// Section 77.15 (`retf` bit 9): may a `RETF` pop into a frame of this loop-free prototype? Not lazy-aware: yes. Lazy-aware but never observed
+    /// recursing (no native self-call recorded, so none of its frames was ever lazy): yes; without an installed root trace it is also demoted to
+    /// eager for good (the heads' cells recomputed as the E4 decision does), so it never becomes lazy-aware under the popping trace. A recursive
+    /// one: no (its frames below a native push can be lazy).
+    pub fn retf_demote(&self) -> bool {
+        if self.lazy_st.get() != LAZY_STATIC {
+            return self.retf_into();
+        }
+        if !self.lazy.get() {
+            return true;
+        }
+        if self.recursive.get() && !mutants::active("retf_demote_recursive") {
+            return false;
+        }
+        if self
+            .heads()
+            .iter()
+            .any(|h| h.state.get() == HeadState::Traced)
+        {
+            self.retf_pin.set(true);
+        } else {
+            self.lazy_st.set(LAZY_OFF);
+            self.lazy.set(false);
+            for h in self.heads() {
+                h.lazy.set(false);
+                h.set_rec();
+            }
+        }
+        true
     }
 
     /// E1: an unrolled recording failed in its unrolled part (`Unroll`). In the adaptive mode, [`UNROLL_FAILS`] failures in a row (no unrolled
@@ -6929,6 +6965,12 @@ pub fn rec_deep(st: &mut State, id: TrId) -> bool {
     deep
 }
 
+/// Section 77.15: may a native self-call of `pr` be compiled (not after a `RETF` popped into its lazy-aware frames, see `TrProto::retf_pin`)?
+pub fn retf_pinned(st: &mut State, pr: ProtoRef) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| tp.retf_pin.get() && tp.lazy.get())
+}
+
 /// R2: a native self-call of `pr` was recorded.
 pub fn mark_recursive(st: &mut State, pr: ProtoRef) {
     let d = d_of(st);
@@ -7446,6 +7488,18 @@ pub fn retf_into_loop_proto(p: &rn_core::func::Proto) -> bool {
         return false;
     };
     tp.retf_into()
+}
+
+/// Section 77.15: [`TrProto::retf_demote`] of `p` (a loop-free prototype `maybe_lazy_proto` flags); false without a dispatch table.
+pub fn retf_demote_proto(p: &rn_core::func::Proto) -> bool {
+    let Some(pr) = proto_ref(p) else {
+        return false;
+    };
+    // SAFETY: as in `retf_into_loop_proto`
+    let Some(tp) = (unsafe { (*(pr.0 as *const JitProto)).tr.as_deref() }) else {
+        return false;
+    };
+    tp.retf_demote()
 }
 
 /// R2: has a native self-call of `pr` been recorded?

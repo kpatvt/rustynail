@@ -4609,6 +4609,53 @@ fn s75_recinl_programs() {
     compare(jobs);
 }
 
+/// Section 77.14 (`t1g` bit 2): generic `for` over Lua closure iterators pushed as flat frames by tier 1: results nil-filled and cut,
+/// iterators with three parameters and varargs, errors with levels and tracebacks, `debug.getinfo` of the caller, coroutine yields from inside
+/// the iterator, hooks installed mid-loop, deep recursion inside the iterator, callable tables / C functions as iterators, a closure pipeline;
+/// `t1g` 7 / 3 (also with `retf` bit 9, section 77.15) in the trace modes (and traces off), `+verify`, exit storms, budget 17, GC stress 2.
+/// Mutants `t1g_tflat_params_skip`, `t1g_tflat_top_short`.
+#[test]
+fn s77_tflat_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on", "t1x"] {
+        for limits in ["t1g=7", "t1g=3", "t1g=7,retf=695", "t1g=3,retf=695"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s77_tflat", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s77_tflat", trace)
+                .limits_s("t1g=7")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+    }
+    compare(jobs);
+}
+
+/// Section 77.15 (`retf` bit 9): `RETF` pops into loop-free (maybe lazy-aware) callers that never recursed; the recursion programs (whose callers
+/// are lazy-aware and recursive, and must stay refused) with the bit on, in the trace modes. Mutant `retf_demote_recursive`.
+#[test]
+fn s77_retf_demote_programs() {
+    let mut jobs = Vec::new();
+    for name in ["deep_recursion", "s77_rself", "s77_tflat"] {
+        for trace in ["always", "on2", "on"] {
+            for limits in ["retf=695", "retf=695,lazyci=2", "t1g=7,retf=695,retfmax=4"] {
+                jobs.push(Job::new(name, trace).limits_s(limits));
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 77.7 (`retf` bits 4-7): function-entry side traces that pop their root frame into a frame of the same closure (a recursion returning into
 /// the caller's loop) and go on in the caller: trees of varying shape, early returns, an error below the pop under `pcall`, a method recursion called
 /// from another function's loop; `retf` 179 (the default) / 51 / 19 / 3 / 7, the trace modes with `+verify`, exit storms, budget 17 and GC stress 2.

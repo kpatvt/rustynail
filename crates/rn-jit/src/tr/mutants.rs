@@ -468,6 +468,12 @@ pub const NAMES: &[&str] = &[
     "sloadhome_slot_reused",
     // section 77.6: the carry entry of a side trace reads a parent spill slot whose number is a home of this trace from the stack
     "sloadhome_carry_src",
+    // section 77.14 (`t1g` bit 2): the flat iterator call takes a closure with three or more parameters (no nil fill)
+    "t1g_tflat_params_skip",
+    // section 77.14: `top` of the flat iterator call one slot short (a vararg iterator loses its last argument)
+    "t1g_tflat_top_short",
+    // section 77.15 (`retf` bit 9): a recursive lazy-aware caller is popped into too
+    "retf_demote_recursive",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1213,7 +1219,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 907);
+        assert_eq!(NAMES.len(), 910);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

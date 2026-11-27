@@ -8337,13 +8337,18 @@ impl Rec {
 
     /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?
     fn pop_into_ok(&self, cp: &Proto) -> bool {
-        !(self.cfg.retf_nolazy != 0
-            && !mutants::active("retf_lazy_caller_ok")
-            && (maybe_lazy_proto(cp, self.cfg.retf_nolazy & 3 >= 2, false)
-                || (self.cfg.retf_nolazy & 4 != 0
-                    && maybe_lazy_proto(cp, self.cfg.retf_nolazy & 3 >= 2, true)
-                    && !mutants::active("lazyloop_retf_ok")
-                    && !super::cache::retf_into_loop_proto(cp))))
+        if self.cfg.retf_nolazy == 0 || mutants::active("retf_lazy_caller_ok") {
+            return true;
+        }
+        let any_c = self.cfg.retf_nolazy & 3 >= 2;
+        if maybe_lazy_proto(cp, any_c, false) {
+            // section 77.15 (`retf` bit 9): a loop-free caller that is not lazy-aware, or never recursed (demoted to eager when untraced)
+            return self.cfg.retf & 512 != 0 && super::cache::retf_demote_proto(cp);
+        }
+        !(self.cfg.retf_nolazy & 4 != 0
+            && maybe_lazy_proto(cp, any_c, true)
+            && !mutants::active("lazyloop_retf_ok")
+            && !super::cache::retf_into_loop_proto(cp))
     }
 
     /// Section 39.1 (T1, `retfsel`): the selector's question for the root frame `ci` about to return: the state of the head of the caller's innermost

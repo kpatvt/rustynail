@@ -8891,3 +8891,109 @@ Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the 
 `sloadhome` alone (`=0` against `=3`): lua_lexer -0.19 % / +0.8 % cycles, towers -0.38 % / -2.3 %, json +0.07 % / +1.0 %, permute -0.28 % / 0,
 queens -1.2 % / -0.8 %, diff_levenshtein -0.9 % / -1.1 %. The lua_lexer and json cycle rises are inside the bar (2 %) and the instruction counts
 do not rise beyond 0.3 %; default on.
+
+### 77.14 Tier-1 flat generic `for` (`t1g` bit 2, value 4): built, default off
+
+**What it does.** `TFORCALL A C` of a compiled Lua closure iterator no longer goes through `jit_tforcall` (which calls the iterator with
+`State::call`, a C-level call whose frame is a fresh C boundary). `Cx::tfor_flat` (`calls.rs`, entered from the helper template after the `ipairs` /
+`next` fast paths, the hook test and the count) copies the iterator, the state and the control value to the call slots `OP_TFORCALL` uses (5.5:
+`R[A+3..A+5]`, the control value first because its slot is overwritten; 5.4: `R[A+4..A+6]`), sets `top` behind the two arguments and `savedpc` to
+the `TFORLOOP`, fills the next `CallInfo` like `pre_call_lua_fast` with `C + 1` in `callstatus` (C wanted results, no `CIST_FRESH`, no
+`CIST_T1RET`) and jumps to the callee's `entry0`, the way `tpl_call` pushes a compiled callee. `lower` adds a resume entry at the `TFORLOOP` after
+every `TFORCALL` while the bit is on, so the callee's `RETURN` (`ret_tail`) and the interpreter's return path both continue at the `TFORLOOP`.
+Everything else falls through to the helper call: not a Lua closure, no compiled entry, three or more parameters (the nil fill stays the
+helper's), not enough stack for the callee's frame, no spare `CallInfo`, the interrupt flag set. Hooks: the template's hook test sends the
+instruction to the interpreter before any of this (unchanged); a hook installed inside the iterator is seen by the callee's own guards and at the
+`TFORLOOP`'s re-entry. Errors, tracebacks, `debug.getinfo(2)` from the iterator and coroutine yields across the iterator see an ordinary
+Lua-to-Lua call (the interpreter's `OP_TFORCALL` makes the same frame, through C recursion).
+
+**Tests.** `tests/vm/s77_tflat.lua` (also a vm-corpus program, compared with the reference): results nil-filled and cut to the loop's
+variables, a three-parameter and a vararg iterator, errors at levels 1 and 2 and a traceback, `getinfo` of the loop's frame from the iterator,
+yields from inside the iterator, a call hook installed mid-loop, deep recursion inside the iterator (stack growth), a callable table and `next` as
+iterators, a closure pipeline folded by a generic `for`, function-entry iterators whose side traces return toward the loop.
+`tr_core::s77_tflat_programs`: `t1g` 7 / 3 (also with `retf=695`) in `always`, `on2`, `on`, `t1x`, with `+verify`, `+exitstorm=3 +verify`,
+budget 17 and GC stress 2; kept out of the emulator twins (`S77_PROGS`). Mutants (caught): `t1g_tflat_params_skip` (a three-parameter iterator
+taken without the nil fill), `t1g_tflat_top_short` (`top` one slot short: a vararg iterator loses its control value). A mutant on the `C + 1`
+result count was caught by no program and was dropped.
+
+**Measured** (one binary, instructions exact, `RUSTYNAIL_SEED=0`):
+
+| program | `t1g=3` -> `t1g=7`, traces on | traces off (tier 1 only) |
+|---|---|---|
+| corpus2/heldout/stream_closures | 3519.7 -> 3381.0 M (-3.9 %) | 9448.7 -> 9190.8 M (-2.7 %) |
+| corpus2/dev/iter_pipeline | 785.8 -> 6909.4 M (**+779 %**) | 14030.8 -> 8996.3 M (-35.9 %) |
+| corpus2/dev/text_adventure | 7378.8 -> 7394.0 M (+0.2 %) | 8578.1 -> 8595.3 M (+0.2 %) |
+| awfy/json, awfy/towers, corpus/lua_lexer | +0.00 %, +0.00 %, +0.02 % | |
+
+Whole set (223 programs, instructions): geomean +0.97 %, entirely iter_pipeline; otherwise only stream_closures (-3.9 %), coroutines (+0.4 %),
+testrunner_luaunit (+0.4 %) and astar_jumper (+0.3 %) move beyond 0.3 %. Output identical on all 223.
+
+**Why iter_pipeline explodes.** In tier 1 alone the flat push is a 36 % win there. With traces, the program's `Iter:reduce` loop (`for v in
+self.next do acc = f(acc, v) end`, one loop head serving every pipeline of the program) goes `Black`. With the bit off its second root (recorded on
+the primes `filter` pipeline, whose `while` and `for d` loops `loopany` unrolls) is flushed `Ineffective` once and the third root, recorded on
+another pipeline, survives (7371 entries). With the bit on the iterators run in tier 1 instead of the interpreter (the general helper's
+`State::call` sends a small callee to the interpreter: `hot_call_plain`'s heuristic), their function-entry and continuation heads warm up (the
+`map` / `filter` / `take` closures get roots of their own: 8 more traces before the reduce head re-records), and the reduce head's third root is
+recorded on the primes pipeline again: the second `Ineffective` flush blacklists the head (Q2) and the program runs its hottest loop in tier 1 (48 %
+of the samples in `lua_proto:170`). The push itself is not wrong (identical output, the oracle passes); it changes which pipeline the megamorphic
+head gets recorded on. No static per-site rule separates the two programs (their fold loops are the same bytecode); a loop-free-iterators-only
+variant (a `JitProtoHdr` flag) was measured (iter_pipeline 6940 M, stream_closures -2.8 %) and removed. Default off (`T1G_PROCESS` stays 3).
+
+**What it unblocks.** stream_closures' function-entry side traces no longer stop at the root-frame identity test (`CIST_FRESH`, 77.12): with the
+bit on and `retf` bit 2 every refusal left is I9 (`pop_into_ok`: 23 of 24 refusals, one at `retfmax`). With I9 off for the whole program
+(`lazyci=0,t1g=7,retf=183`) 26 pops are compiled, the stub materialisations fall from 414 853 to 283 000 and the program runs 3176.4 M
+instructions (-9.8 % against the default 3519.7 M): the ceiling of pieces (a) and (b) on this program.
+
+### 77.15 Pieces (a) and (b): `RETF` into a never-recursive lazy-aware caller (`retf` bit 9, value 512): built, default off; (c) not built
+
+**(a) + (b) as built.** I9 refuses every loop-free, non-vararg caller (`maybe_lazy_proto`, the static superset of `TrProto::lazy`). The reason
+(C70): a lazy-aware family's frames can be lazy, and a pop into one continues outside its region. A lazy frame exists only below a native push of
+the family (`rec_call`), and a prototype none of whose compiled traces made one (`TrProto::recursive` false; `mark_recursive` runs at that
+compile) never had one. With bit 9, `pop_into_ok` asks `TrProto::retf_demote` about such a caller: not lazy-aware: yes; lazy-aware, never
+recursive, no installed root trace: demoted to eager for good (its and its heads' `lazy` cleared, the cells recomputed with `set_rec`, the E4
+decision in the other direction), yes; lazy-aware, never recursive, with installed traces: yes, and the prototype is pinned (`retf_pin`: a later
+native self-call of it aborts its compile, `retf-pin`, so its frames never become lazy under the popping trace); recursive: no. Region
+membership (b): after the pop the side trace runs the caller's code as an eager trace; it links only at loop heads of the caller (`retf_head`
+answers for loop heads only, and a loop-free caller has none) and at frame heads of prototypes with loops (unchanged rules), never into the lazy
+family's own traces. Mutant `retf_demote_recursive` (recursive callers popped into) is caught by `tr_core::s77_retf_demote_programs`
+(`deep_recursion`, `s77_rself`, `s77_tflat` with `retf=695`, `retf=695,lazyci=2`, `t1g=7,retf=695,retfmax=4`); the pin is a conservative guard
+that no test program reaches (its mutant was not caught and was dropped).
+
+**Measured** (one binary, 15 runs interleaved, minimum, CPU 8; `t1g=3` against `t1g=7,retf=695`: flat push + function-entry pops + bit 9):
+
+| program | instructions M | cycles M |
+|---|---|---|
+| corpus2/heldout/stream_closures | 3519.72 -> 3364.96 (-4.4 %) | 805.82 -> 765.17 (-5.0 %) |
+| awfy/json | 426.65 -> 420.31 (-1.5 %) | 134.00 -> 133.73 (-0.2 %) |
+| awfy/towers | 164.01 -> 164.01 | 42.60 -> 42.63 |
+| corpus2/dev/text_adventure | 7378.75 -> 7403.88 (+0.3 %) | 2371.05 -> 2409.12 (+1.6 %) |
+| corpus/lua_lexer | 2747.21 -> 3357.63 (**+22.2 %**) | 710.58 -> 904.06 (**+27.2 %**) |
+| corpus2/dev/iter_pipeline | 785.79 -> 6912.21 (**+780 %**) | 180.28 -> 1317.72 |
+
+Bit 9 alone (`retf=691`, whole set, instructions): no program moves (geomean -0.000 %): without bit 2 no function-entry root pops, and the pops
+77.7's bits take go into frames of the same closure (recursive: refused). On top of `t1g=7`, bit 9 brings stream_closures from 3383.8 to 3365.2 M
+(`retf=951`): 11 pops compiled against 26 with `lazyci=0`, because most remaining `LeaveFrame` aborts are now `map`'s `return f(v)` (a `TAILCALL`
+in the caller's frame after the pop), which the `RETF` recording does not continue through. lua_lexer's +22 % is `retf` bit 2 (function-entry
+families pop everywhere: 77.7's finding); without bit 2 bit 9 has no work. Default off.
+
+A bit 8 (`RETF` into a caller suspended at a `TFORCALL`, i.e. into the frame 77.14 pushes) was built and measured: two pops more in
+stream_closures (3176.4 -> 3177.4 M with `lazyci=0`), none in the test programs; removed with its mutant.
+
+**(c) carrying sunk allocations through the return: not built.** After a pop the recording continues in the caller and ends at the fold loop's
+head with a link into its root trace. A sunk allocation still virtual there must be materialised at the link: links pass register values (R1's
+carry) and stack slots, never virtual objects, and the fold loop's root trace starts from its own `SLOAD`s; it would need a second entry per virtual
+shape that takes the allocation's fields (section 52's replay generalised from exits to links). The measurements bound what is left for it: with
+`lazyci=0` the pops already cut the stub materialisations by 32 % (414 853 -> 283 000); the rest happen at the links into `fold`'s trace. Not
+attempted: (a) and (b) are not on by default, so (c) would carry nothing in the shipped configuration.
+
+### 77.16 Round 4 numbers: every shipped handle of section 77 combined (one binary, final defaults, `RUSTYNAIL_SEED=0`)
+
+The shipped defaults are unchanged by 77.14 / 77.15 (`uvk=11, flink=1, sloadhome=3, retf=179`, `t1g=3`). All 223 programs, instructions, the
+handles off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the defaults: geomean **-0.585 %**, no program up by more than 0.3 %. Movers beyond
+0.3 %: awfy/queens -20.9 %, corpus/lua_lexer -14.3 %, jit-trace/tail_loop -10.9 %, programs/fasta -10.7 %, corpus2/heldout/forth_vm -10.3 %,
+jit-trace/rec_loop -4.9 %, awfy/cd -4.2 %, corpus2/dev/particles_physics -4.0 %, awfy/bounce -3.8 %, corpus/class_middleclass -3.7 %,
+awfy/richards -3.4 %, awfy/deltablue -2.4 %, corpus/astar_jumper -2.2 %, awfy/storage -2.1 %, apps/raytrace -2.0 %, corpus/sha2_base64 -1.9 %,
+programs/metamethods -1.4 %, roguelike_turns -1.3 %, awfy/json -1.0 %, programs/json -0.9 %, diff_levenshtein -0.9 %, containers_lru_heap
+-0.8 %, lib/type_call -0.8 %, dijkstra_routes -0.7 %, vending_fsm -0.7 %, and fourteen more between -0.3 and -0.6 % (lib/tremove_front, tunpack,
+rep_sep, sel_loop, msgpack_pure, regex_nfa, heapsort, towers, oop_override, sudoku_solver, setmt, tmove, char, rep). Cycles of the movers: 77.13
+(the knobs and the code they gate are unchanged since).

@@ -1302,7 +1302,7 @@ fn bn_retf_process_default() {
     for (env, want, wmax) in [
         (None, RETF_PROCESS, RETFMAX_PROCESS),
         (Some("retf=1"), 1, RETFMAX_PROCESS),
-        (Some("retf=999,retfmax=2"), 255, 2),
+        (Some("retf=9999,retfmax=2"), 1023, 2),
         (Some("retfmax=99"), RETF_PROCESS, 8),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
