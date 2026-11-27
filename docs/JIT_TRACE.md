@@ -9237,3 +9237,38 @@ Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the 
 With `sloadhome=3` on top (measured before it was switched off): towers -0.44 % / -2.3 % cycles, permute -0.31 %, lua_lexer -0.20 %. Whole set
 (223 programs, instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise
 beyond 0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
+
+## 79. awfy/permute against LuaJIT, round 4: push writebacks, region frames in side traces, the return protocol, adaptive `dynunroll` (2026-11-27, base c707218)
+
+Start (c707218, release `rn-cli`, `RUSTYNAIL_SEED=0`, CPU 9): permute 117.6 M instructions / 23.0 M cycles at the default size, **127.5
+instructions per call** at N = 1000 (LuaJIT 2.1: 48). Per trace (perf `instructions:u`, `RUSTYNAIL_JIT_PERFMAP=2`, N = 1000, per call): trace 7
+44.9, trace 8 35.1, trace 11 19.4, trace 3 12.2, trace 9 7.3, trace 4 4.0. Measurement method of this section: instructions per call =
+(instructions at N = 1000 - instructions at N = 100) / (900 * 8660); cycles min of 5 at the default size, one binary, knob off against on.
+Whole set: the 223 programs, instructions, one run each, knob off against on in the same binary (testrunner_luaunit, lua_parser,
+stream_closures and astar_jumper change trace formation with the binary's layout alone: compare them only within one binary).
+
+### 79.1 `chainlive`: the push writeback leaves out the pushed frame's dead numeric temporaries (`TrLimits::chainlive`, default 1)
+
+F4 (`snapprune`) prunes the snapshots of the root frame only. The writeback of a native push (`end_rec_call`) stored every slot the recording
+had written, including the registers of inlined callees that returned below the pushed frame's top (permute's trace 7: the inlined `swap`
+frame's temporaries at slots 13 / 14, inside the pushed `permute` frame above its two arguments). Now the slots of the pushed frame above its
+arguments that the callee's bytecode liveness proves dead at its pc 0 (`live.rs` via `cache::prune_cached` of the callee: temporaries only, not
+captured, a prototype without debug information or with `TBC` is never pruned) leave the writeback when they hold a number, `nil` or a boolean
+(the F4 rule; collectables, function slots and flagged entries stay). Not for a vararg callee (its extra arguments lie above the parameters).
+Why it is exact under F4: the callee is guarded to be this prototype; at its entry nothing reads those registers before writing them; the
+caller's registers from the `CALL`'s `A` up are the callee's frame; the slot keeps a stale value as F4's exits do (tier 1 at a function entry
+assumes no register type above the parameters). Mutant `chainlive_args` (the arguments are dropped too), caught by `tr_core::s79_push_programs`.
+
+### 79.2 `pushtag`: tag stores of a push writeback that its `SLOAD`s prove (`TrLimits::pushtag`, default 1)
+
+B1 skips a writeback tag store when an unmodified `SLOAD` of the trace saw the same static tag (`exit::wb_ents`), but not in traces that end
+with a native push (`rec_call`: "native frames move the base"). The push writeback is emitted before `rec_call_tail` moves the base, and a
+self-looping push trace loads its slots again at the new base after the jump, so the rule holds there too (`exit::wb_ents_push`; not with
+carried loads, native returns or `RETF` segments). permute's trace 7: the `for` state slots 3 / 5. A mutant that drops the carried-load
+exclusion was not caught by any program built for it (no side trace with carried loads ended in a push) and was dropped, not claimed.
+
+Measured (one binary, `chainlive=0,pushtag=0` against the settings): permute 127.54 -> 127.14 (`chainlive`) / 127.21 (`pushtag`) -> **126.81**
+instructions per call (both), default size 117.64 -> 117.01 M (-0.54 %). Whole set (both on): permute -0.54 %, queens -1.05 %, astar_jumper
+-1.4 % (layout noise); nothing rises by more than 0.2 %; geomean -0.014 %. Tests: `tests/vm/s79_push.lua` (vm_corpus, and
+`tr_core::s79_push_programs`: both knobs 1 / 0, with `recinl=3,sidepush=1` and `regcarry=0`, the trace modes, `+verify`, exit storms, budget 17,
+GC stress 2, plus `s75_recinl` / `s75_oframe` with the knobs).

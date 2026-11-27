@@ -208,6 +208,8 @@ pub struct RecCfg {
     pub mfdeep: bool,
     /// Section 75.14 (`mfshare`): repeated `mfkeys` lookups of one key share the first value.
     pub mfshare: bool,
+    /// Section 79.1 (`chainlive`): the push writeback leaves out the callee's dead numeric temporaries.
+    pub chainlive: bool,
     /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants (bit 0); bit 1: not in the root frame of the
     /// recording (no identity guard on the root closure); bit 2: not in side recordings; bit 3: a new identity guard only on a closure created
     /// by a main chunk.
@@ -573,6 +575,7 @@ impl Default for RecCfg {
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
+            chainlive: super::cache::CHAINLIVE_PROCESS != 0,
             // (section 77.3: the driver sets it from `TrLimits::uvk`; recorder unit tests replay against handle models that cannot evaluate an
             // identity guard on a closure address, and tr_core covers the knob)
             uvk: 0,
@@ -1350,6 +1353,9 @@ struct Rec {
     oframe_lims: Vec<(u32, u16)>,
     /// Section 75: the top of the frame that executes the native self-call (its writeback leaves out the slots above it).
     oframe_wb: Option<u16>,
+    /// Section 79.1 (`chainlive`): the root-relative slots of the pushed frame whose writeback entries may be left out when they hold a number,
+    /// `nil` or a boolean (dead temporaries of the callee at its entry).
+    chainlive_dead: Vec<u16>,
     /// Section 75: a `CALL` being recorded whose arguments reach above the calling frame's top (`__call` shifts them one slot up, a native
     /// self-call pushes them): (pc, depth, root-relative end of the arguments); snapshots of that instruction keep the slots below it.
     oframe_floor: Option<(u32, usize, usize)>,
@@ -1739,6 +1745,7 @@ impl Rec {
             rec_call: None,
             oframe_lims: Vec::new(),
             oframe_wb: None,
+            chainlive_dead: Vec::new(),
             oframe_floor: None,
             mfk_seen: Vec::new(),
             hdr_cache: Vec::new(),
@@ -1944,6 +1951,7 @@ impl Rec {
         // (section 75: per-recording state that names snapshots / refs of the discarded IR)
         self.oframe_lims.clear();
         self.oframe_wb = None;
+        self.chainlive_dead.clear();
         self.oframe_floor = None;
         self.mfk_seen.clear();
         self.hdr_cache.clear();
@@ -2951,6 +2959,19 @@ impl Rec {
                     let mut wb = self.sm.entries();
                     if let (Some(t), true, true) = (self.oframe_wb, rc_end, self.segs.is_empty()) {
                         wb.retain(|e| e.flags != 0 || e.slot < t);
+                    }
+                    if rc_end && self.segs.is_empty() && !self.chainlive_dead.is_empty() {
+                        // Section 79.1 (`chainlive`): only plain entries holding numbers, `nil` or booleans (F4: never a collectable)
+                        let ir = &ir;
+                        let dead = &self.chainlive_dead;
+                        wb.retain(|e| {
+                            !(e.flags == 0
+                                && dead.contains(&e.slot)
+                                && matches!(
+                                    ir.ty_of(e.r),
+                                    Ty::Int | Ty::Num | Ty::Nil | Ty::False | Ty::True
+                                ))
+                        });
                     }
                     wb
                 }
@@ -7616,6 +7637,30 @@ impl Rec {
             }
         }
         self.oframe_wb = self.oframe_top();
+        self.chainlive_dead.clear();
+        if self.cfg.chainlive && !p.is_vararg() {
+            // Section 79.1: the registers of the pushed frame above its arguments that the callee writes before it reads them (its bytecode
+            // liveness at pc 0, the F4 rule: temporaries only, not captured; no debug information: none). The callee is guarded to be this
+            // prototype; nothing reads them before the callee writes them, and the caller's registers from the `CALL`'s `A` up are the callee's.
+            // MUTANT `chainlive_args`: the arguments are taken too.
+            if let Some(pi) = super::cache::prune_cached(p, false, self.cfg.opencall) {
+                if let Some(d0) = pi.dead.first() {
+                    let cb = self.frames[d].base_off + a + 1;
+                    let from = if mutants::active("chainlive_args") {
+                        0
+                    } else {
+                        nargs
+                    };
+                    for r in from..nslots {
+                        if crate::live::has(d0, r as u32) || (r < nargs && mutants::active("chainlive_args")) {
+                            if let Ok(sl) = u16::try_from(cb + r) {
+                                self.chainlive_dead.push(sl);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         self.rec_call = Some(RecCall {
             a: a as u16,
             nargs: nargs as u16,

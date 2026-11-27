@@ -962,6 +962,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
+        chainlive: cfg.limits.chainlive != 0,
         uvk: if cache::uvk_off(st) {
             0
         } else {
@@ -1207,6 +1208,7 @@ pub fn driver_start_side(
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
+        chainlive: cfg.limits.chainlive != 0,
         uvk: if cache::uvk_off(st) {
             0
         } else {
@@ -2704,6 +2706,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         rec_late,
         // SAFETY: as above.
         rec_fuse: rec_late && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } != 0,
+        // SAFETY: as above.
+        push_tags: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.pushtag } != 0,
         // SAFETY: as above.
         rec_fuse_saved: rec_late
             && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,

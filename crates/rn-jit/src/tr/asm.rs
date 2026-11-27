@@ -287,6 +287,8 @@ pub struct AsmEnv {
     /// Section 75 (`retfuse`): a late native `RETURN0` (no writeback) whose guards need no saved registers dispatches from its guards' site chain
     /// straight into one tail per site (no second load of `previous` / `savedpc`, no second site chain).
     pub rec_fuse: bool,
+    /// Section 79.2 (`pushtag`): the writeback of a native push skips tag stores its `SLOAD`s prove ([`exit::wb_ents_push`]).
+    pub push_tags: bool,
     /// Section 75.15 (`retfuse` bit 1): the fused native return also when the late guards saved live registers (the success path needs none of them).
     pub rec_fuse_saved: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
@@ -449,6 +451,7 @@ impl Default for AsmEnv {
             rec_vb_keep: false,
             rec_late: false,
             rec_fuse: false,
+            push_tags: false,
             rec_fuse_saved: false,
             lazy_cs: None,
             lazy_nparams: 0,
@@ -3394,10 +3397,14 @@ pub fn assemble_dl(
         },
     );
     cx.sites = Cow::Owned(exit::site_classes(ir));
-    cx.wb_ents = exit::wb_ents_ex(
-        ir,
-        (env.guarddiet && env.side.is_some()).then_some(&env.entry_tags),
-    );
+    cx.wb_ents = if env.push_tags && ir.rec_call.is_some() {
+        exit::wb_ents_push(ir)
+    } else {
+        exit::wb_ents_ex(
+            ir,
+            (env.guarddiet && env.side.is_some()).then_some(&env.entry_tags),
+        )
+    };
     cx.shape_dropped = shape_dropped(ir, env.shape_min);
     cx.first_flag = rolled
         && env.head != 0

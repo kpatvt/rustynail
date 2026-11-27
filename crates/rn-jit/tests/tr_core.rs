@@ -4687,6 +4687,47 @@ fn s77_home_programs() {
     compare(jobs);
 }
 
+/// Sections 79.1 / 79.2 (`chainlive`, `pushtag`): the writeback of a native push without the pushed frame's dead numeric temporaries and with
+/// the tag stores its `SLOAD`s prove left out: permute, arguments of every type computed in the trace, a local that changes type before the
+/// push, fewer arguments than parameters, collectables beside the pruned slots with full collections, a vararg recursion; both knobs on / off,
+/// with `recinl=3,sidepush=1` and `regcarry=0`, the trace modes with `+verify`, exit storms, budget 17 and GC stress 2. Mutant
+/// `chainlive_args`.
+#[test]
+fn s79_push_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "chainlive=1,pushtag=1",
+            "chainlive=0,pushtag=0",
+            "chainlive=1,pushtag=1,recinl=3,sidepush=1",
+            "chainlive=1,pushtag=1,regcarry=0",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s79_push", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s79_push", trace)
+                .limits_s("chainlive=1,pushtag=1")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+        for l in ["chainlive=1,pushtag=1", "chainlive=1,pushtag=1,recinl=3,sidepush=1"] {
+            jobs.push(Job::new("s75_recinl", trace).opts("+verify").limits_s(l));
+            jobs.push(Job::new("s75_oframe", trace).opts("+verify").limits_s(l));
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 77.2 (`flink`): frameful side traces linking back to the loop root through its guard-free second entry, with the root's slots
 /// changing type behind the links and a callee that needs more stack than the root; `flink` 1 / 0 (and with `guarddiet=0`, `regcarry=0`),
 /// the trace modes with `+verify`, exit storms, budget 17 and GC stress 2. Mutant `flink_no_proof`.

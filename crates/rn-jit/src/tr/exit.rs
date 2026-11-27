@@ -1510,10 +1510,26 @@ pub fn wb_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<(u16, Ty)> {
     out
 }
 
+/// Section 79.2 (`pushtag`): [`wb_ents`] for a trace that ends with a native push (`rec_call`): its writeback runs at the end of the
+/// iteration, before the push moves the base, so every `SLOAD` of the iteration read the slots the writeback writes (a self-looping push
+/// trace loads them again at the new base after the jump). Not with carried loads (R1: their stack slot may hold another tag), native
+/// returns or `RETF` segments. (A mutant that drops the carried-load exclusion was not caught by any program built for it: no side trace
+/// with carried loads ended in a push there; the exclusion stays.)
+pub fn wb_ents_push(ir: &TraceIr) -> Vec<(u16, Ty)> {
+    if ir.rec_call.is_none() || ir.rec_ret.is_some() || !ir.segs.is_empty() || !ir.carry_in.is_empty() {
+        return Vec::new();
+    }
+    wb_ents_scan(ir)
+}
+
 fn wb_ents_own(ir: &TraceIr) -> Vec<(u16, Ty)> {
     if ir.rec_call.is_some() || ir.rec_ret.is_some() || !ir.segs.is_empty() {
         return Vec::new();
     }
+    wb_ents_scan(ir)
+}
+
+fn wb_ents_scan(ir: &TraceIr) -> Vec<(u16, Ty)> {
     let mut out: Vec<(u16, Ty)> = Vec::new();
     let stored = stored_slots(ir);
     for i in &ir.ins {

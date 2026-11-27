@@ -454,6 +454,8 @@ pub const NAMES: &[&str] = &[
     "mfkeys_check_skip",
     // section 75.14 (`mfshare`): a later lookup reuses the first lookup of ANY extra key
     "mfshare_any_key",
+    // section 79.1 (`chainlive`): the push writeback also leaves out the pushed frame's arguments
+    "chainlive_args",
     // section 77.3 (`uvk`): writes into read-only variables flush nothing / the closure's identity is not guarded / any upvalue is folded /
     // the collection of a closure held by identity is not reported
     "uvk_flush_skip",

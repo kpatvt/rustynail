@@ -190,6 +190,10 @@ pub const MFSHARE_PROCESS: u32 = 1;
 /// with `+randra +exitstorm=7` (bh_next, n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants) and a crash of dm_dynkey (`-fwd -cse -sink`), not
 /// root-caused (they disappear with `guarddiet=0`), docs/JIT_TRACE.md section 77.6.
 pub const SLOADHOME_PROCESS: u32 = 0;
+/// Section 79.1 (`chainlive`): the process default of [`TrLimits::chainlive`] (also the struct default).
+pub const CHAINLIVE_PROCESS: u32 = 1;
+/// Section 79.2 (`pushtag`): the process default of [`TrLimits::pushtag`] (also the struct default).
+pub const PUSHTAG_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -957,6 +961,14 @@ pub struct TrLimits {
     /// stack slot when the allocator spills it: no spill store at the definition, reloads from the stack (`ra::RaOpts::homes`). 0 = off, 1 = on
     /// (default [`SLOADHOME_PROCESS`] = 0).
     pub sloadhome: u32,
+    /// Section 79.1 (`chainlive`, docs/JIT_TRACE.md section 79.1): the writeback of a native push leaves out the dead numeric temporaries of the
+    /// pushed frame (the slots above its arguments that the callee's bytecode liveness proves written before read at its entry; the F4 rule of
+    /// `snapprune` applied to the callee). 0 = off, 1 = on (default [`CHAINLIVE_PROCESS`]).
+    pub chainlive: u32,
+    /// Section 79.2 (`pushtag`, docs/JIT_TRACE.md section 79.2): the writeback of a native push skips the tag store of a slot whose unmodified
+    /// `SLOAD` saw the same static tag (B1's rule for push traces: the writeback runs before the base moves). 0 = off, 1 = on (default
+    /// [`PUSHTAG_PROCESS`]).
+    pub pushtag: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1262,6 +1274,8 @@ impl Default for TrLimits {
             uvk: UVK_PROCESS,
             flink: FLINK_PROCESS,
             sloadhome: SLOADHOME_PROCESS,
+            chainlive: CHAINLIVE_PROCESS,
+            pushtag: PUSHTAG_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1510,6 +1524,8 @@ impl TrLimits {
                 "uvk" => l.uvk = v.min(15),
                 "flink" => l.flink = v.min(1),
                 "sloadhome" => l.sloadhome = v.min(3),
+                "chainlive" => l.chainlive = v.min(1),
+                "pushtag" => l.pushtag = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
