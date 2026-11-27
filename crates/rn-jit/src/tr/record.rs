@@ -740,6 +740,8 @@ pub struct Recorded {
     /// Section 78.1 (`stitch`): what the recording used: bit 0 a generic continuation root, bit 1 a stitch at a C call of a side recording,
     /// bit 2 the end of a `gmatch` iteration, bit 3 a pop of `stitch` bit 3, bit 4 a frame link behind a `TFORPREP`.
     pub stitch_use: u8,
+    /// Section 78.7: the continuation head (prototype, pc) the recording's final stitching exit leads into, if any.
+    pub stitch_feeds: Option<(usize, u32)>,
 }
 
 /// The result of a recording.
@@ -1476,6 +1478,8 @@ struct Rec {
     stitch_use: u8,
     /// Section 78.2: a step of the recording ran in an inlined Lua frame.
     entered_lua: bool,
+    /// Section 78.7: see [`Recorded::stitch_feeds`].
+    stitch_feeds: Option<(usize, u32)>,
     /// Section 78.4: the recording passed the head of an outer loop (`outer_link`): it links at the inner head at any length.
     outer_pass: bool,
     /// Section 78.1: the instruction being recorded is a `CALL` followed by such a `TFORPREP` (`string.gmatch` may be recorded in the frame).
@@ -1801,6 +1805,7 @@ impl Rec {
             tprep_ahead: false,
             stitch_use: 0,
             entered_lua: false,
+            stitch_feeds: None,
             outer_pass: false,
             inner_ret_used: false,
             inner_linked: false,
@@ -1940,6 +1945,7 @@ impl Rec {
     fn reset(&mut self) {
         self.stitch_use = 0;
         self.entered_lua = false;
+        self.stitch_feeds = None;
         self.outer_pass = false;
         self.b = Builder::for_recording(self.cfg.fold, self.cfg.cse);
         self.sm = SlotMap::new(self.nslots);
@@ -3052,6 +3058,7 @@ impl Rec {
             inner_link: self.inner_linked,
             inner_ret: self.inner_ret_used,
             stitch_use: self.stitch_use | u8::from(self.cfg.cont_gen && self.cfg.side.is_none()),
+            stitch_feeds: self.stitch_feeds.take(),
         }
     }
 
@@ -7443,8 +7450,9 @@ impl Rec {
         }
         // (a function-entry recording stitches by its own minimum: it has no loop to pay for the extra exit; section 78.1: so does a generic
         // continuation root)
+        // (section 78.7: a short leaf root is worth its entry only when it reaches its `RETURN`; one that would stitch at a C call keeps `fn_min`)
         let min = if self.cfg.fn_root {
-            self.fn_min_eff()
+            self.cfg.fn_min
         } else if self.cfg.cont_gen && self.cfg.side.is_none() {
             super::cache::STITCH_CONT_MIN as u32
         } else {
@@ -7466,6 +7474,9 @@ impl Rec {
                 && !mutants::active("stitch_side_never"));
         if side_stitch && self.cfg.side.is_some() && why == AbortReason::CFunc {
             self.stitch_use |= 2;
+        }
+        if why == AbortReason::CFunc {
+            self.stitch_feeds = Some((self.frames[self.cur_depth].proto, self.cur_pc + 1));
         }
         if (self.cfg.side.is_some() && !self.cfg.fn_root && !side_stitch)
             || (self.cfg.stitch_min == 0 && !self.cfg.fn_root && !self.cfg.side.is_some())
@@ -8130,6 +8141,10 @@ impl Rec {
         let (a, b) = (i.a() as usize, i.b() as usize);
         if self.cur_depth == 0 {
             if self.cfg.fn_root {
+                // (section 78.7: a tail call of a Lua function is a dispatcher, not a leaf: the short-body exemption of `fnleaf` does not apply)
+                if vm.slot(a).as_lclosure().is_some() {
+                    self.entered_lua = true;
+                }
                 return self.fn_end();
             }
             if self.cfg.cont_gen && self.cfg.side.is_none() && self.segs.is_empty() {
@@ -8265,6 +8280,22 @@ impl Rec {
                 // N3a: a second root `RETURN` the recording cannot pop (`retfmax`, a vararg / C caller, ...): it ends with the stitching exit before it
                 return self.end_exit();
             }
+            // section 78.7: the caller's continuation head the stitching exit before this `RETURN` leads into
+            self.stitch_feeds = {
+                let c = vm
+                    .st
+                    .ci()
+                    .previous()
+                    .filter(|c| c.r().callstatus & CIST_C == 0);
+                c.and_then(|c| {
+                    let cl = vm.st.ci_lclosure(c)?;
+                    let cp = cl.proto();
+                    let after =
+                        (c.r().savedpc as usize).wrapping_sub(cp.code().as_ptr() as usize) / 4;
+                    (after > 0 && after < cp.code().len())
+                        .then_some((&*cp as *const Proto as usize, after as u32))
+                })
+            };
             if self.cfg.fn_root {
                 return self.fn_end();
             }

@@ -10323,13 +10323,31 @@ fn s64_wgcall_programs() {
 #[test]
 fn s78_stitch_programs() {
     let progs = ["s78_01_stitch"];
-    let limits = ["stitch=63", "stitch=31", "stitch=0"];
+    let limits = ["stitch=63", "stitch=31", "stitch=127", "stitch=0"];
     let jobs = b1_jobs(&progs, &limits);
     let res = compare(jobs);
     assert!(!res.is_empty());
     assert_eq!(TrLimits::default().stitch, 0);
     assert_eq!(TrLimits::parse("stitch=63").0.stitch, 63);
     let mut seen = [0u64; 5];
+    // section 78.7 (bit 6): continuation roots only behind stitching exits: fewer than without the rule, but some (mutant `stitch_fed_ignored`)
+    let roots = |l: &str| -> u64 {
+        res.iter()
+            .filter(|(j, _)| {
+                j.limits == l
+                    && j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.stitch_use[0])
+            .sum()
+    };
+    let (fed, all) = (roots("stitch=127"), roots("stitch=63"));
+    assert!(
+        fed > 0 && fed < all,
+        "fed continuation roots {fed} against {all}"
+    );
     for (j, o) in &res {
         if j.limits == "stitch=0" {
             assert_eq!(o.stats.stitch_use[..5], [0; 5], "{}: stitch=0", j.tag());

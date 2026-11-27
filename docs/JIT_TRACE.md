@@ -8671,3 +8671,34 @@ outerlink=0`, so a cost of the new code in the recorder or the binary's layout, 
 Tests: `tests/vm/s78_03_wgloop.lua`, `s78_04_wglua.lua`, `s78_05_outerlink.lua`; `tr_core::s78_wgloop_programs` (every mode, then the gate at
 `wgate=2400000`: the C-call loop opens it, the Lua-callee loop does not), `tr_core::s78_outerlink_programs`. Mutants (registry 907 -> 909):
 `wgloop_never`, `outerlink_never`, both caught.
+
+### 78.7 Round 2: `stitch` and `fnleaf` narrowed per site and shipped ON (process defaults `stitch=95`, `fnleaf=16`; struct defaults stay 0)
+
+**`stitch` bit 6 (64): continuation roots only behind stitching exits.** A continuation head records as a generic root only when an installed trace
+ends with a stitching exit that leads into it (`HeadData::stitch_fed`, set at install from `Recorded::stitch_feeds`: a stitch at the `CALL` in front
+of the head, or the stitching exit before a root `RETURN` whose caller was suspended at the head), the head then fired `STITCH_FED_FIRES` (6) more
+times (bit 5 drops the wait), the prototype is neither recursive nor self-referential, and it is not already running in one of the 8 nearest caller
+frames (a method recursion no probe marked yet: towers). The `Rerec`-free type-guard rule of 78.1 also applies only to such fed families. The
+type-guard family lookup now runs only for type-guard exits without a side trace (it ran at every hot-exit call: towers +0.23 % instructions).
+Measured (one binary, instructions, `stitch=0` -> `95`): text_adventure **-13.9 %**, queens -16.8 %, wordfreq_wrap -5.4 %, json_rxi -3.8 %,
+gmatch_words -4.2 %; deltablue / havlak / towers / richards / list / cd within +0.07 % (were +7.4 / +10.9 / +3.4 % with `stitch=63`). Whole set
+(148 programs, `stitch=95,fnleaf=16` against both 0): largest rise **+0.07 %** (havlak, list, template_engine; raytrace +0.06 %).
+
+**`fnleaf` discriminators.** markdown's +0.38 % was `escape(s) return (gsub(...))`: a root that stitches at once at the `gsub` call; the short-body
+exemption now applies only at the root `RETURN` (a stitch at a C call keeps `fnmin`). apps/events (+0.14 %) were callbacks whose cold branch calls a
+method (`bus:emit`, `bus:off`): a prototype with a `SELF` is not a leaf. A root `TAILCALL` of a Lua function ends the exemption too. Result
+`fnleaf=16`: json -2.0 %, deltablue -0.6 %, every other measured program 0.00 % (markdown, events, richards, raytrace, cd, towers, programs/json).
+The `SELF` rule halves json's gain (-6.4 % before) but removes the events rise.
+
+**`fnleaf` bit 12 (heads of tail-call-only functions): still off.** richards' +29.4 % comes from the heads themselves (bit 12 without the short-body
+admission: same +29.4 %): `TCB:run` / `HandlerTask:run` end in `return self.task:run(m)`, polymorphic dispatchers whose roots replace the inlined
+dispatch. Rule built: only when every tail callee is a global or an upvalue (`GETTABUP` / `GETUPVAL`). richards then 0.00 %, but raytrace moves
+from -1.7 % to **+2.9 %** and cd +1.9 %: not shipped.
+
+**The +0.1..0.2 % with both knobs at 0 (78.6).** A `perf record -e instructions:u` of co_wrap shows the difference in rn-core functions this branch
+does not change (`coro_direct`, `run_mode`, `free_obj` change their shares, i.e. their inlining): the binary's code generation, not a check on the
+recording path. Not removable at the source.
+
+**Not done this round:** `efkeep` narrowing per root, the raw-copy materialisation template, the rule for exits landing in `put`'s tier-1 code.
+Mutants (registry 909 -> 910): `stitch_fed_ignored` (caught by `s78_stitch_programs`, which now also runs `stitch=127` and asserts fed roots form,
+fewer than without the rule); two policy mutants of the bit-12 / tail rules were caught by no program and were dropped.

@@ -1122,6 +1122,8 @@ pub const NAMES: &[&str] = &[
     // docs/JIT_TRACE.md sections 78.3 (`wgloop`), 78.4 (`outerlink`)
     "wgloop_never",
     "outerlink_never",
+    // docs/JIT_TRACE.md section 78.7 (`stitch` bit 6): continuation roots only behind stitching exits
+    "stitch_fed_ignored",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1212,7 +1214,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 909);
+        assert_eq!(NAMES.len(), 910);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

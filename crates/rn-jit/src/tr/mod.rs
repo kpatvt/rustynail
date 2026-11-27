@@ -821,8 +821,22 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                 && !cache::proto_recursive(st, pr)
                 // (only once the recursion probe of the function's entry head gave up: a recursive function keeps its continuation heads
                 // for the recursion machinery)
-                && cache::fn_probe_settled(st, pr, pc, cfg.limits.stitch & 32 != 0)
+                && (if cfg.limits.stitch & 64 != 0 {
+                    // section 78.7 (`stitch` bit 6): only a continuation that a stitching exit of an installed trace leads into
+                    cache::head_stitch_fed(st, pr, pc)
+                        && !mutants::active("stitch_fed_ignored")
+                        && cache::fed_fire(
+                            st,
+                            pr,
+                            pc,
+                            if cfg.limits.stitch & 32 != 0 { 0 } else { cache::STITCH_FED_FIRES },
+                        )
+                } else {
+                    cache::fn_probe_settled(st, pr, pc, cfg.limits.stitch & 32 != 0)
+                })
         })
+        // (section 78.7: and the prototype is not running in a caller frame already: a method recursion `self:f()` that no probe has marked yet)
+        && !(cfg.limits.stitch & 64 != 0 && recursion_on_stack(st, ci, 8))
         && !mutants::active("stitch_cont_refused");
     if cfg.limits.recany != 0
         && !cont_gen
@@ -985,6 +999,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             && cfg.limits.fnleaf & 4095 != 0
             && proto.code().len() <= (cfg.limits.fnleaf & 4095) as usize
             && !proto_names_error(&proto)
+            // (section 78.7: and holds no method call: a callback whose cold branch calls a method (apps/events' handlers `bus:emit`, `bus:off`)
+            // is a leaf only on the path recorded)
+            && !proto.code().iter().any(|&w| {
+                rn_core::instruction::Instruction(w).opcode() == Some(rn_core::ver::active::OpCode::SelfOp)
+            })
             && !mutants::active("fnleaf_never"))
         .then_some(0),
         cont_ret: cont_gen && cfg.limits.stitch & 8 != 0,
@@ -3116,6 +3135,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     }
     cache::note_inner(st, rec.inner_link && !act.side, rec.inner_ret);
     cache::note_stitch_use(st, rec.stitch_use);
+    // section 78.7 (`stitch` bit 6): the continuation head the final stitching exit leads into
+    if let (Some((p, pc)), true) = (rec.stitch_feeds, rec.stitched) {
+        // SAFETY: the prototype is one of the recording's frames or the caller of its root frame, alive while the trace is installed (its closure is on the stack).
+        if let Some(pr) = cache::proto_ref(unsafe { &*(p as *const rn_core::func::Proto) }) {
+            cache::mark_stitch_fed(st, pr, pc);
+        }
+    }
     // T9 (`innerlink`): the head this root's frame-linking exit enters (the return half reads it)
     if let Some(si) = side.filter(|s| s.frame_link && !act.side) {
         // SAFETY: an inlined callee of the trace, registered as a dependency (TR32) and live.

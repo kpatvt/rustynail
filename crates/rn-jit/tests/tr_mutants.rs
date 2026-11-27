@@ -5009,6 +5009,11 @@ const TABLE: &[Row] = &[
         owner: "S78",
         dets: &[d("tr_core", "s78_outerlink_programs")],
     },
+    Row {
+        name: "stitch_fed_ignored",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

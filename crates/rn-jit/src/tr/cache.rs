@@ -136,9 +136,9 @@ pub const OUTERLINK_PROCESS: u32 = 1;
 /// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
 pub const WGLOOP_PROCESS: u32 = 16;
 /// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (also the struct default).
-pub const FNLEAF_PROCESS: u32 = 0;
+pub const FNLEAF_PROCESS: u32 = 16;
 /// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (also the struct default).
-pub const STITCH_PROCESS: u32 = 0;
+pub const STITCH_PROCESS: u32 = 95;
 /// Section 78.1 (`stitch` bit 1): fewest recorded steps of a side recording before it stitches at a C call.
 pub const STITCH_SIDE_MIN: usize = 8;
 /// Section 78.1 (`stitch` bit 0): leaf samples (`FnShort` recordings) of a prototype's function-entry head after which its continuation heads
@@ -1271,8 +1271,8 @@ impl Default for TrLimits {
             innerlink: INNERLINK_PROCESS,
             t5: T5_PROCESS,
             t7: T7_PROCESS,
-            stitch: STITCH_PROCESS,
-            fnleaf: FNLEAF_PROCESS,
+            stitch: 0,
+            fnleaf: 0,
             wgloop: 0,
             outerlink: 0,
             efkeep: EFKEEP_PROCESS,
@@ -1511,7 +1511,7 @@ impl TrLimits {
                 "innerlink" => l.innerlink = v.min(15),
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
-                "stitch" => l.stitch = v.min(63),
+                "stitch" => l.stitch = v.min(127),
                 "fnleaf" => l.fnleaf = v.min(8191),
                 "wgloop" => l.wgloop = v.min(1024),
                 "outerlink" => l.outerlink = v.min(1),
@@ -1657,6 +1657,13 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "wgcall") {
             self.limits.wgcall = WGCALL_PROCESS;
+        }
+        // section 78.7 (`stitch`, `fnleaf`): likewise
+        if !names_limit(limits_env, "stitch") {
+            self.limits.stitch = STITCH_PROCESS;
+        }
+        if !names_limit(limits_env, "fnleaf") {
+            self.limits.fnleaf = FNLEAF_PROCESS;
         }
         // section 78 (`wgloop`, `outerlink`): on in a process; the struct default 0 keeps the tests' formation as it was
         if !names_limit(limits_env, "wgloop") {
@@ -1833,6 +1840,11 @@ pub struct HeadData {
     /// T9 (`innerlink`): a root trace that ends with a frame-linking exit into this head was installed (set at install; never reset: a hint for the
     /// return half, `innerlink` bit 1).
     pub linked_in: Cell<bool>,
+    /// Section 78.7 (`stitch` bit 6): an installed trace ends with a stitching exit that leads into this continuation head (a stitch at the `CALL`
+    /// in front of it, or the stitching exit before a callee's root `RETURN` whose caller was suspended here).
+    pub stitch_fed: Cell<bool>,
+    /// Section 78.7 (`stitch` bit 6): hot firings of this fed continuation head refused while it waits (`STITCH_FED_FIRES`).
+    pub fed_fires: Cell<u8>,
     /// R1 (`rearm`): rearm entries still allowed before a short stay refunds nothing ([`REARM_BUDGET`] consecutive short ones end them for a while).
     pub rearm_budget: Cell<u8>,
     /// R1: refused rearm attempts since the budget ran out.
@@ -1969,6 +1981,8 @@ impl HeadData {
             second: Cell::new(false),
             inner_n: Cell::new(0),
             linked_in: Cell::new(false),
+            stitch_fed: Cell::new(false),
+            fed_fires: Cell::new(0),
             ident_kept: Cell::new(false),
             dom_done: Cell::new(false),
             reroot_done: Cell::new(false),
@@ -6085,13 +6099,21 @@ pub fn exit_hot_policy(
     // section 78.1 (`stitch` bit 0): a family rooted at a continuation head of a non-recursive prototype is a straight-line trace of a polymorphic
     // call path (handlers, receivers): a type-guard exit there is another path, not an unstable loop: no `Rerec` flush (it would end in a blacklisted
     // head), the exit stays an ordinary one
+    // (asked only for a type-guard exit that cannot get a side trace: the rest of the exits do not pay for the lookup)
     let cont_family = d.tr.cfg.limits.stitch & 1 != 0
+        && out.site == ExitSite::TypeGuard
+        && !sides
         && match d.tr.slot(family) {
             Some(Slot {
                 body: Body::Trace(f),
                 ..
-            }) => tr_of(d, f.root)
-                .is_some_and(|tp| tp.is_cont_head(tp.head(f.head).pc) && !tp.recursive.get()),
+            }) => tr_of(d, f.root).is_some_and(|tp| {
+                let h = tp.head(f.head);
+                tp.is_cont_head(h.pc)
+                    && !tp.recursive.get()
+                    // (section 78.7: with bit 6 only the families of fed continuation heads, never a self-referential prototype)
+                    && (d.tr.cfg.limits.stitch & 64 == 0 || (h.stitch_fed.get() && !tp.selfref.get()))
+            }),
             _ => false,
         };
     match out.site {
@@ -6842,6 +6864,45 @@ pub fn head_linked_in(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
     with_tr(st, pr, |tp| {
         tp.head_index(pc)
             .is_some_and(|i| tp.head(i).linked_in.get())
+    })
+    .unwrap_or(false)
+}
+
+/// Section 78.7 (`stitch` bit 6): marks the continuation head at `pc` of `pr` as fed by a stitching exit.
+pub fn mark_stitch_fed(st: &mut State, pr: ProtoRef, pc: u32) {
+    let _ = with_tr(st, pr, |tp| {
+        if let Some(i) = tp.head_index(pc) {
+            if tp.is_cont_head(pc) {
+                tp.head(i).stitch_fed.set(true);
+            }
+        }
+    });
+}
+
+/// Section 78.7 (`stitch` bit 6): hot firings a fed continuation head waits before its first recording (it must stay hot behind the stitch).
+pub const STITCH_FED_FIRES: u8 = 6;
+
+/// Section 78.7: counts a hot firing of the fed continuation head at `pc`; true once it has fired [`STITCH_FED_FIRES`] times.
+pub fn fed_fire(st: &mut State, pr: ProtoRef, pc: u32, need: u8) -> bool {
+    with_tr(st, pr, |tp| {
+        tp.head_index(pc).is_some_and(|i| {
+            let h = tp.head(i);
+            let n = h.fed_fires.get().saturating_add(1);
+            h.fed_fires.set(n);
+            n > need
+        })
+    })
+    .unwrap_or(false)
+}
+
+/// Section 78.7 (`stitch` bit 6): is the continuation head at `pc` of `pr` fed by a stitching exit?
+pub fn head_stitch_fed(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    with_tr(st, pr, |tp| {
+        !tp.recursive.get()
+            && !tp.selfref.get()
+            && tp
+                .head_index(pc)
+                .is_some_and(|i| tp.head(i).stitch_fed.get())
     })
     .unwrap_or(false)
 }
@@ -9294,7 +9355,21 @@ pub(crate) fn emit_dispatch(
         && !env.follower[0]
         && (env.ops.iter().any(|o| matches!(o, Some(OpCode::Call)))
             || (c.c_entered && !mutants::active("centry_no_head"))
-            || (c.fn_tail && env.ops.iter().any(|o| matches!(o, Some(OpCode::Tailcall))))
+            || (c.fn_tail
+                && env.ops.iter().any(|o| matches!(o, Some(OpCode::Tailcall)))
+                // (section 78.7: every tail callee is a global or an upvalue (`return setmetatable{...}`), never a method or field of an argument
+                // (`return self.task:run(m)`: a polymorphic dispatcher, awfy/richards +29 %))
+                && (0..env.ins.len())
+                    .filter(|&pc| matches!(env.ops[pc], Some(OpCode::Tailcall)))
+                    .all(|pc| {
+                        let a = env.ins[pc].a();
+                        (1..=12usize)
+                            .filter(|k| *k <= pc)
+                            .find(|k| env.ins[pc - k].a() == a && env.ops[pc - k].is_some())
+                            .is_some_and(|k| {
+                                matches!(env.ops[pc - k], Some(OpCode::Gettabup | OpCode::Getupval))
+                            })
+                    }))
             || mutants::active("fn_head_calls_ignored"))
         && (!env.ops.iter().any(|o| matches!(o, Some(OpCode::Tbc)))
             || mutants::active("fn_head_tbc_ignored"));
