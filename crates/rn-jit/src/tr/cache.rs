@@ -131,9 +131,9 @@ pub const T5_PROCESS: u32 = 0;
 pub const T7_PROCESS: u32 = 0;
 /// Section 78.5 (`efkeep`): the process default of [`TrLimits::efkeep`] (also the struct default).
 pub const EFKEEP_PROCESS: u32 = 0;
-/// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (also the struct default).
+/// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0).
 pub const OUTERLINK_PROCESS: u32 = 1;
-/// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (also the struct default).
+/// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
 pub const WGLOOP_PROCESS: u32 = 16;
 /// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (also the struct default).
 pub const FNLEAF_PROCESS: u32 = 0;
@@ -1094,12 +1094,12 @@ pub struct TrLimits {
     pub fnleaf: u32,
     /// Section 78.3 (`wgloop`, docs/JIT_TRACE.md section 78.3): the per-loop form of `wgcall`. A loop whose body holds exactly one call-like
     /// instruction, a `CALL` whose callee is a C function at the moment the gate charges (read from the local register or upvalue the callee was
-    /// moved from), weighs that call as `1 + wgloop` bytecodes; every other loop is charged as before. 0 = off. Default [`WGLOOP_PROCESS`].
+    /// moved from), weighs that call as `1 + wgloop` bytecodes; every other loop is charged as before. 0 = off. Default 0 here, [`WGLOOP_PROCESS`] in a process.
     pub wgloop: u32,
     /// Section 78.4 (`outerlink`, docs/JIT_TRACE.md section 78.4): a side recording that reaches the head of an untraced loop of its root frame
     /// whose body contains a loop head with an installed trace (the outer loop of a traced inner loop) records on through the outer loop's
     /// iteration instead of aborting `SideUntraced`, and links at the inner head at any length (not `SideShort`). 0 = off. Default
-    /// [`OUTERLINK_PROCESS`].
+    /// 0 here, [`OUTERLINK_PROCESS`] in a process.
     pub outerlink: u32,
     /// Section 78.5 (`efkeep`, docs/JIT_TRACE.md section 78.5): the persistent-entry-failure rule does not flush (`Rerec`) a root whose family
     /// has at least `efkeep` installed side traces: the failing entries keep going to tier 1 (or to the head's prelude) and the family's side
@@ -1273,8 +1273,8 @@ impl Default for TrLimits {
             t7: T7_PROCESS,
             stitch: STITCH_PROCESS,
             fnleaf: FNLEAF_PROCESS,
-            wgloop: WGLOOP_PROCESS,
-            outerlink: OUTERLINK_PROCESS,
+            wgloop: 0,
+            outerlink: 0,
             efkeep: EFKEEP_PROCESS,
         };
         if mutants::active("bb_default_ignored") {
@@ -1657,6 +1657,13 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "wgcall") {
             self.limits.wgcall = WGCALL_PROCESS;
+        }
+        // section 78 (`wgloop`, `outerlink`): on in a process; the struct default 0 keeps the tests' formation as it was
+        if !names_limit(limits_env, "wgloop") {
+            self.limits.wgloop = WGLOOP_PROCESS;
+        }
+        if !names_limit(limits_env, "outerlink") {
+            self.limits.outerlink = OUTERLINK_PROCESS;
         }
     }
 

@@ -8660,7 +8660,7 @@ materialisation already sizes the table exactly and inserts without lookups, H5;
 `rn-core::table` and its GC argument), the re-record of a root that keeps the old root's side traces for the exits they still serve, and a rule
 for the exits landing in `put`'s tier-1 code.
 
-### 78.6 All defaults against the base (release, one binary each, `RUSTYNAIL_SEED=0`, CPU 14)
+### 78.6 All defaults against the base (release, one binary each, `RUSTYNAIL_SEED=0`, CPU 14; `wgloop` / `outerlink` are process defaults, the struct default (the tests) stays 0)
 
 Targets, min of 15 interleaved (cycles M / instructions M): text_adventure 2340.2 / 7350.0 -> 2333.5 / 7350.2 (-0.3 % / 0.0 %; with `stitch=63`
 2095.6 / 6316.1, **-10.5 % / -14.1 %**); cd 231.2 / 642.6 -> 232.2 / 643.3 (+0.45 % / +0.09 %); fmt_s 6.28 / 23.33 -> **5.41 / 18.79 (-13.9 % /
