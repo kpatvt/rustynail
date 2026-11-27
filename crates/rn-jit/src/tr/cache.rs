@@ -160,6 +160,8 @@ pub const PUREB_PROCESS: u32 = 1;
 pub const OPENCALL_PROCESS: u32 = 1;
 /// S73: the process default of [`TrLimits::landfix`] (also the struct default).
 pub const LANDFIX_PROCESS: u32 = 1;
+/// Section 75 (`oframe`): the process default of [`TrLimits::oframe`] (also the struct default).
+pub const OFRAME_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -840,6 +842,10 @@ pub struct TrLimits {
     /// stay in the interpreter. 1 = a known register that is dead at the label gets its tag rewritten instead of checked (a dead register is never read before
     /// it is written: only the tag has to be what tier 1's payload-only stores assume); 0 = every known register is checked (default [`LANDFIX_PROCESS`]).
     pub landfix: u32,
+    /// Section 75 (`oframe`, docs/JIT_TRACE.md section 75): snapshots (and the writeback of a native self-call) leave out the slots at or above the top of
+    /// the innermost frame (`base + maxstacksize`): the registers of inlined callees that have returned. Nothing can read them before a new frame writes
+    /// them (the collector marks below `top` and clears above it); the exit / push no longer stores them. 0 = off, 1 = on (default [`OFRAME_PROCESS`]).
+    pub oframe: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1129,6 +1135,7 @@ impl Default for TrLimits {
             pureb: PUREB_PROCESS,
             opencall: OPENCALL_PROCESS,
             landfix: LANDFIX_PROCESS,
+            oframe: OFRAME_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1361,6 +1368,7 @@ impl TrLimits {
                 "pureb" => l.pureb = v.min(1),
                 "opencall" => l.opencall = v.min(1),
                 "landfix" => l.landfix = v.min(1),
+                "oframe" => l.oframe = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

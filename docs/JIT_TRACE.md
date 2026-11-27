@@ -8206,3 +8206,66 @@ move up to +-14 % on programs with unchanged instructions (layout noise); 5-run 
 "ships OFF" note is superseded). Basis: instructions of all 134 programs within +0.05 % (wins: len_op -8.8 %, it_next -3.5 %, byte_multi -1.1 %); cycles checked with 15 interleaved
 runs of one binary with the knobs toggled on CPU 4: binary_trees min +0.1 % / median -0.4 %, getmt 0.0 %, sieve min +4.1 % / median +0.4 % (the sieve spread alone is 7 %, fastest
 509 against median 548 M cycles). `landfix` must stay ON with `opencall` (section 73: `rep_sep`).
+
+## 75. awfy/permute against LuaJIT: head-to-head, `oframe`, `retfuse` (2026-11-26, base 2606226)
+
+### 75.1 Head-to-head (release `rn-cli`, `RUSTYNAIL_SEED=0`, `taskset -c 8`, LuaJIT 2.1 `/usr/bin/luajit`)
+
+LuaJIT on permute is a lottery: 22 runs at the default size gave 14.5 .. 1005 M cycles (`-jp=v`: the slow runs spend 80-100 % in the trace
+compiler, re-recording after blacklisting). Its best run: 14.5 M cycles / 58 M instructions (100 iterations); at 1000 iterations its best is
+90.0 M / 435 M, so **steady state: 9.9 cycles and 48 instructions per `permute` call** (8660 calls per iteration, 5039 loop iterations, 10078 swaps).
+Ours (2606226): 35.4 M / 191.2 M at 100, 320.1 M / 1864.9 M at 1000: **36.5 cycles, 215 instructions per call** (3.7x cycles, 4.5x instructions
+in steady state; 2.4x cycles at the default size where LuaJIT's startup counts).
+
+LuaJIT's good run (`-jdump=+rsx`) is ONE loop trace rooted at the `for` of `permute` (line 19, `stop -> loop`) that inlines the whole subtree for a
+fixed depth pattern: both swaps, the recursive `self:permute(n1)` calls and the inner `for` loops of the inlined levels (unrolled), so `self`, its
+metatable, `__index`, `P.swap`, `P.permute` and `self.v` are validated once per iteration and CSE'd over every inlined call, `n ~= 0` folds to a
+constant per level, and no frame is ever pushed or popped (frames exist only in snapshots). Side traces cover the other depth patterns.
+
+Ours: six traces, cut at every call (99 % of the instructions in trace code; tier 1 0.1 %):
+
+| trace | what | runs per iteration | hot-path instructions (disassembly) |
+|---|---|---:|---:|
+| 3 | function entry: `count++`, `n ~= 0`, `n1`, native self-push (loops on itself for the first call) | 8660 | link entry 8 + 50 (descend) / 26 (leaf) |
+| 4 | side of 3 (`n == 0`): native `RETURN0` | 5040 | 31 (to pc 11) .. 37 (to pc 22) |
+| 8 | continuation after the first call: `FORPREP`, inlined swap, push | 3620 | 6 + 112 |
+| 7 | continuation after the in-loop call: inlined swap, `FORLOOP`; loop end: native `RETURN0` | 5039 | ~95 + return ~80 |
+| 7 exit 13 | `FORLOOP` continues: stub, then the root at pc 26 through its cell | 1419 | stub + |
+| 9 | root at pc 26: `FORLOOP`, inlined swap, push | 1419 | 140 |
+
+Extra work per call against LuaJIT, ranked (instructions per `permute` call, from the counts above; perf `instructions:u` sampling skids too much
+on this CPU to attribute single instructions, so these are path counts times run counts):
+
+| # | item | LuaJIT | ours per call | buildable here |
+|---:|---|---|---:|---|
+| 1 | frame protocol: native push (slot stores, `ci` link, `savedpc`, room checks, cell dispatch) and native return (callstatus / root tests, `savedpc` site chains twice, pop, cell dispatch) | none (inlined) | ~90 | structural (inline recursion with loops); parts: `retfuse` |
+| 2 | re-validation at every trace entry: `self` type, `HMISS swap` in self, metatable, `__index` shape + `HREFK` + `HLOAD`, `P` shape, `HREFK swap`, closure `EQREF`, `self.v` | once per loop iteration | ~29 | no (needs facts across trace transitions: metatable version stamps, section 28 (b)) |
+| 3 | trace-entry slot type guards, `POLL` / `BUDGET` / stack checks per entry | once | ~20 | no (section 21.3.2: unsound without a family invariant) |
+| 4 | trace 7's loop-continue exit 13 through its stub and the root's cell, trace 9 re-entering | none | ~13 | not built (a side trace would still re-validate, item 2) |
+| 5 | stores of the returned inlined `swap` frame's registers (slots 10-14, above `permute`'s 10 slots) at every push and exit | none (dead) | ~7 | **`oframe`** |
+| 6 | the second load of `previous` / `savedpc` and the second site chain of a native return | none | ~5 | **`retfuse`** |
+| 7 | `n ~= 0` / `count` reload: not constant-folded across calls | folded | ~4 | no (needs inlining, item 1) |
+
+### 75.2 `oframe`: snapshots leave out the slots above the innermost frame's top (`TrLimits::oframe`, default 1 = `OFRAME_PROCESS`)
+
+A snapshot taken by `Rec::cur_snapshot` (with no open `top`) records the root-relative top of its innermost frame (`base_off + maxstacksize`; none
+for a vararg frame before its `VARARGPREP`, whose extra arguments may lie above `maxstacksize`). At the end of the recording (`Rec::oframe_prune`,
+no `RETF` segments) the plain value entries at or above that top leave the map; function slots and flagged entries stay. The writeback of a native
+self-call (`end_rec_call`) drops the slots above the calling frame's top the same way. These are the registers of inlined callees that have
+returned (permute: the inlined `swap` frame, slots 10-14 above `permute`'s 10 slots, stored at every push of traces 8 / 9 and at trace 7's exit 13).
+
+Why it is exact: at the snapshot's pc no frame owns those slots. Tier 1 / the interpreter read a register only after writing it, except parameters
+(below the callee's base + `numparams`, inside the frame); `debug.getlocal` limits a Lua frame to its `top`; the collector marks below `thread.top`
+and clears above it in the atomic phase, so a stale slot neither keeps nor loses an object (the F4 argument of section 7, here for slots no frame
+owns, collectables included). When a later call covers them they are callee registers above its parameters, which the callee writes before it
+reads them; their contents before that are unspecified in PUC too (it leaves the previous frame's values). Tier 1's typed landing labels check
+registers of the landing frame only, never slots above it.
+
+Mutant `oframe_root_top` (the root frame's top is used for snapshots inside inlined frames: drops live registers of a callee whose frame reaches above
+its caller's top), caught by `tr_core::s75_oframe_programs` (program `tests/vm/s75_oframe.lua`: an exit inside an inlined callee with five live
+locals above its caller's top, the permute shape, collectables in a returned frame with full collections between, a later callee covering the stale
+slots; `oframe` 1 / 0 and with `recnat=1`, modes `always` / `on2` / `on`, `+verify`, exit storms, budget 17, GC stress 2).
+
+Measured (one binary, `oframe=0` against `=1`, `RUSTYNAIL_SEED=0`, `taskset -c 8`, min of 5): permute 191.22 -> 184.30 M instructions (**-3.62 %**),
+35.40 -> 33.35 M cycles (**-5.8 %**). Whole set (bench/{lib,programs,awfy,corpus,corpus2}, 190 programs, instructions, one run each): movers beyond
+0.3 %: permute -3.61 %, corpus/astar_jumper -2.43 %, programs/varargs -1.15 %, awfy/towers -0.62 %, programs/fib -0.36 %; nothing rises beyond 0.3 %.

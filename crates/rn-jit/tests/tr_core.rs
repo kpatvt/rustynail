@@ -4480,6 +4480,36 @@ fn s73_landfix_programs() {
     );
 }
 
+/// Section 75 (`oframe`): snapshots and the writeback of a native self-call leave out the slots above the innermost frame's top: an exit inside an
+/// inlined callee whose live registers lie above its caller's top, the permute shape, collectables in a returned frame with collections in between,
+/// with the knob on and off, in the trace modes with `+verify`, exit storms, small budgets and GC stress. Mutant `oframe_root_top`.
+#[test]
+fn s75_oframe_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["oframe=1", "oframe=0", "oframe=1,recnat=1"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s75_oframe", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new("s75_oframe", trace)
+                    .limits_s(limits)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 59: B1 (`pureb`: `string.byte` ranges with one `j <= #s` guard and DCE-able loads) and B2 (`opencall`: open-result `CALL`s define
 /// the registers from `A` up in the `snapprune` liveness), with the knobs on (shipped) and off, in the trace modes with lockstep, exit storms,
 /// budgets, GC stress and the stack-move stress. Mutants `pureb_len_guard_skip`, `opencall_defs_low`.

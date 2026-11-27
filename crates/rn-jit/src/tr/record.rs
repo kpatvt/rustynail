@@ -196,6 +196,8 @@ pub struct RecCfg {
     pub pureb: bool,
     /// B2 (`opencall`): the `snapprune` liveness lets an open-result `CALL` define every register from `A` up.
     pub opencall: bool,
+    /// Section 75 (`oframe`): snapshots leave out the slots at or above the top of their innermost frame.
+    pub oframe: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -547,6 +549,7 @@ impl Default for RecCfg {
             snapprune_locals: false,
             pureb: super::cache::PUREB_PROCESS != 0,
             opencall: super::cache::OPENCALL_PROCESS != 0,
+            oframe: super::cache::OFRAME_PROCESS != 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -1300,6 +1303,10 @@ struct Rec {
     stitched: bool,
     /// P-M3: the native self-call that ended the recording (`end_rec_call`).
     rec_call: Option<RecCall>,
+    /// Section 75 (`oframe`): per snapshot taken by `cur_snapshot`, the root-relative top of its innermost frame (slots at or above it are dropped).
+    oframe_lims: Vec<(u32, u16)>,
+    /// Section 75: the top of the frame that executes the native self-call (its writeback leaves out the slots above it).
+    oframe_wb: Option<u16>,
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1667,6 +1674,8 @@ impl Rec {
             end_snap: None,
             stitched: false,
             rec_call: None,
+            oframe_lims: Vec::new(),
+            oframe_wb: None,
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -2775,6 +2784,9 @@ impl Rec {
         if mutants::active("snap_prune_dead") {
             snap::prune_dead(&mut self.b.ir, &self.meta, &self.sm.last_read);
         }
+        if self.segs.is_empty() {
+            self.oframe_prune();
+        }
         if self.cfg.snapprune && self.segs.is_empty() {
             // SAFETY: the root frame's prototype is alive for the whole recording (its closure runs in the root frame).
             let p = unsafe { &*(self.frames[0].proto as *const Proto) };
@@ -2818,6 +2830,7 @@ impl Rec {
             }
         }
         ir.loop_at = None;
+        let rc_end = self.rec_call.is_some();
         ir.rec_call = self.rec_call.take();
         ir.rec_ret = self.rec_ret.map(|x| x.0);
         LA_LAST.with(|l| *l.borrow_mut() = self.la_seen.borrow().clone());
@@ -2833,7 +2846,13 @@ impl Rec {
                     flags: 0,
                 }],
                 Some(_) => Vec::new(),
-                None => self.sm.entries(),
+                None => {
+                    let mut wb = self.sm.entries();
+                    if let (Some(t), true, true) = (self.oframe_wb, rc_end, self.segs.is_empty()) {
+                        wb.retain(|e| e.flags != 0 || e.slot < t);
+                    }
+                    wb
+                }
             },
             snap_step: self.meta.iter().map(|m| m.step).collect(),
             path: std::mem::take(&mut self.path),
@@ -7228,6 +7247,7 @@ impl Rec {
         let need = (d + 1).saturating_sub(usize::from(d > 0 && mutants::active("h9_maxci_short")));
         self.max_ci = self.max_ci.max(need as u8);
         let code = p.code_ptr() as u64;
+        self.oframe_wb = self.oframe_top();
         self.rec_call = Some(RecCall {
             a: a as u16,
             nargs: nargs as u16,
@@ -7324,8 +7344,67 @@ impl Rec {
             uncharged: false,
             low,
         });
+        if top == 0 {
+            if let Some(t) = self.oframe_top() {
+                self.oframe_lims.push((s, t));
+            }
+        }
         self.cur_snap = Some(s);
         Ok(s)
+    }
+
+    /// Section 75 (`oframe`): the root-relative top (`base + maxstacksize`) of the innermost frame, at and above which no register of a
+    /// live frame lies (the registers of inlined callees that have returned); `None`: nothing may be dropped (knob off, a vararg frame
+    /// before its `VARARGPREP`, whose extra arguments may lie above `maxstacksize`). Mutant `oframe_root_top`: the root frame's top
+    /// is used for inlined frames too (drops live registers of a callee whose frame reaches above its caller's).
+    fn oframe_top(&self) -> Option<u16> {
+        if !self.cfg.oframe {
+            return None;
+        }
+        let d = if mutants::active("oframe_root_top") {
+            0
+        } else {
+            self.cur_depth
+        };
+        let f = &self.frames[d];
+        if self.frames[..=self.cur_depth]
+            .iter()
+            .any(|f| f.vpending.is_some())
+        {
+            return None;
+        }
+        u16::try_from(f.base_off + f.nslots).ok()
+    }
+
+    /// Section 75 (`oframe`): leaves the slots at or above the innermost frame's top out of the maps of the snapshots `cur_snapshot`
+    /// took (only plain value entries: function slots and flagged entries stay).
+    fn oframe_prune(&mut self) {
+        if self.oframe_lims.is_empty() {
+            return;
+        }
+        let ir = &mut self.b.ir;
+        let mut lim: Vec<u16> = vec![u16::MAX; ir.snaps.len()];
+        for &(s, t) in &self.oframe_lims {
+            if let Some(l) = lim.get_mut(s as usize) {
+                *l = t;
+            }
+        }
+        let mut new_map: Vec<SnapEntry> = Vec::with_capacity(ir.snapmap.len());
+        let mut wins: Vec<(u32, u16)> = Vec::with_capacity(ir.snaps.len());
+        for (k, sn) in ir.snaps.iter().enumerate() {
+            let (start, len) = sn.map;
+            let at = new_map.len() as u32;
+            for e in &ir.snapmap[start as usize..start as usize + usize::from(len)] {
+                if !(e.flags == 0 && e.slot >= lim[k] && sn.top == 0) {
+                    new_map.push(*e);
+                }
+            }
+            wins.push((at, (new_map.len() as u32 - at) as u16));
+        }
+        ir.snapmap = new_map;
+        for (sn, w) in ir.snaps.iter_mut().zip(wins) {
+            sn.map = w;
+        }
     }
 
     /// E1 (section 34.2, the shape rule): the callee in register `a` of the current frame was read from an upvalue (a `ULOAD`, or the running

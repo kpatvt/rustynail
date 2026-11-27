@@ -439,6 +439,8 @@ pub const NAMES: &[&str] = &[
     "opencall_defs_low",
     // S73 (`landfix`): the typed landing labels rewrite the tag of a LIVE known register too (instead of exiting on a mismatch)
     "landfix_live_rewrite",
+    // section 75 (`oframe`): the snapshots of an inlined frame drop the slots above the ROOT frame's top (live callee registers)
+    "oframe_root_top",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1184,7 +1186,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 891);
+        assert_eq!(NAMES.len(), 892);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
