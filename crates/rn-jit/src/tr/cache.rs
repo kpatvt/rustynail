@@ -631,6 +631,9 @@ pub struct TrLimits {
     /// BUNDLE-Q (`t1q`): bit mask of the tier-1 exits removed (1 = `EQ` of objects without a real `__eq` call, 2 = float `MOD`, 4 = BUNDLE-S `__index` Lua function frames, 8 = BUNDLE-S `__newindex` Lua function frames); bit 7 (0x80) = named explicitly (then it also applies
     /// with `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly) (default [`T1Q_PROCESS`]).
     pub t1q: u32,
+    /// Section 77.17 (`polyhead`): `Ineffective` flushes of a loop head whose traces inlined different prototypes are not counted as repeats (at
+    /// most this many; each backs off `hot * 16`); 0 = Q3 as before (the second `Ineffective` flush blacklists).
+    pub polyhead: u32,
     /// R2 (`t1g`): bit mask of the tier-1 generic-`for` paths (1 = `CLOSE` without its helper when nothing is open, 2 = `TFORCALL` of `next` through the lean
     /// helper, 4 = section 77.14: `TFORCALL` of a compiled Lua closure iterator as a flat frame push, off by default); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
     pub t1g: u32,
@@ -1093,6 +1096,7 @@ impl Default for TrLimits {
     fn default() -> TrLimits {
         #[allow(unused_mut)]
         let mut l = TrLimits {
+            polyhead: 0,
             maxtrace: 1000,
             maxrecord: 4000,
             maxsnap: 500,
@@ -1382,6 +1386,7 @@ impl TrLimits {
                 "f2ifl" => l.f2ifl = v.min(1),
                 "t1q" => l.t1q = v.min(0x7f) | 0x80,
                 "t1g" => l.t1g = v.min(0x7f) | 0x80,
+                "polyhead" => l.polyhead = v.min(63),
                 "amt" => l.amt = v.min(1),
                 "rearmside" => l.rearmside = v.min(64),
                 "rearmclean" => l.rearmclean = v.min(1),
@@ -1782,6 +1787,8 @@ pub struct HeadData {
     pub flushed_hash: Cell<u64>,
     /// Q3: number of `Ineffective` flushes of this head.
     pub ineff: Cell<u8>,
+    /// Section 77.17 (`polyhead`): hash of the inlined prototypes of the last trace of this head flushed `Ineffective` (0 = none).
+    pub ineff_deps: Cell<u64>,
     /// C36: the head had its `second` abort-count second chance.
     pub second: Cell<bool>,
     /// C39: `innerretry` rounds this head has had.
@@ -1937,6 +1944,7 @@ impl HeadData {
             pcl_addr: Cell::new(0),
             flushed_hash: Cell::new(0),
             ineff: Cell::new(0),
+            ineff_deps: Cell::new(0),
             second: Cell::new(false),
             inner_n: Cell::new(0),
             linked_in: Cell::new(false),
@@ -3018,9 +3026,30 @@ impl TrProto {
 
     /// Q3: an `Ineffective` flush of head `i`. The second one of the same head blacklists at once (the first
     /// re-record did not cure it); otherwise the `Rerec` transition.
-    pub fn on_ineffective(&self, i: usize) -> Penalty {
+    pub fn on_ineffective(&self, i: usize, poly: u32, deps: u64, hot: i32) -> Penalty {
         let h = &self.heads[i];
         let n = h.ineff.get().saturating_add(1);
+        // Section 77.17 (`polyhead`): a polymorphic head (one loop serving several callees: a generic `for` over different iterator
+        // closures) whose flushed trace inlined other prototypes than the last ineffective one is not counted as a repeat: the
+        // first re-record did not fail again, it was made on another callee. At most `poly` such flushes; each waits `hot * 16`
+        // iterations before the head re-records, so the next recording tends to see the head's next callee rather than the same one.
+        if poly & 15 != 0 && h.inner_n.get() == 0 && !mutants::active("polyhead_never") {
+            let prev = h.ineff_deps.get();
+            h.ineff_deps.set(deps);
+            // (bit 4: the re-record waits `hot * 16 << (n - 2)` iterations instead of re-recording at once; bit 5: also a repeat on the same
+            // prototypes, i.e. a long back-off instead of the blacklist)
+            let wait = if poly & 16 != 0 {
+                (i64::from(hot) * 16) << (n.saturating_sub(2)).min(8)
+            } else {
+                1
+            };
+            if n >= 2 && (prev != deps || poly & 32 != 0) && u32::from(n) <= (poly & 15) + 1 {
+                h.ineff.set(n);
+                h.rerec.set(h.rerec.get().saturating_add(1));
+                self.to_warm(i, wait);
+                return Penalty::Wait(wait as i32);
+            }
+        }
         h.ineff.set(n);
         // C39 follow-up: a trace installed after retry rounds of `innerretry` (`inner_n > 0`) that turns out ineffective ends the head
         // for good (no re-record): the retried loop is the data-dependent inner loop the first rounds could not record, and its
@@ -3032,6 +3061,24 @@ impl TrProto {
             return Penalty::Black;
         }
         self.on_rerecord(i)
+    }
+
+    /// Section 77.17 (`polyhead` bit 5): a byte-identical re-record of a head whose `Ineffective` flushes are still inside the polymorphic budget
+    /// backs off like an `Ineffective` flush (the head serves other callees later), instead of [`TrProto::on_identical`]'s blacklist.
+    pub fn on_identical_poly(&self, i: usize, poly: u32, hot: i32) -> Penalty {
+        let h = &self.heads[i];
+        let n = h.ineff.get();
+        if poly & 32 != 0
+            && n >= 1
+            && u32::from(n) <= (poly & 15)
+            && !mutants::active("polyhead_never")
+        {
+            h.ineff.set(n.saturating_add(1));
+            let wait = (i64::from(hot) * 16) << n.min(8);
+            self.to_warm(i, wait);
+            return Penalty::Wait(wait as i32);
+        }
+        self.on_identical(i)
     }
 
     /// Q3: a new compile of head `i` is byte-identical to the trace flushed last: re-installing it would repeat the
@@ -4589,7 +4636,9 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
             d.tr.stats.refused += 1;
             tp.on_transient(r.head)
         }
-        AbortKind::Identical => tp.on_identical(r.head),
+        AbortKind::Identical => {
+            tp.on_identical_poly(r.head, d.tr.cfg.limits.polyhead, d.tr.cfg.hot_loop)
+        }
         AbortKind::Drop => {
             tp.on_dropped(r.head);
             Penalty::Wait(tp.hot)
@@ -5459,7 +5508,14 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                         d.tr.stats.ineffective += 1;
                     }
                     if why == FlushWhy::Ineffective {
-                        tp.on_ineffective(t.head)
+                        let deps = {
+                            let mut v: Vec<usize> = t.deps.clone();
+                            v.sort_unstable();
+                            v.iter().fold(0xcbf2_9ce4_8422_2325u64, |a, &x| {
+                                (a ^ x as u64).wrapping_mul(0x0100_0000_01b3)
+                            }) | 1
+                        };
+                        tp.on_ineffective(t.head, d.tr.cfg.limits.polyhead, deps, hot)
                     } else {
                         tp.on_rerecord(t.head)
                     }

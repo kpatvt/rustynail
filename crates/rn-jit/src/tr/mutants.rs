@@ -474,6 +474,8 @@ pub const NAMES: &[&str] = &[
     "t1g_tflat_top_short",
     // section 77.15 (`retf` bit 9): a recursive lazy-aware caller is popped into too
     "retf_demote_recursive",
+    // section 77.17 (`polyhead`): the polymorphic-head rule never applies
+    "polyhead_never",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1219,7 +1221,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 910);
+        assert_eq!(NAMES.len(), 911);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

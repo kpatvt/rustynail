@@ -908,7 +908,7 @@ fn c39_policy() {
     // follow-up: an ineffective flush of a trace installed after retry rounds blacklists at once (no re-record); without rounds the first one re-records
     let tq = TrProto::new(10, &[3, 7], 256, true, 77, 1);
     assert!(
-        !matches!(tq.on_ineffective(0), Penalty::Black),
+        !matches!(tq.on_ineffective(0, 0, 1, 256), Penalty::Black),
         "first ineffective flush without retry rounds: re-record"
     );
     assert!(matches!(
@@ -918,7 +918,7 @@ fn c39_policy() {
     assert_eq!(tq.on_abort(1, "InnerLoop", true), Penalty::Black);
     assert!(matches!(tq.inner_chance(1, 3), Some(Penalty::Wait(_))));
     assert_eq!(
-        tq.on_ineffective(1),
+        tq.on_ineffective(1, 0, 1, 256),
         Penalty::Black,
         "ineffective after a retry round: blacklisted for good"
     );
@@ -1290,6 +1290,45 @@ fn bh_libcall_process_default() {
         c.apply_process_limits(env);
         assert_eq!(c.limits.libcall, want, "limits env {env:?}");
     }
+}
+
+/// Section 77.17 (`polyhead`): the second `Ineffective` flush of a head blacklists (Q3) unless the knob is on and the flushed trace inlined other
+/// prototypes than the last ineffective one (bit 5: any repeat), up to the knob's count; bit 4 makes the re-record wait `hot * 16 << (n - 2)`; a
+/// byte-identical re-record inside the budget backs off too. Mutant `polyhead_never`.
+#[test]
+fn s77_polyhead_rule() {
+    use rn_jit::tr::cache::{Penalty, TrProto};
+    // off: Q3 as before
+    let tp = TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    assert!(!matches!(tp.on_ineffective(0, 0, 11, 256), Penalty::Black));
+    assert_eq!(tp.on_ineffective(0, 0, 22, 256), Penalty::Black);
+    // on, other prototypes each time: two more re-records, then the blacklist
+    let tp = TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    assert!(!matches!(tp.on_ineffective(0, 2, 11, 256), Penalty::Black));
+    assert_eq!(tp.on_ineffective(0, 2, 22, 256), Penalty::Wait(1));
+    assert_eq!(tp.on_ineffective(0, 2, 33, 256), Penalty::Wait(1));
+    assert_eq!(tp.on_ineffective(0, 2, 44, 256), Penalty::Black);
+    // on, the same prototypes again: blacklisted (a real repeat), unless bit 5
+    let tp = TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    assert!(!matches!(tp.on_ineffective(0, 2, 11, 256), Penalty::Black));
+    assert_eq!(tp.on_ineffective(0, 2, 11, 256), Penalty::Black);
+    let tp = TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    assert!(!matches!(tp.on_ineffective(0, 50, 11, 256), Penalty::Black));
+    assert_eq!(tp.on_ineffective(0, 50, 11, 256), Penalty::Wait(256 * 16));
+    assert_eq!(tp.on_ineffective(0, 50, 11, 256), Penalty::Wait(256 * 32));
+    // an identical re-record inside the budget backs off (bit 5), outside it blacklists
+    assert!(matches!(tp.on_identical_poly(0, 52, 256), Penalty::Wait(_)));
+    assert_eq!(
+        tp.on_identical_poly(0, 50, 256),
+        Penalty::Black,
+        "outside the budget"
+    );
+    let tq = TrProto::new(10, &[3, 7], 256, true, 77, 1);
+    assert_eq!(
+        tq.on_identical_poly(0, 50, 256),
+        Penalty::Black,
+        "no ineffective flush yet"
+    );
 }
 
 /// BUNDLE-N: `retf` is 179 by default (side RETF recording + inline re-push stub; function-entry families, bit 2, stay off; section 77.7: bits 4, 5, 7,

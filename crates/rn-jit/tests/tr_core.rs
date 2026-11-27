@@ -4641,6 +4641,21 @@ fn s77_tflat_programs() {
     compare(jobs);
 }
 
+/// Section 77.17 (`polyhead`): one generic-`for` head serving many pipelines (nested, with data-dependent inner loops) under the polymorphic-head
+/// rule, `t1g` 7 / 3, in the trace modes, with `+verify` and exit storms.
+#[test]
+fn s77_polyhead_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["t1g=7,polyhead=52", "t1g=3,polyhead=52", "t1g=7,polyhead=2"] {
+            for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                jobs.push(Job::new("s77_polyhead", trace).opts(opts).limits_s(limits));
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 77.15 (`retf` bit 9): `RETF` pops into loop-free (maybe lazy-aware) callers that never recursed; the recursion programs (whose callers
 /// are lazy-aware and recursive, and must stay refused) with the bit on, in the trace modes. Mutant `retf_demote_recursive`.
 #[test]

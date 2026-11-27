@@ -16,4 +16,10 @@ pub const S77_PROGS: &[Prog] = &[
         // section 77.14 (`t1g` bit 2): the vm-corpus program, also compared with the reference there
         src: include_str!("../../../../tests/vm/s77_tflat.lua"),
     },
+    Prog {
+        name: "s77_polyhead",
+        small: true,
+        // section 77.17 (`polyhead`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s77_polyhead.lua"),
+    },
 ];

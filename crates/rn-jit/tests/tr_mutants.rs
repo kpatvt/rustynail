@@ -2286,6 +2286,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s77_retf_demote_programs")],
     },
     Row {
+        name: "polyhead_never",
+        owner: "S77",
+        dets: &[d("tr_policy", "s77_polyhead_rule")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

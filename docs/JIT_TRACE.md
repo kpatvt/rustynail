@@ -8997,3 +8997,48 @@ programs/metamethods -1.4 %, roguelike_turns -1.3 %, awfy/json -1.0 %, programs/
 -0.8 %, lib/type_call -0.8 %, dijkstra_routes -0.7 %, vending_fsm -0.7 %, and fourteen more between -0.3 and -0.6 % (lib/tremove_front, tunpack,
 rep_sep, sel_loop, msgpack_pure, regex_nfa, heapsort, towers, oop_override, sudoku_solver, setmt, tmove, char, rep). Cycles of the movers: 77.13
 (the knobs and the code they gate are unchanged since).
+
+### 77.17 Round 5: the polymorphic-head rule (`polyhead`): built, default off; items 2-4 not reached
+
+**Cause of 77.14's iter_pipeline regression, refined.** iter_pipeline's `Iter:reduce` head records, under `t1g=7`, its second and third
+roots on the same pipeline (the primes `filter`, whose `while` / `for d` loops `loopany` unrolls). Both are flushed `Ineffective`, and Q3
+blacklists at the second one (`TrProto::on_ineffective`). Under `t1g=3` the first `Rerec` flush of the head falls ~14 entries later (199 against
+185: the exit counts that trigger it differ), so the second root is recorded on another pipeline. That root is flushed `Ineffective` once, and the third
+(2806 B, the trace that later serves the nested `sum` part) survives. The two runs diverge at that one flush; the flat push is not involved
+beyond moving it.
+
+**The rule** (`TrLimits::polyhead`, default 0, `TrProto::on_ineffective(i, poly, deps, hot)`, `TrProto::on_identical_poly`). Bits 0-3: how many
+`Ineffective` flushes past the first are not counted as repeats. They are not counted when the flushed trace inlined other prototypes than the last
+ineffective one (a hash of `Trace::deps`, kept per head in `ineff_deps`), or, with bit 5, regardless of that. Bit 4: such a re-record waits
+`hot * 16 << (n - 2)` iterations instead of one. With bit 5, a byte-identical re-record inside the budget backs off the same way instead of
+`on_identical`'s blacklist. Test `tr_policy::s77_polyhead_rule` (the decision table; mutant `polyhead_never` caught); program
+`tests/vm/s77_polyhead.lua` (one `reduce` head serving five pipelines, nested, with a data-dependent inner loop; vm corpus and
+`tr_core::s77_polyhead_programs` with `t1g` 7 / 3, `+verify`, exit storms). The program does not reproduce the blowup (it is too short for the
+head to go through several roots); it checks results.
+
+**Measured** (one binary, instructions exact):
+
+| iter_pipeline, `t1g=7` | instructions |
+|---|---|
+| `polyhead=0` | 6909 M |
+| `=1` / `=3` / `=8` (prototype rule only) | 6909 M (no effect: the two ineffective roots have the same prototypes) |
+| `=50` (bits 1, 4, 5) | 4795 M |
+| `=52` (4 repeats, back-off, any) | 3279 M |
+| `=55` / `=63` | 3300 / 3380 M |
+| `t1g=3` (any `polyhead`) | 786 M |
+
+With `polyhead=52` the reduce head still goes `Black` (5 `Ineffective` flushes, then an `Identical` re-record outside the budget). The trace that serves it
+under `t1g=3` (2806 B) is recorded, but it is flushed `Ineffective` here (3306 entries, 6596 exits) instead of surviving, and the nested part
+runs `reduce` in tier 1 (`lua_proto:170` 19 %, `lua_proto:255` 19 %, `lua_proto:183` 15 % of the samples). The rule does not fix the cause. A
+per-closure trace family per loop head (one root per iterator prototype) is what the shape needs, and it was not built in this round.
+
+Whole set (223, instructions): `t1g=3,polyhead=52` against `t1g=3`: geomean -0.085 %, nothing above +0.3 %; prototype_objects -9.2 %,
+csv_report -1.6 %, stream_closures -1.2 %, real_dis_x86 -0.7 % (astar_jumper -6 % is its run-to-run variation: its base varies 4.28-4.56 G between
+runs). `t1g=7,polyhead=52`: geomean +0.57 % (iter_pipeline +317 %). Cycles (7 runs interleaved, minimum, CPU 8), `t1g=3` against
+`t1g=3,polyhead=52`: prototype_objects 2434 -> 2424 M (-0.4 %), csv_report 1438 -> 1465 M (+1.9 %), **stream_closures 835 -> 917 M (+9.8 %)** at
+-1.2 % instructions, iter_pipeline and lua_lexer unchanged. stream_closures misses the cycles bar. `polyhead` stays 0, and `t1g` bit 2 stays off.
+
+**Item 2 (retf bit 2 on lua_lexer), first measurement only.** `retf=183` (179 + bit 2) compiles 29 pops against 12 and costs +22.2 %
+instructions (2748 -> 3358 M); bit 9 changes nothing there (691 = 179). The profile moves from one dominant trace (TRACE-14, 10 %) to several
+(TRACE-19 / 3 / 1, about 5 % each): the bit-2 pops split the lexer's hot loop into several traces. The per-site discriminator was not built.
+**Items 3 (RETF through a caller's `TAILCALL`) and 4 (link entries for sunk allocations): not reached.**
