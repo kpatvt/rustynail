@@ -178,6 +178,8 @@ pub const SIDEBACK_PROCESS: u32 = 0;
 pub const SIDEBLF_PROCESS: u32 = 65;
 /// Section 76.4 (`carena`): the process default of [`TrLimits::carena`] (also the struct default).
 pub const CARENA_PROCESS: u32 = 1;
+/// Section 76.10 (`t1exit`): the process default of [`TrLimits::t1exit`] (also the struct default).
+pub const T1EXIT_PROCESS: u32 = 1;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
@@ -904,6 +906,11 @@ pub struct TrLimits {
     /// while a recorder step, a trace pipeline, a tier-1 compile or a deferred exit stub runs). Process-wide: read when the process's JIT is set up.
     /// Only where the binary registers `rn_core::carena::CArena` as its allocator (`rnlua`, the trace test binaries). 0 = off, 1 = on (default [`CARENA_PROCESS`]).
     pub carena: u32,
+    /// Section 76.10 (`t1exit`, docs/JIT_TRACE.md section 76.10): tier 1's out-of-line exit sequences (`savedpc = pc`, an optional refund, `ret`
+    /// through the thunk's epilogue: about 45 bytes each) become `mov eax, pc; jmp` to one shared exit per prototype that computes the address of
+    /// `pc` and leaves (12-20 bytes each); also the inline exit stubs of the instructions tier 1 does not compile and the `MMBIN` stubs.
+    /// 0 = off, 1 = on (default [`T1EXIT_PROCESS`]).
+    pub t1exit: u32,
     /// Section 75.13 (`mfdeep`, docs/JIT_TRACE.md section 75.13): E5's fold of the family key also in an inlined chain frame (`unr`) that was called with
     /// the root's closure ref and whose register 0 is the root's entry register 0. 0 = off, 1 = on (default [`MFDEEP_PROCESS`]).
     pub mfdeep: u32,
@@ -1208,6 +1215,7 @@ impl Default for TrLimits {
             sideback: SIDEBACK_PROCESS,
             sideblf: SIDEBLF_PROCESS,
             carena: CARENA_PROCESS,
+            t1exit: T1EXIT_PROCESS,
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
@@ -1451,6 +1459,7 @@ impl TrLimits {
                 "sideback" => l.sideback = v.min(15),
                 "sideblf" => l.sideblf = v.min(511),
                 "carena" => l.carena = v.min(1),
+                "t1exit" => l.t1exit = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),

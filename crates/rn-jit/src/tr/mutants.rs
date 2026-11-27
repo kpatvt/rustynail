@@ -1121,6 +1121,8 @@ pub const NAMES: &[&str] = &[
     "fixsum_shift",
     // section 76.9 (`cspeed` lever `PRUNEQ`): every snapshot is copied whole (nothing pruned)
     "pruneq_copy_all",
+    // section 76.10 (`t1exit`): the shared tier-1 exit sequence names the next instruction
+    "t1exit_pc_off",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1214,7 +1216,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 905);
+        assert_eq!(NAMES.len(), 906);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

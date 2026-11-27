@@ -1073,6 +1073,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         e.str_mt = str_mt_addr(st, d);
         (e.inl, e.inl_mut) = t1inline_bits(d);
         e.t1q = t1q_bits(d);
+        e.t1exit = t1exit_bits(d);
         e.t1g = t1g_bits(d);
         e.ccall_helper = ccall_helper(d);
         e.hints = &d.t1i_hints;
@@ -1097,6 +1098,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl: 0,
         inl_mut: 0,
         t1q: 0,
+        t1exit: 0,
         t1g: 0,
         hints: std::ptr::null(),
         jret: 0,
@@ -1116,6 +1118,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl,
         inl_mut,
         t1q: t1q_bits(d),
+        t1exit: t1exit_bits(d),
         t1g: t1g_bits(d),
         hints: &d.t1i_hints,
         ccall_helper: ccall_helper(d),
@@ -1194,6 +1197,24 @@ fn t1inline_bits(d: &JitData) -> (u16, u16) {
     }
     let _ = d;
     (0, 0)
+}
+
+/// Section 76.10 (`t1exit`): the shared exit sequence of tier 1 (the limit as configured; without traces the struct default).
+fn t1exit_bits(d: &JitData) -> u32 {
+    #[cfg(feature = "trace")]
+    {
+        d.tr.cfg.limits.t1exit
+            | if crate::tr::mutants::active("t1exit_pc_off") {
+                0x100
+            } else {
+                0
+            }
+    }
+    #[cfg(not(feature = "trace"))]
+    {
+        let _ = d;
+        1
+    }
 }
 
 /// BUNDLE-Q (`t1q`): the tier-1 exits removed (bits 0-1 of the limit) plus the test-only mutants (bits 8..). With traces off only when the limit was named.
@@ -1709,6 +1730,22 @@ fn compile_inner(
             eprintln!("[t1size] {k} {v}");
         }
         eprintln!("[t1size] TOTAL {}", em.code.len());
+        let rets = low
+            .prog
+            .ops
+            .iter()
+            .filter(|o| matches!(o, crate::ir::Op::Ret(_)))
+            .count();
+        eprintln!("[t1size] RETS {rets}");
+        let sec = crate::lower::T1SEC.with(std::cell::Cell::get);
+        let off = |l: u32| em.label_off.get(l as usize).copied().flatten().unwrap_or(0) as usize;
+        let (s0, s1, s2, s3) = (off(sec[0]), off(sec[1]), off(sec[2]), off(sec[3]));
+        eprintln!("[t1size] SEC_main {s0}");
+        eprintln!("[t1size] SEC_mmbin {}", s1 - s0);
+        eprintln!("[t1size] SEC_cold {}", s2 - s1);
+        eprintln!("[t1size] SEC_land {}", s3 - s2);
+        eprintln!("[t1size] SEC_exits {}", em.code.len() - s3);
+        eprintln!("[t1size] OPS {}", low.prog.ops.len());
     }
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
         // debugging aid: raw machine code per prototype (`objdump -D -b binary -mi386:x86-64`)

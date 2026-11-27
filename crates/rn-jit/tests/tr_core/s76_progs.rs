@@ -4,10 +4,53 @@
 
 use super::progs::Prog;
 
-pub const S76_PROGS: &[Prog] = &[Prog {
-    name: "s76_side_fail",
-    small: false,
-    src: r#"
+pub const S76_PROGS: &[Prog] = &[
+    Prog {
+        name: "s76_t1_exits",
+        small: false,
+        src: r##"
+-- tier-1 exits of every kind (section 76.10, `t1exit`): unsupported instructions (exit stubs), guards that leave with a refund
+-- in the middle of a block, metamethod fallbacks, and allocation helpers whose collection runs a finalizer that installs a count
+-- hook (the trap exit); the hook counts, so the exit's pc and refund must be exact
+local log = {}
+local hooked = 0
+local first, cur = -1, 0
+local function mk(i)
+  return setmetatable({ i = i }, { __gc = function(o)
+    if o.i % 49 == 0 and hooked == 0 then
+      hooked = 1
+      local n = 0
+      debug.sethook(function()
+        n = n + 1
+        if n == 1 then first = cur end
+        if n > 2000 then debug.sethook(); hooked = 2 end
+      end, "", 7)
+    end
+  end })
+end
+local V = setmetatable({}, { __add = function(a, b) return 3 end })
+local acc = 0
+for round = 1, 6 do
+  for i = 1, 300 do
+    cur = round * 1000 + i
+    local t = { i, i + 1, x = i }
+    if i % 7 == 0 then t = mk(i) end
+    local v = (i % 11 == 0) and V or i
+    acc = acc + (v + 1) + #t
+    if i % 13 == 0 then acc = acc + select("#", i, round) end
+    local s = tostring(i)
+    acc = acc + #s
+  end
+  collectgarbage()
+  log[#log + 1] = acc
+end
+print(acc, hooked, first, table.concat(log, ","))
+"##,
+    },
+    Prog {
+        name: "s76_side_fail",
+        small: false,
+        src: r#"
 -- side exits whose recordings fail again and again (a C function, a callee loop, leaving the frame, a deep recursion), so that the back-off
 -- of failed side recordings decides when (and whether) the next attempt is made; results must not depend on it
 local floor, fmt = math.floor, string.format
@@ -36,4 +79,5 @@ for o = 1, 30 do
 end
 print(acc, table.concat(out, ","))
 "#,
-}];
+    },
+];

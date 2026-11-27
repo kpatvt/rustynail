@@ -10460,6 +10460,37 @@ fn s76_carena_programs() {
     assert_eq!(TrLimits::parse("carena=0").0.carena, 0);
 }
 
+/// Section 76.10 (`t1exit`): tier 1's shared exit sequence (`pc | refund << 20` in one register, one sequence per prototype, the trap variant
+/// after helpers that may have run a finalizer). Programs with exit stubs, refunding guard exits, metamethod fallbacks and a finalizer that
+/// installs a count hook run identically with the knob on and off in every mode (`+verify`, exit storms, budgets 3 / 17, `-loop`, GC stress
+/// 1 / 2 except for the program that prints the hook's first firing, stack moves), and with traces off (tier 1 alone). Mutant
+/// `t1exit_pc_off`.
+#[test]
+fn s76_t1exit_programs() {
+    let progs = ["s76_t1_exits", "s64_call_observers", "s76_side_fail"];
+    // (`s76_t1_exits` prints where the finalizer's hook first fired: GC stress moves the finalizer, so its stress jobs are left out)
+    let mut jobs: Vec<Job> = b1_jobs(&progs, &["t1exit=1", "t1exit=0"])
+        .into_iter()
+        .filter(|j| {
+            !(j.prog == "s76_t1_exits" && j.env.iter().any(|(k, _)| k == "RUSTYNAIL_GC_STRESS"))
+        })
+        .collect();
+    for p in progs {
+        for l in ["t1exit=1", "t1exit=0"] {
+            for b in [0, 3, 17] {
+                let mut j = Job::new(p, "off").limits_s(l);
+                if b != 0 {
+                    j = j.budget(b);
+                }
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().t1exit, 1);
+}
+
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at
 /// the compile-only level, and off (control).
 /// Mutants `tailhook_ignored`, `tailhook_from_jit_enter`.

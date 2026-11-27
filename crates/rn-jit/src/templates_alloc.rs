@@ -796,6 +796,11 @@ impl Cx<'_> {
                     self.br(Cc::Eq, 0, Src::Imm(h::H_EXIT as i32), x);
                     self.op(Op::Jmp(err));
                 }
+                Cold::Hook { l, next, refund } if self.exit_shared(next, refund) => {
+                    // section 76.10 (`t1exit`): the shared exit with `ci.trap` set
+                    self.op(Op::Bind(l));
+                    self.exit_seq_x(next, refund, true);
+                }
                 Cold::Hook { l, next, refund } => {
                     self.op(Op::Bind(l));
                     let addr = self.cfg.code_addr as u64 + 4 * u64::from(next);

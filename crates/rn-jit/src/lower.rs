@@ -291,6 +291,10 @@ pub(crate) struct Cx<'a> {
     /// Exit labels keyed by (pc, refunded pre-paid instructions).
     exit_at: HashMap<(u32, u32), L>,
     exit_trap: HashMap<u32, L>,
+    /// Section 76.10 (`t1exit`): the shared exit sequence (`eax` = pc), bound after the exit sequences when an exit used it.
+    exit_common: Option<L>,
+    /// Section 76.10 (`t1exit`): the shared exit that also sets `ci.trap` (a hook may have been installed), then continues in `exit_common`.
+    exit_trap_common: Option<L>,
     pub(crate) sh: calls::Shared,
     /// Register type knowledge, valid inside the current block (reset at block heads).
     pub(crate) ty: [Ty; 256],
@@ -325,6 +329,93 @@ pub(crate) struct Cx<'a> {
 impl Cx<'_> {
     pub(crate) fn pc_addr(&self, pc: u32) -> u64 {
         self.cfg.code_addr as u64 + 4 * u64::from(pc)
+    }
+    /// Section 76.10 (`t1exit`): leave with `savedpc` = instruction `pc` and exit code `Continue`: the inline sequence, or with the knob on
+    /// `mov eax, pc; jmp exit_common` (the shared sequence computes the address of `pc`).
+    pub(crate) fn exit_seq(&mut self, pc: u32) {
+        self.exit_seq_r(pc, 0);
+    }
+    /// [`Cx::exit_seq`] that also gives back `refund` pre-paid instructions (`refund` < 4096 and `pc` < 2^20 for the shared form, whose
+    /// `eax` carries `pc | refund << 20`).
+    pub(crate) fn exit_seq_r(&mut self, pc: u32, refund: u32) {
+        self.exit_seq_x(pc, refund, false);
+    }
+    /// Section 76.10 (`t1exit`): may the shared exit sequence carry `pc` and `refund`?
+    pub(crate) fn exit_shared(&self, pc: u32, refund: u32) -> bool {
+        self.cfg.calls.is_some_and(|e| e.t1exit & 1 != 0) && pc < 1 << 20 && refund < 1 << 12
+    }
+    /// [`Cx::exit_seq_r`]; `trap`: also set `ci.trap` (the exits after a helper that may have run a finalizer, which may have installed a hook).
+    pub(crate) fn exit_seq_x(&mut self, pc: u32, refund: u32, trap: bool) {
+        let bits = self.cfg.calls.map_or(0, |e| e.t1exit);
+        if self.exit_shared(pc, refund) {
+            let slot = if trap {
+                &mut self.exit_trap_common
+            } else {
+                &mut self.exit_common
+            };
+            let l = match *slot {
+                Some(l) => l,
+                None => {
+                    let l = self.p.label();
+                    *slot = Some(l);
+                    l
+                }
+            };
+            if trap && self.exit_common.is_none() {
+                self.exit_common = Some(self.p.label());
+            }
+            // MUTANT `t1exit_pc_off` (bit 8 of the knob word): the exit names the next instruction
+            let pcv = if bits & 0x100 != 0 { pc + 1 } else { pc };
+            self.op(Op::Mov(0, u64::from(pcv | refund << 20)));
+            self.op(Op::Jmp(l));
+        } else {
+            let addr = self.pc_addr(pc);
+            self.op(Op::Mov(0, addr));
+            self.st(W::B8, ciw(ci::SAVEDPC), 0);
+            if trap {
+                self.st_imm(W::B4, ciw(ci::TRAP), 1);
+            }
+            if refund > 0 {
+                // give back the pre-paid count of the instructions the interpreter will execute again
+                let m = M {
+                    base: Base::Cnt,
+                    off: 0,
+                };
+                self.ld(1, W::B4, m);
+                self.op(Op::Add(1, Src::Imm(refund as i32)));
+                self.st(W::B4, m, 1);
+            }
+            self.op(Op::Ret(JitExit::Continue as u32));
+        }
+    }
+    /// Section 76.10 (`t1exit`): the shared exit sequence, if an exit used it: `savedpc = code_addr + 4 * eax`, leave with `Continue`.
+    pub(crate) fn emit_exit_common(&mut self) {
+        if let Some(l) = self.exit_trap_common.take() {
+            self.op(Op::Bind(l));
+            // (as the inline sequence; `debug.sethook` also sets the trap of every Lua frame, so a mutant that skips this store is equivalent
+            // and was not registered)
+            self.st_imm(W::B4, ciw(ci::TRAP), 1);
+            // (falls into the shared exit below, which `exit_seq_x` created with it)
+        }
+        if let Some(l) = self.exit_common.take() {
+            self.op(Op::Bind(l));
+            // the refund (bits 20..31 of `eax`; adding 0 leaves the counter as it is)
+            let m = M {
+                base: Base::Cnt,
+                off: 0,
+            };
+            self.op(Op::MovR(1, 0));
+            self.op(Op::ShrI(1, 20));
+            self.ld(2, W::B4, m);
+            self.op(Op::Add(2, Src::V(1)));
+            self.st(W::B4, m, 2);
+            self.op(Op::And(0, Src::Imm(0xF_FFFF)));
+            self.op(Op::ShlI(0, 2));
+            self.op(Op::Mov(1, self.cfg.code_addr as u64));
+            self.op(Op::Add(0, Src::V(1)));
+            self.st(W::B8, ciw(ci::SAVEDPC), 0);
+            self.op(Op::Ret(JitExit::Continue as u32));
+        }
     }
     /// Label of "leave with `savedpc` = instruction `pc`" (no refund: nothing of `pc` was counted).
     pub(crate) fn exit_at(&mut self, pc: u32) -> L {
@@ -797,6 +888,8 @@ pub fn lower(code: &[u32], cfg: LowerCfg<'_>) -> Option<Lowered> {
 }
 
 thread_local! {
+    /// Section 76.10 (diagnostic): the labels of the last lowering's out-of-line sections (MMBIN stubs, cold slow paths, landing checks, exits).
+    pub(crate) static T1SEC: std::cell::Cell<[L; 4]> = const { std::cell::Cell::new([0; 4]) };
     /// S73 (`landfix`): the registers that are dead at each pc (`live::prunable_with`), set by the compile that calls [`lower_ex`]; `None`: every
     /// typed landing label checks every known register.
     pub(crate) static LAND_DEAD: std::cell::RefCell<Option<Vec<crate::live::Set>>> = const { std::cell::RefCell::new(None) };
@@ -1129,6 +1222,8 @@ pub(crate) fn lower_ex(
         code,
         exit_at: HashMap::default(),
         exit_trap: HashMap::default(),
+        exit_common: None,
+        exit_trap_common: None,
         sh: calls::Shared::default(),
         ty: [Ty::Unk; 256],
         rem,
@@ -1193,10 +1288,7 @@ pub(crate) fn lower_ex(
         cx.op(Op::Bind(cx.pcl[pc]));
         if k == Kind::Stub {
             cx.exit_at.insert((pc as u32, 0), cx.pcl[pc]);
-            let addr = cx.pc_addr(pc as u32);
-            cx.op(Op::Mov(0, addr));
-            cx.st(W::B8, ciw(ci::SAVEDPC), 0);
-            cx.op(Op::Ret(JitExit::Continue as u32));
+            cx.exit_seq(pc as u32);
             continue;
         }
         if head[pc] {
@@ -1383,17 +1475,21 @@ pub(crate) fn lower_ex(
         resume_overrides = out.resume_overrides;
         points = out.points;
     }
+    // section 76.10 (diagnostic `RUSTYNAIL_JIT_T1SIZE`): labels at the section boundaries of the out-of-line code
+    let sec0 = cx.p.label();
+    cx.op(Op::Bind(sec0));
     // out-of-line stubs of the MMBIN followers: the interpreter runs the arithmetic instruction first and
     // falls into them on the slow path
     for pc in cold_list {
         cx.op(Op::Bind(cx.pcl[pc]));
         cx.exit_at.insert((pc as u32, 0), cx.pcl[pc]);
-        let addr = cx.pc_addr(pc as u32);
-        cx.op(Op::Mov(0, addr));
-        cx.st(W::B8, ciw(ci::SAVEDPC), 0);
-        cx.op(Op::Ret(JitExit::Continue as u32));
+        cx.exit_seq(pc as u32);
     }
+    let sec1 = cx.p.label();
+    cx.op(Op::Bind(sec1));
     cx.emit_cold();
+    let sec2 = cx.p.label();
+    cx.op(Op::Bind(sec2));
     // P-X: the landing labels of the typed mid-block pcs: verify the tags tier 1 assumes there, else leave to the
     // interpreter at `pc` (refunding the pre-paid count, as a failing guard of the template at `pc` does)
     let land_dead = LAND_DEAD.with(|c| c.borrow().clone());
@@ -1435,6 +1531,9 @@ pub(crate) fn lower_ex(
         }
         cx.op(Op::Jmp(cx.pcl[*pc]));
     }
+    let sec3 = cx.p.label();
+    cx.op(Op::Bind(sec3));
+    T1SEC.with(|c| c.set([sec0, sec1, sec2, sec3]));
     // lazily referenced exit sequences
     let mut at: Vec<((u32, u32), L)> = cx.exit_at.iter().map(|(&a, &b)| (a, b)).collect();
     at.sort_unstable();
@@ -1443,6 +1542,11 @@ pub(crate) fn lower_ex(
             continue; // emitted inline above
         }
         cx.op(Op::Bind(l));
+        if cx.cfg.calls.is_some_and(|e| e.t1exit & 1 != 0) {
+            // section 76.10 (`t1exit`): `pc` and the refund in one register, the shared sequence does the rest
+            cx.exit_seq_r(pc, refund);
+            continue;
+        }
         let addr = cx.pc_addr(pc);
         cx.op(Op::Mov(0, addr));
         cx.st(W::B8, ciw(ci::SAVEDPC), 0);
@@ -1458,16 +1562,24 @@ pub(crate) fn lower_ex(
         }
         cx.op(Op::Ret(JitExit::Continue as u32));
     }
+    cx.emit_exit_common();
     let mut tr: Vec<(u32, L)> = cx.exit_trap.iter().map(|(&a, &b)| (a, b)).collect();
     tr.sort_unstable();
     for (pc, l) in tr {
         cx.op(Op::Bind(l));
+        if cx.exit_shared(pc, 0) {
+            // section 76.10 (`t1exit`)
+            cx.exit_seq_x(pc, 0, true);
+            continue;
+        }
         let addr = cx.pc_addr(pc);
         cx.op(Op::Mov(0, addr));
         cx.st(W::B8, ciw(ci::SAVEDPC), 0);
         cx.st_imm(W::B4, ciw(ci::TRAP), 1);
         cx.op(Op::Ret(JitExit::Continue as u32));
     }
+    // (the trap exits may be the first users of the shared sequence)
+    cx.emit_exit_common();
     if let Some(w) = warm {
         let mut stubs: Vec<_> = warm_lbl.iter().map(|(&k, &l)| (k, l)).collect();
         stubs.sort_unstable();
