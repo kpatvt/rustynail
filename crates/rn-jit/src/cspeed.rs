@@ -39,8 +39,16 @@ pub const FWDSNAP: u32 = 256;
 /// (no `TNEW`): it found no candidate then. Most side traces allocate nothing.
 pub const SINKSKIP: u32 = 512;
 
+/// Section 76.9: the close of a recording computes the fetched count before each snapshot's step from prefix sums of the step costs
+/// (`snap::fixup` summed the costs from the start once per snapshot).
+pub const FIXSUM: u32 = 1024;
+/// Section 76.9: the snapshot pruning of a closed recording (`snap::prune_snaps`) copies a snapshot whole when nothing in it may be dropped
+/// (inlined frames, an open top, or no dead temporary at its pc) instead of testing every entry.
+pub const PRUNEQ: u32 = 2048;
+
 /// All levers.
-pub const ALL: u32 = MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP;
+pub const ALL: u32 =
+    MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP | FIXSUM | PRUNEQ;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

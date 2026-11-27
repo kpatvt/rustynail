@@ -4979,6 +4979,16 @@ const TABLE: &[Row] = &[
         owner: "S76",
         dets: &[d("tr_core", "s76_carena_blocks")],
     },
+    Row {
+        name: "fixsum_shift",
+        owner: "S76",
+        dets: &[d("tr_record", "count_model_is_exact")],
+    },
+    Row {
+        name: "pruneq_copy_all",
+        owner: "S76",
+        dets: &[d("tr_ir", "prune_snaps_drops_only_dead_numbers")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

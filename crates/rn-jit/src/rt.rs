@@ -1675,6 +1675,41 @@ fn compile_inner(
             return Err(Fail::Permanent);
         }
     }
+    if std::env::var_os("RUSTYNAIL_JIT_T1SIZE").is_some() {
+        // section 76.10 (diagnostic): the tier-1 code bytes of each instruction (from its label to the next label in code order; the
+        // out-of-line code after the last label is reported as `cold`), one line per prototype and opcode on stderr
+        let mut offs: Vec<(usize, Option<u32>)> = low
+            .pc_labels
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, l)| {
+                l.and_then(|l| em.label_off.get(l as usize).copied().flatten())
+                    .map(|o| (o as usize, Some(pc as u32)))
+            })
+            .collect();
+        offs.sort_unstable();
+        offs.push((em.code.len(), None));
+        let mut per: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut last_main = 0usize;
+        for w in offs.windows(2) {
+            let (o, pc) = w[0];
+            let n = w[1].0 - o;
+            let name = pc.map_or_else(
+                || "cold".to_string(),
+                |pc| {
+                    rn_core::instruction::Instruction(p.code()[pc as usize])
+                        .opcode()
+                        .map_or_else(|| "?".to_string(), |op| format!("{op:?}"))
+                },
+            );
+            *per.entry(name).or_default() += n;
+            last_main = last_main.max(o);
+        }
+        for (k, v) in per {
+            eprintln!("[t1size] {k} {v}");
+        }
+        eprintln!("[t1size] TOTAL {}", em.code.len());
+    }
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
         // debugging aid: raw machine code per prototype (`objdump -D -b binary -mi386:x86-64`)
         let _ = std::fs::write(

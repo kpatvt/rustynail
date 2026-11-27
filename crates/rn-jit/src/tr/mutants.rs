@@ -1117,6 +1117,10 @@ pub const NAMES: &[&str] = &[
     "carena_recycle_live",
     // section 76.4 (`carena`, bit 2): `realloc` grows any block of the current chunk in place, not only the newest
     "carena_grow_any",
+    // section 76.9 (`cspeed` lever `FIXSUM`): the prefix sums of the step costs are shifted by one step
+    "fixsum_shift",
+    // section 76.9 (`cspeed` lever `PRUNEQ`): every snapshot is copied whole (nothing pruned)
+    "pruneq_copy_all",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1210,7 +1214,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 903);
+        assert_eq!(NAMES.len(), 905);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -116,21 +116,18 @@ pub fn enabled() -> bool {
 /// A compile starts on this thread.
 #[inline]
 pub fn enter() {
-    let n = DEPTH.fetch_add(1, Ordering::Relaxed) + 1;
+    // (a plain load and store, not an atomic add: `enter` / `leave` run once per recorded bytecode; concurrent compiles on several threads
+    // may lose a count, which only decides whether the arena serves, never whether a block is valid)
+    let n = DEPTH.load(Ordering::Relaxed).wrapping_add(1);
+    DEPTH.store(n, Ordering::Relaxed);
     ACT.store(n != 0 && ENABLED.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// The compile of the matching [`enter`] ends.
 #[inline]
 pub fn leave() {
-    let prev = DEPTH.fetch_sub(1, Ordering::Relaxed);
-    let n = if prev == 0 {
-        // (an unpaired `leave`: stay at zero)
-        DEPTH.store(0, Ordering::Relaxed);
-        0
-    } else {
-        prev - 1
-    };
+    let n = DEPTH.load(Ordering::Relaxed).saturating_sub(1);
+    DEPTH.store(n, Ordering::Relaxed);
     ACT.store(n != 0 && ENABLED.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 

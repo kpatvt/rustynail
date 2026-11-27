@@ -47,6 +47,12 @@ fn minus(a: Set, b: Set) -> Set {
     [a[0] & !b[0], a[1] & !b[1], a[2] & !b[2], a[3] & !b[3]]
 }
 
+/// Section 76.9: is the set empty?
+#[inline]
+pub fn is_empty(s: &Set) -> bool {
+    s.iter().all(|&w| w == 0)
+}
+
 /// Is register `r` in `s`?
 pub fn has(s: &Set, r: u32) -> bool {
     r < 256 && s[(r as usize) >> 6] & (1 << (r & 63)) != 0
