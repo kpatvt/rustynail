@@ -4559,7 +4559,15 @@ fn s75_dynunroll_programs() {
 fn s75_recinl_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for limits in ["recinl=2", "recinl=3", "recinl=4,dynunroll=16", "recinl=0"] {
+        for limits in [
+            "recinl=2",
+            "recinl=3",
+            "recinl=4,dynunroll=16",
+            "recinl=0",
+            "recinl=2,sidepush=1",
+            "recinl=3,sidepush=1",
+            "recinl=4,sidepush=1,dynunroll=80",
+        ] {
             for (opts, budget) in [
                 ("", 0),
                 ("+verify", 0),
@@ -4585,6 +4593,11 @@ fn s75_recinl_programs() {
             "e1_01_unroll_shapes",
         ] {
             jobs.push(Job::new(p, trace).opts("+verify").limits_s("recinl=3"));
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+verify")
+                    .limits_s("recinl=3,sidepush=1"),
+            );
         }
     }
     compare(jobs);

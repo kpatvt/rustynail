@@ -168,6 +168,8 @@ pub const RETFUSE_PROCESS: u32 = 1;
 pub const DYNUNROLL_PROCESS: u32 = 0;
 /// Section 75.9 (`recinl`): the process default of [`TrLimits::recinl`] (also the struct default).
 pub const RECINL_PROCESS: u32 = 2;
+/// Section 75.10 (`sidepush`): the process default of [`TrLimits::sidepush`] (also the struct default).
+pub const SIDEPUSH_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -866,6 +868,10 @@ pub struct TrLimits {
     /// materialises the chain. Only for a prototype with a counted loop whose self-call is found through a table (method recursion); bit 3 drops that
     /// rule (measurement only). 0 / 1 = off; default 2 ([`RECINL_PROCESS`]).
     pub recinl: u32,
+    /// Section 75.10 (`sidepush`, docs/JIT_TRACE.md section 75.10): a side recording that starts inside inlined self-call frames of the root
+    /// prototype (chain frames, virtual in the trace) may end with the native push of a self-call: the push materialises those frames as lazy frames
+    /// first (E1's chain push). Only frames of the `recinl` shape (a prototype with a counted loop, a method self-call). 0 = off, 1 = on (default [`SIDEPUSH_PROCESS`]).
+    pub sidepush: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1159,6 +1165,7 @@ impl Default for TrLimits {
             retfuse: RETFUSE_PROCESS,
             dynunroll: DYNUNROLL_PROCESS,
             recinl: RECINL_PROCESS,
+            sidepush: SIDEPUSH_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1395,6 +1402,7 @@ impl TrLimits {
                 "retfuse" => l.retfuse = v.min(1),
                 "dynunroll" => l.dynunroll = v.min(127),
                 "recinl" => l.recinl = v.min(15),
+                "sidepush" => l.sidepush = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

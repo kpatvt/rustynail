@@ -202,6 +202,8 @@ pub struct RecCfg {
     pub dynunroll: u32,
     /// Section 75.9 (`recinl`): unroll-chain depth of continuation / loop recordings (0 / 1: off).
     pub recinl: u32,
+    /// Section 75.10 (`sidepush`): native pushes from side recordings that start inside chain frames.
+    pub sidepush: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -556,6 +558,7 @@ impl Default for RecCfg {
             oframe: super::cache::OFRAME_PROCESS != 0,
             dynunroll: super::cache::DYNUNROLL_PROCESS,
             recinl: super::cache::RECINL_PROCESS,
+            sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -1839,10 +1842,17 @@ impl Rec {
                 nextra: 0,
                 pc_shift: 0,
                 pc_wanted: 0,
+                // Section 75.10 (`sidepush`): a plain frame of the root prototype called for a fixed number of results is a chain frame (the exit
+                // left it virtual; a native push from this recording materialises it as E1's push does); `vararg` frames were refused above
+                unr: self.cfg.sidepush
+                    && key == self.frames[0].proto
+                    && !f.tail
+                    && mm.is_none()
+                    && f.nresults >= 0
+                    && recinl_shape(p.code(), f.call_pc),
                 mm,
                 ectx: None,
                 tfor: None,
-                unr: false,
             });
         }
         let d = fr.len();
@@ -7532,12 +7542,23 @@ impl Rec {
             .enumerate()
             .filter(|(i, f)| f.proto == key && !(tail && *i == d))
             .count();
+        // Section 75.10 (`sidepush`): a side recording inside chain frames pushes from its innermost one (every frame between it and the root a
+        // chain frame of the root prototype)
+        let side_push = self.cfg.sidepush
+            && d >= 1
+            && self
+                .cfg
+                .side
+                .as_ref()
+                .is_some_and(|sd| !sd.frames.is_empty())
+            && self.frames[1..=d].iter().all(|f| f.unr);
         let push_ok = uses > 0
             && self.cfg.rec_native
-            && (self.cfg.fn_root || self.cfg.rec_cont)
-            && self.cfg.side.as_ref().map_or(true, |sd| {
-                self.cfg.rec_any && self.cfg.fn_root && sd.frames.is_empty()
-            })
+            && (self.cfg.fn_root || self.cfg.rec_cont || side_push)
+            && (side_push
+                || self.cfg.side.as_ref().map_or(true, |sd| {
+                    self.cfg.rec_any && self.cfg.fn_root && sd.frames.is_empty()
+                }))
             && !tail
             && !vararg
             && wanted >= 0
@@ -7602,7 +7623,7 @@ impl Rec {
         } else {
             self.cfg.rec_unroll as usize
         };
-        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= k)) {
+        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= k) || side_push) {
             return self.end_rec_call(vm, idx, a, nargs, wanted, &p, cl);
         }
         if uses > 0 {
@@ -8310,7 +8331,12 @@ impl Rec {
     /// The results `R[a .. a + nret]` of the current inlined frame move to the caller (see [`Rec::ret`]).
     fn ret_from(&mut self, vm: &Vm<'_>, a: usize, nret: usize) -> R<usize> {
         let d = self.cur_depth;
-        if d > 0 && self.frames[d].unr {
+        if d > 0
+            && self.frames[d].unr
+            && !(self.cfg.sidepush && !self.cfg.fn_root && self.frames[d].proto_loops())
+        {
+            // (section 75.10, `sidepush`: outside function-entry recordings a chain frame may return: it is then an ordinary inlined frame that
+            // is gone before any push)
             // E1: a frame of the unroll chain returns before its self-call: the chain is broken (the trace would bake a leaf path into the
             // inlined levels); the recording fails as `Unroll`
             return Err(AbortReason::Unroll);
@@ -12715,6 +12741,37 @@ impl Rec {
     /// Section 75.8: bit 6 of `dynunroll` (a policy bit: no semantic effect).
     fn dynunroll_norec(&self) -> bool {
         self.cfg.dynunroll & 64 != 0
+    }
+}
+
+/// Section 75.9 / 75.10: does the prototype's code have a counted loop?
+fn has_forprep(code: &[u32]) -> bool {
+    code.iter()
+        .any(|&w| Instruction(w).opcode_raw() == OpCode::Forprep as u8)
+}
+
+/// Section 75.10 (`sidepush`): the shape `recinl` builds chains for: the prototype has a counted loop and the `CALL` at `call_pc` calls a method
+/// fetched by `SELF` into its function register (method recursion; recursion through an upvalue is E1's).
+fn recinl_shape(code: &[u32], call_pc: u32) -> bool {
+    let Some(&cw) = code.get(call_pc as usize) else {
+        return false;
+    };
+    let c = Instruction(cw);
+    if c.opcode_raw() != OpCode::Call as u8 || !has_forprep(code) {
+        return false;
+    }
+    let lo = (call_pc as usize).saturating_sub(c.b() as usize + 1);
+    code[lo..call_pc as usize].iter().any(|&w| {
+        let i = Instruction(w);
+        i.opcode_raw() == OpCode::SelfOp as u8 && i.a() == c.a()
+    })
+}
+
+impl RecFrame {
+    /// Section 75.10: the frame's prototype has a counted loop.
+    fn proto_loops(&self) -> bool {
+        // SAFETY: a recorded frame's prototype is a dependency of the recording, alive while it runs.
+        has_forprep(unsafe { (*(self.proto as *const Proto)).code() })
     }
 }
 

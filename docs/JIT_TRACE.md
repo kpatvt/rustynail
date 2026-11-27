@@ -8432,3 +8432,37 @@ of the inlined prologues at other recursion levels (the reason `recinl=3/4` lose
 push; and loop roots that inline the whole subtree (the callee's loop through `dynunroll`, its self-calls as further chain frames) need the same,
 since every level that is not the recorded one leaves through such an exit. With that, the per-level exits become linked side traces and the chain
 depth can grow, which is what removes items 1-4 and 7 of 75.1.
+
+### 75.10 (A), second increment: `sidepush`, native pushes from side recordings inside chain frames (`TrLimits::sidepush`, default 1)
+
+Before: a side recording that starts inside inlined frames could not make a native push (`push_ok` required a frameless side trace), so every
+exit inside a `recinl` chain frame (the callee prologue recorded at one recursion level, entered at another) went to tier 1 or a side trace that
+stitched. Now:
+
+* `Rec::seed_frames` marks a rebuilt frame as a chain frame (`unr`) when it is a plain frame of the root prototype called for a fixed number of
+  results, the root is not vararg (refused before), and the frame has the `recinl` shape (`recinl_shape`: the prototype has a counted loop and
+  the `CALL` at its `call_pc` calls a method that `SELF` fetched into the function register).
+* `push_ok` accepts such a side recording (`side_push`: depth >= 1, every frame between the root and the current one a chain frame) and the
+  self-call is the native push from the innermost frame: `end_rec_call` builds the `inl` list of the chain frames (checked again there: every
+  one `unr` and of the callee's prototype, else `Unroll`), the assembler's `rec_call_tail_lazy` materialises them as lazy frames (each frame's
+  `func`, its caller's `savedpc`), then pushes. The side trace was entered with those frames virtual (S1), the state E1's chain push assumes.
+* A chain frame may return inside a recording that is not function-entry (`ret_from`), for prototypes with loops: it is then an ordinary inlined
+  frame that is gone before any push. (E1 forbids it in function-entry recordings: the leaf path would be baked into the inlined levels.)
+
+Guards kept: the callee identity guard of the push (`EQREF` of the prototype: side frames carry no closure ref), the push's stack and `CallInfo`
+room checks, the method lookup of each recorded `SELF`; nothing is assumed about frames the recording did not build.
+
+First form (no shape rule, returns allowed for every chain frame outside function-entry recordings): permute 165.9 -> 135.8 M, but fib +127 %,
+forth_vm +64 %, binary_trees +52 %, towers +17 %, astar_jumper +16 %, cd +10 %, mustache_lustache +3.5 % (E1 families whose side traces now
+pushed / returned from chain frames). With the shape rule, whole set (190 programs, instructions, one run each, `sidepush=0` against `=1`, both
+with `recinl=2`): **permute 165.90 -> 135.79 M (-18.15 %)**, astar_jumper +0.9 % (its noise), nothing else beyond 0.3 %; geomean -0.10 %.
+permute cycles (CPU 8, min of 5, two interleaved rounds): 31.59 / 32.01 -> 26.94 / 27.05 M (**-14.7 .. -15.5 %**). With it, `recinl=3` / `4`:
+145.16 M / 28.5-28.6 M cycles, still above `recinl=2` (the deeper prologues are specialised to one recursion level; the side traces of the
+other levels now link instead of exiting, but each still re-validates).
+
+Tests: `tr_core::s75_recinl_programs` runs `recinl` 2 / 3 / 4 with `sidepush=1` (and `dynunroll=80`), every trace mode, `+verify`, exit storms,
+budget 17, GC stress 2, plus the h7 / e1 recursion programs and `s75_oframe` with `recinl=3,sidepush=1`; `s75_recinl.lua` has the method replaced
+mid-run, errors from depth under `pcall`, self fields changed in the recursion, varargs and open-result self-calls. The chain mutants
+`h9_inl_savedpc_off`, `h9_inl_push_skip`, `h9_inl_bump_off` are caught there. Two sidepush-specific mutants were tried and are equivalent:
+pushing from frames that are not chain frames (`end_rec_call` re-checks every frame and aborts `Unroll`), and counting a frame called for open
+results as a chain frame (the lazy completion decodes the caller's `CALL` when the prototype's calls do not share one result count); dropped.
