@@ -684,7 +684,15 @@ impl Cx<'_> {
             .hash();
         let (nilres, tail) = (self.p.label(), self.p.label());
         self.op(Op::Bind(l));
-        for lvl in 0..env.idx_levels {
+        // section 76.10 (`t1exit` bit 2): one copy of the level body in a loop counted in `V7` instead of `idx_levels` unrolled copies
+        let rolled = env.t1exit & 4 != 0 && env.idx_levels > 1;
+        let lvl_loop = self.p.label();
+        if rolled {
+            self.op(Op::Mov(7, u64::from(env.idx_levels)));
+            self.op(Op::Bind(lvl_loop));
+        }
+        let copies = if rolled { 1 } else { env.idx_levels };
+        for lvl in 0..copies {
             // V0 = the table that missed: no metatable ends the chain with nil
             self.ld(4, W::B8, rm(0, table::METATABLE as i32));
             self.br(Cc::Eq, 4, Src::Imm(0), nilres);
@@ -708,7 +716,9 @@ impl Cx<'_> {
             );
             self.op(Op::Mov(3, u64::from(hash)));
             // absent or nil there: the next level (after the last one: nil if that table has no metatable, else the helper)
-            let next = if lvl + 1 == env.idx_levels {
+            let next = if rolled {
+                self.p.label()
+            } else if lvl + 1 == env.idx_levels {
                 tail
             } else {
                 self.p.label()
@@ -723,6 +733,15 @@ impl Cx<'_> {
             self.op(Op::Jmp(back));
             if next != tail {
                 self.op(Op::Bind(next));
+            }
+            if rolled {
+                // the next level, while any is left
+                self.op(Op::Sub(7, Src::Imm(1)));
+                self.br(Cc::Ne, 7, Src::Imm(0), lvl_loop);
+                // MUTANT `chain_end_nil`: the chain that ran out of levels answers nil without looking for a further metatable
+                if crate::tr_mut_chain_end_nil() {
+                    self.op(Op::Jmp(nilres));
+                }
             }
         }
         self.op(Op::Bind(tail));

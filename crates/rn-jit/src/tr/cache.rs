@@ -179,7 +179,7 @@ pub const SIDEBLF_PROCESS: u32 = 65;
 /// Section 76.4 (`carena`): the process default of [`TrLimits::carena`] (also the struct default).
 pub const CARENA_PROCESS: u32 = 1;
 /// Section 76.10 (`t1exit`): the process default of [`TrLimits::t1exit`] (also the struct default).
-pub const T1EXIT_PROCESS: u32 = 1;
+pub const T1EXIT_PROCESS: u32 = 7;
 /// Section 76.11 (`hdrcse`): the process default of [`TrLimits::hdrcse`] (also the struct default).
 pub const HDRCSE_PROCESS: u32 = 1;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
@@ -911,7 +911,9 @@ pub struct TrLimits {
     /// Section 76.10 (`t1exit`, docs/JIT_TRACE.md section 76.10): tier 1's out-of-line exit sequences (`savedpc = pc`, an optional refund, `ret`
     /// through the thunk's epilogue: about 45 bytes each) become `mov eax, pc; jmp` to one shared exit per prototype that computes the address of
     /// `pc` and leaves (12-20 bytes each); also the inline exit stubs of the instructions tier 1 does not compile and the `MMBIN` stubs.
-    /// 0 = off, 1 = on (default [`T1EXIT_PROCESS`]).
+    /// Bit 1: helper calls go through one trampoline per helper and prototype (`call rel32` instead of `mov rdi; mov rsi; movabs; call rax`).
+    /// Bit 2: the inline `__index` chain walk of a constant-key read is one level body in a counted loop instead of `idx_levels` unrolled copies.
+    /// 0 = off, 7 = all (default [`T1EXIT_PROCESS`]).
     pub t1exit: u32,
     /// Section 76.11 (`hdrcse`, docs/JIT_TRACE.md section 76.11): the recorder reuses an `FLOAD` of the same table ref and header field emitted
     /// earlier in the recording when no instruction since may change a table header (`opt_mem::header_safe`, rule 4: allocation, key insertion,
@@ -1468,7 +1470,7 @@ impl TrLimits {
                 "sideback" => l.sideback = v.min(15),
                 "sideblf" => l.sideblf = v.min(511),
                 "carena" => l.carena = v.min(1),
-                "t1exit" => l.t1exit = v.min(1),
+                "t1exit" => l.t1exit = v.min(7),
                 "hdrcse" => l.hdrcse = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),

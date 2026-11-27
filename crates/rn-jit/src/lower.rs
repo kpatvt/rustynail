@@ -890,6 +890,8 @@ pub fn lower(code: &[u32], cfg: LowerCfg<'_>) -> Option<Lowered> {
 thread_local! {
     /// Section 76.10 (diagnostic): the labels of the last lowering's out-of-line sections (MMBIN stubs, cold slow paths, landing checks, exits).
     pub(crate) static T1SEC: std::cell::Cell<[L; 4]> = const { std::cell::Cell::new([0; 4]) };
+    /// Section 76.10 (diagnostic): the out-of-line pieces of the last lowering, `(kind, label)` in emission order.
+    pub(crate) static T1COLD: std::cell::RefCell<Vec<(&'static str, L)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// S73 (`landfix`): the registers that are dead at each pc (`live::prunable_with`), set by the compile that calls [`lower_ex`]; `None`: every
     /// typed landing label checks every known register.
     pub(crate) static LAND_DEAD: std::cell::RefCell<Option<Vec<crate::live::Set>>> = const { std::cell::RefCell::new(None) };

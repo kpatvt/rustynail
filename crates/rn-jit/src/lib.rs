@@ -60,3 +60,21 @@ pub use rt::{
 };
 #[cfg(feature = "trace")]
 pub use rt::{set_trace, set_trace_enabled};
+
+/// Section 76.10: mutant `htramp_swap_args` (the helper trampoline of tier 1 exchanges thread and `ci`).
+#[inline(always)]
+pub(crate) fn tr_mut_htramp_swap() -> bool {
+    #[cfg(feature = "trace")]
+    return crate::tr::mutants::active("htramp_swap_args");
+    #[cfg(not(feature = "trace"))]
+    false
+}
+
+/// Section 76.10: mutant `chain_end_nil` (the rolled `__index` chain of tier 1 answers nil when it runs out of levels).
+#[inline(always)]
+pub(crate) fn tr_mut_chain_end_nil() -> bool {
+    #[cfg(feature = "trace")]
+    return crate::tr::mutants::active("chain_end_nil");
+    #[cfg(not(feature = "trace"))]
+    false
+}

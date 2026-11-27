@@ -51,6 +51,11 @@ local function mk(i)
   end })
 end
 local V = setmetatable({}, { __add = function(a, b) return 3 end })
+-- an `__index` chain of three levels (the inline chain walk of tier 1 reads up to `idx_levels` of them)
+local C0 = { top = 1 }
+local C1 = setmetatable({ mid = 2 }, { __index = C0 })
+local C2 = setmetatable({}, { __index = C1 })
+local C3 = setmetatable({ deep = 3 }, { __index = C2 })
 local acc = 0
 for round = 1, 6 do
   for i = 1, 300 do
@@ -60,6 +65,7 @@ for round = 1, 6 do
     local v = (i % 11 == 0) and V or i
     acc = acc + (v + 1) + #t
     if i % 13 == 0 then acc = acc + select("#", i, round) end
+    acc = acc + (C3.deep or 0) + (C2.mid or 0) + (C3.top or 0) + (C3.none or 5)
     local s = tostring(i)
     acc = acc + #s
   end

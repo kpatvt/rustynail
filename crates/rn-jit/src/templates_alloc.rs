@@ -598,9 +598,30 @@ impl Cx<'_> {
     pub(crate) fn emit_cold(&mut self) {
         let mut idx = 0;
         // (emitting a Slow stub pushes its own Fail/Hook entries)
+        let diag = std::env::var_os("RUSTYNAIL_JIT_T1SIZE").is_some();
         while idx < self.cold.len() {
             let c = self.cold[idx];
             idx += 1;
+            if diag {
+                // section 76.10 (diagnostic): a label before each out-of-line piece, named by its kind
+                let l = self.p.label();
+                self.op(Op::Bind(l));
+                let name: &'static str = match c {
+                    Cold::Slow { .. } => "Slow",
+                    Cold::Chain { .. } => "Chain",
+                    Cold::StrSelf { .. } => "StrSelf",
+                    Cold::SetNil { .. } => "SetNil",
+                    Cold::NewKey { .. } => "NewKey",
+                    Cold::Cmp { .. } => "Cmp",
+                    Cold::MmRet { .. } => "MmRet",
+                    Cold::ArithMm { .. } => "ArithMm",
+                    Cold::Fail { .. } => "Fail",
+                    Cold::Hook { .. } => "Hook",
+                    #[allow(unreachable_patterns)]
+                    _ => "other",
+                };
+                crate::lower::T1COLD.with(|v| v.borrow_mut().push((name, l)));
+            }
             match c {
                 Cold::Slow { l, pc, call } => {
                     self.op(Op::Bind(l));

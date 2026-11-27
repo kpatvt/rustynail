@@ -1682,13 +1682,15 @@ fn compile_inner(
     if d.heuristic && !low.worth_compiling() {
         return Err(Fail::Permanent);
     }
-    let em = x86::emit(&low.prog).map_err(|_| Fail::Permanent)?;
+    // Section 76.10 (`t1exit` bit 1): the helper trampolines
+    let htramp = env.t1exit & 2 != 0;
+    let em = x86::with_htramp(htramp, || x86::emit(&low.prog)).map_err(|_| Fail::Permanent)?;
     #[cfg(feature = "trace")]
     crate::tr::phase::add(crate::tr::phase::TIER1, t_tier1);
     // Section 49 (`ccheck`): the encoder of the old paths gives the same bytes and label offsets
     #[cfg(feature = "trace")]
     if d.tr.cfg.limits.ccheck != 0 {
-        let same = crate::cspeed::with(0, || x86::emit(&low.prog))
+        let same = crate::cspeed::with(0, || x86::with_htramp(htramp, || x86::emit(&low.prog)))
             .is_ok_and(|e2| e2.code == em.code && e2.label_off == em.label_off);
         crate::tr::CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !same {
@@ -1745,6 +1747,11 @@ fn compile_inner(
         eprintln!("[t1size] SEC_cold {}", s2 - s1);
         eprintln!("[t1size] SEC_land {}", s3 - s2);
         eprintln!("[t1size] SEC_exits {}", em.code.len() - s3);
+        let cold = crate::lower::T1COLD.with(|v| std::mem::take(&mut *v.borrow_mut()));
+        for (i, (k, l)) in cold.iter().enumerate() {
+            let end = cold.get(i + 1).map_or(s2, |n| off(n.1));
+            eprintln!("[t1size] COLD_{k} {}", end.saturating_sub(off(*l)));
+        }
         eprintln!("[t1size] OPS {}", low.prog.ops.len());
     }
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
@@ -2083,7 +2090,8 @@ fn recompile_inner(
     if !same {
         return Err(Fail::Permanent);
     }
-    let em = x86::emit(&low.prog).map_err(|_| Fail::Permanent)?;
+    let em = x86::with_htramp(env.t1exit & 2 != 0, || x86::emit(&low.prog))
+        .map_err(|_| Fail::Permanent)?;
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
         let _ = std::fs::write(
             format!("{dir}/proto-{:x}-v{ver}.bin", p.code_ptr() as usize),

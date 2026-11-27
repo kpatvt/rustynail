@@ -4999,6 +4999,16 @@ const TABLE: &[Row] = &[
         owner: "S76",
         dets: &[d("tr_core", "s76_hdrcse_programs")],
     },
+    Row {
+        name: "htramp_swap_args",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
+    Row {
+        name: "chain_end_nil",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

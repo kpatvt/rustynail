@@ -10469,14 +10469,14 @@ fn s76_carena_programs() {
 fn s76_t1exit_programs() {
     let progs = ["s76_t1_exits", "s64_call_observers", "s76_side_fail"];
     // (`s76_t1_exits` prints where the finalizer's hook first fired: GC stress moves the finalizer, so its stress jobs are left out)
-    let mut jobs: Vec<Job> = b1_jobs(&progs, &["t1exit=1", "t1exit=0"])
+    let mut jobs: Vec<Job> = b1_jobs(&progs, &["t1exit=7", "t1exit=3", "t1exit=0"])
         .into_iter()
         .filter(|j| {
             !(j.prog == "s76_t1_exits" && j.env.iter().any(|(k, _)| k == "RUSTYNAIL_GC_STRESS"))
         })
         .collect();
     for p in progs {
-        for l in ["t1exit=1", "t1exit=0"] {
+        for l in ["t1exit=7", "t1exit=4", "t1exit=2", "t1exit=0"] {
             for b in [0, 3, 17] {
                 let mut j = Job::new(p, "off").limits_s(l);
                 if b != 0 {
@@ -10488,7 +10488,7 @@ fn s76_t1exit_programs() {
     }
     let res = compare(jobs);
     assert!(!res.is_empty());
-    assert_eq!(TrLimits::default().t1exit, 1);
+    assert_eq!(TrLimits::default().t1exit, 7);
 }
 
 /// Section 76.11 (`hdrcse`): the recorder's reuse of header loads (`FLOAD`) until a header barrier. A program that reads fields of one table
