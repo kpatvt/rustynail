@@ -62,7 +62,7 @@ for m in ${MATRIX//,/ }; do
   esac
 done
 if [ -z "${BASE:-}" ]; then
-  BASE="lj:lj21=/usr/bin/luajit;ljoff:ljoff21=/usr/bin/luajit -joff;$PREVBASE"
+  BASE="lj:lj22=/usr/bin/luajit;ljoff:ljoff22=/usr/bin/luajit -joff;$PREVBASE"
   case ",$MATRIX," in *,55*) BASE="${BASE}puc:puc55=$R/55/build-seed0/lua;b1p:b1p-108b935;b1g:b1g-108b935;" ;; esac
   case ",$MATRIX," in *,54*) BASE="${BASE}puc54:puc54=$R/54/build-seed0/lua;" ;; esac
 fi
