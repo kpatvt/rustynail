@@ -9756,9 +9756,9 @@ pub fn tier1_bytes(st: &mut State) -> Option<(Vec<u8>, Vec<u8>)> {
         consts: p.k(),
         t15_warmup: None,
     };
-    let expected = x86::emit(&crate::lower::lower(p.code(), cfg)?.prog)
-        .ok()?
-        .code;
+    let htramp = env.t1exit & 2 != 0;
+    let low = crate::lower::lower(p.code(), cfg)?;
+    let expected = x86::with_htramp(htramp, || x86::emit(&low.prog)).ok()?.code;
     // SAFETY: the block is the committed, readable code of the live descriptor.
     let actual = unsafe {
         std::slice::from_raw_parts(
