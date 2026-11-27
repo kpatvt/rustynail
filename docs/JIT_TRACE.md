@@ -8567,3 +8567,244 @@ so it was dropped; the restore stays (exact state at the exit, TR3).
 Measured (one binary, `retfuse=1` against `=3`, SEED 0, CPU 8, min of 5, two rounds): permute 121.40 -> 117.79 M instructions (**-2.98 %**),
 22.97 / 22.80 -> 22.65 / 22.42 M cycles (**-1.4 .. -1.7 %**). Whole set (190 programs, one run each): permute -2.98 %, astar_jumper -3.9 % (noise);
 geomean -0.03 %. `tr_core::s75_oframe_programs` runs `retfuse=3` and `retfuse=3,recinl=3,sidepush=1` in every mode.
+
+## 76. Compile cost: the measured phase split, side-exit failure policies (`sideback`, `sideblf`) and the compile arena (`carena`) (2026-11-27, base 6058b77)
+
+Task: cut the JIT's fixed (compile) cost, the largest cross-cutting share of the gap to LuaJIT 2.1 (Phase 0: raytrace about 65 % of its gap,
+cd 46 %, json 42 %, towers 55 %, fmt_s 50 %). Items: (a) a per-compile arena / scratch reuse, (b) cheaper recording per bytecode, (c) no
+repeated side recordings at exits that keep failing, (d) compact exit stubs / smaller code, (e) whatever the profile ranks higher.
+**Result: (a) and a narrowed (c) are built and default ON (`carena=1`, `sideblf=65`): raytrace -3.0 % instructions / -5.9 % cycles, cd
+-3.0 % / -5.8 %, deltablue -1.6 % / -2.9 %, richards -1.5 % / -2.2 %, towers -1.0 % / -2.7 %, json -0.6 % / -1.7 % (min of 15, one CPU,
+interleaved, against the base binary); the back-off form of (c) (`sideback`) is built and left OFF (no setting wins); (b) and (d) were not
+built (76.6). Bar misses: lib/fmt_s +2.2 .. +3.1 % and regex_nfa +2.1 % cycles at lower instruction counts, from registering the allocator
+wrapper (present with the knob off), and lua_parser +0.19 % instructions (76.4-76.6). Whole set: -0.69 % instructions, -1.57 % cycles (geomean, 33).**
+
+### 76.0 Where the compile cost goes (measured, base 6058b77)
+
+Method: a frame-pointer build of the base (`RUSTFLAGS=-C force-frame-pointers=yes`, own target directory), `perf record -e cycles:u -c 20011
+--call-graph fp --user-callchains`, 3 runs per program on CPU 13 (`RUSTYNAIL_SEED=0`), every sample classified by its call chain: the outermost
+compile entry (`rn_core::jit_hooks::rec_step` = recording; `rn_jit::tr::pipeline` = trace back end; `rn_jit::rt::compile_inner` = tier-1 compile;
+`defer_build` = deferred exit stubs) and the innermost `rn_jit` module (inlined frames included). DWARF unwinding lost the chains (most samples
+had none) and valgrind / DHAT cannot run on this machine's AVX-512 `ld.so`, so allocation sites by count were not available. Shares are % of all
+user cycles of the run.
+
+| program | compile | recording | trace back end | tier-1 compile | deferred stubs | libc leaf inside compile (malloc / free / realloc / memcpy) | Rust alloc / `RawVec` growth / hashbrown leaf inside compile |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| apps/raytrace | 37.1 | 11.5 | 20.1 | 4.6 | 0.9 | 3.8 | 6.3 |
+| awfy/cd | 39.8 | 9.5 | 24.5 | 3.4 | 2.4 | 5.0 | 7.2 |
+| awfy/towers | 22.7 | 5.5 | 14.1 | 1.9 | 1.1 | 2.4 | 3.9 |
+| awfy/json | 19.5 | 5.0 | 10.5 | 3.3 | 0.6 | 2.2 | 3.5 |
+| lib/fmt_s | 23.5 | 3.3 | 9.9 | 9.8 | 0.5 | 1.6 | 5.4 |
+
+Inside the trace back end (innermost module, % of the run; raytrace / cd / towers / json / fmt_s): register allocator `tr::ra` 5.0 / 5.5 / 3.3 /
+2.8 / 1.9; IR buffer `tr::ir` (operand walks, `Builder::find`, `is_ins`, snapshot entries) 3.7 / 4.6 / 2.4 / 1.7 / 1.4; exit builder `tr::exit`
+2.3 / 3.0 / 1.7 / 1.0 / 0.8; FxHash maps 1.9 / 1.9 / 0.5 / 0.5 / 0.9; x86 encoder 1.6 / 2.1 / 1.5 / 1.2 / 0.7; assembler `tr::asm` 1.6 / 2.0 /
+1.5 / 1.3 / 0.8; loop pass `tr::opt_loop` 0.8 / 1.8 / 1.3 / 0.6 / 1.5; sinking 1.2 / 0.7 / 0 / 0 / 0. Inside recording (raytrace / cd):
+`tr::record` 4.1 / 3.6 (`record::step` -> `record_one`, inlined: 7.2 % of raytrace's run is that one frame), `tr::ir` 3.0 / 2.0, fold 1.1 / 0.6,
+FxHash 1.0 / 0.9, snapshots 1.0 / 0.7, tier-1 label lookups (`lower`) 0.4 / 0.5. The closing of a recording (`Box::new(self.close())`) is 0.9 %
+of raytrace. Inside tier 1 the encoder is the largest part (fmt_s 4.0 of its 9.8 %). Again no hot spot (sections 49, 53, 55, 71), with one
+exception: allocation, 10-12 % of the run inside compiles on raytrace and cd when the Rust-side growth and hashing leaves are counted with libc.
+
+Allocation callers are spread: no call site above 0.5 % of the run (top cd sites: `pipeline_inner` 0.50, `inline_stub_ops_slots` 0.34,
+`Rec::on_step` 0.29, `opt_loop::Em::copy_one` 0.25, `Rec::closure_handle` 0.22, `Program::push` 0.16, `ra::allocate_hinted` 0.16,
+`Cx::stubs_and_tail` 0.16, the `reserve_rehash` of four FxHash maps 0.6 together; the frame-pointer chains skip the caller of a libc leaf, so these
+are approximate). Allocation leaves of the whole cd run (compile and runtime): 6.8 %. Since no site dominates, (a) was built as one lever for all
+of them (76.4) instead of per-site presizing. glibc tunables do not reach it: `tcache_count=127` -0.4 % instructions on cd, larger tcache +0.8 %.
+
+Phase timers (`RUSTYNAIL_JIT_VERBOSE=1`, TSC ticks, single runs, orientation only): recorder ticks per recorded bytecode raytrace 761, cd 1225,
+towers 1415, json 1385; pipeline per compile raytrace 205 k (43 compiles, `max_pipeline` 1.27 M), cd 135 k (238, 3.14 M), towers 141 k (27),
+json 142 k (57), fmt_s 190 k (2); tier-1 per compile raytrace 170 k, cd 120 k, towers 106 k, json 199 k, fmt_s 410 k. Code (perf map sizes):
+raytrace trace bodies 156 KB + deferred stubs 26 KB + tier 1 237 KB; cd 569 + 187 + 489 KB; towers 86 + 21 + 40 KB.
+
+Side recordings (verbose 2, base): json 93 side recordings, 58 failed (per exit: 9 exits `LeaveFrame` twice, 6 `InnerLoop` twice, 6 `CFunc`
+twice, 3 `SideShort` twice, 4 `InnerFamily` once, ...); cd 303 / 135 failed (43 `MaxSide` once, 22 `Depth` twice, 12 `SideShort` once,
+8 `LeaveFrame` twice, 6 `SideShort` twice); raytrace 46 / 12; towers 35 / 14 (8 `Recursion`, 2 `LeaveFrame` twice). An exit already stops after
+the second identical unchangeable failure (`side_failed`: `repeat`), so the only waste left at a failing exit is the second recording.
+
+### 76.1 Measurement method of this section
+
+Binaries: plain release `rn-cli` (5.5), base 6058b77 and the final commit, staged as `<dir>/bas/rnlua` and `<dir>/new/rnlua` (equal path length).
+`perf stat -e instructions:u,cycles:u`, `taskset -c 15` (CPU 4 was busy with another benchmark; the machine's load average was 20-26 from other
+sessions during the runs, so cycles are noisier than in earlier sections), 300 ms spin before each run, `RUSTYNAIL_SEED=0`, configurations
+interleaved in each round, limits strings of equal length (`memtune=0,memtune=0` for the base), min of 15 runs for the target programs and min of
+5 for the whole set (76.5). Knob comparisons are on one binary. Instructions are deterministic. Only 5.5 was measured.
+
+### 76.2 `sideback`: exponential back-off of side recordings after a failure (knob, default OFF)
+
+`TrLimits::sideback` (`RUSTYNAIL_JIT_TRACE_LIMITS=sideback=N`, `SIDEBACK_PROCESS = 0`): after the `n`th failed recording at an exit that leaves the
+exit a retry, the next attempt waits `2^(s * n) - 1` more report windows of `hot_exit` exits (bits 0-1 = `s`, at most 255 windows; the waiting
+reports re-arm the counter without a fault and are not side attempts for the `loopany` guard). Bit 2: only after unchangeable causes; bit 3: only
+after the causes the bytecode path alone decides (`CFunc`, `Nyi`, `Recursion`, `Depth`, `Vararg`, `MultRet`, `TailCall`, `TableHash`). Only the
+moment of the retry moves; what is recorded is unchanged. Counter `[trace] sideback: reports waited N`.
+
+Instructions M, same binary (`sideback=0` / 1 / 2 / 9 / 10 / 11): raytrace 291.97 / 299.36 / 305.36 / 291.97 / 291.97 / 291.97; cd 642.89 / 638.09 /
+635.43 / 643.03 / 642.86 / 641.44; towers 164.45 / 164.71 / 169.08 / 164.70 / 169.08 / 172.22; json 430.61 / 428.80 / 425.08 / 430.29 / 430.25 / 430.32;
+richards 165.03 / 165.13 / **212.72** / 165.06 / 165.04 / 165.07; deltablue 306.50 / 314.91 / 310.47 / 306.50 / 306.52 / 306.54; expr_lang 489.51 /
+488.21 / 489.00 / 491.19 / 490.86 / 492.21. **Default OFF**: delaying the retry loses where the second attempt succeeds (richards +29 %, raytrace
++2.5 .. +4.6 %, deltablue +1.3 .. +2.7 %), and the narrowed form (bit 3) gains nothing measurable (cd -0.2 %) while towers loses 2.8-4.7 %
+(`Recursion` retries that later succeed). The gain is in *not* retrying for the right causes, which is 76.3.
+
+Test `tr_core::s76_sideback_programs` (program `s76_side_fail`: exits whose recordings fail with `CFunc`, `InnerLoop`, `Recursion`, `Nyi(Closure)`,
+`SideShort`; `sideback` 3 / 11 / 6 / 0 x every trace mode, `+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves; at 3 the back-off
+must wait). Mutant `sideback_no_wait`.
+
+### 76.3 `sideblf`: blacklist a side exit at its first failure, per cause (knob, default 65)
+
+`TrLimits::sideblf` (`SIDEBLF_PROCESS = 65`): a mask of cause classes (1 `Depth`, 2 `Recursion`, 4 `LeaveFrame`, 8 `SideShort`, 16 `CFunc` /
+`Nyi`, 32 `InnerLoop`, 64 `TooLong`, 128 `LeaveLoop`, 256 the other unchangeable causes); an unchangeable failure of a class in the mask blacklists
+the exit at its first occurrence instead of the second (`side_failed`: `repeat`); a retry that `sbump2` still has pending is kept. The existing
+`blfirst` bit 16 does this for every class at once: `blfirst=31` gave cd -5.6 % instructions but json +10.8 %, richards +28.7 %, towers +5.1 %,
+lru_cache +2.8 %, expr_lang +4.1 %, so the per-class mask narrows it.
+
+Instructions M per class (same binary, one class at a time; first number = 0, the control): raytrace 291.97, class 64 (`TooLong`) 288.46 (-1.2 %),
+32 293.09; cd 642.90, 1 641.70, 2 639.95, 4 648.70, 8 634.28; towers 164.46, 2 172.95, 4 166.70; json 430.61, 8 431.26, 16 430.01; fmt_s 23.12,
+8 22.17; richards 165.04, 32 **212.54**; deltablue 306.50, 4 307.26, 8 313.54; lru_cache 305.14, 384 314.03; expr_lang 489.52, 8 486.80. Combined:
+89 (with `SideShort`) costs list +20 %, permute +52 %, queens +32 %, deltablue +2.2 %; 81 (with `CFunc`) costs markdown +0.65 %; **65 (`Depth` +
+`TooLong`) moves no program of 17 by more than +0.05 %** and gains raytrace -1.2 %, cd -0.2 %. Shipped: 65. Cycles (min of 15, same binary,
+`carena=1`, `sideblf` 00 -> 65): raytrace 90.49 -> 88.82 (-1.8 %), json 132.97 -> 132.24, the others within +-0.4 %.
+
+Test `tr_core::s76_sideblf_programs` (`sideblf` 65 / 511 / 18 / 0 in every mode; at 511 fewer side recordings than at 0). Mutant `sideblf_never`.
+With the default at 65 every trace test runs it.
+
+### 76.4 `carena`: the compile arena (knob, default ON)
+
+`rn_core::carena` (new module; `docs/UNSAFE.md` row, invariants CA1-CA4) is a `GlobalAlloc` that `rnlua` (`crates/rn-cli/src/main.rs`) and the
+`tr_core` test binary register as their process allocator. While a compile runs on a thread (`carena::enter` / `leave` around `tr::driver_step`,
+i.e. a recorder step and the pipeline it may start; around `rt::compile_inner` / `recompile_inner` for tier 1; around `defer_build` for deferred
+exit stubs) and the arena is on, blocks up to 2 KiB come from 16 KiB chunks of one reserved 256 MiB system block (pages committed when touched) by
+bumping a pointer; a free decides by address range (in any mode, on any thread), counts the chunk's live blocks down, and the owner thread recycles
+a chunk whose count reaches zero onto its free list; a `realloc` of the newest block of the current chunk grows or shrinks in place (the common
+`Vec` doubling). Everything else (outside a compile, larger blocks, the range used up) goes to `System`. `rn-core` keeps no dependency (the range
+is one `System` block). The knob `carena` (`CARENA_PROCESS = 1`) is applied at JIT set-up and by `rt::set_trace` (process-wide: the last configured
+state decides); statistics `[trace] carena: blocks N chunks used M recycled R`. No compile decision reads the allocator: generated code and results
+are unchanged (output hashes and trace statistics identical with the knob on and off).
+
+Chunk size: 64 KiB chunks gave cd a peak RSS of 34.8 MB against 16.5 MB (long-lived blocks of a compile pin their chunk); 32 KiB 32.9 MB; 16 KiB
+26.0 MB at the same instruction gain (cd 625.6 / 625.1 / 624.8 M for 16 / 32 / 64 KiB). raytrace, json, towers, fmt_s: peak RSS unchanged
+(16.6-16.8 MB). **cd's peak RSS grows by 9.5 MB (+57 %)**; that is the cost of the lever. Arena use (16 KiB): cd 144 670 blocks, 841 chunks taken,
+1159 recycles; raytrace 45 228 / 247 / 330; json 36 787 / 190 / 206; towers 15 029 blocks; fmt_s 1182 blocks in 3 chunks. Runtime-heavy programs
+(instructions, `carena` 0 -> 1): binary_trees, gc_churn, string_ops, table_hash, closures, coroutines, heapsort, json_roundtrip, lua_interp,
+wordfreq -0.0 .. -0.2 %, template_engine +0.02 %, classic_vector -0.4 %, astar_jumper -1.2 %.
+
+Measured on the binary of commit e028036 (instructions M / Mcyc, min of 15, interleaved; the final commit 1a4146a differs only in the Lua heap path below):
+
+| program | base binary | `carena=0,sideblf=00` | `carena=1,sideblf=00` | `carena=1,sideblf=65` (shipped) | shipped vs base |
+|---|---|---|---|---|---|
+| apps/raytrace | 291.98 / 94.42 | 292.77 / 95.19 | 286.27 / 90.49 | 283.25 / 88.82 | **-3.0 % / -5.9 %** |
+| awfy/cd | 642.92 / 236.76 | 645.78 / 237.19 | 624.67 / 222.37 | 623.59 / 223.12 | **-3.0 % / -5.8 %** |
+| awfy/towers | 164.44 / 43.20 | 164.75 / 43.45 | 162.79 / 42.03 | 162.79 / 42.04 | -1.0 % / -2.7 % |
+| awfy/json | 430.54 / 134.51 | 432.62 / 136.51 | 427.98 / 132.97 | 427.98 / 132.24 | -0.6 % / -1.7 % |
+| lib/fmt_s | 23.12 / 5.90 | 23.12 / 6.07 | 22.95 / 6.09 | 22.95 / 6.08 | -0.7 % / **+3.1 %** |
+| awfy/richards | 165.00 / 56.67 | 165.50 / 57.47 | 162.48 / 55.31 | 162.48 / 55.43 | -1.5 % / -2.2 % |
+| awfy/deltablue | 306.50 / 102.72 | 307.48 / 103.88 | 301.74 / 99.77 | 301.59 / 99.74 | -1.6 % / -2.9 % |
+| awfy/havlak | 507.51 / 181.05 | 508.09 / 183.16 | 505.04 / 180.54 | 505.18 / 180.11 | -0.5 % / -0.5 % |
+
+**The wrapper on the runtime path, and the fix (commit 1a4146a).** The whole set (76.5) showed the cost of registering a process allocator:
+with the knobs off, lua_lexer +0.81 % instructions and regex_nfa +0.15 % / +4.3 % cycles against the base; a scratch build of the same tree
+without the `#[global_allocator]` line had the base's instruction counts exactly (regex_nfa 3481.51 M) and ran regex_nfa at 634 Mcyc against the
+base's 656 and the wrapper build's 684-689 (11 runs). The Lua heap (`rn_core::alloc::SystemAllocator`, every GC object, string and table part) went
+through `std::alloc`, i.e. through the wrapper. It now calls `std::alloc::System` directly (the same `malloc` as before in every binary that does not
+register an allocator; an embedder's own `#[global_allocator]` no longer sees the Lua heap, which `lua_newstate` / `Mem::new` with a custom
+`Allocator` still covers), and the arena test is one thread-local flag set by `enter` / `leave`. Final binary (min of 11, interleaved, instructions M /
+Mcyc, base / shipped / knobs off): regex_nfa 3481.52 / 658.50, 3477.25 / 672.60 (-0.1 % / **+2.1 %**), 3480.56 / 677.39; lua_lexer 3206.47 / 791.64,
+3205.25 / 796.22 (-0.04 % / +0.6 %), 3210.56 / 798.10; fmt_s 23.12 / 5.95, 23.05 / 6.09 (-0.3 % / **+2.4 %**), 23.15 / 6.12; cd 642.92 / 235.91,
+623.25 / 220.09 (**-3.1 % / -6.7 %**), 645.74 / 236.62; raytrace 291.98 / 93.01, 283.26 / 89.07 (**-3.0 % / -4.2 %**), 292.80 / 94.57.
+
+The wrapper costs +0.1 .. +0.5 % instructions with the arena off (the knob-off column against the base: a load and branch per allocation, an
+address-range test per free). **lib/fmt_s misses the cycle bar (+2.3 .. +3.1 % in three series of 15-25 runs) at -0.7 % instructions.** It is
+the binary, not the knob: `carena=0` and `carena=1` give the same cycles (6.06 / 6.06 and 6.09 / 6.09 in two 25-run series), and a scratch build
+of the same tree without the `#[global_allocator]` line (instructions identical to the base, 23.12 M) runs it at 6.02 against the base's 5.98 and
+the final binary's 6.10 in one interleaved series. About half of the miss therefore comes with registering the wrapper (a 6 Mcyc program sees the
+allocator path's code layout) at identical instruction counts, the rest is the layout of the binary; a per-site policy cannot narrow it because
+`carena=0` keeps it. Shipped ON for the gains above; leaving it off would not remove the fmt_s cost (only dropping the registration would).
+
+Tests: `tr_core::s76_carena_blocks` drives `CArena` directly (20 000 random allocations, in-place and copying reallocations, frees in scrambled
+order, frees after the compile ended; every live block keeps its byte pattern); `tr_core::s76_carena_programs` (`s76_side_fail`, `s64_call_loops`,
+`s64_call_observers` x `carena` 1 / 0 x every trace mode, `+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves); with the
+default on, every `tr_core` job runs on the arena. Mutants (rn-core, selected through `apply_vm_mutants`): `carena_recycle_live` (a chunk is
+recycled while one block is live), `carena_grow_any` (any block of the current chunk grows in place). Registry 899 -> 903 (with `sideback_no_wait`
+and `sideblf_never`).
+
+### 76.5 Whole set (33 programs: section 49's 31 plus stream_closures and lua_lexer; binary of commit e028036, min of 5, interleaved)
+
+| program | base instr M / Mcyc | shipped instr M / Mcyc | instr | cycles | knobs off (`carena=0,sideblf=00`) instr / cycles vs base |
+|---|---|---|---:|---:|---:|
+| awfy/bounce | 296.37 / 59.82 | 295.21 / 59.94 | -0.39 % | +0.20 % | +0.06 % / +0.22 % |
+| awfy/cd | 642.92 / 238.98 | 623.59 / 222.80 | -3.01 % | -6.77 % | +0.45 % / +0.64 % |
+| awfy/deltablue | 306.49 / 102.34 | 301.59 / 99.83 | -1.60 % | -2.45 % | +0.32 % / +2.16 % |
+| awfy/havlak | 507.57 / 186.57 | 505.09 / 185.54 | -0.49 % | -0.55 % | +0.11 % / +4.51 % |
+| awfy/json | 430.54 / 138.04 | 427.98 / 132.54 | -0.59 % | -3.98 % | +0.48 % / -0.91 % |
+| awfy/list | 377.45 / 91.97 | 375.66 / 90.97 | -0.47 % | -1.09 % | +0.08 % / +0.57 % |
+| awfy/mandelbrot | 515.31 / 271.61 | 515.04 / 271.48 | -0.05 % | -0.05 % | +0.01 % / +0.09 % |
+| awfy/nbody | 540.89 / 90.90 | 540.40 / 91.47 | -0.09 % | +0.63 % | +0.01 % / +0.26 % |
+| awfy/permute | 117.79 / 22.81 | 117.44 / 22.81 | -0.30 % | +0.00 % | +0.05 % / +0.44 % |
+| awfy/queens | 497.07 / 94.47 | 495.96 / 94.06 | -0.22 % | -0.43 % | -0.03 % / +0.02 % |
+| awfy/richards | 165.00 / 57.12 | 162.49 / 55.50 | -1.52 % | -2.84 % | +0.30 % / +0.68 % |
+| awfy/sieve | 717.89 / 108.45 | 717.60 / 108.13 | -0.04 % | -0.30 % | +0.01 % / -0.36 % |
+| awfy/storage | 492.25 / 101.53 | 487.78 / 101.06 | -0.91 % | -0.46 % | -0.85 % / -0.09 % |
+| awfy/towers | 164.43 / 43.08 | 162.79 / 41.90 | -1.00 % | -2.74 % | +0.20 % / +0.60 % |
+| apps/events | 688.44 / 163.79 | 687.51 / 164.12 | -0.14 % | +0.20 % | -0.01 % / +0.03 % |
+| apps/expr_lang | 489.47 / 128.70 | 485.51 / 121.60 | -0.81 % | -5.52 % | +0.17 % / -1.44 % |
+| apps/lru_cache | 305.08 / 142.36 | 299.19 / 139.13 | -1.93 % | -2.27 % | +0.41 % / +1.49 % |
+| apps/markdown | 380.38 / 120.12 | 377.89 / 116.29 | -0.65 % | -3.19 % | -0.45 % / -2.59 % |
+| apps/raytrace | 291.98 / 94.86 | 283.25 / 88.82 | -2.99 % | -6.37 % | +0.27 % / +0.58 % |
+| corpus2/heldout/bigint_rsa | 5661.00 / 1114.32 | 5621.57 / 1091.54 | -0.70 % | -2.04 % | -0.64 % / -1.84 % |
+| corpus2/heldout/dijkstra_routes | 2854.23 / 1186.69 | 2846.85 / 1150.63 | -0.26 % | -3.04 % | +0.06 % / -1.67 % |
+| corpus2/heldout/forth_vm | 3749.89 / 790.35 | 3747.14 / 784.58 | -0.07 % | -0.73 % | +0.01 % / -0.45 % |
+| corpus2/heldout/prototype_objects | 3616.73 / 1768.71 | 3609.40 / 1801.56 | -0.20 % | +1.86 % | +0.11 % / +9.04 % |
+| corpus2/heldout/roguelike_turns | 2679.77 / 812.45 | 2664.01 / 799.23 | -0.59 % | -1.63 % | +0.06 % / +0.28 % |
+| corpus2/heldout/scheme_interp | 5779.89 / 1453.24 | 5773.73 / 1414.57 | -0.11 % | -2.66 % | +0.01 % / -2.02 % |
+| corpus2/dev/lua_parser | 4445.10 / 1207.94 | 4458.97 / 1163.59 | +0.31 % | -3.67 % | +0.24 % / -2.45 % |
+| corpus2/dev/oop_mixins | 3939.34 / 1195.54 | 3934.16 / 1203.73 | -0.13 % | +0.69 % | +0.12 % / -1.14 % |
+| corpus2/dev/particles_physics | 1321.97 / 386.53 | 1313.22 / 379.98 | -0.66 % | -1.69 % | +0.04 % / +0.99 % |
+| corpus2/dev/regex_nfa | 3481.53 / 658.46 | 3483.56 / 685.98 | +0.06 % | +4.18 % | +0.15 % / +4.34 % |
+| corpus/classic_vector | 1307.20 / 304.42 | 1307.83 / 300.52 | +0.05 % | -1.28 % | +0.46 % / -0.33 % |
+| lib/fmt_s | 23.12 / 6.00 | 22.95 / 6.13 | -0.74 % | +2.17 % | +0.00 % / +2.33 % |
+| corpus2/heldout/stream_closures | 2886.02 / 771.07 | 2802.32 / 730.44 | -2.90 % | -5.27 % | +0.01 % / +0.50 % |
+| corpus/lua_lexer | 3206.47 / 805.35 | 3227.27 / 807.93 | +0.65 % | +0.32 % | +0.81 % / +1.84 % |
+| **geomean (33)** | | | **-0.69 %** | **-1.57 %** | +0.09 % / +0.47 % |
+
+Shipped against base: geomean -0.69 % instructions, -1.57 % cycles; best cd -6.8 %, raytrace -6.4 %, expr_lang -5.5 %, stream_closures -5.3 %
+(-2.9 % instructions), json -4.0 %, lua_parser -3.7 %, markdown -3.2 %, dijkstra_routes -3.0 % cycles. Instructions up: lua_lexer +0.65 %, lua_parser
++0.31 %, regex_nfa +0.06 %, classic_vector +0.05 %: all of them carry the same or a larger increase with the knobs off (the allocator wrapper on the
+Lua heap path), which the final commit mostly removed. Final binary, instructions M against the base: lua_lexer 3205.25 (-0.04 %), regex_nfa 3477.25
+(-0.12 %), classic_vector 1302.60 (-0.35 %), **lua_parser 4453.42 (+0.19 %)** (the remaining Rust-side allocations of the compiler / libraries still
+pass the wrapper); json 426.03 (-1.05 %), deltablue 301.46 (-1.64 %), towers 162.85 (-0.96 %), richards 162.50 (-1.52 %), expr_lang 485.47 (-0.82 %),
+lru_cache 299.11 (-1.96 %), stream_closures 2804.45 (-2.83 %). Cycles above +2 %: regex_nfa +4.2 %
+(final binary +2.1 %, 76.4), fmt_s +2.2 % (final +2.4 %); prototype_objects +1.9 % (its re-run of 11: 1806.8 base / 1382.7 shipped / 1384.3 knobs off /
+1346.7 no wrapper: this program's cycles swing by 25 % between series under the machine's load, so it is noise either way). The knob-off column
+carries the noise of the loaded machine too (havlak +4.5 %, prototype_objects +9.0 % at +0.1 % instructions). The whole set was not re-run on the
+final binary (time box); the final commit changes only the Lua heap's allocator path and the arena flag.
+
+### 76.6 Bar, defaults, and what was not built
+
+* **Defaults**: `carena=1`, `sideblf=65` ON; `sideback=0` OFF. Bar (no program >2 % cycles worse, instructions not up): instructions met on the final
+  binary except **lua_parser +0.19 %** (the four increases of 76.5 were the wrapper on the Lua heap; three are gone). **Cycles missed on two
+  short programs: lib/fmt_s +2.2 .. +3.1 % and regex_nfa +2.1 % (final binary)** at lower instruction counts, both present with the knobs off and
+  absent (or reversed) in the build without the registered allocator: the cost of registering a global allocator wrapper plus layout, which no
+  per-site policy of the knob can narrow. If that is judged worse than the gains, the alternative is to drop the `#[global_allocator]` line (and
+  the lever with it): the knob cannot remove it.
+* **(b) cheaper recording per bytecode: not built.** The profile puts 7.2 % of raytrace's run into the one inlined frame `record::step` ->
+  `record_one`, with no sub-function above 1 % (IR emission 3.0 %, fold 1.1 %, FxHash 1.0 %, snapshots 1.0 %); finding the cost inside it needs a
+  line-level profile (IBS) and per-opcode work that did not fit the time box after (a) and (c). The arena removed the recorder's allocation share
+  (on_step / closure_handle / handle allocations).
+* **(d) compact exit stubs / smaller code: not built.** Deferred stubs are already lazy (raytrace 26 KB of 419 KB); the code volume is the trace
+  bodies (156 KB) and tier 1 (237 KB), i.e. per-instruction encodings and tier-1 coverage of traced prototypes, a back-end change well beyond
+  this box. Not measured for L1i after the arena.
+* **Not done**: 5.4 builds were not measured; gate-heavy, oracle suites, jit-diff beyond the light gate, PGO builds and bench-fast were not run.
+  The per-phase table of 76.0 is of the base; the compile-time counters after the change are the instruction / cycle deltas above (the generated
+  code is unchanged by `carena`; `sideblf` removes second side recordings at `Depth` / `TooLong` exits only).
+
+### 76.7 Gates
+
+* Per commit `GATE_CPUS=12-15 scripts/gate-light.sh <group>`. The first run (commit 8bbf51a, `sideback_`) overlapped with edits of the next
+  item and failed `tr::mutants::tests::registry_is_the_frozen_list` (the frozen registry count was not bumped; fixed in e028036). The run on
+  1a4146a (`carena_,sideblf_,sideback_ --base 6058b77`): fmt, mutant-map, clippy 5.5 / 5.5-jit / 5.4, core 5.5 / 5.4, `vm_corpus` (131 s),
+  jit-diff 1-50 (3 modes, 0 diffs, 0 timeouts) and the mutant group (4 / 4 caught: `sideback_no_wait`, `sideblf_never`, `carena_recycle_live`,
+  `carena_grow_any`) PASS; the trace suites 5.5 / 5.4 failed only `tr_mutants::table_covers_the_registry_exactly_once` (the new TABLE rows were
+  not in registry order; fixed in 54f6024, which the final run below covers). Every other trace test passed with `carena=1` and `sideblf=65` as
+  defaults, i.e. every `tr_core` job (all modes, `+verify` lockstep, exit storms, GC stress 1 / 2, stack moves) ran on the compile arena.
+* Final run on the documentation commit (`carena_,sideblf_,sideback_ --base 6058b77`): every step PASS: fmt, mutant-map, clippy x3, core 5.5 /
+  5.4, trace suites 5.5 (344 s) / 5.4 (325 s), `vm_corpus` (82 s), jit-diff 1-50 (0 diffs, 0 timeouts), mutant group 4 ran / 4 caught.
+* Not run: `gate-heavy.sh`, the full mutant runner, the oracle suites, jit-diff beyond 1-50, the official suite, PGO builds, `bench-fast.sh`,
+  5.4 performance.
