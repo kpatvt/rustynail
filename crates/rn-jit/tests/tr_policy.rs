@@ -1292,16 +1292,17 @@ fn bh_libcall_process_default() {
     }
 }
 
-/// BUNDLE-N: `retf` is 3 by default (side RETF recording + inline re-push stub; function-entry families, bit 2, stay off); an explicit value wins and is clamped to 15 (`retfmax` to 8).
+/// BUNDLE-N: `retf` is 179 by default (side RETF recording + inline re-push stub; function-entry families, bit 2, stay off; section 77.7: bits 4, 5, 7,
+/// self-recursion pops into a numeric / `while` loop of the caller); an explicit value wins and is clamped to 255 (`retfmax` to 8).
 #[test]
 fn bn_retf_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, RETFMAX_PROCESS, RETF_PROCESS};
-    assert_eq!(RETF_PROCESS, 3, "side RETF recording (bit 0) and the inline re-push stub (bit 1) ship on; function-entry families (bit 2) stay off");
+    assert_eq!(RETF_PROCESS, 179, "side RETF recording (bit 0), the inline re-push stub (bit 1) and the section 77.7 self-recursion pops (bits 4, 5, 7) ship on; function-entry families (bit 2) stay off");
     assert_eq!(RETFMAX_PROCESS, 1);
     for (env, want, wmax) in [
         (None, RETF_PROCESS, RETFMAX_PROCESS),
         (Some("retf=1"), 1, RETFMAX_PROCESS),
-        (Some("retf=99,retfmax=2"), 15, 2),
+        (Some("retf=999,retfmax=2"), 255, 2),
         (Some("retfmax=99"), RETF_PROCESS, 8),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
