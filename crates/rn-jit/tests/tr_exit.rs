@@ -2278,6 +2278,7 @@ mod slice {
             backedge_after: 0,
             end_locs: vec![],
             carry: vec![],
+            homes: vec![],
             calls: vec![],
             nspill: 0,
             used: Default::default(),
