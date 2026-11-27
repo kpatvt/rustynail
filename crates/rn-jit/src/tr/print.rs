@@ -404,6 +404,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         if s.side_backoff > 0 {
             let _ = writeln!(o, "[trace] sideback: reports waited {}", s.side_backoff);
         }
+        let (served, recycled, used) = rn_core::carena::stats();
+        if served > 0 {
+            let _ = writeln!(
+                o,
+                "[trace] carena: blocks {served} chunks used {used} recycled {recycled}"
+            );
+        }
         if s.heat_granted > 0 {
             let _ = writeln!(o, "[trace] heatside: granted {}", s.heat_granted);
         }

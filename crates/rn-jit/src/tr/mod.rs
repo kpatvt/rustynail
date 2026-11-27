@@ -1242,11 +1242,14 @@ pub fn driver_start_side(
 /// `Flow::Closed` arm of 4.2) before `Leave` returns to the VM, which then requests the entry into the new trace.
 pub fn driver_step(st: &mut State, ci: Ci, pc: *const u32, token: u64) -> RecStep {
     let t0 = phase::now();
+    // section 76.4 (`carena`): the recorder step and the pipeline it may run allocate from the compile arena
+    rn_core::carena::enter();
     let r = record::step(st, ci, pc, token);
     phase::add(phase::REC_STEP, t0);
     if r == RecStep::Leave {
         finish_outcome(st);
     }
+    rn_core::carena::leave();
     r
 }
 

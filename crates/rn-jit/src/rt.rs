@@ -169,6 +169,8 @@ pub fn register_with(cfg: Config) -> bool {
             if crate::tr::cache::TrConfig::process().limits.memtune != 0 {
                 memtune();
             }
+            // Section 76.4 (`carena`): the compile arena (effective where the binary registered `rn_core::carena::CArena`)
+            rn_core::carena::set_enabled(crate::tr::cache::TrConfig::process().limits.carena != 0);
         }
         jit_hooks::install(VTable {
             hot_call,
@@ -944,6 +946,8 @@ pub fn set_trace(st: &mut State, cfg: crate::tr::cache::TrConfig) {
             let q = (*dp).arena.quarantine_enabled();
             (*dp).arena.set_dual(cfg.limits.codemap != 0 && !q);
         }
+        // Section 76.4 (`carena`): the compile arena follows the state's knob (process-wide: the last configured state decides)
+        rn_core::carena::set_enabled(cfg.limits.carena != 0 && !off);
         // SAFETY: as in `set_mode`.
         unsafe { (*dp).tr.cfg = cfg };
         if off {
@@ -1316,7 +1320,9 @@ fn compile(st: &mut State, p: &Proto) -> Result<(), Fail> {
         unsafe { (*data_ptr(st)).deny = 32 };
         return Err(Fail::Retry);
     }
+    rn_core::carena::enter();
     let r = compile_inner(st, p, desc, &nests, ncells);
+    rn_core::carena::leave();
     jit_hooks::uncharge_code(st, transient);
     if r.is_err() {
         jit_hooks::uncharge_code(st, desc);
@@ -1855,7 +1861,9 @@ pub(crate) fn recompile_with(
         unsafe { (*dp).deny = 32 };
         return Err(Fail::Retry);
     }
+    rn_core::carena::enter();
     let r = recompile_inner(st, p, jpp, dp, plans, ver);
+    rn_core::carena::leave();
     jit_hooks::uncharge_code(st, transient);
     // MUTANT `vbytes_no_credit`: the version bytes of a failed recompile are not refunded
     if r.is_err() && !vbytes_mutant("vbytes_no_credit") {

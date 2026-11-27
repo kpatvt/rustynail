@@ -174,6 +174,10 @@ pub const SIDEPUSH_PROCESS: u32 = 1;
 pub const MFKEYS_PROCESS: u32 = 1;
 /// Section 76.2 (`sideback`): the process default of [`TrLimits::sideback`] (also the struct default).
 pub const SIDEBACK_PROCESS: u32 = 0;
+/// Section 76.3 (`sideblf`): the process default of [`TrLimits::sideblf`] (also the struct default).
+pub const SIDEBLF_PROCESS: u32 = 65;
+/// Section 76.4 (`carena`): the process default of [`TrLimits::carena`] (also the struct default).
+pub const CARENA_PROCESS: u32 = 1;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
@@ -891,6 +895,15 @@ pub struct TrLimits {
     /// the ones whose identical repeat blacklists the exit); without it after every fault. Bit 3: only after the causes the bytecode path alone decides
     /// ([`sideback_path_reason`]: `CFunc`, `Nyi`, `Recursion`, `Depth`, ...). 0 = off (default [`SIDEBACK_PROCESS`]).
     pub sideback: u32,
+    /// Section 76.3 (`sideblf`, docs/JIT_TRACE.md section 76.3): a side exit is blacklisted at the FIRST failed recording whose cause is a property of the
+    /// code (`unchangeable`) and in this mask of cause classes (instead of at the second identical one): 1 `Depth`, 2 `Recursion`, 4 `LeaveFrame`,
+    /// 8 `SideShort`, 16 `CFunc` / `Nyi(..)`, 32 `InnerLoop`, 64 `TooLong`, 128 `LeaveLoop`, 256 the other unchangeable causes. A retry that
+    /// `sbump2` still has pending is kept. 0 = off (default [`SIDEBLF_PROCESS`] = 65: `Depth` and `TooLong`, section 76.3).
+    pub sideblf: u32,
+    /// Section 76.4 (`carena`, docs/JIT_TRACE.md section 76.4): the compile arena of `rn_core::carena` (bump allocation from recycled 16 KiB chunks
+    /// while a recorder step, a trace pipeline, a tier-1 compile or a deferred exit stub runs). Process-wide: read when the process's JIT is set up.
+    /// Only where the binary registers `rn_core::carena::CArena` as its allocator (`rnlua`, the trace test binaries). 0 = off, 1 = on (default [`CARENA_PROCESS`]).
+    pub carena: u32,
     /// Section 75.13 (`mfdeep`, docs/JIT_TRACE.md section 75.13): E5's fold of the family key also in an inlined chain frame (`unr`) that was called with
     /// the root's closure ref and whose register 0 is the root's entry register 0. 0 = off, 1 = on (default [`MFDEEP_PROCESS`]).
     pub mfdeep: u32,
@@ -1193,6 +1206,8 @@ impl Default for TrLimits {
             sidepush: SIDEPUSH_PROCESS,
             mfkeys: MFKEYS_PROCESS,
             sideback: SIDEBACK_PROCESS,
+            sideblf: SIDEBLF_PROCESS,
+            carena: CARENA_PROCESS,
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
@@ -1434,6 +1449,8 @@ impl TrLimits {
                 "sidepush" => l.sidepush = v.min(1),
                 "mfkeys" => l.mfkeys = v.min(1),
                 "sideback" => l.sideback = v.min(15),
+                "sideblf" => l.sideblf = v.min(511),
+                "carena" => l.carena = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
@@ -3937,6 +3954,7 @@ fn side_failed(
     let sbump2 = d.tr.cfg.limits.sbump2;
     let blfirst = d.tr.cfg.limits.blfirst;
     let sideback = d.tr.cfg.limits.sideback;
+    let sideblf = d.tr.cfg.limits.sideblf;
     let Some(Slot {
         body: Body::Trace(t),
         ..
@@ -3952,7 +3970,9 @@ fn side_failed(
     if fault {
         t.fails[k] = t.fails[k].saturating_add(1);
         repeat = unchangeable
-            && (t.last[k] == Some(reason) || blfirst_applies(blfirst, reason, true))
+            && (t.last[k] == Some(reason)
+                || blfirst_applies(blfirst, reason, true)
+                || sideblf_applies(sideblf, reason))
             && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
@@ -3993,6 +4013,29 @@ pub fn sideback_wait(sideback: u32, fails: u32, unchangeable: bool, reason: &str
     }
     let e = (s * fails).min(8);
     ((1u32 << e) - 1).min(255) as u8
+}
+
+/// Section 76.3 (`sideblf`): does the first failed side recording with the unchangeable cause `reason` blacklist its exit (mask of cause classes,
+/// see [`TrLimits::sideblf`])?
+pub fn sideblf_applies(mask: u32, reason: &str) -> bool {
+    if mask == 0 || mutants::active("sideblf_never") {
+        return false;
+    }
+    let bit = match reason {
+        "Depth" => 1,
+        "Recursion" => 2,
+        "LeaveFrame" => 4,
+        "SideShort" => 8,
+        "CFunc" => 16,
+        "InnerLoop" => 32,
+        "TooLong" => 64,
+        "LeaveLoop" => 128,
+        // the exit policy's own reasons (`side_failed` callers) are not recorder aborts
+        "ChainDepth" | "InnerFamily" | "MaxSide" | "FrameKind" => 0,
+        r if r.starts_with("Nyi(") => 16,
+        _ => 256,
+    };
+    mask & bit != 0
 }
 
 /// Section 76.2 (`sideback` bit 3): is `reason` a cause that the bytecode path alone decides?

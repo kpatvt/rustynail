@@ -2206,6 +2206,21 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s76_sideback_programs")],
     },
     Row {
+        name: "sideblf_never",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideblf_programs")],
+    },
+    Row {
+        name: "carena_recycle_live",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
+        name: "carena_grow_any",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
         name: "retfuse_site_next",
         owner: "S75",
         dets: &[d("tr_core", "s75_oframe_programs")],

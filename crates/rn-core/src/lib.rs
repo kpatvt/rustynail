@@ -3,6 +3,7 @@ pub mod alloc;
 pub mod arith;
 pub mod auxlib;
 pub mod call;
+pub mod carena;
 pub mod collect;
 pub mod coro;
 pub mod debuginfo;

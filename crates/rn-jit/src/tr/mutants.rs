@@ -1111,6 +1111,12 @@ pub const NAMES: &[&str] = &[
     "wgcall_weight_skip",
     // docs/JIT_TRACE.md section 76.2 (`sideback`): a failed side recording sets no back-off wait
     "sideback_no_wait",
+    // docs/JIT_TRACE.md section 76.3 (`sideblf`): the first failure never blacklists the exit
+    "sideblf_never",
+    // docs/JIT_TRACE.md section 76.4 (`carena`, rn-core `carena::set_mut_carena` bit 1): a chunk is recycled while one of its blocks is live
+    "carena_recycle_live",
+    // section 76.4 (`carena`, bit 2): `realloc` grows any block of the current chunk in place, not only the newest
+    "carena_grow_any",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1149,6 +1155,9 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_hooked_head_no_trap(active("hooked_head_no_trap"));
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
+    rn_core::carena::set_mut_carena(
+        u8::from(active("carena_recycle_live")) | u8::from(active("carena_grow_any")) << 1,
+    );
     rn_core::table::set_mut_tlib(
         u8::from(active("tmove_presize_holes"))
             | u8::from(active("tpop_meta_skip")) << 1
@@ -1201,7 +1210,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 899);
+        assert_eq!(NAMES.len(), 903);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -671,6 +671,10 @@ fn pmain_native(st: &mut State) -> LuaResult<usize> {
     Ok(1)
 }
 
+/// Section 76.4 (`carena`): the process allocator with the JIT compile arena (off unless the knob switches it on).
+#[global_allocator]
+static GLOBAL: rn_core::carena::CArena = rn_core::carena::CArena;
+
 fn main() {
     // keep the whole C API linked (and exported by `-rdynamic`) for the C modules we load
     {
