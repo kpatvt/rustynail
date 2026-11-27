@@ -176,6 +176,8 @@ pub const MFKEYS_PROCESS: u32 = 1;
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
+/// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
+pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
 pub const UVK_PROCESS: u32 = 11;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
@@ -899,6 +901,11 @@ pub struct TrLimits {
     /// 2 = none in side recordings; 3 = a new identity guard only on a closure created by a main chunk (closures made per call of a factory are
     /// re-created and fail the guard: containers_lru_heap). Default 11 = 1 | 2 | 8 ([`UVK_PROCESS`], section 77.3).
     pub uvk: u32,
+    /// Section 77.2 (`flink`, docs/JIT_TRACE.md section 77.2): a *frameful* side trace (one that starts inside inlined frames, S1) whose link
+    /// continues at a root head of the root prototype at depth 0 is offered the root's guard-free second entry (A2) and the entry past the room
+    /// checks (G1) like a frameless one; the assembler still takes them only when `exit::link_proof` proves the skipped type checks and the
+    /// chain's room covers the target's. 0 = off, 1 = on (default [`FLINK_PROCESS`]).
+    pub flink: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1197,6 +1204,7 @@ impl Default for TrLimits {
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
             uvk: UVK_PROCESS,
+            flink: FLINK_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1438,6 +1446,7 @@ impl TrLimits {
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
                 "uvk" => l.uvk = v.min(15),
+                "flink" => l.flink = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

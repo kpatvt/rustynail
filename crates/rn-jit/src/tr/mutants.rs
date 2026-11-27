@@ -460,6 +460,8 @@ pub const NAMES: &[&str] = &[
     "uvk_ident_skip",
     "uvk_any_upvalue",
     "uvk_dep_skip",
+    // section 77.2: a link takes the guard-free second entry without the proof of the type checks it skips
+    "flink_no_proof",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1205,7 +1207,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 903);
+        assert_eq!(NAMES.len(), 904);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

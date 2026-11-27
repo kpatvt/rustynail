@@ -2430,10 +2430,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 snaps[si.link_snap as usize].link_cell = link_cell;
             }
             // A2: the guard-free entry of the root the head has now (same prototype, a plain frameless link: no prelude, frames or segments)
+            // (section 77.2, `flink`: also a frameful side trace; its slots are root-relative and `link_proof` refuses native frames / segments)
+            // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+            let flink = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.flink } != 0;
             let (link2_cell, link2_sig) = if !prelude
                 && si.link_proto.0 == root
                 && !si.frame_link
-                && !si.frameful
+                && (!si.frameful || flink)
                 && act.side
                 && rec.ir.segs.is_empty()
             {

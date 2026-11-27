@@ -2231,6 +2231,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_mfkeys_programs")],
     },
     Row {
+        name: "flink_no_proof",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_flink_programs")],
+    },
+    Row {
         name: "uvk_flush_skip",
         owner: "S77",
         dets: &[d("tr_core", "s77_uvk_programs")],

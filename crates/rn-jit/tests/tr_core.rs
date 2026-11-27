@@ -4605,6 +4605,41 @@ fn s75_recinl_programs() {
     compare(jobs);
 }
 
+/// Section 77.2 (`flink`): frameful side traces linking back to the loop root through its guard-free second entry, with the root's slots
+/// changing type behind the links and a callee that needs more stack than the root; `flink` 1 / 0 (and with `guarddiet=0`, `regcarry=0`),
+/// the trace modes with `+verify`, exit storms, budget 17 and GC stress 2. Mutant `flink_no_proof`.
+#[test]
+fn s77_flink_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "flink=1",
+            "flink=0",
+            "flink=1,guarddiet=0",
+            "flink=1,regcarry=0",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s77_flink", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s77_flink", trace)
+                .limits_s("flink=1")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+    }
+    compare(jobs);
+}
+
 /// Section 77.3 (`uvk`): read-only upvalues read as constants by traces that hold the closure by identity, with every way the value seen through
 /// a closure can change made mid-run (another closure of the prototype, `debug.setupvalue`, `debug.setlocal`, `debug.upvaluejoin`, collected
 /// closures whose addresses are reused, variables assigned in a nested function, captured loop variables); `uvk` 1 / 0, the trace modes with

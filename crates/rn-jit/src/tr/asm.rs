@@ -4293,12 +4293,12 @@ impl Cx<'_> {
         // A2: does the chain of this trace prove the entry guards of the target root (the ones its second entry skips)?
         let link2 = sd.link2_cell != 0
             && !self.env.lazy
-            && exit::link_proof(
+            && (exit::link_proof(
                 self.ir,
                 writeback,
                 &self.env.entry_tags,
                 &exit::e2_req(sd.link2_sig),
-            );
+            ) || mutants::active("flink_no_proof"));
         if !mutants::active("side_link_no_poll") && !(link2 && mutants::active("entry2_no_poll")) {
             let x = self.poll_stub_label(sd.link_snap)?;
             self.poll_ops(x);
