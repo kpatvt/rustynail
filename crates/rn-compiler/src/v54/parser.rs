@@ -67,9 +67,12 @@ fn compile_boxed<H: CompilerHost>(
         label: Vec::new(),
         nccalls: base_ccalls,
         limit_error: None,
+        uvk: Default::default(),
         kcache: Default::default(),
     };
-    p.mainfunc(source)
+    let mut pd = p.mainfunc(source)?;
+    p.uvk.apply(&mut pd);
+    Ok(pd)
 }
 
 impl<'a, H: CompilerHost> Parser<'a, H> {
@@ -231,6 +234,7 @@ impl<'a, H: CompilerHost> Parser<'a, H> {
         } else {
             self.actvar.push(vd);
         }
+        self.uvk.new_var(self.nact);
         self.nact += 1;
         Ok(self.nact as i32 - 1 - self.fsr().firstlocal as i32)
     }
@@ -291,6 +295,20 @@ impl<'a, H: CompilerHost> Parser<'a, H> {
 
     fn check_readonly(&mut self, e: &E<H>) -> R<()> {
         let fi = self.cur();
+        // section 77.3: an assignment target names this variable (also a failing one: the compile then errors anyway)
+        match e.k {
+            ExpKind::Local => {
+                let vid = self
+                    .uvk
+                    .var_vid(self.fstack[fi].firstlocal + e.var_vidx as usize);
+                self.uvk.mark(vid);
+            }
+            ExpKind::Upval => {
+                let vid = self.uvk.uv_vid(fi, e.info as usize);
+                self.uvk.mark(vid);
+            }
+            _ => {}
+        }
         let mut varname: Option<H::Str> = None;
         match e.k {
             ExpKind::Const => varname = Some(self.actvar[e.info as usize].name),
@@ -363,11 +381,13 @@ impl<'a, H: CompilerHost> Parser<'a, H> {
     fn alloc_upvalue(&mut self, fi: usize) -> R<usize> {
         let n = self.fstack[fi].f.upvalues.len() as i32;
         self.check_limit(fi, n + 1, MAXUPVAL, "upvalues")?;
+        self.uvk.alloc_uv(fi);
         self.fstack[fi].f.upvalues.push(UpvalDesc {
             name: None,
             in_stack: false,
             idx: 0,
             kind: 0,
+            ro: false,
         });
         Ok(n as usize)
     }
@@ -384,6 +404,13 @@ impl<'a, H: CompilerHost> Parser<'a, H> {
                 self.fstack[prev].f.upvalues[v.info as usize].kind,
             )
         };
+        let vid = if v.k == ExpKind::Local {
+            self.uvk
+                .var_vid(self.fstack[prev].firstlocal + v.var_vidx as usize)
+        } else {
+            self.uvk.uv_vid(prev, v.info as usize)
+        };
+        self.uvk.set_uv(fi, idx, vid);
         let up = &mut self.fstack[fi].f.upvalues[idx];
         up.in_stack = in_stack;
         up.idx = uidx;
@@ -663,6 +690,7 @@ impl<'a, H: CompilerHost> Parser<'a, H> {
     // ---- functions -------------------------------------------------------------------------------------------
 
     fn open_func(&mut self, source: Option<H::Str>, line_defined: i32) {
+        self.uvk.open();
         let mut f = ProtoData {
             num_params: 0,
             flags: 0,
@@ -696,6 +724,7 @@ impl<'a, H: CompilerHost> Parser<'a, H> {
     }
 
     fn close_func(&mut self) -> R<ProtoData<H::Str>> {
+        self.uvk.close();
         let nv = self.nvarstack_cur();
         self.k_ret(nv, 0)?;
         self.leave_block()?;

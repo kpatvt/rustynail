@@ -244,7 +244,7 @@ fn db_setlocal(st: &mut State) -> LuaResult<usize> {
     let v = st.check_any(arg + 3)?;
     match l1.find_local(ci, nvar as i32) {
         Some((name, pos)) => {
-            l1.set(pos, v);
+            l1.set_local_value(pos, v);
             st.push_bytes(&name)?;
         }
         None => st.push(Value::NIL),

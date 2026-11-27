@@ -1833,6 +1833,7 @@ impl State {
                 let cl = st.heap().new_lclosure(pd.upvalues.len())?;
                 // SAFETY: fresh closure, proto live, upvalue counts match.
                 unsafe { cl.set_proto(p) };
+                p.note_closure();
                 st.push(Value::lclosure(cl)); // anchor
                 st.heap().init_upvals(cl)?;
                 Ok(())

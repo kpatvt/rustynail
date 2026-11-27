@@ -355,6 +355,7 @@ fn upvalue_lifecycle_shared_by_two_closures() {
                 in_stack: true,
                 idx: 0,
                 kind: 0,
+                ro: false,
             }],
             ..pdata(vec![ins(OpCode::Return0, 0, 0, 0)], 0, 2)
         };
@@ -839,6 +840,7 @@ fn dead_thread_open_upvalues_are_closed_when_the_closure_survives() {
                 in_stack: true,
                 idx: 0,
                 kind: 0,
+                ro: false,
             }],
             ..pdata(vec![ins(OpCode::Return0, 0, 0, 0)], 0, 2)
         };
@@ -1009,6 +1011,7 @@ fn gc_stress_workload_with_threads_closures_userdata() {
                     in_stack: false,
                     idx: 0,
                     kind: 0,
+                    ro: false,
                 }],
                 k: vec![],
                 ..pdata(vec![ins(OpCode::Return0, 0, 0, 0)], 0, 2)
@@ -1083,6 +1086,7 @@ fn fake_loader(
         in_stack: true,
         idx: 0,
         kind: 0,
+        ro: false,
     }];
     Ok(pd)
 }

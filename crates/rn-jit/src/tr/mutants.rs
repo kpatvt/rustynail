@@ -454,6 +454,18 @@ pub const NAMES: &[&str] = &[
     "mfkeys_check_skip",
     // section 75.14 (`mfshare`): a later lookup reuses the first lookup of ANY extra key
     "mfshare_any_key",
+    // section 77.3 (`uvk`): writes into read-only variables flush nothing / the closure's identity is not guarded / any upvalue is folded /
+    // the collection of a closure held by identity is not reported
+    "uvk_flush_skip",
+    "uvk_ident_skip",
+    "uvk_any_upvalue",
+    "uvk_dep_skip",
+    // section 77.2: a link takes the guard-free second entry without the proof of the type checks it skips
+    "flink_no_proof",
+    // section 77.6 (`sloadhome`): a home is given to an `SLOAD` a sunk / function / carried snapshot entry or (bit 1 off) any entry names
+    "sloadhome_snap_named",
+    // section 77.6 bit 1: a home whose slot another snapshot entry writes / a home entry of its own slot kept as a restore
+    "sloadhome_slot_written",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1124,6 +1136,26 @@ pub const NAMES: &[&str] = &[
     "outerlink_never",
     // docs/JIT_TRACE.md section 78.7 (`stitch` bit 6): continuation roots only behind stitching exits
     "stitch_fed_ignored",
+    // docs/JIT_TRACE.md section 76.2 (`sideback`): a failed side recording sets no back-off wait
+    "sideback_no_wait",
+    // docs/JIT_TRACE.md section 76.3 (`sideblf`): the first failure never blacklists the exit
+    "sideblf_never",
+    // docs/JIT_TRACE.md section 76.4 (`carena`, rn-core `carena::set_mut_carena` bit 1): a chunk is recycled while one of its blocks is live
+    "carena_recycle_live",
+    // section 76.4 (`carena`, bit 2): `realloc` grows any block of the current chunk in place, not only the newest
+    "carena_grow_any",
+    // section 76.9 (`cspeed` lever `FIXSUM`): the prefix sums of the step costs are shifted by one step
+    "fixsum_shift",
+    // section 76.9 (`cspeed` lever `PRUNEQ`): every snapshot is copied whole (nothing pruned)
+    "pruneq_copy_all",
+    // section 76.10 (`t1exit`): the shared tier-1 exit sequence names the next instruction
+    "t1exit_pc_off",
+    // section 76.11 (`hdrcse`): the recorder's header-load reuse ignores the header barriers (allocation, insertion, calls)
+    "hdrcse_no_barrier",
+    // section 76.10 (`t1exit` bit 1): the helper trampoline exchanges the thread and `ci` arguments
+    "htramp_swap_args",
+    // section 76.10 (`t1exit` bit 2): the rolled `__index` chain answers nil when it runs out of levels
+    "chain_end_nil",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1162,6 +1194,9 @@ pub fn apply_vm_mutants() {
     rn_core::jit_hooks::set_mut_hooked_head_no_trap(active("hooked_head_no_trap"));
     rn_core::jit_hooks::set_mut_leave_trap_kept(active("leave_trap_kept"));
     rn_core::table::set_mut_tbl_move_meta_skip(active("tbl_move_meta_skip"));
+    rn_core::carena::set_mut_carena(
+        u8::from(active("carena_recycle_live")) | u8::from(active("carena_grow_any")) << 1,
+    );
     rn_core::table::set_mut_tlib(
         u8::from(active("tmove_presize_holes"))
             | u8::from(active("tpop_meta_skip")) << 1
@@ -1214,7 +1249,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 910);
+        assert_eq!(NAMES.len(), 927);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -2231,6 +2231,41 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_mfkeys_programs")],
     },
     Row {
+        name: "uvk_flush_skip",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_uvk_programs")],
+    },
+    Row {
+        name: "uvk_ident_skip",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_uvk_programs")],
+    },
+    Row {
+        name: "uvk_any_upvalue",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_uvk_programs")],
+    },
+    Row {
+        name: "uvk_dep_skip",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_uvk_programs")],
+    },
+    Row {
+        name: "flink_no_proof",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_flink_programs")],
+    },
+    Row {
+        name: "sloadhome_snap_named",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_home_programs")],
+    },
+    Row {
+        name: "sloadhome_slot_written",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_home_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],
@@ -5013,6 +5048,56 @@ const TABLE: &[Row] = &[
         name: "stitch_fed_ignored",
         owner: "S78",
         dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "sideback_no_wait",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideback_programs")],
+    },
+    Row {
+        name: "sideblf_never",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideblf_programs")],
+    },
+    Row {
+        name: "carena_recycle_live",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
+        name: "carena_grow_any",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
+        name: "fixsum_shift",
+        owner: "S76",
+        dets: &[d("tr_record", "count_model_is_exact")],
+    },
+    Row {
+        name: "pruneq_copy_all",
+        owner: "S76",
+        dets: &[d("tr_ir", "prune_snaps_drops_only_dead_numbers")],
+    },
+    Row {
+        name: "t1exit_pc_off",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
+    Row {
+        name: "hdrcse_no_barrier",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_hdrcse_programs")],
+    },
+    Row {
+        name: "htramp_swap_args",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
+    Row {
+        name: "chain_end_nil",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
     },
 ];
 

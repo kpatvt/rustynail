@@ -27,6 +27,7 @@ fn env(armm: bool) -> CallEnv {
         inl: 0,
         inl_mut: 0,
         t1q: 0,
+        t1exit: 0,
         t1g: 0,
         hints: std::ptr::null(),
         tset: 0,

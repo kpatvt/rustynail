@@ -91,6 +91,8 @@ pub struct CallEnv {
     /// BUNDLE-Q (`t1q`): bits 0-3 = the enabled pieces (1 = `EQ` of objects answered in tier 1, 2 = float `MOD` inline helper, 4 / 8 = BUNDLE-S Lua `__index` / `__newindex` frames), bits 8.. = the test-only mutants
     /// (`tr::t1q_mut`; always 0 without the `tr_mutants` feature).
     pub t1q: u32,
+    /// Section 76.10 (`t1exit`): the shared exit sequence of tier 1 (bit 0).
+    pub t1exit: u32,
     /// R2 (`t1g`): bits 0-6 = the enabled generic-`for` paths (1 = `CLOSE` skips its helper when nothing is open, 2 = `TFORCALL` of `next` through
     /// `jit_tfor_next`), bits 8.. = the test-only mutants (`tr::t1g_mut`; always 0 without the `tr_mutants` feature).
     pub t1g: u32,

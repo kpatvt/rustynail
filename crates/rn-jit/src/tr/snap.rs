@@ -221,10 +221,30 @@ pub fn step_cost(low: &Lowered, code: &[u32], pc: u32) -> u32 {
 /// the frame the snapshot's pc belongs to (`lows[meta.low]`).
 pub fn fixup(ir: &mut TraceIr, meta: &[SnapMeta], lows: &[Rc<Lowered>], cost: &[u32], n: u32) {
     debug_assert_eq!(ir.snaps.len(), meta.len());
+    // section 76.9 (`cspeed` lever `FIXSUM`): the fetched count before step `i` from prefix sums (the old path summed `cost[..i]` again for
+    // every snapshot: snapshots x steps additions per closed recording)
+    let pre: Vec<u32> = if crate::cspeed::on(crate::cspeed::FIXSUM) {
+        let mut v = Vec::with_capacity(cost.len() + 1);
+        let mut acc = 0u32;
+        v.push(0);
+        for &c in cost {
+            acc = acc.wrapping_add(c);
+            v.push(acc);
+        }
+        if mutants::active("fixsum_shift") && v.len() > 2 {
+            v.remove(1);
+            v.push(acc);
+        }
+        v
+    } else {
+        Vec::new()
+    };
     for (s, m) in ir.snaps.iter_mut().zip(meta) {
         let (land, amt) = land_info(&lows[m.low as usize], m.pc);
         let (charged, fetched) = if m.uncharged {
             (0, 0)
+        } else if !pre.is_empty() {
+            (n, pre[m.step as usize])
         } else {
             (n, cost[..m.step as usize].iter().sum::<u32>())
         };
@@ -305,10 +325,25 @@ pub fn prune_snaps(ir: &mut TraceIr) {
     };
     let mut new_map: Vec<SnapEntry> = Vec::with_capacity(ir.snapmap.len());
     let mut wins: Vec<(u32, u16)> = Vec::with_capacity(ir.snaps.len());
+    // section 76.9 (`cspeed` lever `PRUNEQ`): a snapshot that nothing of it may drop (inlined frames, an open top, a frame, or no dead set at
+    // its pc) is copied whole, without the per-entry test and type lookup
+    let quick = crate::cspeed::on(crate::cspeed::PRUNEQ) && !mutants::active("prune_collectable");
     for s in &ir.snaps {
         let (start, len) = s.map;
         let at = new_map.len() as u32;
-        for e in &ir.snapmap[start as usize..start as usize + usize::from(len)] {
+        let ents = &ir.snapmap[start as usize..start as usize + usize::from(len)];
+        if quick
+            && (s.nframes != 0
+                || s.frame != 0
+                || s.top != 0
+                || p.dead.get(s.pc as usize).is_none_or(crate::live::is_empty)
+                || mutants::active("pruneq_copy_all"))
+        {
+            new_map.extend_from_slice(ents);
+            wins.push((at, len));
+            continue;
+        }
+        for e in ents {
             if !may_drop(&p, s, e, ir.ty_of(e.r)) {
                 new_map.push(*e);
             }

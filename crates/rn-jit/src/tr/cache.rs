@@ -189,10 +189,28 @@ pub const RECINL_PROCESS: u32 = 2;
 pub const SIDEPUSH_PROCESS: u32 = 1;
 /// Section 75.12 (`mfkeys`): the process default of [`TrLimits::mfkeys`] (also the struct default).
 pub const MFKEYS_PROCESS: u32 = 1;
+/// Section 76.2 (`sideback`): the process default of [`TrLimits::sideback`] (also the struct default).
+pub const SIDEBACK_PROCESS: u32 = 0;
+/// Section 76.3 (`sideblf`): the process default of [`TrLimits::sideblf`] (also the struct default).
+pub const SIDEBLF_PROCESS: u32 = 65;
+/// Section 76.4 (`carena`): the process default of [`TrLimits::carena`] (also the struct default).
+pub const CARENA_PROCESS: u32 = 1;
+/// Section 76.10 (`t1exit`): the process default of [`TrLimits::t1exit`] (also the struct default).
+pub const T1EXIT_PROCESS: u32 = 7;
+/// Section 76.11 (`hdrcse`): the process default of [`TrLimits::hdrcse`] (also the struct default).
+pub const HDRCSE_PROCESS: u32 = 2;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
+/// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default). OFF: wrong results in `tr_core` matrices
+/// with `+randra +exitstorm=7` (bh_next, n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants) and a crash of dm_dynkey (`-fwd -cse -sink`), not
+/// root-caused (they disappear with `guarddiet=0`), docs/JIT_TRACE.md section 77.6.
+pub const SLOADHOME_PROCESS: u32 = 0;
+/// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
+pub const FLINK_PROCESS: u32 = 1;
+/// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
+pub const UVK_PROCESS: u32 = 11;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -401,8 +419,9 @@ pub const T1CCALL_PROCESS: u32 = 0;
 pub const TFMT_PROCESS: u32 = 1;
 /// BUNDLE-N: process default of [`TrLimits::retf`] = 3: bit 0 (1) = `RETF` in side recordings (the root frame is popped and the recording goes on in the caller), bit 1 (2) = the
 /// frame-linking exit of a side trace is an inline stub (the "re-push"); bit 2 (4) = function-entry families stays OFF (regresses native-recursion families, docs/JIT_PARKED.md C38).
-/// Flipped from 2 to 3 on 2026-11-10 with `retfmax` 1 (docs/PERF.md "RETF flip"); the lua_lexer gate of the N3 plan was waived.
-pub const RETF_PROCESS: u32 = 3;
+/// Flipped from 2 to 3 on 2026-11-10 with `retfmax` 1 (docs/PERF.md "RETF flip"); the lua_lexer gate of the N3 plan was waived. Section 77.7: 179 =
+/// 3 | 16 | 32 | 128 (self-recursion pops into a numeric / `while` loop of the caller).
+pub const RETF_PROCESS: u32 = 179;
 /// BUNDLE-N: process default of [`TrLimits::retfmax`].
 pub const RETFMAX_PROCESS: u32 = 1;
 /// BUNDLE-V V2 (`upbar`): process value of [`TrLimits::upbar`] (K3a: also the struct default). **1:** `SETUPVAL` of a collectable value into an upvalue cell is recorded
@@ -790,7 +809,10 @@ pub struct TrLimits {
     pub libcall: u32,
     /// BUNDLE-N (RETF, docs/JIT_PARKED.md C38): frame-leaving side traces. Bit 0 (value 1): a side recording that reaches the `RETURN` of
     /// its root frame executes `RETF` (the pop is done natively and the trace continues in the caller); bit 1 (value 2): inline re-push
-    /// stub; bit 2 (value 4): function-entry roots. Default [`RETF_PROCESS`] (0 = off, byte-identical IR and machine code).
+    /// stub; bit 2 (value 4): function-entry roots; bit 3 (8): test mode, the recording ends right after a pop. Section 77.7: bit 4 (16) a
+    /// function-entry family's side recording pops when its root returns into a frame of the same closure; bit 5 (32) only into a call inside a
+    /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Default
+    /// [`RETF_PROCESS`] = 179 (0 = off, byte-identical IR and machine code).
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
     pub retfmax: u32,
@@ -900,12 +922,58 @@ pub struct TrLimits {
     /// `T`, raw `T[K]` is a Lua closure) and kept by the family rule; a recording then reads them as `T[K]` (a constant table) instead of walking the chain.
     /// 0 = off, 1 = on (default [`MFKEYS_PROCESS`]).
     pub mfkeys: u32,
+    /// Section 76.2 (`sideback`, docs/JIT_TRACE.md section 76.2): exponential back-off of side recordings at an exit whose last recording failed. After
+    /// the `n`th failed recording (a fault) that leaves the exit a retry, the next attempt waits `2^(s * n) - 1` more report windows of `hot_exit` exits
+    /// (`s` = bits 0-1, 1..3; at most 255 windows) instead of one. Bit 2: only after the failures whose cause is a property of the code (`unchangeable`,
+    /// the ones whose identical repeat blacklists the exit); without it after every fault. Bit 3: only after the causes the bytecode path alone decides
+    /// ([`sideback_path_reason`]: `CFunc`, `Nyi`, `Recursion`, `Depth`, ...). 0 = off (default [`SIDEBACK_PROCESS`]).
+    pub sideback: u32,
+    /// Section 76.3 (`sideblf`, docs/JIT_TRACE.md section 76.3): a side exit is blacklisted at the FIRST failed recording whose cause is a property of the
+    /// code (`unchangeable`) and in this mask of cause classes (instead of at the second identical one): 1 `Depth`, 2 `Recursion`, 4 `LeaveFrame`,
+    /// 8 `SideShort`, 16 `CFunc` / `Nyi(..)`, 32 `InnerLoop`, 64 `TooLong`, 128 `LeaveLoop`, 256 the other unchangeable causes. A retry that
+    /// `sbump2` still has pending is kept. 0 = off (default [`SIDEBLF_PROCESS`] = 65: `Depth` and `TooLong`, section 76.3).
+    pub sideblf: u32,
+    /// Section 76.4 (`carena`, docs/JIT_TRACE.md section 76.4): the compile arena of `rn_core::carena` (bump allocation from recycled 16 KiB chunks
+    /// while a recorder step, a trace pipeline, a tier-1 compile or a deferred exit stub runs). Process-wide: read when the process's JIT is set up.
+    /// Only where the binary registers `rn_core::carena::CArena` as its allocator (`rnlua`, the trace test binaries). 0 = off, 1 = on (default [`CARENA_PROCESS`]).
+    pub carena: u32,
+    /// Section 76.10 (`t1exit`, docs/JIT_TRACE.md section 76.10): tier 1's out-of-line exit sequences (`savedpc = pc`, an optional refund, `ret`
+    /// through the thunk's epilogue: about 45 bytes each) become `mov eax, pc; jmp` to one shared exit per prototype that computes the address of
+    /// `pc` and leaves (12-20 bytes each); also the inline exit stubs of the instructions tier 1 does not compile and the `MMBIN` stubs.
+    /// Bit 1: helper calls go through one trampoline per helper and prototype (`call rel32` instead of `mov rdi; mov rsi; movabs; call rax`).
+    /// Bit 2: the inline `__index` chain walk of a constant-key read is one level body in a counted loop instead of `idx_levels` unrolled copies.
+    /// 0 = off, 7 = all (default [`T1EXIT_PROCESS`]).
+    pub t1exit: u32,
+    /// Section 76.11 (`hdrcse`, docs/JIT_TRACE.md section 76.11): the recorder reuses an `FLOAD` of the same table ref and header field emitted
+    /// earlier in the recording when no instruction since may change a table header (`opt_mem::header_safe`, rule 4: allocation, key insertion,
+    /// `TSET`, `TLEN`, library calls are barriers), so the node-count guard and the node / metatable loads of repeated field accesses of one table
+    /// are recorded once (the loop pass, which does this for allocation-free root traces, gives up on traces with a barrier). Bit 0: in root
+    /// recordings, bit 1: in side recordings. Default 2 ([`HDRCSE_PROCESS`]): side recordings only (bit 0 moves the root formation of
+    /// apps/expr_lang, +3 % instructions, section 76.11).
+    pub hdrcse: u32,
     /// Section 75.13 (`mfdeep`, docs/JIT_TRACE.md section 75.13): E5's fold of the family key also in an inlined chain frame (`unr`) that was called with
     /// the root's closure ref and whose register 0 is the root's entry register 0. 0 = off, 1 = on (default [`MFDEEP_PROCESS`]).
     pub mfdeep: u32,
     /// Section 75.14 (`mfshare`, docs/JIT_TRACE.md section 75.14): a second `mfkeys` lookup of the same key in one recording reuses the first one's value
     /// (the family rule admits no store of the key in any family trace, so `T[K]` is constant inside the region). 0 = off, 1 = on (default [`MFSHARE_PROCESS`]).
     pub mfshare: u32,
+    /// Section 77.3 (`uvk`, docs/JIT_TRACE.md section 77.3): a `GETUPVAL` of an upvalue the compiler marked read-only (`UpvalDesc::ro`: the variable is
+    /// never assigned after its initialisation) in a frame whose closure the trace holds by identity is the value seen at record time, a constant
+    /// (numbers, booleans, nil, light C functions, Lua closures, tables, short strings). The frame's closure is guarded by identity once (`EQREF` with
+    /// the closure's address, which a collection of the closure flushes); writes outside the language flush the traces (`jit_hooks::upval_changed`).
+    /// Bits: 0 = on; 1 = no folding in the root frame of a recording (no identity guard on the root closure: awfy/cd, real_dis_arm formed worse);
+    /// 2 = none in side recordings; 3 = a new identity guard only on a closure created by a main chunk (closures made per call of a factory are
+    /// re-created and fail the guard: containers_lru_heap). Default 11 = 1 | 2 | 8 ([`UVK_PROCESS`], section 77.3).
+    pub uvk: u32,
+    /// Section 77.2 (`flink`, docs/JIT_TRACE.md section 77.2): a *frameful* side trace (one that starts inside inlined frames, S1) whose link
+    /// continues at a root head of the root prototype at depth 0 is offered the root's guard-free second entry (A2) and the entry past the room
+    /// checks (G1) like a frameless one; the assembler still takes them only when `exit::link_proof` proves the skipped type checks and the
+    /// chain's room covers the target's. 0 = off, 1 = on (default [`FLINK_PROCESS`]).
+    pub flink: u32,
+    /// Section 77.6 (`sloadhome`, docs/JIT_TRACE.md section 77.6): an `SLOAD` that no snapshot, no end use and no `SSTORE` names keeps its value in its
+    /// stack slot when the allocator spills it: no spill store at the definition, reloads from the stack (`ra::RaOpts::homes`). 0 = off, 1 = on
+    /// (default [`SLOADHOME_PROCESS`] = 0).
+    pub sloadhome: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1231,8 +1299,16 @@ impl Default for TrLimits {
             recinl: RECINL_PROCESS,
             sidepush: SIDEPUSH_PROCESS,
             mfkeys: MFKEYS_PROCESS,
+            sideback: SIDEBACK_PROCESS,
+            sideblf: SIDEBLF_PROCESS,
+            carena: CARENA_PROCESS,
+            t1exit: T1EXIT_PROCESS,
+            hdrcse: HDRCSE_PROCESS,
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
+            uvk: UVK_PROCESS,
+            flink: FLINK_PROCESS,
+            sloadhome: SLOADHOME_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1445,7 +1521,7 @@ impl TrLimits {
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
                 "libcall" => l.libcall = v.min(4095),
-                "retf" => l.retf = v.min(15),
+                "retf" => l.retf = v.min(255),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
@@ -1476,8 +1552,16 @@ impl TrLimits {
                 "recinl" => l.recinl = v.min(15),
                 "sidepush" => l.sidepush = v.min(1),
                 "mfkeys" => l.mfkeys = v.min(1),
+                "sideback" => l.sideback = v.min(15),
+                "sideblf" => l.sideblf = v.min(511),
+                "carena" => l.carena = v.min(1),
+                "t1exit" => l.t1exit = v.min(7),
+                "hdrcse" => l.hdrcse = v.min(3),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
+                "uvk" => l.uvk = v.min(15),
+                "flink" => l.flink = v.min(1),
+                "sloadhome" => l.sloadhome = v.min(3),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -3145,6 +3229,8 @@ pub struct TrStats {
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
     pub heat_granted: u64,
+    /// Section 76.2 (`sideback`): exit reports skipped by the back-off after a failed side recording.
+    pub side_backoff: u64,
     /// Section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings (closed or not).
     pub restarts: u64,
     /// P3: chain checks made ([`chain_check`]).
@@ -3388,6 +3474,8 @@ struct Trace {
     /// Section 39.2 (T3): per exit, how often a full family deferred it under the `heatside` rule (its own count: the `polyside` counter `defer`
     /// keeps its meaning, and an exit deferred here counts once in the `loopany` guard's side attempts, at its first report).
     hdefer: Vec<u8>,
+    /// Section 76.2 (`sideback`): per exit, the report windows still to wait before the next side attempt (set by a failed recording).
+    bwait: Vec<u8>,
     /// P3: per snapshot, whether the exit counter counts twice per exit (`Asm::dbl`).
     dbl: Vec<bool>,
     /// P3 (`ncallee`): the entry segment of this root holds a callee identity guard (`EQREF` on an empty-map snapshot).
@@ -3564,6 +3652,12 @@ pub struct TrState {
     live_traces: u32,
     global_pen: i64,
     global_k: u8,
+    /// Section 77.3 (`uvk`): the traces that read read-only upvalues as constants (flushed by [`upval_changed`]; stale ids are harmless).
+    pub(crate) uvk_ids: Vec<TrId>,
+    /// Section 77.3: writes into read-only captured variables seen (`upval_changed`); after an upvalue join or [`UVK_MAX_EVENTS`] of them the
+    /// state stops folding (`uvk_off`).
+    pub(crate) uvk_events: u32,
+    pub(crate) uvk_off: bool,
     /// P-G: time stamp of the first loop activity (0: none yet) and whether `TrLimits::warm` has elapsed.
     pub(crate) warm_t0: u64,
     pub(crate) warm_open: bool,
@@ -3618,6 +3712,9 @@ impl TrState {
             live_traces: 0,
             global_pen: 0,
             global_k: 0,
+            uvk_ids: Vec::new(),
+            uvk_events: 0,
+            uvk_off: false,
             warm_t0: 0,
             warm_open: false,
             warm_n: 0,
@@ -4063,6 +4160,8 @@ fn side_failed(
     }
     let sbump2 = d.tr.cfg.limits.sbump2;
     let blfirst = d.tr.cfg.limits.blfirst;
+    let sideback = d.tr.cfg.limits.sideback;
+    let sideblf = d.tr.cfg.limits.sideblf;
     let Some(Slot {
         body: Body::Trace(t),
         ..
@@ -4078,7 +4177,9 @@ fn side_failed(
     if fault {
         t.fails[k] = t.fails[k].saturating_add(1);
         repeat = unchangeable
-            && (t.last[k] == Some(reason) || blfirst_applies(blfirst, reason, true))
+            && (t.last[k] == Some(reason)
+                || blfirst_applies(blfirst, reason, true)
+                || sideblf_applies(sideblf, reason))
             && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
@@ -4092,9 +4193,64 @@ fn side_failed(
         // the counter stays where it is (past the divert value `hot_exit - 1`): the inline stub reports this exit no more
         black_exit(&mut t.exit_st, &t.exits, k);
     } else {
+        // section 76.2 (`sideback`): a failed recording that leaves a retry waits `2^(s * fails) - 1` more windows first
+        if fault && k < t.bwait.len() {
+            t.bwait[k] = sideback_wait(sideback, u32::from(t.fails[k]), unchangeable, reason);
+        }
         // the inline stub reports an exit when its counter passes `hot_exit - 1`: count `hot_exit` more
         t.exits[k].set(0);
     }
+}
+
+/// Section 76.2 (`sideback`): the report windows a side attempt waits after its exit's `fails`th failed recording (`unchangeable`: the cause is a
+/// property of the code). `sideback`: bits 0-1 the shift `s` (0 = off), bit 2 only after `unchangeable` causes. `2^(s * fails) - 1`, at most 255.
+pub fn sideback_wait(sideback: u32, fails: u32, unchangeable: bool, reason: &str) -> u8 {
+    let s = sideback & 3;
+    if s == 0 || fails == 0 || (sideback & 4 != 0 && !unchangeable) {
+        return 0;
+    }
+    // bit 3: only the causes that are a property of the bytecode path itself (a C function, an unsupported instruction, the recursion / depth limits,
+    // varargs, multiple results, tail calls, a table hash), not of the trace graph around the exit (`LeaveFrame`, `LeaveLoop`, `SideShort`,
+    // `InnerLoop`: a trace for the frame or loop reached may appear) nor of the length (`TooLong`)
+    if sideback & 8 != 0 && !sideback_path_reason(reason) {
+        return 0;
+    }
+    if mutants::active("sideback_no_wait") {
+        return 0;
+    }
+    let e = (s * fails).min(8);
+    ((1u32 << e) - 1).min(255) as u8
+}
+
+/// Section 76.3 (`sideblf`): does the first failed side recording with the unchangeable cause `reason` blacklist its exit (mask of cause classes,
+/// see [`TrLimits::sideblf`])?
+pub fn sideblf_applies(mask: u32, reason: &str) -> bool {
+    if mask == 0 || mutants::active("sideblf_never") {
+        return false;
+    }
+    let bit = match reason {
+        "Depth" => 1,
+        "Recursion" => 2,
+        "LeaveFrame" => 4,
+        "SideShort" => 8,
+        "CFunc" => 16,
+        "InnerLoop" => 32,
+        "TooLong" => 64,
+        "LeaveLoop" => 128,
+        // the exit policy's own reasons (`side_failed` callers) are not recorder aborts
+        "ChainDepth" | "InnerFamily" | "MaxSide" | "FrameKind" => 0,
+        r if r.starts_with("Nyi(") => 16,
+        _ => 256,
+    };
+    mask & bit != 0
+}
+
+/// Section 76.2 (`sideback` bit 3): is `reason` a cause that the bytecode path alone decides?
+pub fn sideback_path_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "CFunc" | "Vararg" | "MultRet" | "TailCall" | "Recursion" | "Depth" | "TableHash"
+    ) || reason.starts_with("Nyi(")
 }
 
 /// K3 (`fretry`): is the side attempt at an exit inside inlined frames (`framed`) whose previous attempt ended `last` exempt from `framemin`? Only the retry after `SideShort`.
@@ -5242,6 +5398,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         la_any: false,
         defer: vec![0; nex],
         hdefer: vec![0; nex],
+        bwait: vec![0; nex],
         dbl: Vec::new(),
         entry_callee: false,
         hoisted: false,
@@ -5856,6 +6013,83 @@ pub fn type_mt_changed(st: &mut State) {
     flush_all(st, FlushWhy::Dep);
 }
 
+/// Section 77.3: writes into read-only captured variables after which a state stops folding them (each one flushes the folding traces).
+pub const UVK_MAX_EVENTS: u32 = 16;
+
+/// Section 77.3 (`uvk`): a captured variable was written outside the language (`debug.setupvalue` of a read-only upvalue, `debug.setlocal`,
+/// `debug.upvaluejoin` touching a read-only upvalue: `join`). Every trace that read a read-only upvalue as a constant is flushed and a recording
+/// in progress is dropped (no penalty: the heads re-record and see the new value). A join breaks the read-only property for good (the
+/// joined cell may now be written by code that assigns it), so the state stops folding; so does a state that keeps writing such variables.
+pub fn upval_changed(st: &mut State, join: u8) {
+    if mutants::active("uvk_flush_skip") {
+        return;
+    }
+    let d = d_of(st);
+    d.tr.uvk_events = d.tr.uvk_events.saturating_add(1);
+    if join != 0 || d.tr.uvk_events >= UVK_MAX_EVENTS {
+        d.tr.uvk_off = true;
+    }
+    if let Some(aid) = d.tr.active {
+        finish_abort(st, aid, "Off", AbortKind::Drop);
+    }
+    let ids = std::mem::take(&mut d_of(st).tr.uvk_ids);
+    for id in ids {
+        request_flush(st, id, FlushWhy::Dep);
+    }
+}
+
+/// Section 77.3: whether the state stopped folding read-only upvalues (see [`upval_changed`]).
+pub fn uvk_off(st: &mut State) -> bool {
+    d_of(st).tr.uvk_off
+}
+
+type UvkReg = std::collections::HashMap<usize, Vec<(usize, TrId)>>;
+
+/// Section 77.3: closure address -> (owning `JitData`, trace) for every closure a trace holds by identity. Process-wide because the collector's
+/// free path has no state handle (as `free_code`, which reaches its owner through the descriptor).
+fn uvk_reg() -> &'static std::sync::Mutex<UvkReg> {
+    static R: OnceLock<std::sync::Mutex<UvkReg>> = OnceLock::new();
+    R.get_or_init(|| std::sync::Mutex::new(UvkReg::new()))
+}
+
+/// Section 77.3: trace `id` (just installed) holds the closures `cls` by identity and reads read-only upvalues as constants: each closure is
+/// marked (`LClosure::jitdep`) and registered, so that its collection flushes the trace before the address can be reused; the trace joins
+/// the set [`upval_changed`] flushes.
+pub fn uvk_register(st: &mut State, id: TrId, cls: &[usize]) {
+    let dp = rt::data_ptr(st) as usize;
+    d_of(st).tr.uvk_ids.push(id);
+    if cls.is_empty() {
+        return;
+    }
+    let mut reg = uvk_reg().lock().unwrap_or_else(|e| e.into_inner());
+    for &a in cls {
+        // SAFETY: `a` is the address of a closure the recording held by identity and watched until it closed (a collection of it aborts
+        // the recording `DepFreed`), and nothing collects between the close and the install.
+        let c = unsafe { rn_core::value::Gc::from_raw(a as *mut rn_core::func::LClosure) };
+        if !mutants::active("uvk_dep_skip") {
+            c.set_jitdep();
+        }
+        reg.entry(a).or_default().push((dp, id));
+    }
+}
+
+/// Section 77.3: the collector frees a closure marked by [`uvk_register`]: its traces are flushed (deferred while an exit handler runs, TR18).
+/// Returns the bytes to refund.
+pub fn uvk_closure_freed(addr: usize) -> usize {
+    let list = {
+        let mut reg = uvk_reg().lock().unwrap_or_else(|e| e.into_inner());
+        reg.remove(&addr).unwrap_or_default()
+    };
+    let mut refund = 0;
+    for (dp, id) in list {
+        // SAFETY: the owning data outlives its heap (the heap, which frees the closure, is dropped before the per-state slot), as for
+        // `free_code`.
+        let d = unsafe { &mut *(dp as *mut JitData) };
+        refund += flush_or_defer(d, id, FlushWhy::Dep);
+    }
+    refund
+}
+
 /// `jit.flush()`: a recording in progress is dropped and every trace is flushed (no penalty: the heads re-record).
 pub fn control_flush(st: &mut State) {
     if let Some(aid) = d_of(st).tr.active {
@@ -6270,6 +6504,7 @@ fn slink_carry(
             ValSrc::Reg(r) if r != 10 && r != 7 && ty != Ty::Num => CarrySrc::G(r),
             ValSrc::Xmm(x) if ty == Ty::Num => CarrySrc::X(x),
             ValSrc::Spill(n) => CarrySrc::Spill(n),
+            ValSrc::Stack(_) => return Vec::new(),
             _ => continue,
         };
         out.push((s.slot, ty, src, !super::exit::tag_store_redundant(snap, s)));
@@ -6343,6 +6578,7 @@ fn carry_slots(
             ValSrc::Reg(r) if r != 10 && r != 7 && (ty != super::ir::Ty::Num) => CarrySrc::G(r),
             ValSrc::Xmm(x) if ty == super::ir::Ty::Num => CarrySrc::X(x),
             ValSrc::Spill(n) => CarrySrc::Spill(n),
+            ValSrc::Stack(_) => return Vec::new(),
             _ => return Vec::new(),
         };
         if out.iter().any(|&(sl, _, _, _)| sl == s.slot) {
@@ -6443,6 +6679,21 @@ fn side_attempt(
     };
     if state != Some(SideSt::Free) {
         return HotAction::None;
+    }
+    // section 76.2 (`sideback`): the exit's last recording failed: wait out the back-off windows (re-armed, no fault, not a side attempt)
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot_mut(id)
+    {
+        if let Some(w) = t.bwait.get_mut(k as usize) {
+            if *w > 0 {
+                *w -= 1;
+                d.tr.stats.side_backoff += 1;
+                side_failed(d, link, false, "BackWait", false);
+                return HotAction::None;
+            }
+        }
     }
     if d.tr.cfg.limits.loopanymax != 0
         && !snap.frames.is_empty()
@@ -9882,9 +10133,9 @@ pub fn tier1_bytes(st: &mut State) -> Option<(Vec<u8>, Vec<u8>)> {
         consts: p.k(),
         t15_warmup: None,
     };
-    let expected = x86::emit(&crate::lower::lower(p.code(), cfg)?.prog)
-        .ok()?
-        .code;
+    let htramp = env.t1exit & 2 != 0;
+    let low = crate::lower::lower(p.code(), cfg)?;
+    let expected = x86::with_htramp(htramp, || x86::emit(&low.prog)).ok()?.code;
     // SAFETY: the block is the committed, readable code of the live descriptor.
     let actual = unsafe {
         std::slice::from_raw_parts(

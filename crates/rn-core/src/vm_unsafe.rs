@@ -2395,6 +2395,10 @@ pub(crate) fn push_closure(
     let ncl = st.try_alloc(|h| h.new_lclosure(nup))?;
     // SAFETY: `ncl` was created with `sub.upvalue_descs().len()` upvalue slots.
     unsafe { ncl.set_proto(sub) };
+    sub.note_closure();
+    if cl.proto().linedefined == 0 {
+        ncl.set_mainmade();
+    }
     st.set(ra, Value::lclosure(ncl)); // anchor new closure in stack
     for n in 0..nup {
         let d = sub.upvalue_descs()[n];

@@ -45,6 +45,8 @@ pub struct UpvalDesc {
     pub instack: bool,
     pub idx: u8,
     pub kind: u8,
+    /// Section 77.3: see [`crate::protodata::UpvalDesc::ro`].
+    pub ro: bool,
 }
 
 impl UpvalDesc {
@@ -94,6 +96,23 @@ pub struct Proto {
     /// JIT: hotness counter (counts down from `jit_hooks::HOT_THRESHOLD`). Only under `jit`.
     #[cfg(feature = "jit")]
     pub hot: std::cell::Cell<i32>,
+    /// Section 77.3 (`uvk`): closures created from this prototype so far, saturating at 2 (`note_closure`). Only under `jit`.
+    #[cfg(feature = "jit")]
+    pub jitinst: std::cell::Cell<u8>,
+}
+
+impl Proto {
+    /// Section 77.3: counts a closure created from this prototype (saturating at 2).
+    #[inline]
+    pub fn note_closure(&self) {
+        #[cfg(feature = "jit")]
+        {
+            let c = self.jitinst.get();
+            if c < 2 {
+                self.jitinst.set(c + 1);
+            }
+        }
+    }
 }
 
 fn buf_slice<T: Copy>(b: &RawBuf<T>) -> &[T] {
@@ -245,6 +264,7 @@ impl Proto {
                     instack: u.in_stack,
                     idx: u.idx,
                     kind: u.kind,
+                    ro: u.ro,
                 })
                 .collect();
             fill_buf(&mut (*pp).upvalues, &mut heap.mem, &ups)?;
@@ -354,6 +374,10 @@ pub struct LClosure {
     pub(crate) tt: u8,
     pub(crate) marked: u8,
     pub(crate) nupvalues: u8,
+    /// Section 77.3 (`uvk`): bit 0 set once a trace depends on this closure's identity (the collector then tells the JIT when it
+    /// frees it, `jit_hooks::closure_freed`); bit 1: the closure was created by a main chunk (`push_closure`). In the padding after the
+    /// count: no size change.
+    pub(crate) jitdep: u8,
     pub(crate) gclist: *mut GcHeader,
     pub(crate) p: *mut Proto,
     upvals: [*mut UpVal; 0],
@@ -432,6 +456,21 @@ impl Gc<LClosure> {
             *self.slot(i) = uv.as_ptr();
             heap.barrier_obj(self.as_ptr().cast(), uv.as_ptr().cast());
         }
+    }
+    /// Section 77.3: marks the closure as one a trace depends on by identity (see `LClosure::jitdep`).
+    pub fn set_jitdep(self) {
+        // SAFETY: handle invariant; a plain byte of the closure header.
+        unsafe { (*self.as_ptr()).jitdep |= 1 }
+    }
+    /// Section 77.3: marks a closure created by a main chunk (`linedefined == 0`).
+    pub fn set_mainmade(self) {
+        // SAFETY: as `set_jitdep`.
+        unsafe { (*self.as_ptr()).jitdep |= 2 }
+    }
+    /// Section 77.3: was the closure created by a main chunk?
+    pub fn mainmade(self) -> bool {
+        // SAFETY: as `set_jitdep`.
+        unsafe { (*self.as_ptr()).jitdep & 2 != 0 }
     }
     /// Install the prototype.
     ///
@@ -522,6 +561,7 @@ impl Heap {
             {
                 (&raw mut (*p).jit).write(std::cell::Cell::new(std::ptr::null_mut()));
                 (&raw mut (*p).hot).write(std::cell::Cell::new(crate::jit_hooks::initial_hot()));
+                (&raw mut (*p).jitinst).write(std::cell::Cell::new(0));
             }
             Ok(Gc::from_raw(p))
         }
@@ -537,6 +577,7 @@ impl Heap {
         // SAFETY: fresh block of `size_lclosure(nup)` bytes.
         unsafe {
             (&raw mut (*c).nupvalues).write(nup as u8);
+            (&raw mut (*c).jitdep).write(0);
             (&raw mut (*c).gclist).write(std::ptr::null_mut());
             (&raw mut (*c).p).write(std::ptr::null_mut());
             let base = (&raw mut (*c).upvals).cast::<*mut UpVal>();

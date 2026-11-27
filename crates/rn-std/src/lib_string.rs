@@ -285,6 +285,7 @@ fn proto_to_data(p: &Proto) -> ProtoData<StrRef> {
                 in_stack: u.instack,
                 idx: u.idx,
                 kind: u.kind,
+                ro: u.ro,
             })
             .collect(),
         line_info: p.lineinfo().to_vec(),
