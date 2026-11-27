@@ -292,6 +292,8 @@ pub struct AsmEnv {
     /// Section 79.6 (`retremat`): the fused `RETURN0` guards rematerialise pointer constants and unmodified `SLOAD`s on their failure path
     /// instead of saving the registers.
     pub ret_remat: bool,
+    /// Section 79.12 (`retpad`): no loop-head padding in a trace that ends in a native return.
+    pub ret_nopad: bool,
     /// Section 75.15 (`retfuse` bit 1): the fused native return also when the late guards saved live registers (the success path needs none of them).
     pub rec_fuse_saved: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
@@ -456,6 +458,7 @@ impl Default for AsmEnv {
             rec_fuse: false,
             push_tags: false,
             ret_remat: false,
+            ret_nopad: false,
             rec_fuse_saved: false,
             lazy_cs: None,
             lazy_nparams: 0,
@@ -3516,7 +3519,11 @@ pub fn assemble_dl(
     let start_l = cx.label();
     cx.bind(start_l);
     if rolled && env.side.is_none() {
-        cx.head_pad();
+        // Section 79.12 (`retpad`): a trace that ends in a native return never jumps back to its head: no loop-head placement (the padding is a
+        // `jmp` over the nops that every entry executes)
+        if !(env.ret_nopad && ir.rec_ret.is_some() && ir.rec_call.is_none()) {
+            cx.head_pad();
+        }
         cx.bind(loop_l);
         cx.count_iteration();
     } else if rolled {

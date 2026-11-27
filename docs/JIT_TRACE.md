@@ -9445,3 +9445,10 @@ values, collectables and nil elements under `__newindex`, collections and weak v
 
 Measured (one binary, `selfst=0` against `=1`): permute 111.22 -> **104.88** instructions per call, default size 103.44 -> 97.94 M (**-5.3 %**).
 Whole set: permute -5.32 %; nothing else beyond 0.2 % but the noise programs (astar_jumper -1.9 %, real_dis_x86 +0.2 %); geomean -0.03 %.
+
+### 79.12 `retpad`: no loop-head padding in traces that end in a native return (`TrLimits::retpad`, default 1)
+
+Rolled root traces place their loop head `HEAD_OFFSET` bytes into a 64-byte line (Q2), with a `jmp` over the padding that every entry
+executes. A trace that ends in a native return (`rec_ret`, no `rec_call`) never jumps back to its head, so the placement buys nothing and the
+`jmp` is one instruction per entry (permute's traces 8 / 9 / 4). Now omitted there (layout only, no mutant). permute 104.88 -> **104.46**
+instructions per call; whole set: permute -0.37 %, fib -0.59 %, nothing else beyond 0.2 % but the noise programs; geomean 0.00 %.

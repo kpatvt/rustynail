@@ -2796,6 +2796,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // SAFETY: as above.
         ret_remat: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retremat } != 0,
         // SAFETY: as above.
+        ret_nopad: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retpad } != 0,
+        // SAFETY: as above.
         rec_fuse_saved: rec_late
             && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,
         lazy_cs,

@@ -4730,7 +4730,7 @@ fn s79_selfst_programs() {
 
 /// Sections 79.5 / 79.6 (`siteord`, `retremat`): the site chains of native returns and pushes in self-call-first order, and the fused `RETURN0`
 /// guards rematerialising pointer constants and unmodified `SLOAD`s on their failure path: the recursion programs of section 75 / 77 / 79 with
-/// both knobs on / off, the trace modes with `+verify`, exit storms (the failure paths) and budget 17.
+/// both knobs on / off (and `retpad=0`, section 79.12), the trace modes with `+verify`, exit storms (the failure paths) and budget 17.
 #[test]
 fn s79_ret_programs() {
     let mut jobs = Vec::new();
@@ -4746,6 +4746,7 @@ fn s79_ret_programs() {
                 "siteord=1,retremat=1",
                 "siteord=0,retremat=0",
                 "siteord=1,retremat=1,recinl=3,sidepush=1",
+                "retpad=0",
             ] {
                 for (opts, budget) in [("+verify", 0), ("+exitstorm=3 +verify", 0), ("", 17)] {
                     let mut j = Job::new(prog, trace).opts(opts).limits_s(limits);
