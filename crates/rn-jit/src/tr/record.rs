@@ -571,7 +571,9 @@ impl Default for RecCfg {
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
-            uvk: super::cache::UVK_PROCESS,
+            // (section 77.3: the driver sets it from `TrLimits::uvk`; recorder unit tests replay against handle models that cannot evaluate an
+            // identity guard on a closure address, and tr_core covers the knob)
+            uvk: 0,
             hrefv: true,
             shape: false,
             fold: true,
