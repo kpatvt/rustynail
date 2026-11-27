@@ -8366,3 +8366,8 @@ Per-site gates tried for the regressions, none removes them (so they are not chu
 (3) a per-site limit on distinct recorded trip counts (2 / 3 / 5): storage, sha2, msgpack, bignum unchanged at every setting, wins partly lost.
 storage's site is `for i = 1, size do a[i] = false end` with random sizes in an inlined callee. Default ON (16) for the geomean and the size
 of the wins; the four regressions stay open (with `dynunroll=0` per run as the escape).
+
+gate-light on the first `dynunroll` commit: the 5.5 / 5.4 trace suites failed four shape assertions (no wrong output): `k4_innerside_programs`
+(counts `InnerLoop` side aborts, which `dynunroll` removes), `m1_interp_shapes` (side recordings that now reach recursive calls inside an unrolled
+loop abort `Recursion`: 5 > 4), `nr_n3_programs` / `nr_retf_traces_are_installed` (the RETF traces they expect arise from an `InnerLoop` refusal).
+Their asserted jobs now set `dynunroll=0` explicitly (the rest of their matrices run the default), so their mutants keep their detectors.

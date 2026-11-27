@@ -5092,7 +5092,11 @@ fn h2_tail_programs() {
 fn k4_innerside_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2"] {
-        for lim in ["innerside=0", "innerside=2", ""] {
+        for lim in [
+            "innerside=0,dynunroll=0",
+            "innerside=2,dynunroll=0",
+            "dynunroll=0",
+        ] {
             jobs.push(
                 Job::new("k4_eval_loop", trace)
                     .opts("+verify")
@@ -5119,7 +5123,12 @@ fn k4_innerside_programs() {
                 .map(|(_, o)| o.stats.clone())
                 .expect("job")
         };
-        let (off, two, def) = (find("innerside=0"), find("innerside=2"), find(""));
+        // (section 75.7: `dynunroll=0`: the `InnerLoop` side aborts this test counts are what `dynunroll` removes)
+        let (off, two, def) = (
+            find("innerside=0,dynunroll=0"),
+            find("innerside=2,dynunroll=0"),
+            find("dynunroll=0"),
+        );
         let inner = |s: &TStats| s.side_aborts.get("InnerLoop").copied().unwrap_or(0);
         eprintln!(
             "k4_eval_loop [{trace}] InnerLoop side aborts: off {} two {} default {}",
@@ -9945,6 +9954,7 @@ fn m1_interp_shapes() {
             jobs.push(Job::new(p, trace).budget(3));
             jobs.push(Job::new(p, trace).budget(17));
             jobs.push(Job::new(p, trace).opts("-loop"));
+            jobs.push(Job::new(p, trace).limits_s("dynunroll=0"));
             jobs.push(Job::new(p, trace).opts("+emurun +verify"));
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "2"));
             jobs.push(Job::new(p, trace).env("RUSTYNAIL_GC_STRESS", "1"));
@@ -10065,7 +10075,8 @@ fn m1_interp_shapes() {
             })
             .map(|(_, o)| o.stats.clone())
     };
-    if let Some(on) = pick("") {
+    // (section 75.7: with `dynunroll=0`; an unrolled inner loop leads side recordings into further recursive calls)
+    if let Some(on) = pick("dynunroll=0") {
         let rec = |s: &TStats| s.side_aborts.get("Recursion").copied().unwrap_or(0);
         assert!(
             rec(&on) <= 4,
@@ -12343,7 +12354,10 @@ fn nr_matrix() {
 #[test]
 fn nr_retf_traces_are_installed() {
     let mk = |l: &str| Job::new("n_retf_hot", "always").opts("+verify").limits_s(l);
-    let r = run_all(vec![mk("retf=1,retfmax=1,lazyci=0"), mk("retf=0")]);
+    let r = run_all(vec![
+        mk("retf=1,retfmax=1,lazyci=0,dynunroll=0"),
+        mk("retf=0"),
+    ]);
     assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
     // RETF is inert under the 5.4 build (by design): no RETF trace is ever installed, the output is the same
     let inert = cfg!(rustynail_lua54);
@@ -12373,7 +12387,7 @@ fn nr_retf_traces_are_installed() {
     ] {
         let r = run_all(vec![Job::new(p, "always")
             .opts("+verify")
-            .limits_s("retf=1,retfmax=1,lazyci=0")]);
+            .limits_s("retf=1,retfmax=1,lazyci=0,dynunroll=0")]);
         assert!(r[0].1.ok, "{p}: {}", r[0].1.stderr);
         if inert {
             assert_eq!(
@@ -12398,7 +12412,8 @@ fn nr_retf_traces_are_installed() {
 /// `retf_untraced_aborts`, `retf_second_return_aborts`, `relink_jumps_to_land`, `relink_savedpc_off`.
 #[test]
 fn nr_n3_programs() {
-    let lim = "retf=7,retfmax=3,lazyci=0"; // (RETF never pops into a possibly lazy-aware caller: these programs have loop-free callers)
+    // (section 75.7: `dynunroll=0`, the trace shapes asserted here are those of an `InnerLoop` refusal)
+    let lim = "retf=7,retfmax=3,lazyci=0,dynunroll=0"; // (RETF never pops into a possibly lazy-aware caller: these programs have loop-free callers)
     for p in [
         "n_retf_types",
         "n_retf_upvals",
