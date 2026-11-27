@@ -176,8 +176,10 @@ pub const MFKEYS_PROCESS: u32 = 1;
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
-/// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default).
-pub const SLOADHOME_PROCESS: u32 = 1;
+/// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default). OFF: wrong results in `tr_core` matrices
+/// with `+randra +exitstorm=7` (bh_next, n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants) and a crash of dm_dynkey (`-fwd -cse -sink`), not
+/// root-caused (they disappear with `guarddiet=0`), docs/JIT_TRACE.md section 77.6.
+pub const SLOADHOME_PROCESS: u32 = 0;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -914,7 +916,7 @@ pub struct TrLimits {
     pub flink: u32,
     /// Section 77.6 (`sloadhome`, docs/JIT_TRACE.md section 77.6): an `SLOAD` that no snapshot, no end use and no `SSTORE` names keeps its value in its
     /// stack slot when the allocator spills it: no spill store at the definition, reloads from the stack (`ra::RaOpts::homes`). 0 = off, 1 = on
-    /// (default [`SLOADHOME_PROCESS`]).
+    /// (default [`SLOADHOME_PROCESS`] = 0).
     pub sloadhome: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred

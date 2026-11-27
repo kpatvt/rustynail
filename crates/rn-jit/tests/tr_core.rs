@@ -51,6 +51,8 @@ mod s60_progs;
 mod s64_progs;
 #[path = "tr_core/s68_progs.rs"]
 mod s68_progs;
+#[path = "tr_core/s77_progs.rs"]
+mod s77_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -79,6 +81,7 @@ use s59_progs::S59_PROGS;
 use s60_progs::S60_PROGS;
 use s64_progs::S64_PROGS;
 use s68_progs::S68_PROGS;
+use s77_progs::S77_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -213,6 +216,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S59_PROGS)
         .chain(S60_PROGS)
         .chain(S68_PROGS)
+        .chain(S77_PROGS)
         .chain(S64_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))

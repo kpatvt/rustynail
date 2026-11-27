@@ -12,12 +12,6 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
-        name: "s77_rself",
-        small: true,
-        // section 77.7 (`retf` bits 4-7): the vm-corpus program, also compared with the reference there
-        src: include_str!("../../../../tests/vm/s77_rself.lua"),
-    },
-    Prog {
         name: "s77_home",
         small: true,
         // section 77.6 (`sloadhome`): the vm-corpus program, also compared with the reference there

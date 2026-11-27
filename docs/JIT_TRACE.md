@@ -8710,7 +8710,7 @@ before and LuaJIT's 0.41 G; the remaining per-token costs are the token loop's p
 loads, 6 leading `SLOAD`s), the `string.sub` / `string.char` helpers (`short_core` 14 % of all instructions) and the links that do not pass the
 A2 proof (77.2). Not built: 77.1.
 
-### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default 3 = `SLOADHOME_PROCESS`)
+### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default **0 = off**, `SLOADHOME_PROCESS`)
 
 The handle of 77.1, built (round 2). Between an entry and an exit nothing writes the Lua stack but the stubs, the writeback at the end and the
 TR3b `SSTORE`s (G1, 7.x), so the payload of an `SLOAD`'s slot *is* the value until the trace ends. `ra::sload_homes` picks the `SLOAD`s that may
@@ -8743,6 +8743,16 @@ writebacks, loop-carried slots, XMM homes, a towers-shaped method recursion with
 slot another snapshot entry writes). Dropped, not caught by any program built for them: `sloadhome_sstore` (with `+wb` the `SSTORE`d slots are
 the ones the next iteration does not read, so a home of such a slot is never reloaded after the store in these programs) and
 `sloadhome_carry_dense`; both checks stay in the code.
+
+**Shipped OFF: a correctness failure that is not root-caused.** The full gate-light with `sloadhome=3` as the default failed nine `tr_core` matrices
+on 5.5 (seven on 5.4) that pass with it off: wrong results under `+exitstorm=7 +verify +randra=5` in `bh_next` (the `over` / `later` / `fresh`
+lines print addresses as numbers), `n6_dynkey_shape`, `f1_next_hint`, `n7_gfor_nest`, `n5_str_variants`, and a crash (SIGSEGV) of `dm_dynkey` under
+`-fwd -cse -sink`; `sloadhome=1` (no snapshot entries at homes) fails the same way. In the child reproducer (`TR_CORE_JOB="bh_next|always|+exitstorm=7
++verify +randra=5||sloadhome=1||0"`) the failure disappears with `guarddiet=0` and stays with `regcarry=0`, `slink=0`, `dlink=0`, `ccheck` either
+way; a bisection over the traces that get homes needs several of them at once (no single trace splits it). So some path of G1 (the chain's entry
+tags, the guard-free second entry, its room entry, or the tag-skipping writeback) leaves a home's stack slot different from the `SLOAD`'s value
+between the entry and a reload; the eligibility rule does not model it yet. The knob stays (all the measurements above are with it on, outputs of
+the 223 benchmark programs were identical), the default is 0 until that path is found.
 
 ### 77.7 `retf` bits 4-7: function-entry side traces pop into a self-recursive caller's loop (`RETF_PROCESS` = 179)
 
@@ -8787,18 +8797,20 @@ sites of its own prototype), (b) region membership of the caller's code that the
 allocations through the return into the caller's trace (section 52's replay generalised from exits to returns). None of the three fit this time
 box next to 77.6 / 77.7; the handles of 77.7 cover the self-recursive case only.
 
-### 77.9 Round 2 numbers (one binary, d5f4ed5 + docs, `RUSTYNAIL_SEED=0`, CPU 8, 15 runs interleaved, minimum)
+### 77.9 Round 2 numbers (one binary, final defaults, `RUSTYNAIL_SEED=0`, CPU 8, 15 runs interleaved, minimum)
 
-All four handles of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the defaults:
+Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the shipped defaults (`uvk=11,flink=1,sloadhome=0,retf=179`):
 
 | program | instructions M | cycles M |
 |---|---|---|
-| corpus/lua_lexer | 3206.74 -> 2747.05 (**-14.3 %**) | 796.99 -> 711.95 (**-10.7 %**) |
-| awfy/towers | 164.63 -> 163.89 (-0.45 %) | 43.13 -> 42.21 (-2.1 %) |
-| awfy/json | 431.03 -> 426.52 (-1.05 %) | 133.02 -> 132.78 (-0.2 %) |
-| awfy/permute | 117.82 -> 117.46 (-0.31 %) | 22.96 -> 22.83 (-0.6 %) |
+| corpus/lua_lexer | 3206.82 -> 2752.43 (**-14.2 %**) | 804.16 -> 710.76 (**-11.6 %**) |
+| awfy/towers | 164.63 -> 164.63 (0) | 42.89 -> 42.84 (-0.1 %) |
+| awfy/json | 431.00 -> 426.33 (-1.1 %) | 132.87 -> 131.79 (-0.8 %) |
+| awfy/permute | 117.82 -> 117.82 (0) | 23.11 -> 23.02 (-0.4 %) |
+| awfy/queens | 497.13 -> 398.05 (-19.9 %) | 93.86 -> 79.48 (-15.3 %) |
+| awfy/cd | 644.68 -> 616.00 (-4.5 %) | 233.93 -> 232.06 (-0.8 %) |
+| awfy/storage | 492.25 -> 482.04 (-2.1 %) | 101.77 -> 99.72 (-2.0 %) |
 
-Round 2 alone (`sloadhome=0,retf=3` against the defaults): lua_lexer -0.20 % / +0.1 % cycles (noise), towers -0.44 % / -2.3 %, json -0.14 % /
-+0.5 % (noise band), permute -0.31 % / -0.3 %, queens -18.1 % / -15.6 %, cd -2.7 % / -0.2 %, storage -2.1 % / -2.4 %. Whole set (223 programs,
-instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise beyond
-0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
+With `sloadhome=3` on top (measured before it was switched off): towers -0.44 % / -2.3 % cycles, permute -0.31 %, lua_lexer -0.20 %. Whole set
+(223 programs, instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise
+beyond 0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
