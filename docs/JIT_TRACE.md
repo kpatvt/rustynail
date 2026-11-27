@@ -8576,7 +8576,7 @@ side traces link back to its head, so the head's prologue (stack check, three-le
 its 24 `SLOAD`s (tag compare, load, spill store) run once per token, and 19 upvalue reads (`UREF` + `UVREL` + `EQ`) of locals that are never
 assigned (`BYTE_*`, `is_alpha`, `sbyte`, `keywords`) stand where LuaJIT has constants.
 
-### 77.1 SLOAD homes / lazy SLOADs: analysed, not built (time box)
+### 77.1 SLOAD homes / lazy SLOADs: analysed, not built (time box; built in round 2, see 77.6)
 
 After 77.3 the lexer's main-loop root has 12 `SLOAD`s left (48 before), 6 of them in the leading run that every entry executes, each a tag
 compare, a load and a spill store (`ra::evict` gives the lowest-ref values a spill slot under pressure; reverse linear scan). The handle: a
@@ -8709,3 +8709,96 @@ lookups per move), which neither handle addresses. lua_lexer after both: trace c
 before and LuaJIT's 0.41 G; the remaining per-token costs are the token loop's pre-roll (the `lx:next()` method lookup, `self.pos` / `self.src`
 loads, 6 leading `SLOAD`s), the `string.sub` / `string.char` helpers (`short_core` 14 % of all instructions) and the links that do not pass the
 A2 proof (77.2). Not built: 77.1.
+
+### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default 3 = `SLOADHOME_PROCESS`)
+
+The handle of 77.1, built (round 2). Between an entry and an exit nothing writes the Lua stack but the stubs, the writeback at the end and the
+TR3b `SSTORE`s (G1, 7.x), so the payload of an `SLOAD`'s slot *is* the value until the trace ends. `ra::sload_homes` picks the `SLOAD`s that may
+use their slot as their spill home; `Ra::home_slot` gives such a value a dedicated spill slot number (recorded in `Allocation::homes`) when the
+allocator spills it; the assembler then emits no store at the definition (`Cx::post`) and reloads (`Cx::reload`, the loop moves through
+`Cx::smem`) read `[base + 16 * slot + 8]`.
+
+Eligibility (bit 0): not the function slot, not a carried load (`SLOAD_CARRIED`: its stack slot is stale, the value arrives in a register),
+not a constant-typed `SLOAD` (nil / booleans), no `SSTORE` of the slot, its slot not in `TraceIr::carry` (the slots a register-carrying R1 link
+leaves unwritten), not an end use (the writeback reads the value), no RETF segments (the base moves), and no snapshot entry names it. Bit 1
+(value 2): plain stack-slot snapshot entries may name it, when no entry of any exit snapshot writes the home's slot with another value: the exit
+restores those entries from the stack (`exit::ValSrc::Stack(slot)`: the stub loads `[base + 16 * slot + 8]`, `restore` reads the stack; an
+entry of the home's own slot is dropped, the slot holds the value already). Sunk-table fields, function slots and R1's dense (`SNAP_CARRY`)
+entries keep disqualifying. Only the snapshots an exit can restore count (the guard snapshots the allocator already walks for weak values:
+the check rides on that pass; a first form that scanned the whole snapshot map per trace cost awfy/cd +0.4 % instructions in compile time).
+
+Measured (one binary, `sloadhome=0` against `=3`, instructions, one run each, 223 programs): geomean **-0.05 %**; queens -1.0 %, fmt_x_pad
+-1.1 %, diff_levenshtein -0.9 %, type_call -0.8 %, dijkstra_routes -0.7 %, tremove_front / tunpack -0.6 %, rep_sep / heapsort -0.5 %, towers
+-0.44 %, setmt / metamethods / class_middleclass / tmove / oop_override / char / rep / tail_loop -0.3 .. -0.4 %; rises above 0.3 %:
+astar_jumper +4.0 % and testrunner_luaunit +0.31 %, both run-to-run noise of those programs (re-measured: -1.9 % / -0.3 %, and -0.16 % /
+-0.01 %); awfy/cd +0.10 %. lua_lexer -0.19 % (2752.4 -> 2747.2 M), permute -0.27 %, json +0.07 %. Outputs of all 223 programs are
+identical between `sloadhome=0` and `=3`. The first stage alone (`=1`) measured lua_lexer -0.33 %, queens -0.32 %, towers 0. towers'
+hottest trace keeps its spill stores: its leading `SLOAD`s are R1-carried (`TraceIr::carry`); giving them homes needs the carrying link to write
+their payloads to the stack (one store per slot in the link instead of one per entry in the root): not built.
+
+Tests: `tests/vm/s77_home.lua` (vm_corpus, and `tr_core::s77_home_programs`: `sloadhome` 3 / 1 / 0, the trace modes, `+verify`, `+wb`,
+`+randra=3`, exit storms, budget 17, GC stress 2): moves and swaps restored from loaded values at exits, sunk tables built from them, link
+writebacks, loop-carried slots, XMM homes, a towers-shaped method recursion with register-carrying links. Mutants (both caught):
+`sloadhome_snap_named` (a sunk / function / carried entry, or with bit 1 off any entry, may name a home), `sloadhome_slot_written` (a home whose
+slot another snapshot entry writes). Dropped, not caught by any program built for them: `sloadhome_sstore` (with `+wb` the `SSTORE`d slots are
+the ones the next iteration does not read, so a home of such a slot is never reloaded after the store in these programs) and
+`sloadhome_carry_dense`; both checks stay in the code.
+
+### 77.7 `retf` bits 4-7: function-entry side traces pop into a self-recursive caller's loop (`RETF_PROCESS` = 179)
+
+Phase 0's `LeaveFrame` side aborts (json, towers, stream_closures) are root `RETURN`s of function-entry families' side recordings: RETF (N2c) pops
+the root frame only when `retf` bit 2 (all function-entry families: lua_lexer +22 %) or the T1 selector / T9 `inner_ret` allow it. New bits of
+`TrLimits::retf` (bit 3 was taken: the test mode that ends a recording right after its pop):
+
+* bit 4 (16): the pop is allowed when the caller is **the same closure** (a recursion; a tree of closures of one prototype calling each other is
+  not: corpus2/expr_compiler's AST closures);
+* bit 5 (32): only into a call that lies inside a loop of the caller (`cache::enclosing_loop_head`);
+* bit 6 (64): only when that loop's head has a root trace (as the selector);
+* bit 7 (128): not when that loop is a generic `for` (expr_compiler's `emit` recursing over `ipairs(node.args)`: +6.1 % with bits 4 + 5).
+
+Every condition of `Rec::retf` stays (I9 `retf_nolazy`, the caller suspended at an `OP_CALL`, the operands, `RetfAlias`); the bits only choose
+where the existing RETF runs, so there is no new invariant and no mutant (the RETF mutants of N2c / N3a and their detectors cover the
+mechanism). Measured (instructions, one binary, `retf=3` against the setting; 12 programs first, then the whole set):
+
+| setting | queens | json | storage | lua_parser | sudoku | expr_compiler | roguelike | dijkstra | list | lua_interp |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 19 (bit 4) | -17.1 % | -0.2 % | -2.1 % | -4.4 % | -0.1 % | +5.5 % | 0 | 0 | +63.0 % | +39.3 % |
+| 51 (4 + 5) | -17.1 % | -0.2 % | -2.1 % | -4.5 % | -0.1 % | +6.1 % | 0 | 0 | 0 | 0 |
+| 115 (4 + 5 + 6) | -17.1 % | 0 | 0 | -3.3 % | +12.2 % | 0 | 0 | 0 | 0 | 0 |
+| **179 (4 + 5 + 7)** | **-17.1 %** | -0.2 % | **-2.1 %** | 0 | -0.1 % | 0 | 0 | 0 | 0 | 0 |
+
+(An earlier round that used bit 3 by mistake measured the test mode, not these rules.) Whole set with 179: geomean **-0.10 %**; queens -17.1 %,
+cd -2.8 %, storage -2.1 %, programs/json -0.9 %; nothing else beyond 0.3 % except astar_jumper +2.0 % (its noise band). Outputs of all 223
+programs identical between `retf=3` and `=179`. Default 179. Tests: `tests/vm/s77_rself.lua` (vm_corpus, and `tr_core::s77_rself_programs`:
+`retf` 179 / 51 / 19 / 3 / 7, the trace modes, `+verify`, exit storms, budget 17, GC stress 2): tree walks of varying shape, early returns used by
+the caller's loop, an error below the pop under `pcall`, a method recursion called from another function's loop.
+
+### 77.8 What is left of item 2 (stream_closures): not built, why
+
+stream_closures' 33 `LeaveFrame` side aborts are root `RETURN`s of the `map` / `filter` / `readings` closures' function-entry families (L30
+`Tailcall`, L37 / L165 `Return1`), and their callers are those loop-free closures: every one of these pops is refused by I9 (`pop_into_ok`: a
+caller that may be lazy-aware can have lazy frames, and the caller's code after the pop would run in a trace outside its region; 49 refusals at
+`retf=7`, the other 17 at the root-frame identity test). Measured ceiling with I9 off (`lazyci=0`, which switches lazy `CallInfo`s off for the
+whole program): -0.7 %, and -0.4 % with `retf=7` on top: popping alone is not what LuaJIT gains there. LuaJIT's side traces run back through
+filter -> map -> fold and keep the `readings` record virtual into the fold loop's trace; ours materialise it at the exit (286 k stub
+materialisations, `setnodevector` 10.8 % of the cycles) and the stack frames are rebuilt by the stub. The building blocks it needs: (a) native
+returns from a function-entry side trace into a caller of another, lazy-aware family (the return tail of P-M3 dispatches only to continuation
+sites of its own prototype), (b) region membership of the caller's code that then runs in that side trace (I9's reason), (c) carrying sunk
+allocations through the return into the caller's trace (section 52's replay generalised from exits to returns). None of the three fit this time
+box next to 77.6 / 77.7; the handles of 77.7 cover the self-recursive case only.
+
+### 77.9 Round 2 numbers (one binary, d5f4ed5 + docs, `RUSTYNAIL_SEED=0`, CPU 8, 15 runs interleaved, minimum)
+
+All four handles of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the defaults:
+
+| program | instructions M | cycles M |
+|---|---|---|
+| corpus/lua_lexer | 3206.74 -> 2747.05 (**-14.3 %**) | 796.99 -> 711.95 (**-10.7 %**) |
+| awfy/towers | 164.63 -> 163.89 (-0.45 %) | 43.13 -> 42.21 (-2.1 %) |
+| awfy/json | 431.03 -> 426.52 (-1.05 %) | 133.02 -> 132.78 (-0.2 %) |
+| awfy/permute | 117.82 -> 117.46 (-0.31 %) | 22.96 -> 22.83 (-0.6 %) |
+
+Round 2 alone (`sloadhome=0,retf=3` against the defaults): lua_lexer -0.20 % / +0.1 % cycles (noise), towers -0.44 % / -2.3 %, json -0.14 % /
++0.5 % (noise band), permute -0.31 % / -0.3 %, queens -18.1 % / -15.6 %, cd -2.7 % / -0.2 %, storage -2.1 % / -2.4 %. Whole set (223 programs,
+instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise beyond
+0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
