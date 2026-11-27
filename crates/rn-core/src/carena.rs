@@ -24,6 +24,11 @@ pub const MAX_BLOCK: usize = 2 * 1024;
 const HDR: usize = 64;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+/// Nesting depth of compiles (section 76.8: process-wide, so that the allocator's fast path is one load of [`ACT`] and no thread-local).
+static DEPTH: AtomicU32 = AtomicU32::new(0);
+/// The arena serves allocations now (on, inside a compile): set by [`enter`] / [`leave`]. A thread that allocates while another thread
+/// compiles takes its blocks from its own chunks (chunks are per thread), which is as correct as from the system allocator.
+static ACT: AtomicBool = AtomicBool::new(false);
 static BASE: AtomicUsize = AtomicUsize::new(0);
 /// The next never-used chunk of the range (offset).
 static FRESH: AtomicUsize = AtomicUsize::new(0);
@@ -66,10 +71,6 @@ struct Chunk {
 }
 
 thread_local! {
-    /// Nesting depth of compiles on this thread.
-    static DEPTH: Cell<u32> = const { Cell::new(0) };
-    /// The arena serves this thread now (on, inside a compile): set by [`enter`] / [`leave`].
-    static ACT: Cell<bool> = const { Cell::new(false) };
     /// The current chunk of this thread (address, 0 = none), its bump pointer, its newest block (for in-place growth, 0 = none).
     static CUR: Cell<usize> = const { Cell::new(0) };
     static TOP: Cell<usize> = const { Cell::new(0) };
@@ -115,21 +116,22 @@ pub fn enabled() -> bool {
 /// A compile starts on this thread.
 #[inline]
 pub fn enter() {
-    let n = DEPTH.with(|d| {
-        d.set(d.get() + 1);
-        d.get()
-    });
-    ACT.with(|a| a.set(n != 0 && ENABLED.load(Ordering::Relaxed)));
+    let n = DEPTH.fetch_add(1, Ordering::Relaxed) + 1;
+    ACT.store(n != 0 && ENABLED.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// The compile of the matching [`enter`] ends.
 #[inline]
 pub fn leave() {
-    let n = DEPTH.with(|d| {
-        d.set(d.get().saturating_sub(1));
-        d.get()
-    });
-    ACT.with(|a| a.set(n != 0 && ENABLED.load(Ordering::Relaxed)));
+    let prev = DEPTH.fetch_sub(1, Ordering::Relaxed);
+    let n = if prev == 0 {
+        // (an unpaired `leave`: stay at zero)
+        DEPTH.store(0, Ordering::Relaxed);
+        0
+    } else {
+        prev - 1
+    };
+    ACT.store(n != 0 && ENABLED.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// Blocks served by the arena on this thread / chunks recycled / chunks of the range ever taken (statistics).
@@ -155,7 +157,7 @@ fn mark() -> usize {
 /// Does this thread allocate from the arena now?
 #[inline]
 fn active() -> bool {
-    ACT.with(|a| a.get())
+    ACT.load(Ordering::Relaxed)
 }
 
 /// Drops one live count of the chunk at `c`: on its owner thread the last one recycles it onto the owner's free list, on another thread it is
@@ -269,6 +271,21 @@ unsafe impl GlobalAlloc for CArena {
         }
         // SAFETY: forwarded with the caller's layout.
         unsafe { System.alloc(layout) }
+    }
+
+    #[inline]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if active() {
+            let p = bump(layout);
+            if !p.is_null() {
+                // SAFETY: a fresh block of `layout.size()` bytes (a recycled chunk holds old bytes).
+                unsafe { std::ptr::write_bytes(p, 0, layout.size()) };
+                return p;
+            }
+        }
+        // SAFETY: forwarded with the caller's layout (section 76.8: `calloc`, which skips zeroing fresh pages; the default method of the trait
+        // would `malloc` and clear every byte).
+        unsafe { System.alloc_zeroed(layout) }
     }
 
     #[inline]

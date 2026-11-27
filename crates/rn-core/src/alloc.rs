@@ -74,8 +74,63 @@ pub trait Allocator: std::any::Any {
     }
 }
 
-/// The default allocator: the system allocator (`std::alloc::System`, i.e. `malloc`). Section 76.4: not the process global allocator, so
-/// that the Lua heap's blocks do not pass through `rnlua`'s compile-arena wrapper (`carena::CArena`), which serves only JIT compiles.
+/// Section 76.8: the Lua heap's default allocator takes its blocks from `std::alloc::System` directly instead of the process global
+/// allocator. Off by default (an embedder's `#[global_allocator]` sees the Lua heap, as before); `rnlua` switches it on at the top of `main`
+/// with [`set_heap_system`] so that the Lua heap's blocks do not pass through its compile-arena wrapper (`carena::CArena`).
+static HEAP_SYSTEM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Section 76.8: makes the default allocator ([`SystemAllocator`], [`PoolAllocator`]'s arenas) use `std::alloc::System` directly (`true`) or
+/// the process global allocator (`false`, the default). Must be called before the first state is created and never changed afterwards: a
+/// block is freed by the allocator the current setting names.
+pub fn set_heap_system(on: bool) {
+    HEAP_SYSTEM.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline(always)]
+fn heap_system() -> bool {
+    HEAP_SYSTEM.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// # Safety
+/// As [`GlobalAlloc::alloc`].
+#[inline(always)]
+unsafe fn h_alloc(l: Layout) -> *mut u8 {
+    if heap_system() {
+        // SAFETY: caller contract.
+        unsafe { System.alloc(l) }
+    } else {
+        // SAFETY: caller contract.
+        unsafe { std::alloc::alloc(l) }
+    }
+}
+
+/// # Safety
+/// As [`GlobalAlloc::dealloc`], for a block of [`h_alloc`] / [`h_realloc`] under the same setting.
+#[inline(always)]
+unsafe fn h_dealloc(p: *mut u8, l: Layout) {
+    if heap_system() {
+        // SAFETY: caller contract.
+        unsafe { System.dealloc(p, l) }
+    } else {
+        // SAFETY: caller contract.
+        unsafe { std::alloc::dealloc(p, l) }
+    }
+}
+
+/// # Safety
+/// As [`GlobalAlloc::realloc`], for a block of [`h_alloc`] / [`h_realloc`] under the same setting.
+#[inline(always)]
+unsafe fn h_realloc(p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+    if heap_system() {
+        // SAFETY: caller contract.
+        unsafe { System.realloc(p, l, n) }
+    } else {
+        // SAFETY: caller contract.
+        unsafe { std::alloc::realloc(p, l, n) }
+    }
+}
+
+/// The default allocator: the process global allocator (or `std::alloc::System` directly after [`set_heap_system`]`(true)`, section 76.8).
 #[derive(Default, Debug, Clone, Copy)]
 pub struct SystemAllocator;
 
@@ -85,7 +140,7 @@ impl Allocator for SystemAllocator {
             if !ptr.is_null() && old != 0 {
                 // SAFETY: caller guarantees (ptr, old) describes a live block of this allocator, which
                 // was created with this exact layout.
-                unsafe { System.dealloc(ptr, Layout::from_size_align_unchecked(old, BLOCK_ALIGN)) };
+                unsafe { h_dealloc(ptr, Layout::from_size_align_unchecked(old, BLOCK_ALIGN)) };
             }
             return std::ptr::null_mut();
         }
@@ -94,12 +149,12 @@ impl Allocator for SystemAllocator {
         };
         if ptr.is_null() || old == 0 {
             // SAFETY: `new_layout` has non-zero size.
-            unsafe { System.alloc(new_layout) }
+            unsafe { h_alloc(new_layout) }
         } else {
             // SAFETY: (ptr, old) is a live block allocated with alignment BLOCK_ALIGN; `new` is non-zero
             // and `new_layout` proved it does not overflow `isize` when rounded to the alignment.
             unsafe {
-                System.realloc(
+                h_realloc(
                     ptr,
                     Layout::from_size_align_unchecked(old, BLOCK_ALIGN),
                     new,
@@ -197,7 +252,7 @@ impl PoolAllocator {
             return std::ptr::null_mut();
         }
         // SAFETY: non-zero size.
-        let a = unsafe { System.alloc(Layout::from_size_align_unchecked(ARENA_SIZE, BLOCK_ALIGN)) };
+        let a = unsafe { h_alloc(Layout::from_size_align_unchecked(ARENA_SIZE, BLOCK_ALIGN)) };
         if a.is_null() {
             return a;
         }
@@ -226,7 +281,7 @@ impl Drop for PoolAllocator {
         for &a in &self.arenas {
             // SAFETY: every arena was allocated in `refill` with this layout.
             unsafe {
-                System.dealloc(
+                h_dealloc(
                     a,
                     Layout::from_size_align_unchecked(ARENA_SIZE, BLOCK_ALIGN),
                 )
@@ -749,6 +804,32 @@ impl<T: Copy> Default for RawBuf<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Section 76.8: the default is the global allocator; `set_heap_system(true)` (what `rnlua` does) takes the blocks of the default and pool
+    /// allocators from `System`. (In this test binary both are `malloc`, so switching while other tests run is harmless.)
+    #[test]
+    fn heap_system_switch() {
+        assert!(
+            !heap_system(),
+            "embedders keep the global allocator by default"
+        );
+        set_heap_system(true);
+        for pooled in [false, true] {
+            let a: Box<dyn Allocator> = if pooled {
+                Box::new(PoolAllocator::new())
+            } else {
+                Box::new(SystemAllocator)
+            };
+            let mut m = Mem::new(a);
+            let p = m.alloc(40).unwrap();
+            // SAFETY: p is a live 40-byte block from m.
+            let q = unsafe { m.realloc(p.as_ptr(), 40, 4000) }.unwrap().unwrap();
+            // SAFETY: q is a live 4000-byte block from m.
+            unsafe { m.free(q.as_ptr(), 4000) };
+            assert_eq!(m.total_bytes(), 0);
+        }
+        set_heap_system(false);
+    }
 
     #[test]
     fn alloc_free_accounting() {

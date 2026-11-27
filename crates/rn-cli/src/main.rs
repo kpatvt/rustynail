@@ -676,6 +676,8 @@ fn pmain_native(st: &mut State) -> LuaResult<usize> {
 static GLOBAL: rn_core::carena::CArena = rn_core::carena::CArena;
 
 fn main() {
+    // Section 76.8: the Lua heap allocates from `System` directly (not through the compile-arena wrapper above); before any state exists
+    rn_core::alloc::set_heap_system(true);
     // keep the whole C API linked (and exported by `-rdynamic`) for the C modules we load
     {
         std::hint::black_box(rn_capi::exported_symbols());
