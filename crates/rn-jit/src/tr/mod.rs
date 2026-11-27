@@ -889,6 +889,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         opencall: cfg.limits.opencall != 0,
         oframe: cfg.limits.oframe != 0,
         dynunroll: cfg.limits.dynunroll,
+        recinl: cfg.limits.recinl,
         avoid: if cfg.limits.reroot != 0 {
             pr.and_then(|pr| cache::head_reroot_avoid(st, pr, pc))
         } else {
@@ -1119,6 +1120,7 @@ pub fn driver_start_side(
         opencall: cfg.limits.opencall != 0,
         oframe: cfg.limits.oframe != 0,
         dynunroll: cfg.limits.dynunroll,
+        recinl: cfg.limits.recinl,
         ..RecCfg::default()
     };
     let token = record::arm(st, ci, start.pc, rc)?;

@@ -200,6 +200,8 @@ pub struct RecCfg {
     pub oframe: bool,
     /// Section 75.7 (`dynunroll`): the trip-count bound of an inlined `for` whose bounds are not trace constants (0: none).
     pub dynunroll: u32,
+    /// Section 75.9 (`recinl`): unroll-chain depth of continuation / loop recordings (0 / 1: off).
+    pub recinl: u32,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -553,6 +555,7 @@ impl Default for RecCfg {
             opencall: super::cache::OPENCALL_PROCESS != 0,
             oframe: super::cache::OFRAME_PROCESS != 0,
             dynunroll: super::cache::DYNUNROLL_PROCESS,
+            recinl: super::cache::RECINL_PROCESS,
             hrefv: true,
             shape: false,
             fold: true,
@@ -7571,7 +7574,35 @@ impl Rec {
             } else {
                 (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES)
             });
-        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= self.cfg.rec_unroll as usize)) {
+        // Section 75.9 (`recinl`): the unroll chain in a continuation or loop recording (E1 builds it only in function-entry recordings)
+        // (only a prototype with a counted loop: the self-calls sit in a loop body, the shape LuaJIT's subtree traces win on; recursion without loops
+        // keeps E1 / the plain push, section 75.9)
+        let unr2 = !unr
+            && push_ok
+            && self.cfg.recinl > 1
+            && (self.cfg.recinl & 8 != 0
+                || (p
+                    .code()
+                    .iter()
+                    .any(|&w| Instruction(w).opcode_raw() == OpCode::Forprep as u8)
+                    && !self.callee_from_upvalue(a)))
+            && !self.cfg.fn_root
+            && self.cfg.side.is_none()
+            && uses == d + 1
+            && self.frames[1..=d].iter().all(|f| f.unr)
+            && d < (self.cfg.recinl & 7) as usize
+            && d < (if self.cfg.max_depth == 0 {
+                MAX_DEPTH
+            } else {
+                (self.cfg.max_depth as usize).min(super::exit::MAX_FRAMES)
+            });
+        let unr = unr || unr2;
+        let k = if unr2 {
+            (self.cfg.recinl & 7) as usize
+        } else {
+            self.cfg.rec_unroll as usize
+        };
+        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= k)) {
             return self.end_rec_call(vm, idx, a, nargs, wanted, &p, cl);
         }
         if uses > 0 {

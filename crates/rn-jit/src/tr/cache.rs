@@ -166,6 +166,8 @@ pub const OFRAME_PROCESS: u32 = 1;
 pub const RETFUSE_PROCESS: u32 = 1;
 /// Section 75.7 (`dynunroll`): the process default of [`TrLimits::dynunroll`] (also the struct default).
 pub const DYNUNROLL_PROCESS: u32 = 0;
+/// Section 75.9 (`recinl`): the process default of [`TrLimits::recinl`] (also the struct default).
+pub const RECINL_PROCESS: u32 = 2;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -859,6 +861,11 @@ pub struct TrLimits {
     /// trip count at record time is at most this bound (bits 0-5), instead of aborting `InnerLoop` (or linking, T9). Bit 6: not in a frame whose
     /// prototype is already on the frame stack (section 75.8). 0 = off (default [`DYNUNROLL_PROCESS`]: the whole-set bar is not met, section 75.8).
     pub dynunroll: u32,
+    /// Section 75.9 (`recinl`, docs/JIT_TRACE.md section 75.9): a continuation or loop recording of a lazy-aware family inlines root-frame self-calls
+    /// as frames of an unroll chain (E1's lazy frames) up to `recinl & 7` frames deep; the self-call at the end of the chain is the native push that
+    /// materialises the chain. Only for a prototype with a counted loop whose self-call is found through a table (method recursion); bit 3 drops that
+    /// rule (measurement only). 0 / 1 = off; default 2 ([`RECINL_PROCESS`]).
+    pub recinl: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1151,6 +1158,7 @@ impl Default for TrLimits {
             oframe: OFRAME_PROCESS,
             retfuse: RETFUSE_PROCESS,
             dynunroll: DYNUNROLL_PROCESS,
+            recinl: RECINL_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1386,6 +1394,7 @@ impl TrLimits {
                 "oframe" => l.oframe = v.min(1),
                 "retfuse" => l.retfuse = v.min(1),
                 "dynunroll" => l.dynunroll = v.min(127),
+                "recinl" => l.recinl = v.min(15),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

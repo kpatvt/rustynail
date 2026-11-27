@@ -8399,3 +8399,36 @@ instructions, none above 2 % cycles) is missed, so **the default is OFF** (`DYNU
 for programs that want it. What is left to make it a default: a per-site adaptive policy fed by run-time exits of the unrolled copies (the
 regressing sites are visible only after the trace runs: exit counts at the copy's `FORLOOP` guards, or a measured comparison with the tier-1
 stay it replaced), like `bhmin` for `budhoist`.
+
+### 75.9 (A), first increment: `recinl`, the unroll chain in continuation and loop recordings (`TrLimits::recinl`, default 2)
+
+The machinery for native pushes that materialise inlined frames exists (E1: `end_rec_call` with `inl`, `rec_call_tail_lazy` writes each chain
+frame's `func` and its caller's `savedpc` and moves the frame base, outermost first), but only function-entry recordings build a chain. Now
+(`Rec::call_lua`, `unr2`) a continuation or loop recording (not a side recording) of a root-frame self-call that meets the native push's conditions
+inlines it as a chain frame (`unr`) while the chain is shorter than `recinl & 7` frames; the self-call at that depth is the native push of the
+chain. Every guard stays: the callee identity per frame, the push's stack / `CallInfo` room checks, the method lookup chain per frame (the CSE of
+the recording shares it with the caller's where it can), and the asm refuses a chain in a family that is not lazy-aware (`incons`, the trace is
+then not installed). For permute the continuation traces at pc 11 / 22 / 26 now carry the callee's prologue (`count` update, `n ~= 0`, `n - 1`)
+and push one level deeper: the callee's entry trace and its re-validation run once less per call; a leaf callee returns inside the trace.
+
+Policy (whole-set evidence, first run without it: list +846 %, scheme_interp +263 %, memo_cache +135 %, expr_compiler +69 %, parser_combinator
++19 %, inspect_lua +16 %, towers +12 %, lua_parser +9 %, binary_trees +3.6 %, cd +1.3 %; fib -2.9 %, permute -7.2 %): only a prototype with a
+counted loop (`FORPREP`) whose self-call is found through a table, not an upvalue (that shape is E1's in function-entry recordings). With it the
+whole set moves only permute (instructions, one run each, 190 programs, `recinl=0` against `=2`): **permute 178.85 -> 165.90 M (-7.24 %)**;
+corpus/astar_jumper +3.8 % is its run-to-run noise (4.31 .. 4.56 G for either setting, three runs each). permute cycles (CPU 8, min of 5, two
+interleaved rounds): 33.41 / 33.68 -> 32.75 / 32.49 M (-2.0 .. -3.6 %). `recinl=3` / `4`: 196.6 / 203.3 M (deeper chains exit at the
+level-specific guards of the inlined prologues; that is the place where side traces must be able to push from inside the chain frames, the next
+increment).
+
+Tests: `tests/vm/s75_recinl.lua` (permute, a tree walk called with fewer arguments at some levels, the method replaced mid-run through a second
+`__index` level, errors from depth under `pcall`, a field of self replaced inside the recursion, a vararg method recursion and open-result self-calls),
+`tr_core::s75_recinl_programs` (`recinl` 2 / 3 / 4 with `dynunroll` / 0, every trace mode, `+verify`, exit storms, budget 17, GC stress 2, plus the h7 /
+e1 recursion programs and `s75_oframe` with `recinl=3`). It is now also a detector of the chain mutants `h9_inl_savedpc_off`, `h9_inl_push_skip` and
+`h9_inl_bump_off` (each caught). A recinl-specific mutant (a self-call that fails the push conditions joins the chain) was equivalent: the deeper
+self-call then fails `push_ok` too, the chain never pushes and the recording stitches / aborts as before; dropped.
+
+**What remains of (A).** Native pushes from *side* recordings that start inside chain frames (`push_ok` requires a frameless side trace): the exits
+of the inlined prologues at other recursion levels (the reason `recinl=3/4` lose) need side traces that can complete the chain frames lazily and
+push; and loop roots that inline the whole subtree (the callee's loop through `dynunroll`, its self-calls as further chain frames) need the same,
+since every level that is not the recorded one leaves through such an exit. With that, the per-level exits become linked side traces and the chain
+depth can grow, which is what removes items 1-4 and 7 of 75.1.

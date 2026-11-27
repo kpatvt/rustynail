@@ -4551,6 +4551,45 @@ fn s75_dynunroll_programs() {
     compare(jobs);
 }
 
+/// Section 75.9 (`recinl`): continuation and loop recordings inline root-frame self-calls as an unroll chain whose last self-call is the native push
+/// that materialises it: method recursion with loops (permute, a tree walk, a recursion called with fewer arguments, a callee replaced mid-run, errors
+/// from depth), `recinl` 2 / 3 / 4 / 0, with `dynunroll`, in the trace modes with `+verify`, exit storms, budget 17 and GC stress 2; also the h7 / e1
+/// recursion programs with `recinl=3`. Detector of the chain mutants `h9_inl_savedpc_off`, `h9_inl_push_skip`, `h9_inl_bump_off` in this setting.
+#[test]
+fn s75_recinl_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["recinl=2", "recinl=3", "recinl=4,dynunroll=16", "recinl=0"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s75_recinl", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new("s75_recinl", trace)
+                    .limits_s(limits)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+        for p in [
+            "s75_oframe",
+            "h7_02_rec_shapes",
+            "h7_03_rec_closures_varargs",
+            "e1_01_unroll_shapes",
+        ] {
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s("recinl=3"));
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 59: B1 (`pureb`: `string.byte` ranges with one `j <= #s` guard and DCE-able loads) and B2 (`opencall`: open-result `CALL`s define
 /// the registers from `A` up in the `snapprune` liveness), with the knobs on (shipped) and off, in the trace modes with lockstep, exit storms,
 /// budgets, GC stress and the stack-move stress. Mutants `pureb_len_guard_skip`, `opencall_defs_low`.

@@ -4331,17 +4331,17 @@ const TABLE: &[Row] = &[
     Row {
         name: "h9_inl_push_skip",
         owner: "E1",
-        dets: &[d("tr_core", "e1_unroll_programs")],
+        dets: &[d("tr_core", "e1_unroll_programs"), d("tr_core", "s75_recinl_programs")],
     },
     Row {
         name: "h9_inl_savedpc_off",
         owner: "E1",
-        dets: &[d("tr_core", "e1_unroll_programs")],
+        dets: &[d("tr_core", "e1_unroll_programs"), d("tr_core", "s75_recinl_programs")],
     },
     Row {
         name: "h9_inl_bump_off",
         owner: "E1",
-        dets: &[d("tr_core", "e1_unroll_programs")],
+        dets: &[d("tr_core", "e1_unroll_programs"), d("tr_core", "s75_recinl_programs")],
     },
     Row {
         name: "h9_maxci_short",
