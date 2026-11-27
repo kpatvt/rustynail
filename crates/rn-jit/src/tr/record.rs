@@ -1355,12 +1355,10 @@ struct Rec {
     oframe_floor: Option<(u32, usize, usize)>,
     /// Section 75.14 (`mfshare`): the value refs of the `mfkeys` lookups made so far in this recording, by constant index.
     mfk_seen: Vec<(u32, Ref)>,
-<<<<<<< HEAD
     /// Section 76.11 (`hdrcse`): the `FLOAD`s since the last header barrier, `(table ref, field, type, load ref)`, and how many IR
     /// instructions were checked for barriers.
     hdr_cache: Vec<(Ref, Ref, Ty, Ref)>,
     hdr_scan: usize,
-=======
     /// Section 77.3 (`uvk`): closure refs whose identity the trace knows (guarded by `EQREF` with the closure's address, or a `KPTR` constant read
     /// from a read-only upvalue), with the address.
     uvk_known: Vec<(Ref, usize)>,
@@ -1370,7 +1368,6 @@ struct Rec {
     uvk_watched: usize,
     /// Section 77.3: a read-only upvalue was read as a constant.
     uvk_used: bool,
->>>>>>> d52cc24
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1744,15 +1741,12 @@ impl Rec {
             oframe_wb: None,
             oframe_floor: None,
             mfk_seen: Vec::new(),
-<<<<<<< HEAD
             hdr_cache: Vec::new(),
             hdr_scan: 0,
-=======
             uvk_known: Vec::new(),
             uvk_cl: Vec::new(),
             uvk_watched: 0,
             uvk_used: false,
->>>>>>> d52cc24
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -1952,15 +1946,12 @@ impl Rec {
         self.oframe_wb = None;
         self.oframe_floor = None;
         self.mfk_seen.clear();
-<<<<<<< HEAD
         self.hdr_cache.clear();
         self.hdr_scan = 0;
-=======
         self.uvk_known.clear();
         self.uvk_cl.clear();
         self.uvk_watched = 0;
         self.uvk_used = false;
->>>>>>> d52cc24
         self.inl_back.set(0);
         self.la_seen.borrow_mut().clear();
         self.first_store = None;
