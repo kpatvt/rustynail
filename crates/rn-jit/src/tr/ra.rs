@@ -210,6 +210,13 @@ pub struct RaOpts {
     /// R1 (`regcarry`): the index of the first instruction behind the leading `SLOAD` run of a root (`exit::lead_run`): the allocator records where the
     /// run's values are before that instruction ([`Allocation::carry`]). 0: nothing is recorded.
     pub carry_at: usize,
+    /// Section 77.6 (`sloadhome`): an `SLOAD` that no snapshot, no end use and no `SSTORE` of its slot names, in a trace without native frames
+    /// segments, is not a carried load and whose slot is not one R1's register-carrying entry leaves unwritten (`TraceIr::carry`), gets its stack slot as its spill home: no store at the definition, its
+    /// reloads read the payload from the stack (which nothing writes between an entry and an exit but the stubs, the writeback and `SSTORE`).
+    pub homes: bool,
+    /// Section 77.6 (`sloadhome` bit 1): also an `SLOAD` named by plain stack-slot snapshot entries, when no entry of any snapshot targets its slot
+    /// (the exit restores those entries from the stack, `exit::ValSrc::Stack`).
+    pub homes_snap: bool,
     /// Section 51 (`rapol`): the policy levers (`RAPOL_*` bits).
     pub pol: u32,
 }
@@ -225,6 +232,8 @@ impl Default for RaOpts {
             hkaddr: false,
             ixfuse: false,
             carry_at: 0,
+            homes: false,
+            homes_snap: false,
             pol: super::cache::RAPOL_PROCESS,
         }
     }
@@ -236,6 +245,91 @@ impl RaOpts {
         RaOpts {
             randra: o.randra,
             ..RaOpts::default()
+        }
+    }
+}
+
+/// Section 77.6 (`sloadhome`): per instruction, the root-relative stack slot an `SLOAD` may use as its spill home (see [`RaOpts::homes`]).
+fn sload_homes(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> (Vec<Option<u16>>, Vec<u32>) {
+    let n = ir.ins.len();
+    let mut out = vec![None; n];
+    if !opts.homes || !ir.segs.is_empty() {
+        return (out, Vec::new());
+    }
+    let mut cand: Vec<(usize, u16)> = Vec::new();
+    for (k, i) in ir.ins.iter().enumerate() {
+        if i.op == TOp::Sload
+            && i.a != u16::MAX
+            && aux_bits(i.aux) & SLOAD_CARRIED == 0
+            && !matches!(i.t, Ty::Nil | Ty::False | Ty::True)
+            && !ir.carry.contains(&i.a)
+        {
+            out[k] = Some(i.a);
+            cand.push((k, i.a));
+        }
+    }
+    if cand.is_empty() {
+        return (out, Vec::new());
+    }
+    for i in &ir.ins {
+        if i.op == TOp::Sstore {
+            for c in cand.iter().filter(|c| c.1 == i.aux as u16) {
+                out[c.0] = None;
+            }
+        }
+    }
+    for &r in end_uses {
+        if TraceIr::is_ins(r) && idx(r) < n {
+            out[idx(r)] = None;
+        }
+    }
+    // per stack slot: the instruction of the candidate loading it, `u32::MAX` for several, `u32::MAX - 1` for none
+    let maxs = cand.iter().map(|c| usize::from(c.1)).max().unwrap_or(0);
+    let mut by_slot = vec![u32::MAX - 1; maxs + 1];
+    for c in &cand {
+        let b = &mut by_slot[usize::from(c.1)];
+        *b = if *b == u32::MAX - 1 {
+            c.0 as u32
+        } else {
+            u32::MAX
+        };
+    }
+    (out, by_slot)
+}
+
+/// Section 77.6: applies snapshot entry `e` (of a snapshot an exit restores) to the home candidates: a non-plain entry (or, with `homes_snap` off,
+/// any entry) naming a candidate disqualifies it; an entry of a candidate's slot that restores another value overwrites the stack the other entries
+/// read.
+fn home_snap_entry(
+    home: &mut [Option<u16>],
+    by_slot: &[u32],
+    ir: &TraceIr,
+    e: &SnapEntry,
+    homes_snap: bool,
+) {
+    let n = home.len();
+    if TraceIr::is_ins(e.r) && idx(e.r) < n && home[idx(e.r)].is_some() {
+        let plain = e.flags & (SNAP_SUNK_ANY | SNAP_FUNC | SNAP_CARRY) == 0 && e.slot < SNAP_PSEUDO;
+        if !(homes_snap && plain) && !mutants::active("sloadhome_snap_named") {
+            home[idx(e.r)] = None;
+        }
+    }
+    match by_slot.get(usize::from(e.slot)).copied() {
+        None => {}
+        Some(j) if j == u32::MAX - 1 => {}
+        Some(_) if mutants::active("sloadhome_slot_written") => {}
+        Some(j) if j != u32::MAX => {
+            if !(TraceIr::is_ins(e.r) && idx(e.r) == j as usize) {
+                home[j as usize] = None;
+            }
+        }
+        Some(_) => {
+            // (several loads of one slot: every one whose ref is not the entry's)
+            for (k, i) in ir.ins.iter().enumerate() {
+                if i.op == TOp::Sload && i.a == e.slot && !(TraceIr::is_ins(e.r) && idx(e.r) == k) {
+                    home[k] = None;
+                }
+            }
         }
     }
 }
@@ -270,6 +364,9 @@ pub struct Allocation {
     pub end_locs: Vec<Loc>,
     /// R1: with [`RaOpts::carry_at`] set: per live leading `SLOAD` (ref, register holding it before instruction `carry_at`, spill slots that hold it).
     pub carry: Vec<(Ref, Loc, Vec<u16>)>,
+    /// Section 77.6 (`sloadhome`): spill slots that are the stack slot of an `SLOAD` (spill slot, root-relative stack slot): never stored, reloaded
+    /// from the stack.
+    pub homes: Vec<(u16, u16)>,
     /// Helper-call sites in instruction order.
     pub calls: Vec<CallSite>,
     /// Spill slots used (`0..nspill`), not counting [`SCRATCH_SPILL`].
@@ -795,6 +892,9 @@ struct Ra<'a> {
     free_slots: Vec<u16>,
     next_slot: usize,
     reuse_slots: bool,
+    /// Section 77.6: the stack slot of each `SLOAD` that may live in it instead of a spill slot.
+    home_of: Vec<Option<u16>>,
+    homes: Vec<(u16, u16)>,
     out: Vec<InsAlloc>,
     snap_locs: Vec<Vec<Loc>>,
     snap_first: Vec<usize>,
@@ -1119,6 +1219,7 @@ pub fn allocate_hinted(
         }
         snap_last[s] = i;
     }
+    let (mut home_of, home_by_slot) = sload_homes(ir, end_uses, opts);
     let mut weak = vec![false; n];
     {
         let mut real = vec![false; n];
@@ -1146,6 +1247,9 @@ pub fn allocate_hinted(
             for e in ir.snap_entries(s) {
                 if TraceIr::is_ins(e.r) {
                     snapped[idx(e.r)] = true;
+                }
+                if !home_by_slot.is_empty() {
+                    home_snap_entry(&mut home_of, &home_by_slot, ir, e, opts.homes_snap);
                 }
             }
         }
@@ -1196,6 +1300,8 @@ pub fn allocate_hinted(
         free_slots: Vec::new(),
         next_slot: 0,
         reuse_slots,
+        home_of,
+        homes: Vec::new(),
         out: vec![InsAlloc::default(); n],
         snap_locs: ir
             .snaps
@@ -1324,6 +1430,17 @@ impl Ra<'_> {
         Ok((self.next_slot - 1) as u16)
     }
 
+    /// Section 77.6: the home slot of `v` (a permanent slot recorded in `homes`), when `v` may live in its stack slot.
+    fn home_slot(&mut self, v: usize) -> R<Option<u16>> {
+        let Some(a) = self.home_of.get(v).copied().flatten() else {
+            return Ok(None);
+        };
+        let s = self.new_slot(true)?;
+        self.vals[v].perm.push(s);
+        self.homes.push((s, a));
+        Ok(Some(s))
+    }
+
     fn any_slot(&self, v: usize) -> Option<u16> {
         self.vals[v]
             .perm
@@ -1334,6 +1451,9 @@ impl Ra<'_> {
 
     fn ensure_slot(&mut self, v: usize) -> R<u16> {
         if let Some(s) = self.any_slot(v) {
+            return Ok(s);
+        }
+        if let Some(s) = self.home_slot(v)? {
             return Ok(s);
         }
         let s = self.new_slot(false)?;
@@ -1694,6 +1814,7 @@ impl Ra<'_> {
             backedge_after: after,
             end_locs,
             carry: std::mem::take(&mut self.carry),
+            homes: std::mem::take(&mut self.homes),
             calls: self.calls,
             nspill: self.next_slot as u16,
             used: std::cell::OnceCell::new(),
@@ -1826,8 +1947,10 @@ impl Ra<'_> {
                     self.vals[v].fixed = true;
                 }
                 None => {
-                    let s = self.new_slot(true)?;
-                    self.vals[v].perm.push(s);
+                    if self.home_slot(v)?.is_none() {
+                        let s = self.new_slot(true)?;
+                        self.vals[v].perm.push(s);
+                    }
                     self.vals[v].slot_home = true;
                 }
             }
@@ -2209,6 +2332,9 @@ pub fn dump(ir: &TraceIr, al: &Allocation) -> String {
         Loc::X(n) => format!("X{n}"),
         Loc::Spill(n) => format!("[{n}]"),
     };
+    if !al.homes.is_empty() {
+        let _ = writeln!(s, "homes (spill <- stack slot): {:?}", al.homes);
+    }
     for (i, ins) in ir.ins.iter().enumerate() {
         let ia = &al.ins[i];
         let _ = write!(

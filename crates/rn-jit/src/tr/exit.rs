@@ -85,6 +85,9 @@ pub enum ValSrc {
     Spill(u16),
     /// A constant payload (the tag is in [`SlotRestore::tag`]).
     Imm(u64),
+    /// Section 77.6 (`sloadhome`, bit 1): the payload of root-relative stack slot `n` (the home of an `SLOAD` that no entry of any snapshot
+    /// of the trace writes back, so it still holds the entry value while the exit restores the others). Stack-slot entries only.
+    Stack(u16),
 }
 
 /// N5: [`SlotRestore::tag`] of a string whose short / long variant is not static (`ir::F_ANYSTR`): the restore reads the tag
@@ -845,7 +848,22 @@ pub fn build_exits_ex(
                 }
                 continue;
             }
-            let (tag, src) = slot_value(ir, si, e.r, loc, &mut usable)?;
+            let home = match loc {
+                Loc::Spill(k) => al.homes.iter().find(|h| h.0 == k).map(|h| h.1),
+                _ => None,
+            };
+            let (tag, src) = match home {
+                Some(a) => {
+                    if a == e.slot {
+                        continue; // (the slot holds the value already)
+                    }
+                    let t = ir.ty_of(e.r);
+                    let tag = tag_of(t)
+                        .ok_or_else(|| format!("snapshot {si}: raw type {t:?} at a home"))?;
+                    (tag, ValSrc::Stack(a))
+                }
+                None => slot_value(ir, si, e.r, loc, &mut usable)?,
+            };
             slots.push(SlotRestore {
                 slot: e.slot,
                 tag,
@@ -1156,6 +1174,7 @@ pub fn inline_stub_ops_slots(
                         },
                     });
                 }
+                // (a home is never a dynamic string: its `SLOAD` has a static type)
                 _ => unreachable!("dynamic string tag without a register or spill source"),
             }
             v.push(Op::Or(7, Src::Imm(i32::from(BIT_ISCOLLECTABLE))));
@@ -1183,6 +1202,21 @@ pub fn inline_stub_ops_slots(
                     dst: 7,
                     w: W::B8,
                     m: area_m(exit_area::SPILL + 8 * usize::from(k)),
+                });
+                v.push(Op::St {
+                    w: W::B8,
+                    m: fm(8),
+                    src: Src::V(7),
+                });
+            }
+            ValSrc::Stack(a) => {
+                v.push(Op::Ld {
+                    dst: 7,
+                    w: W::B8,
+                    m: M {
+                        base: Base::Frame,
+                        off: i32::from(a) * 16 + 8,
+                    },
                 });
                 v.push(Op::St {
                     w: W::B8,
@@ -1686,6 +1720,7 @@ fn read_src(area: &ExitArea, s: ValSrc) -> u64 {
         ValSrc::Xmm(n) => area.xmm[usize::from(n)],
         ValSrc::Spill(n) => area.spill[usize::from(n)],
         ValSrc::Imm(v) => v,
+        ValSrc::Stack(_) => unreachable!("a home only restores stack slots (`restore` reads it)"),
     }
 }
 
@@ -1828,7 +1863,20 @@ pub unsafe fn restore(
     for e in &s.slots {
         let idx = base + usize::from(e.slot);
         assert!(idx < ctx.stack_size, "snapshot slot beyond the stack");
-        let v = read_src(area, e.src);
+        let v = match e.src {
+            ValSrc::Stack(a) => {
+                let j = base + usize::from(a);
+                assert!(j < ctx.stack_size, "home slot beyond the stack");
+                // SAFETY: `j < stack_size` (contract as for the writes below); no entry of the snapshot writes slot `a` (section 77.6)
+                unsafe {
+                    ctx.stack0
+                        .wrapping_add(j * 16 + 8)
+                        .cast::<u64>()
+                        .read_unaligned()
+                }
+            }
+            src => read_src(area, src),
+        };
         // SAFETY: `idx < stack_size`, so the 16-byte slot is inside the stack (contract); the write is
         // unaligned-safe and covers the whole `Value` (widened tag, then payload).
         unsafe {
@@ -1875,7 +1923,7 @@ pub fn sunk_save_ops(s: &ExitSnap) -> Vec<Op> {
     let mut note = |src: ValSrc| match src {
         ValSrc::Reg(r) => gpr[usize::from(r)] = true,
         ValSrc::Xmm(x) => xmm[usize::from(x)] = true,
-        ValSrc::Spill(_) | ValSrc::Imm(_) => {}
+        ValSrc::Spill(_) | ValSrc::Imm(_) | ValSrc::Stack(_) => {}
     };
     for t in &s.sunk {
         for f in &t.fields {
@@ -2013,6 +2061,7 @@ pub fn replay_copy_ops(s: &ExitSnap) -> Vec<Op> {
                 v.push(Op::Mov(6, c));
                 None
             }
+            ValSrc::Stack(_) => unreachable!("a home only restores stack slots"),
         };
         if let Some(m) = from {
             v.push(Op::Ld {

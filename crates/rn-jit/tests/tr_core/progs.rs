@@ -12,6 +12,12 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
+        name: "s77_home",
+        small: true,
+        // section 77.6 (`sloadhome`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s77_home.lua"),
+    },
+    Prog {
         name: "s77_flink",
         small: true,
         // section 77.2 (`flink`): the vm-corpus program, also compared with the reference there

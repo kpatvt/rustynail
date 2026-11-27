@@ -2134,6 +2134,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         ixfuse: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ixfuse } != 0,
         // SAFETY: as above.
         pol: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.rapol },
+        // SAFETY: as above.
+        homes: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sloadhome } & 1 != 0,
+        // SAFETY: as above.
+        homes_snap: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sloadhome } & 2 != 0,
         carry_at: if ir.carry.is_empty() {
             0
         } else {
@@ -3638,7 +3642,7 @@ fn verify_probe(st: &mut State, id: TrId) {
             exit::ValSrc::Reg(r) => Some(a.gpr[usize::from(r)]),
             exit::ValSrc::Xmm(x) => Some(a.xmm[usize::from(x)]),
             exit::ValSrc::Spill(k) => Some(a.spill[usize::from(k)]),
-            exit::ValSrc::Imm(_) => None,
+            exit::ValSrc::Imm(_) | exit::ValSrc::Stack(_) => None,
         }
     };
     for s in &snap.slots {

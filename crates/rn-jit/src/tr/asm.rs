@@ -3244,7 +3244,10 @@ impl<'a> Cx<'a> {
     fn emit_move(&mut self, m: Move) {
         match (m.dst, m.src) {
             (Loc::G(d), Loc::G(s)) => self.push(Op::MovR(d, s)),
-            (Loc::G(d), Loc::Spill(s)) => self.ld(d, W::B8, spill_m(s)),
+            (Loc::G(d), Loc::Spill(s)) => {
+                let m = self.smem(s);
+                self.ld(d, W::B8, m)
+            }
             (Loc::G(d), Loc::Const(c)) => {
                 let b = self.kbits_of(c);
                 self.push(Op::Mov(d, b));
@@ -3253,10 +3256,10 @@ impl<'a> Cx<'a> {
             // cycle breaking through V7 (ra::sequentialise)
             (Loc::G(d), Loc::X(s)) => self.push(Op::FtoG(d, s)),
             (Loc::X(d), Loc::G(s)) => self.push(Op::GtoF(d, s)),
-            (Loc::X(d), Loc::Spill(s)) => self.push(Op::LdF {
-                dst: d,
-                m: spill_m(s),
-            }),
+            (Loc::X(d), Loc::Spill(s)) => {
+                let m = self.smem(s);
+                self.push(Op::LdF { dst: d, m })
+            }
             (Loc::X(d), Loc::Const(c)) => {
                 let b = self.kbits_of(c);
                 self.ldf_const(d, b);
@@ -3267,7 +3270,8 @@ impl<'a> Cx<'a> {
                 src: s,
             }),
             (Loc::Spill(d), Loc::Spill(s)) => {
-                self.ld(7, W::B8, spill_m(s));
+                let m = self.smem(s);
+                self.ld(7, W::B8, m);
                 self.st(W::B8, spill_m(d), Src::V(7));
             }
             (Loc::Spill(d), Loc::Const(c)) => {
@@ -5439,7 +5443,31 @@ impl Cx<'_> {
 
     // ---- reloads / stores ---------------------------------------------------------------------------------------------
 
+    /// Section 77.6 (`sloadhome`): the stack slot whose payload is the home of spill slot `s`, if it is one.
+    fn home_of(&self, s: u16) -> Option<u16> {
+        self.al.homes.iter().find(|h| h.0 == s).map(|h| h.1)
+    }
+
+    /// Section 77.6: the memory of spill slot `s` as a source (a home slot reads its stack slot's payload).
+    fn smem(&self, s: u16) -> M {
+        match self.home_of(s) {
+            Some(a) => fm(a, 8),
+            None => spill_m(s),
+        }
+    }
+
     fn reload(&mut self, r: &super::ra::Reload) {
+        if let Some(a) = self.home_of(r.slot) {
+            match r.reg {
+                Loc::G(n) => self.ld(n, W::B8, fm(a, 8)),
+                Loc::X(n) => self.push(Op::LdF {
+                    dst: n,
+                    m: fm(a, 8),
+                }),
+                l => panic!("reload into {l:?}"),
+            }
+            return;
+        }
         match r.reg {
             Loc::G(n) => self.ld(n, W::B8, spill_m(r.slot)),
             Loc::X(n) => self.push(Op::LdF {
@@ -5461,6 +5489,10 @@ impl Cx<'_> {
         let a = &self.al.ins[i];
         let (dst, stores, post) = (a.dst, a.stores.clone(), a.post.clone());
         for s in stores {
+            if self.home_of(s).is_some() {
+                // (section 77.6: the value is its stack slot's payload; nothing to store)
+                continue;
+            }
             match dst {
                 Loc::G(n) => self.st(W::B8, spill_m(s), Src::V(n)),
                 Loc::X(n) => self.push(Op::StF {
@@ -10913,6 +10945,11 @@ impl Cx<'_> {
                         }),
                         ValSrc::Spill(k) => {
                             self.ld(7, W::B8, spill_m(k));
+                            self.st(W::B8, fm(e.slot, 8), Src::V(7));
+                        }
+                        ValSrc::Stack(a) => {
+                            // (section 77.6: a home; no entry writes slot `a`)
+                            self.ld(7, W::B8, fm(a, 8));
                             self.st(W::B8, fm(e.slot, 8), Src::V(7));
                         }
                         ValSrc::Imm(_) => unreachable!("checked by the eligibility test"),

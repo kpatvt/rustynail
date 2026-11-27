@@ -2256,6 +2256,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s77_flink_programs")],
     },
     Row {
+        name: "sloadhome_snap_named",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_home_programs")],
+    },
+    Row {
+        name: "sloadhome_slot_written",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_home_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

@@ -176,6 +176,8 @@ pub const MFKEYS_PROCESS: u32 = 1;
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
+/// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default).
+pub const SLOADHOME_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -906,6 +908,10 @@ pub struct TrLimits {
     /// checks (G1) like a frameless one; the assembler still takes them only when `exit::link_proof` proves the skipped type checks and the
     /// chain's room covers the target's. 0 = off, 1 = on (default [`FLINK_PROCESS`]).
     pub flink: u32,
+    /// Section 77.6 (`sloadhome`, docs/JIT_TRACE.md section 77.6): an `SLOAD` that no snapshot, no end use and no `SSTORE` names keeps its value in its
+    /// stack slot when the allocator spills it: no spill store at the definition, reloads from the stack (`ra::RaOpts::homes`). 0 = off, 1 = on
+    /// (default [`SLOADHOME_PROCESS`]).
+    pub sloadhome: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1205,6 +1211,7 @@ impl Default for TrLimits {
             mfshare: MFSHARE_PROCESS,
             uvk: UVK_PROCESS,
             flink: FLINK_PROCESS,
+            sloadhome: SLOADHOME_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1447,6 +1454,7 @@ impl TrLimits {
                 "mfshare" => l.mfshare = v.min(1),
                 "uvk" => l.uvk = v.min(15),
                 "flink" => l.flink = v.min(1),
+                "sloadhome" => l.sloadhome = v.min(3),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -6210,6 +6218,7 @@ fn slink_carry(
             ValSrc::Reg(r) if r != 10 && r != 7 && ty != Ty::Num => CarrySrc::G(r),
             ValSrc::Xmm(x) if ty == Ty::Num => CarrySrc::X(x),
             ValSrc::Spill(n) => CarrySrc::Spill(n),
+            ValSrc::Stack(_) => return Vec::new(),
             _ => continue,
         };
         out.push((s.slot, ty, src, !super::exit::tag_store_redundant(snap, s)));
@@ -6283,6 +6292,7 @@ fn carry_slots(
             ValSrc::Reg(r) if r != 10 && r != 7 && (ty != super::ir::Ty::Num) => CarrySrc::G(r),
             ValSrc::Xmm(x) if ty == super::ir::Ty::Num => CarrySrc::X(x),
             ValSrc::Spill(n) => CarrySrc::Spill(n),
+            ValSrc::Stack(_) => return Vec::new(),
             _ => return Vec::new(),
         };
         if out.iter().any(|&(sl, _, _, _)| sl == s.slot) {
