@@ -8710,7 +8710,7 @@ before and LuaJIT's 0.41 G; the remaining per-token costs are the token loop's p
 loads, 6 leading `SLOAD`s), the `string.sub` / `string.char` helpers (`short_core` 14 % of all instructions) and the links that do not pass the
 A2 proof (77.2). Not built: 77.1.
 
-### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default **0 = off**, `SLOADHOME_PROCESS`)
+### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default 3 since 77.10, `SLOADHOME_PROCESS`)
 
 The handle of 77.1, built (round 2). Between an entry and an exit nothing writes the Lua stack but the stubs, the writeback at the end and the
 TR3b `SSTORE`s (G1, 7.x), so the payload of an `SLOAD`'s slot *is* the value until the trace ends. `ra::sload_homes` picks the `SLOAD`s that may
@@ -8744,7 +8744,7 @@ slot another snapshot entry writes). Dropped, not caught by any program built fo
 the ones the next iteration does not read, so a home of such a slot is never reloaded after the store in these programs) and
 `sloadhome_carry_dense`; both checks stay in the code.
 
-**Shipped OFF: a correctness failure that is not root-caused.** The full gate-light with `sloadhome=3` as the default failed nine `tr_core` matrices
+**Shipped OFF in round 2: a correctness failure, root-caused and fixed in 77.10 (default 3 since).** The full gate-light with `sloadhome=3` as the default failed nine `tr_core` matrices
 on 5.5 (seven on 5.4) that pass with it off: wrong results under `+exitstorm=7 +verify +randra=5` in `bh_next` (the `over` / `later` / `fresh`
 lines print addresses as numbers), `n6_dynkey_shape`, `f1_next_hint`, `n7_gfor_nest`, `n5_str_variants`, and a crash (SIGSEGV) of `dm_dynkey` under
 `-fwd -cse -sink`; `sloadhome=1` (no snapshot entries at homes) fails the same way. In the child reproducer (`TR_CORE_JOB="bh_next|always|+exitstorm=7
@@ -8814,3 +8814,80 @@ Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the 
 With `sloadhome=3` on top (measured before it was switched off): towers -0.44 % / -2.3 % cycles, permute -0.31 %, lua_lexer -0.20 %. Whole set
 (223 programs, instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise
 beyond 0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
+
+### 77.10 `sloadhome`: the two causes of the round-2 failures, fixed; default 3
+
+The failures of 77.6 were bugs of the homes, not latent ones of G1: no variant of the reproducer family fails without homes (bh_next,
+n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants with `+exitstorm=3/5/7 +verify +randra=1..8`, `sloadhome=0`: 120 jobs, all equal to
+the interpreter; f1_next_hint prints addresses, its raw output differs run to run in every setting, so it was judged through the harness). With
+homes only `+randra=5` failed, and only with some address layouts (a third of the runs). Minimal reproducers, by line deletion on the harness child
+(`TR_CORE_JOB="@file|always|<opts>||sloadhome=1||0"`): bh_next's `over` loop behind three main-chunk locals and a fill loop (wrong totals), and
+dm_dynkey's case E (stores through `__newindex` function / table metatables; SIGSEGV with `-fwd -cse -sink`: tier 1 called a C function at 0x11, a
+slot restored with an integer payload under a function tag). A temporary check (keep the home's spill store, compare it with the stack at every
+home reload, abort on a difference) never fired, so the reloads were right; switching the sources of the moves back to the spill slots made both
+reproducers pass, and a print at each move kind named the culprits:
+
+1. **The loop invariant's home slot was handed back.** `Ra::cross_loop` turns a loop invariant's permanent slots into ordinary ones when the
+   backward scan crosses `LOOP`, so they are freed at the definition; a home slot then went to another value, whose spills and reloads the
+   assembler took for the home (`Allocation::homes` names slot numbers for the whole trace). Now home slots stay permanent there. Mutant
+   `sloadhome_slot_reused` (caught by `s77_home_programs`, whose case (5) is bh_next's shape and whose matrix now runs `+randra=1..8` with storms 3 / 7).
+2. **The carry entry read a parent spill slot as a home.** The R1 carry entry of a side trace moves the parent's exit-map values (`CarrySrc::Spill(n)`:
+   the parent's spill slots in the exit area) to where this trace holds them, through `Cx::emit_move`, whose spill sources resolve this trace's
+   homes: a parent slot whose number is a home here was read from the stack. It now uses `Cx::emit_move_raw` (sources are exit-area slots as they
+   are). Mutant `sloadhome_carry_src` (caught by `r1_regcarry_programs`).
+
+Rules added on the way and dropped again once the two causes were found (none of them was needed: the failing set passes without them, and their
+mutants survived every detector): a home slot written back at the end of the trace, R1's leading run in a root with a carrying entry, bit 1 off in
+traces with register carrying. Kept as defensive rules without a mutant: snapshots no guard names count for eligibility like the guards' (the end
+exit of a straight-line trace), and an exit with an entry restored from a home takes no R1 carry path (it has no register to hand over).
+
+Gate subset re-run with `sloadhome=3` as the default (5.5 debug): the nine failing `tr_core` tests of 77.6 plus `r1_*`, `s77_*`,
+`twins_options`, `twins_emulator_modes`, `s1_lazystub_programs`: all pass. Whole set (223 programs, instructions, `sloadhome=0` against `=3`,
+one binary): geomean **-0.07 %**, no rise beyond 0.3 %; queens -1.2 %, fmt_x_pad -1.2 %, diff_levenshtein -0.9 %, type_call -0.8 %, dijkstra -0.7 %,
+tremove_front / tunpack -0.6 %, rep_sep / heapsort -0.5 %, setmt / metamethods / tmove / towers / class_middleclass / oop_override / char /
+rep / tail_loop -0.3 .. -0.4 %. Outputs of the 223 programs identical. Default **3** (on). Cycles: 77.13.
+
+### 77.11 Homes for slots that register-carrying links leave unwritten (towers): not built, and why it cannot save anything
+
+towers' hottest trace (28) keeps its leading `SLOAD`s in spill slots because they are R1's dense slots (`TraceIr::carry`): every snapshot after the
+run restores them (`SNAP_CARRY` entries), precisely because a register-carrying link into the root's third entry hands their values over in
+registers and leaves the stack stale (its exit stubs store tags only). A home reads the stack, so it needs that slot's payload in the stack: the
+carrying link would have to store it. On the entries that come through such a link the root's own definition stores do not run either (the third
+entry is behind the leading run, the link stores into the root's spill slots), so the store would only move from the link's spill store to a stack
+store: no instruction saved on those entries; on the other entries (interpreter, second entry) the stores are already gone with 77.10's rules where
+the slot is not dense. The dense entries would also have to be restored from the stack at exits that follow a carrying entry, where the stack is
+stale. Not built: no gain on the entries it targets, and a correctness argument (stale stack after carried entries) against it.
+
+### 77.12 Item 2 for stream_closures: native returns into lazy-aware families, region membership, sunk records through returns: blocked
+
+Measured where stream_closures' `LeaveFrame` side aborts come from (instrumented `Rec::ret` / `Rec::retf`, removed again): the 33 aborts are root
+`RETURN`s of the `map` / `filter` / `readings` closures' function-entry families and of filter's `while` loop root; `Rec::retf` refuses them at the
+root-frame test (`CIST_FRESH`: 17 at `retf=7`) and at I9 (`pop_into_ok`, a maybe-lazy caller: 49). The first one is structural: tier 1 runs
+`fold`'s `for v in src` through `jit_tforcall`, which calls the Lua iterator with `State::call` (a C-level call), so the iterator's frame is a
+fresh C boundary and a return from it has to come back into that helper; no trace can pop into `fold` natively. With I9 off for the whole program
+(`lazyci=0`), `retf=7` and `retfmax=4` the `LeaveFrame` aborts stay (36) and the stub materialisations are unchanged (286 731 -> 286 030);
+instructions -0.3 %. So pieces (a) native returns from a function-entry side trace into another lazy-aware family and (b) region membership of the
+caller's code are not what limits this program: (0) a tier-1 `TFORCALL` that pushes a Lua iterator's frame natively (no C recursion, the way
+tier-1 `CALL` pushes) is the prerequisite, and only then do (a) and (b) apply, and (c) carrying the sunk record through the return into the fold
+loop's trace (section 52's replay from exits generalised to returns) can keep it virtual. (0) is a change of tier 1's call protocol (resumable
+generic-`for` frames, the hook and error paths of `luaD_call`), outside this branch's JIT pieces; none of (0), (a), (b), (c) was built.
+json and towers: their remaining `LeaveFrame` aborts (8 and 4) are the self-recursive pops that 77.7's bits now take where the caller loop
+qualifies (json -0.2 %), and pops into non-loop callers, which 77.7 measured as regressions (lua_interp +39 %, list +63 %).
+
+### 77.13 Round 3 numbers (one binary, 7ef7cfb + docs, `RUSTYNAIL_SEED=0`, CPU 8, 15 runs interleaved, minimum)
+
+Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the shipped defaults (`uvk=11,flink=1,sloadhome=3,retf=179`):
+
+| program | instructions M | cycles M |
+|---|---|---|
+| corpus/lua_lexer | 3206.73 -> 2747.17 (**-14.3 %**) | 800.27 -> 702.99 (**-12.2 %**) |
+| awfy/towers | 164.64 -> 164.01 (-0.4 %) | 43.35 -> 42.66 (-1.6 %) |
+| awfy/json | 431.04 -> 426.65 (-1.0 %) | 135.02 -> 135.28 (+0.2 %, noise) |
+| awfy/permute | 117.82 -> 117.49 (-0.3 %) | 23.25 -> 23.22 (-0.1 %) |
+| awfy/queens | 497.12 -> 393.17 (-20.9 %) | 93.92 -> 78.87 (-16.0 %) |
+| awfy/cd | 644.83 -> 617.99 (-4.2 %) | 238.49 -> 238.08 (-0.2 %) |
+| awfy/storage | 492.26 -> 482.05 (-2.1 %) | 105.92 -> 100.21 (-5.4 %) |
+
+`sloadhome` alone (`=0` against `=3`): lua_lexer -0.19 % / +0.8 % cycles, towers -0.38 % / -2.3 %, json +0.07 % / +1.0 %, permute -0.28 % / 0,
+queens -1.2 % / -0.8 %, diff_levenshtein -0.9 % / -1.1 %. The lua_lexer and json cycle rises are inside the bar (2 %) and the instruction counts
+do not rise beyond 0.3 %; default on.
