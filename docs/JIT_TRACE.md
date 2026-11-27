@@ -8539,3 +8539,17 @@ Measured (one binary, `mfdeep=0` against `=1`, SEED 0, CPU 8, min of 5, two inte
 astar_jumper -1.3 % (its noise); geomean -0.03 %. Tests: `tr_core::s75_mfkeys_programs` now also runs `mfdeep=1` and `mfdeep=1,recinl=3` on
 `s75_mfkeys` and `s75_recinl` (every trace mode, `+verify`, exit storms, budget 17, GC stress 2). The share of the remaining `swap` lookups through
 the builder's CSE (a second `KPTR` of the same table) was measured too: no change (126.97 M both ways), not kept.
+
+### 75.14 `mfshare`: one `mfkeys` lookup per key and recording (`TrLimits::mfshare`, default 1)
+
+The trace-7 dump after 75.13 showed the `swap` lookup twice (`KPTR` -> shape guard -> `HREFK` -> `HLOAD` -> `EQREF`, 15 instructions): once for
+each unrolled loop iteration of the continuation; trace 8 likewise before and after the inlined leaf. Routing the `KPTR` through the builder's
+CSE changed nothing (126.97 M either way): the guards carry their own snapshots. But no reload is needed at all: the family rule (75.12) admits
+no store or insertion of an extra key in any family trace, so `T[K]` is constant inside the region, and a recording may reuse the value ref of
+its first lookup of `K` (`Rec::mfk_seen`, cleared with the IR by `Rec::reset`; the same reset now also clears `oframe_lims` / `oframe_wb` /
+`oframe_floor`, which name snapshots of the discarded IR). Mutant `mfshare_any_key` (a later lookup reuses the first lookup of any key) is caught
+by `s75_mfkeys_programs` through the new case (7) of `s75_recinl.lua` (a permute-shaped family with two other method keys, `swap` and `tick`).
+
+Measured (one binary, `mfshare=0` against `=1`, SEED 0, CPU 8, min of 5, two rounds): permute 126.97 -> 121.40 M instructions (**-4.38 %**),
+24.70 / 24.58 -> 23.49 / 23.54 M cycles (**-4.2 .. -4.9 %**). Whole set (190 programs, one run each): permute -4.38 %, astar_jumper +2.75 % (its
+noise band, 4.27 .. 4.56 G); geomean -0.01 %.

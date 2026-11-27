@@ -4643,7 +4643,12 @@ fn s75_mfkeys_programs() {
                 .opts("+verify")
                 .limits_s("mfkeys=1"),
         );
-        for l in ["mfdeep=1", "mfdeep=1,recinl=3,sidepush=1"] {
+        for l in [
+            "mfdeep=1",
+            "mfdeep=1,recinl=3,sidepush=1",
+            "mfshare=1",
+            "mfshare=1,recinl=3",
+        ] {
             jobs.push(Job::new("s75_recinl", trace).opts("+verify").limits_s(l));
         }
     }

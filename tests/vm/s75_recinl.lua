@@ -113,3 +113,32 @@ for k = 1, 3 do
   local v = setmetatable({ k = 0 }, V)
   print("vararg", k, v:sum(7, k), v.k, select('#', v:list(6)), v.k)
 end
+
+-- (7) two other method keys in a permute-shaped family (`swap` and `tick`, each looked up twice per loop iteration)
+local W = {}
+W.__index = W
+function W:swap(i, j)
+  local tmp = self.v[i + 1]
+  self.v[i + 1] = self.v[j + 1]
+  self.v[j + 1] = tmp
+end
+function W:tick(k) self.t = self.t + k end
+function W:permute(n)
+  self.count = self.count + 1
+  if n ~= 0 then
+    local n1 = n - 1
+    self:permute(n1)
+    for i = n1, 0, -1 do
+      self:swap(n1, i)
+      self:tick(1)
+      self:permute(n1)
+      self:swap(n1, i)
+      self:tick(2)
+    end
+  end
+end
+for k = 1, 4 do
+  local w = setmetatable({ count = 0, t = 0, v = { 1, 2, 3, 4, 5, 6 } }, W)
+  w:permute(5)
+  print("twokeys", k, w.count, w.t, table.concat(w.v, ","))
+end

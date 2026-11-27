@@ -174,6 +174,8 @@ pub const SIDEPUSH_PROCESS: u32 = 1;
 pub const MFKEYS_PROCESS: u32 = 1;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
 pub const MFDEEP_PROCESS: u32 = 1;
+/// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
+pub const MFSHARE_PROCESS: u32 = 1;
 /// G1: the process default of [`TrLimits::guarddiet`] (also the struct default).
 pub const GUARDDIET_PROCESS: u32 = 1;
 /// H1: the process default of [`TrLimits::hkaddr`] (also the struct default).
@@ -884,6 +886,9 @@ pub struct TrLimits {
     /// Section 75.13 (`mfdeep`, docs/JIT_TRACE.md section 75.13): E5's fold of the family key also in an inlined chain frame (`unr`) that was called with
     /// the root's closure ref and whose register 0 is the root's entry register 0. 0 = off, 1 = on (default [`MFDEEP_PROCESS`]).
     pub mfdeep: u32,
+    /// Section 75.14 (`mfshare`, docs/JIT_TRACE.md section 75.14): a second `mfkeys` lookup of the same key in one recording reuses the first one's value
+    /// (the family rule admits no store of the key in any family trace, so `T[K]` is constant inside the region). 0 = off, 1 = on (default [`MFSHARE_PROCESS`]).
+    pub mfshare: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1180,6 +1185,7 @@ impl Default for TrLimits {
             sidepush: SIDEPUSH_PROCESS,
             mfkeys: MFKEYS_PROCESS,
             mfdeep: MFDEEP_PROCESS,
+            mfshare: MFSHARE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1419,6 +1425,7 @@ impl TrLimits {
                 "sidepush" => l.sidepush = v.min(1),
                 "mfkeys" => l.mfkeys = v.min(1),
                 "mfdeep" => l.mfdeep = v.min(1),
+                "mfshare" => l.mfshare = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

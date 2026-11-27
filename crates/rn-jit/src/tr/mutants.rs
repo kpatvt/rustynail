@@ -452,6 +452,8 @@ pub const NAMES: &[&str] = &[
     "dynunroll_skip_unguarded",
     // section 75.12 (`mfkeys`): the region check does not verify the other method keys
     "mfkeys_check_skip",
+    // section 75.14 (`mfshare`): a later lookup reuses the first lookup of ANY extra key
+    "mfshare_any_key",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1197,7 +1199,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 898);
+        assert_eq!(NAMES.len(), 899);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

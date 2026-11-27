@@ -206,6 +206,8 @@ pub struct RecCfg {
     pub sidepush: bool,
     /// Section 75.13 (`mfdeep`): E5's fold in chain frames called with the root closure on the root receiver.
     pub mfdeep: bool,
+    /// Section 75.14 (`mfshare`): repeated `mfkeys` lookups of one key share the first value.
+    pub mfshare: bool,
     /// N6: dynamic short-string keys record as `HREFV` (`RUSTYNAIL_JIT_HREFV=0` turns it off: every computed key is specialised on
     /// its address by an `EQREF`, as before).
     pub hrefv: bool,
@@ -564,6 +566,7 @@ impl Default for RecCfg {
             recinl: super::cache::RECINL_PROCESS,
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
+            mfshare: super::cache::MFSHARE_PROCESS != 0,
             hrefv: true,
             shape: false,
             fold: true,
@@ -1325,6 +1328,8 @@ struct Rec {
     /// Section 75: a `CALL` being recorded whose arguments reach above the calling frame's top (`__call` shifts them one slot up, a native
     /// self-call pushes them): (pc, depth, root-relative end of the arguments); snapshots of that instruction keep the slots below it.
     oframe_floor: Option<(u32, usize, usize)>,
+    /// Section 75.14 (`mfshare`): the value refs of the `mfkeys` lookups made so far in this recording, by constant index.
+    mfk_seen: Vec<(u32, Ref)>,
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1695,6 +1700,7 @@ impl Rec {
             oframe_lims: Vec::new(),
             oframe_wb: None,
             oframe_floor: None,
+            mfk_seen: Vec::new(),
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -1888,6 +1894,11 @@ impl Rec {
         self.deps.clear();
         self.want_dep.clear();
         self.late_dep.clear();
+        // (section 75: per-recording state that names snapshots / refs of the discarded IR)
+        self.oframe_lims.clear();
+        self.oframe_wb = None;
+        self.oframe_floor = None;
+        self.mfk_seen.clear();
         self.inl_back.set(0);
         self.la_seen.borrow_mut().clear();
         self.first_store = None;
@@ -6274,6 +6285,21 @@ impl Rec {
         if t.1 != Ty::Tab || t.0 != self.slot0_entry()? {
             return Ok(false);
         }
+        if self.cfg.mfshare {
+            // Section 75.14: the family rule keeps `T[K]` itself unchanged in every family trace (no store or insertion of `K`), so the value loaded
+            // by the first lookup of this recording is the value of every later one (mutant `mfshare_any_key`: the first lookup of any key)
+            let hit = self
+                .mfk_seen
+                .iter()
+                .find(|e| e.0 == c || mutants::active("mfshare_any_key"))
+                .map(|e| e.1);
+            if let Some(r) = hit {
+                self.def(a + 1, t.0);
+                self.def(a, r);
+                self.midfolded = true;
+                return Ok(true);
+            }
+        }
         // SAFETY: `extra_found_in` just found the method in the table at `tab` (a live table of the receiver's chain).
         let holder = unsafe { rn_core::table::TableRef::from_raw(tab as *mut _) };
         let kref = self.field_key(vm, c as usize)?;
@@ -6292,6 +6318,7 @@ impl Rec {
         if r == NOREF {
             return Err(AbortReason::Diverge);
         }
+        self.mfk_seen.push((c, r));
         self.def(a + 1, t.0);
         self.def(a, r);
         self.midfolded = true;
