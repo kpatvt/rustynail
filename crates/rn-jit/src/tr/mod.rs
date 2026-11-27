@@ -963,6 +963,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
         chainlive: cfg.limits.chainlive != 0,
+        rootproto: cfg.limits.rootproto != 0,
+        mfside: cfg.limits.mfside != 0,
         uvk: if cache::uvk_off(st) {
             0
         } else {
@@ -1209,6 +1211,8 @@ pub fn driver_start_side(
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
         chainlive: cfg.limits.chainlive != 0,
+        rootproto: cfg.limits.rootproto != 0,
+        mfside: cfg.limits.mfside != 0,
         uvk: if cache::uvk_off(st) {
             0
         } else {

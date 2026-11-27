@@ -194,6 +194,10 @@ pub const SLOADHOME_PROCESS: u32 = 0;
 pub const CHAINLIVE_PROCESS: u32 = 1;
 /// Section 79.2 (`pushtag`): the process default of [`TrLimits::pushtag`] (also the struct default).
 pub const PUSHTAG_PROCESS: u32 = 1;
+/// Section 79.3 (`rootproto`): the process default of [`TrLimits::rootproto`] (also the struct default).
+pub const ROOTPROTO_PROCESS: u32 = 1;
+/// Section 79.4 (`mfside`): the process default of [`TrLimits::mfside`] (also the struct default).
+pub const MFSIDE_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -969,6 +973,14 @@ pub struct TrLimits {
     /// `SLOAD` saw the same static tag (B1's rule for push traces: the writeback runs before the base moves). 0 = off, 1 = on (default
     /// [`PUSHTAG_PROCESS`]).
     pub pushtag: u32,
+    /// Section 79.3 (`rootproto`, docs/JIT_TRACE.md section 79.3): a call (inlined or the native push) whose callee is the root frame's own closure
+    /// ref (the `SLOAD` of the function slot, as E5's fold gives it) takes no prototype guard: the root frame of a trace always runs the trace's
+    /// prototype. 0 = off, 1 = on (default [`ROOTPROTO_PROCESS`]).
+    pub rootproto: u32,
+    /// Section 79.4 (`mfside`, docs/JIT_TRACE.md section 79.4): E5's fold of the family key also in a frame of the root prototype that `mfdeep` does
+    /// not cover (a side trace's seeded chain frames, an inlined frame called with another closure ref), under a guard that the frame's register 0
+    /// is the root frame's register 0. 0 = off, 1 = on (default [`MFSIDE_PROCESS`]).
+    pub mfside: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1276,6 +1288,8 @@ impl Default for TrLimits {
             sloadhome: SLOADHOME_PROCESS,
             chainlive: CHAINLIVE_PROCESS,
             pushtag: PUSHTAG_PROCESS,
+            rootproto: ROOTPROTO_PROCESS,
+            mfside: MFSIDE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1526,6 +1540,8 @@ impl TrLimits {
                 "sloadhome" => l.sloadhome = v.min(3),
                 "chainlive" => l.chainlive = v.min(1),
                 "pushtag" => l.pushtag = v.min(1),
+                "rootproto" => l.rootproto = v.min(1),
+                "mfside" => l.mfside = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

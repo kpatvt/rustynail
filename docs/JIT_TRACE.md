@@ -9272,3 +9272,34 @@ instructions per call (both), default size 117.64 -> 117.01 M (-0.54 %). Whole s
 -1.4 % (layout noise); nothing rises by more than 0.2 %; geomean -0.014 %. Tests: `tests/vm/s79_push.lua` (vm_corpus, and
 `tr_core::s79_push_programs`: both knobs 1 / 0, with `recinl=3,sidepush=1` and `regcarry=0`, the trace modes, `+verify`, exit storms, budget 17,
 GC stress 2, plus `s75_recinl` / `s75_oframe` with the knobs).
+
+### 79.3 `rootproto`: no prototype guard on a call of the root frame's own closure (`TrLimits::rootproto`, default 1)
+
+E5 folds `self:permute` to the root frame's closure (the `SLOAD` of the function slot); the inlined call of that ref still took the TR7a
+prototype guard (`SLOAD lcf slot65535; EQREF #Proto`: 4 instructions in traces 7 and 8 of permute). The root frame of a trace always runs the
+trace's prototype: every entry is a frame of it (heads and cells are per prototype, side traces start in their parent's frames), and after a
+`RETF` the new root frame is the caller whose site the pop guarded (`func_ref` is reset there). So a call whose callee ref is `func_ref` and
+whose recorded prototype is the root's takes no guard (`Rec::call_lua`, and the push of `end_rec_call` when it has no running-closure ref).
+Mutant `rootproto_any_ref` (any callee of the root prototype goes unguarded), caught by `tr_core::s79_mfside_programs` (case (4) of
+`tests/vm/s79_mfside.lua`: the callee read from a field is the root closure at record time and another function later).
+
+### 79.4 `mfside`: E5's fold in frames that `mfdeep` does not cover, under a receiver guard (`TrLimits::mfside`, default 1)
+
+`mfdeep` folds `SELF A 0 K` of the family key in an inlined chain frame whose closure ref is the root's and whose register 0 is the root's
+entry load (ref equality, no guard). A side trace's seeded chain frames have neither (their closure and register 0 are slot loads), so permute's
+trace 11 (the `sidepush` side trace inside a chain frame) walked the whole chain again: `HMISS` on the receiver, metatable, `__index`, the class's
+`permute` slot, the closure compare (about 30 instructions per run). Now (`Rec::midfold_self`) a frame of the root prototype that `mfdeep` does
+not cover folds the key when its register 0 is the root frame's register 0: at record time the same table, at run time a guard `EQ R0_d, R0_0`
+(none when the refs are equal). The folded value is the root closure. Why it is exact: the root frame runs a folded trace of the region, so
+`lookup(R0_0, K) == root closure` (E5 soundness, 35.5); a lookup depends on the receiver only and nothing inside a region changes a lookup of
+`K` (family rule), so the same receiver gives the same closure in frame `d`, whatever closure frame `d` runs. The push from such a frame then
+compares the folded callee with the frame's closure (the push's identity guard, as before). A mutant without the receiver guard was not caught
+by any program built for it (the frames that reach the rule in those programs share the root's receiver; chain frames do by E5's push rule); it
+was dropped, the guard stays.
+
+Measured (one binary, both off against the settings, SEED 0): permute 126.81 -> 125.06 (`rootproto`) / 123.25 (`mfside`) -> **121.51**
+instructions per call (both), default size 117.02 -> 112.38 M (-3.97 %). Whole set (both on): permute -3.97 %, fib -0.94 %, binary_trees
+-0.24 %, testrunner_luaunit -0.29 %; nothing rises by more than 0.2 %; geomean -0.025 % (`mfside` alone: permute -2.69 %, nothing else beyond
+0.3 % but astar_jumper -1.1 %, its noise). Tests: `tests/vm/s79_mfside.lua` (vm_corpus, and `tr_core::s79_mfside_programs`: both knobs 1 / 0,
+with `recinl=3,sidepush=1`, `sidepush=0` and `unroll=3,dynunroll=16`, the trace modes, `+verify`, exit storms, budget 17, GC stress 2, plus
+`s75_mfkeys` / `s75_recinl` with the knobs).

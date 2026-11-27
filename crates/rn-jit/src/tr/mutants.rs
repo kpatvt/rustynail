@@ -456,6 +456,8 @@ pub const NAMES: &[&str] = &[
     "mfshare_any_key",
     // section 79.1 (`chainlive`): the push writeback also leaves out the pushed frame's arguments
     "chainlive_args",
+    // section 79.3 (`rootproto`): any callee of the root prototype goes unguarded, not only the root frame's own closure ref
+    "rootproto_any_ref",
     // section 77.3 (`uvk`): writes into read-only variables flush nothing / the closure's identity is not guarded / any upvalue is folded /
     // the collection of a closure held by identity is not reported
     "uvk_flush_skip",

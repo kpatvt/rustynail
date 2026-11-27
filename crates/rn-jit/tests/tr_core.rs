@@ -4687,6 +4687,51 @@ fn s77_home_programs() {
     compare(jobs);
 }
 
+/// Sections 79.3 / 79.4 (`rootproto`, `mfside`): calls of the root frame's own closure without a prototype guard, and E5's fold in frames that
+/// `mfdeep` does not cover under a receiver guard: permute (side traces inside chain frames), an inlined frame on another receiver whose class
+/// wraps the method, the method replaced between runs and from inside the recursion, a callee from a field that changes, the receiver's class
+/// swapped; both knobs on / off, with `recinl=3,sidepush=1` and `sidepush=0`, the trace modes with `+verify`, exit storms, budget 17 and GC
+/// stress 2, plus `s75_mfkeys` / `s75_recinl` with the knobs. Mutant `rootproto_any_ref`.
+#[test]
+fn s79_mfside_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "rootproto=1,mfside=1",
+            "rootproto=0,mfside=0",
+            "rootproto=1,mfside=1,recinl=3,sidepush=1",
+            "rootproto=1,mfside=1,sidepush=0",
+            "rootproto=1,mfside=1,unroll=3,dynunroll=16",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s79_mfside", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s79_mfside", trace)
+                .limits_s("rootproto=1,mfside=1")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+        for l in [
+            "rootproto=1,mfside=1",
+            "rootproto=1,mfside=1,recinl=3,sidepush=1",
+        ] {
+            jobs.push(Job::new("s75_mfkeys", trace).opts("+verify").limits_s(l));
+            jobs.push(Job::new("s75_recinl", trace).opts("+verify").limits_s(l));
+        }
+    }
+    compare(jobs);
+}
+
 /// Sections 79.1 / 79.2 (`chainlive`, `pushtag`): the writeback of a native push without the pushed frame's dead numeric temporaries and with
 /// the tag stores its `SLOAD`s prove left out: permute, arguments of every type computed in the trace, a local that changes type before the
 /// push, fewer arguments than parameters, collectables beside the pruned slots with full collections, a vararg recursion; both knobs on / off,
@@ -4720,7 +4765,10 @@ fn s79_push_programs() {
                 .limits_s("chainlive=1,pushtag=1")
                 .env("RUSTYNAIL_GC_STRESS", "2"),
         );
-        for l in ["chainlive=1,pushtag=1", "chainlive=1,pushtag=1,recinl=3,sidepush=1"] {
+        for l in [
+            "chainlive=1,pushtag=1",
+            "chainlive=1,pushtag=1,recinl=3,sidepush=1",
+        ] {
             jobs.push(Job::new("s75_recinl", trace).opts("+verify").limits_s(l));
             jobs.push(Job::new("s75_oframe", trace).opts("+verify").limits_s(l));
         }

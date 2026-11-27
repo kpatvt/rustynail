@@ -1516,7 +1516,11 @@ pub fn wb_ents_ex(ir: &TraceIr, entry: Option<&[u8; 256]>) -> Vec<(u16, Ty)> {
 /// returns or `RETF` segments. (A mutant that drops the carried-load exclusion was not caught by any program built for it: no side trace
 /// with carried loads ended in a push there; the exclusion stays.)
 pub fn wb_ents_push(ir: &TraceIr) -> Vec<(u16, Ty)> {
-    if ir.rec_call.is_none() || ir.rec_ret.is_some() || !ir.segs.is_empty() || !ir.carry_in.is_empty() {
+    if ir.rec_call.is_none()
+        || ir.rec_ret.is_some()
+        || !ir.segs.is_empty()
+        || !ir.carry_in.is_empty()
+    {
         return Vec::new();
     }
     wb_ents_scan(ir)

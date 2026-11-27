@@ -210,6 +210,10 @@ pub struct RecCfg {
     pub mfshare: bool,
     /// Section 79.1 (`chainlive`): the push writeback leaves out the callee's dead numeric temporaries.
     pub chainlive: bool,
+    /// Section 79.3 (`rootproto`): a call of the root frame's own closure ref takes no prototype guard.
+    pub rootproto: bool,
+    /// Section 79.4 (`mfside`): E5's fold in any frame of the root prototype under a guard that its register 0 is the root's.
+    pub mfside: bool,
     /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants (bit 0); bit 1: not in the root frame of the
     /// recording (no identity guard on the root closure); bit 2: not in side recordings; bit 3: a new identity guard only on a closure created
     /// by a main chunk.
@@ -576,6 +580,8 @@ impl Default for RecCfg {
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
             chainlive: super::cache::CHAINLIVE_PROCESS != 0,
+            rootproto: super::cache::ROOTPROTO_PROCESS != 0,
+            mfside: super::cache::MFSIDE_PROCESS != 0,
             // (section 77.3: the driver sets it from `TrLimits::uvk`; recorder unit tests replay against handle models that cannot evaluate an
             // identity guard on a closure address, and tr_core covers the knob)
             uvk: 0,
@@ -6340,6 +6346,7 @@ impl Rec {
             return Ok(false);
         }
         let d = self.cur_depth;
+        let mut recv_guard = false;
         if d != 0 {
             // Section 75.13 (`mfdeep`): an inlined chain frame called with the root closure's ref (so it runs that very closure) on the root's
             // receiver (checked below: register 0 is the root's entry load): every frame of the region shares that pair, so the fact holds for it
@@ -6348,7 +6355,14 @@ impl Rec {
                 || self.func_ref == NOREF
                 || self.frames[d].cref != self.func_ref
             {
-                return Ok(false);
+                // Section 79.4 (`mfside`): any other frame of the root prototype (a side trace's seeded chain frames, whose closure ref and
+                // register 0 are slot loads) folds under a guard that its register 0 is the root frame's register 0: the root frame's fact
+                // `lookup(R0, K) == root closure` then gives the same closure for it (the lookup depends on the receiver only, and nothing in a
+                // region changes a lookup of `K`)
+                if !self.cfg.mfside || self.frames[d].proto != self.frames[0].proto {
+                    return Ok(false);
+                }
+                recv_guard = true;
             }
         }
         if i.c() as usize != kidx as usize || a + 1 >= self.frames[d].nslots {
@@ -6364,6 +6378,33 @@ impl Rec {
             || !method_lookup_is(vm.st, vm.slot(0), key, &fv)
         {
             return Ok(false);
+        }
+        if recv_guard {
+            // (record time: this frame's register 0 is the root frame's; the frame's closure need not be the root's: the folded value is the
+            // root closure, which the lookup gives for that receiver)
+            let base0 = self.frames[0].base_off;
+            let same = match (vm.slot(0).as_table(), vm.root_slot(base0).as_table()) {
+                (Some(x), Some(y)) => x.as_ptr() == y.as_ptr(),
+                _ => false,
+            };
+            if !same {
+                return Ok(false);
+            }
+            let t = self.rd(vm, 0)?;
+            let r0 = self.rd_slot(vm, base0)?;
+            if t.1 != Ty::Tab || r0.1 != Ty::Tab {
+                return Ok(false);
+            }
+            // (a mutant without this guard was not caught by any program built for it: the frames that reach here in those programs share
+            // the root's receiver, chain frames by E5's push rule; the guard stays)
+            if t.0 != r0.0 {
+                self.guard(TOp::Eq, Ty::I64, t.0, r0.0, 0)?;
+            }
+            let f = self.func_ref_load()?;
+            self.def(a + 1, t.0);
+            self.def(a, f);
+            self.midfolded = true;
+            return Ok(true);
         }
         let t = self.rd(vm, 0)?;
         if t.1 != Ty::Tab || t.0 != self.slot0_entry()? {
@@ -7614,6 +7655,12 @@ impl Rec {
             // (section 77.3: the callee is a closure the trace holds by identity)
         } else if running != NOREF {
             self.entry_guard(TOp::Eq, Ty::I64, cref, running, 0)?;
+        } else if self.cfg.rootproto
+            && key == self.frames[0].proto
+            && ((self.func_ref != NOREF && cref == self.func_ref)
+                || mutants::active("rootproto_any_ref"))
+        {
+            // (section 79.3: the root frame's own closure)
         } else {
             let kp = self.b.ir.konst(KVal::Ptr(key as u64, PtrKind::Proto));
             self.entry_guard(TOp::Eqref, Ty::I64, cref, kp, 0)?;
@@ -7652,7 +7699,9 @@ impl Rec {
                         nargs
                     };
                     for r in from..nslots {
-                        if crate::live::has(d0, r as u32) || (r < nargs && mutants::active("chainlive_args")) {
+                        if crate::live::has(d0, r as u32)
+                            || (r < nargs && mutants::active("chainlive_args"))
+                        {
                             if let Ok(sl) = u16::try_from(cb + r) {
                                 self.chainlive_dead.push(sl);
                             }
@@ -8080,6 +8129,13 @@ impl Rec {
             }
         } else if self.uvk_holds(cref, cl.as_ptr() as usize) {
             // (section 77.3: the callee is a closure the trace holds by identity: its proto is the recorded one)
+        } else if self.cfg.rootproto
+            && key == self.frames[0].proto
+            && ((self.func_ref != NOREF && cref == self.func_ref)
+                || mutants::active("rootproto_any_ref"))
+        {
+            // (section 79.3, `rootproto`: the callee is the root frame's own closure, whose prototype is the trace's: every entry of a trace is a frame
+            // of its prototype, and after a `RETF` the root frame is the caller that the pop's site guard identified)
         } else if !mutants::active("callee_guard_skip") {
             if let Some(k) = known {
                 if !mutants::active("cloreuse_guard_skip") {
