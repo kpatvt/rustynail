@@ -4726,7 +4726,8 @@ fn s79_ret_programs() {
 /// `mfdeep` does not cover under a receiver guard: permute (side traces inside chain frames), an inlined frame on another receiver whose class
 /// wraps the method, the method replaced between runs and from inside the recursion, a callee from a field that changes, the receiver's class
 /// swapped; both knobs on / off, with `recinl=3,sidepush=1` and `sidepush=0`, the trace modes with `+verify`, exit storms, budget 17 and GC
-/// stress 2, plus `s75_mfkeys` / `s75_recinl` with the knobs. Mutant `rootproto_any_ref`.
+/// stress 2, plus `s75_mfkeys` / `s75_recinl` with the knobs; section 79.10 (`mfconst`, case (6): the extra method rebound between runs, collected).
+/// Mutants `rootproto_any_ref`, `mfconst_check_skip`.
 #[test]
 fn s79_mfside_programs() {
     let mut jobs = Vec::new();
@@ -4737,6 +4738,7 @@ fn s79_mfside_programs() {
             "rootproto=1,mfside=1,recinl=3,sidepush=1",
             "rootproto=1,mfside=1,sidepush=0",
             "rootproto=1,mfside=1,unroll=3,dynunroll=16",
+            "mfconst=0",
         ] {
             for (opts, budget) in [
                 ("", 0),

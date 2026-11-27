@@ -146,3 +146,39 @@ for k = 1, 4 do
   p:permute(4)
   print("class", k, p.count, p.subs, table.concat(p.v, ","))
 end
+
+-- (6) section 79.10 (`mfconst`): the extra method `swap` rebound between runs: to a closure of the same prototype with another upvalue (a
+-- factory), to another function, back to the first one, with full collections in between (the old closures die, their addresses may be reused)
+local K = {}
+K.__index = K
+local function mkswap(tag)
+  return function(self, i, j)
+    local tmp = self.v[i + 1]
+    self.v[i + 1] = self.v[j + 1]
+    self.v[j + 1] = tmp
+    self.tags = self.tags + tag
+  end
+end
+function K:permute(n)
+  self.count = self.count + 1
+  if n ~= 0 then
+    local n1 = n - 1
+    self:permute(n1)
+    for i = n1, 0, -1 do
+      self:swap(n1, i)
+      self:permute(n1)
+      self:swap(n1, i)
+    end
+  end
+end
+local first = mkswap(1)
+for k = 1, 8 do
+  if k == 3 then K.swap = mkswap(2)
+  elseif k == 4 then K.swap = function(self, i, j) self.tags = self.tags + 100 end
+  elseif k == 5 then K.swap = first
+  elseif k == 6 then K.swap = mkswap(3); collectgarbage(); collectgarbage()
+  elseif k ~= 2 or not K.swap then K.swap = K.swap or first end
+  local p = setmetatable({ count = 0, tags = 0, v = { 1, 2, 3, 4, 5, 6 } }, K)
+  p:permute(5)
+  print("rebind", k, p.count, p.tags, table.concat(p.v, ","))
+end

@@ -635,7 +635,7 @@ fn midfold_extra_keys(
     cl: rn_core::value::Gc<rn_core::func::LClosure>,
     kc: u32,
     ix: u64,
-) -> Vec<(u32, u64, u64)> {
+) -> Vec<(u32, u64, u64, u64)> {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode;
     let p = cl.proto();
@@ -643,7 +643,7 @@ fn midfold_extra_keys(
     let recv = st.get(rn_core::state::StkId(func.0 + 1));
     let idx = st.g().heap.tm_name(rn_core::meta::Tm::Index);
     let _ = ix;
-    let mut out: Vec<(u32, u64, u64)> = Vec::new();
+    let mut out: Vec<(u32, u64, u64, u64)> = Vec::new();
     let Some(t0) = recv.as_table() else {
         return out;
     };
@@ -670,8 +670,8 @@ fn midfold_extra_keys(
         for _ in 0..cache::MIDFOLD_DEPTH {
             let v = t.get_short_str(key);
             if !v.is_nil() {
-                if v.as_lclosure().is_some() {
-                    out.push((c, key.as_ptr() as u64, t.as_ptr() as u64));
+                if let Some(f) = v.as_lclosure() {
+                    out.push((c, key.as_ptr() as u64, t.as_ptr() as u64, f.as_ptr() as u64));
                 }
                 break;
             }
@@ -786,6 +786,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     let (idf_fold, idf_ident) = pr.map_or((None, None), |pr| cache::idfold_cfg(st, pr));
     // E5 (`midfold`): the per-prototype decision at its first recording (a method recursion on its own register 0)
     if let Some(pr) = pr {
+        // Section 79.10 (`mfconst`): a family whose region check found an extra method rebound flushes its traces and keeps the loads from now on
+        cache::mfconst_stale_flush(st, pr);
         if cfg.limits.midfold != 0 && cache::midfold_pending(st, pr) {
             let key = midfold_key(st, ci, cl);
             cache::midfold_decide(st, pr, key);
@@ -886,6 +888,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         midfold: mf_fold,
         mfkeys: if mf_fold.is_some() {
             pr.map(|pr| std::rc::Rc::new(cache::midfold_extra(st, pr)))
+        } else {
+            None
+        },
+        mfconst: if mf_fold.is_some() {
+            pr.and_then(|pr| cache::mfconst_vals(st, pr))
         } else {
             None
         },
@@ -1186,6 +1193,11 @@ pub fn driver_start_side(
         midfold: mf_fold,
         mfkeys: if mf_fold.is_some() {
             Some(std::rc::Rc::new(cache::midfold_extra(st, pr)))
+        } else {
+            None
+        },
+        mfconst: if mf_fold.is_some() {
+            cache::mfconst_vals(st, pr)
         } else {
             None
         },

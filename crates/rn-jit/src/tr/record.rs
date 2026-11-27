@@ -192,6 +192,8 @@ pub struct RecCfg {
     pub dyn_ban: Option<std::rc::Rc<Vec<(u64, u32)>>>,
     /// Section 79.7 (`dynpol`): static per-site policy bits of `dynunroll`.
     pub dynpol: u32,
+    /// Section 79.10 (`mfconst`): the extra method keys whose value the region check fixes (constant index, closure address).
+    pub mfconst: Option<std::rc::Rc<Vec<(u32, u64)>>>,
     /// F4 (`snapprune`): the snapshots of the root frame leave out the dead numeric temporaries (`snap::prune_snaps`).
     pub snapprune: bool,
     /// F4 experiment (`snapprune=2`): dead *locals* are pruned as well (`debug.getlocal` of a dead local then shows a stale value).
@@ -575,6 +577,7 @@ impl Default for RecCfg {
             avoid: None,
             dyn_ban: None,
             dynpol: 0,
+            mfconst: None,
             snapprune: false,
             snapprune_locals: false,
             pureb: super::cache::PUREB_PROCESS != 0,
@@ -6486,6 +6489,40 @@ impl Rec {
         }
         // SAFETY: `extra_found_in` just found the method in the table at `tab` (a live table of the receiver's chain).
         let holder = unsafe { rn_core::table::TableRef::from_raw(tab as *mut _) };
+        // Section 79.10 (`mfconst`): the region check fixes `T[K]` to the closure seen at the decision: when it is that closure now, it is a constant
+        // (held by identity: its collection flushes the trace, section 77.3's registration)
+        let fixed = self
+            .cfg
+            .mfconst
+            .as_ref()
+            .and_then(|v| v.iter().find(|e| e.0 == c).map(|e| e.1));
+        if let Some(want) = fixed {
+            let v = holder.get_short_str(key);
+            if let Some(cl) = v.as_lclosure().filter(|cl| cl.as_ptr() as u64 == want) {
+                let ca = cl.as_ptr() as usize;
+                self.touch(&v)?;
+                let k = self.b.ir.konst(KVal::Ptr(ca as u64, PtrKind::LClosure));
+                let r = self.b.emit_raw(Ins {
+                    op: TOp::Kptr,
+                    t: Ty::Lcf,
+                    flags: 0,
+                    a: k,
+                    b: NOREF,
+                    prev: NOREF,
+                    aux: 0,
+                })?;
+                self.uvk_known.push((r, ca));
+                if !self.uvk_cl.contains(&ca) {
+                    self.uvk_cl.push(ca);
+                }
+                self.uvk_used = true;
+                self.mfk_seen.push((c, r));
+                self.def(a + 1, t.0);
+                self.def(a, r);
+                self.midfolded = true;
+                return Ok(true);
+            }
+        }
         let kref = self.field_key(vm, c as usize)?;
         self.touch(&Value::table(holder))?;
         let kt = self.b.ir.konst(KVal::Ptr(tab, PtrKind::Raw));

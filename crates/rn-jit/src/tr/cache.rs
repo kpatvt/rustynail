@@ -204,6 +204,8 @@ pub const SITEORD_PROCESS: u32 = 1;
 pub const RETREMAT_PROCESS: u32 = 1;
 /// Section 79.7 (`dynmiss`): the process default of [`TrLimits::dynmiss`] (also the struct default).
 pub const DYNMISS_PROCESS: u32 = 0;
+/// Section 79.10 (`mfconst`): the process default of [`TrLimits::mfconst`] (also the struct default).
+pub const MFCONST_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1001,6 +1003,10 @@ pub struct TrLimits {
     /// Section 79.7 (`dynpol`): static per-site policy bits of `dynunroll` (1: not a loop skipped at record time; 2: not in side recordings;
     /// 4: not at depth 2 or more; 8: not a body with a call; 16: not at most one trip). Default 0.
     pub dynpol: u32,
+    /// Section 79.10 (`mfconst`, docs/JIT_TRACE.md section 79.10): the region check of an E5 family also fixes the value of each extra method key
+    /// (`mfkeys`) to the closure seen at the decision, and the recordings use that closure as a constant (no load, no type or prototype guard).
+    /// 0 = off, 1 = on (default [`MFCONST_PROCESS`]).
+    pub mfconst: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1314,6 +1320,7 @@ impl Default for TrLimits {
             retremat: RETREMAT_PROCESS,
             dynmiss: DYNMISS_PROCESS,
             dynpol: 0,
+            mfconst: MFCONST_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1570,6 +1577,7 @@ impl TrLimits {
                 "retremat" => l.retremat = v.min(1),
                 "dynmiss" => l.dynmiss = v.min(1000),
                 "dynpol" => l.dynpol = v.min(255),
+                "mfconst" => l.mfconst = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -2222,6 +2230,10 @@ pub struct TrProto {
     midfold_idx: Cell<u64>,
     /// Section 75.12 (`mfkeys`): the other method keys of the family: (constant index, key address, address of the table that holds the method).
     midfold_x: std::cell::RefCell<Vec<(u32, u64, u64)>>,
+    /// Section 79.10 (`mfconst`): per extra key of `midfold_x`, the closure (address) the region check also requires as its value (0: none).
+    midfold_xv: std::cell::RefCell<Vec<u64>>,
+    /// Section 79.10: a region check found an extra key with another value: the family is flushed at its next recording start and keeps the loads.
+    midfold_xstale: Cell<bool>,
     /// E5: installed traces of this prototype that folded a `SELF` (`Trace::midfold`): while any lives, every trace of the family keeps the
     /// checked entries, its pushes pass their own receiver and the family rule holds.
     midfold_live: Cell<u32>,
@@ -2310,6 +2322,8 @@ impl TrProto {
             midfold_key: Cell::new(0),
             midfold_idx: Cell::new(0),
             midfold_x: std::cell::RefCell::new(Vec::new()),
+            midfold_xv: std::cell::RefCell::new(Vec::new()),
+            midfold_xstale: Cell::new(false),
             midfold_live: Cell::new(0),
             idfold_uv: Cell::new(0),
             idfold_live: Cell::new(0),
@@ -7443,15 +7457,70 @@ pub fn midfold_decide(st: &mut State, pr: ProtoRef, key: Option<(u32, u64, u64)>
 }
 
 /// Section 75.12 (`mfkeys`): stores the other method keys of a family whose E5 decision just turned folding on (nothing when it did not).
-pub fn midfold_set_extra(st: &mut State, pr: ProtoRef, x: Vec<(u32, u64, u64)>) {
+pub fn midfold_set_extra(st: &mut State, pr: ProtoRef, x: Vec<(u32, u64, u64, u64)>) {
     let d = d_of(st);
     if d.tr.cfg.limits.mfkeys == 0 {
         return;
     }
+    let cst = d.tr.cfg.limits.mfconst != 0;
     if let Some(tp) = tr_of(d, pr.0) {
         if tp.midfold_st.get() == 1 && tp.midfold_x.borrow().is_empty() {
-            *tp.midfold_x.borrow_mut() = x;
+            *tp.midfold_xv.borrow_mut() = x.iter().map(|e| if cst { e.3 } else { 0 }).collect();
+            *tp.midfold_x.borrow_mut() = x.into_iter().map(|e| (e.0, e.1, e.2)).collect();
         }
+    }
+}
+
+/// Section 79.10 (`mfconst`): the extra method keys of `pr` whose value the region check fixes: (constant index, closure address); `None`: none.
+pub fn mfconst_vals(st: &mut State, pr: ProtoRef) -> Option<std::rc::Rc<Vec<(u32, u64)>>> {
+    let d = d_of(st);
+    if d.tr.cfg.limits.mfkeys == 0 || d.tr.cfg.limits.mfconst == 0 {
+        return None;
+    }
+    let tp = tr_of(d, pr.0)?;
+    let v: Vec<(u32, u64)> = tp
+        .midfold_x
+        .borrow()
+        .iter()
+        .zip(tp.midfold_xv.borrow().iter())
+        .filter(|(_, &a)| a != 0)
+        .map(|(e, &a)| (e.0, a))
+        .collect();
+    (!v.is_empty()).then(|| std::rc::Rc::new(v))
+}
+
+/// Section 79.10: a region check of `pr` found an extra method with another value than the fixed one: every trace of the prototype is flushed
+/// (they may use the old closure as a constant) and the values are no longer fixed (the recordings load them, as `mfkeys` without `mfconst`).
+pub fn mfconst_stale_flush(st: &mut State, pr: ProtoRef) {
+    let d = d_of(st);
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if !tp.midfold_xstale.get() {
+        return;
+    }
+    tp.midfold_xstale.set(false);
+    tp.midfold_xv.borrow_mut().iter_mut().for_each(|a| *a = 0);
+    let ids: Vec<TrId> =
+        d.tr.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(k, sl)| match &sl.body {
+                Body::Trace(t) if t.root == pr.0 && t.side.is_none() => Some(TrId {
+                    slot: k as u32,
+                    gen: sl.gen,
+                }),
+                _ => None,
+            })
+            .collect();
+    vlog(d, || {
+        format!(
+            "mfconst: an extra method was rebound: flush {} roots",
+            ids.len()
+        )
+    });
+    for id in ids {
+        request_flush(st, id, FlushWhy::Unsink);
     }
 }
 
@@ -7608,12 +7677,24 @@ pub unsafe extern "C" fn jit_tr_midfold_check(
     let Some(tp) = tr_of(d, pr.0) else {
         return ok;
     };
-    for &(kc, _, tab) in tp.midfold_x.borrow().iter() {
+    let xv = tp.midfold_xv.borrow();
+    for (i, &(kc, _, tab)) in tp.midfold_x.borrow().iter().enumerate() {
         let Some(k2) = p.k().get(kc as usize).and_then(|v| v.as_strref()) else {
             return 0;
         };
         if !extra_found_in(t0, k2, idx, tab) {
             return 0;
+        }
+        // Section 79.10 (`mfconst`): the value too, when the family's traces may use it as a constant (MUTANT `mfconst_check_skip`: not checked)
+        let want = xv.get(i).copied().unwrap_or(0);
+        if want != 0 && !mutants::active("mfconst_check_skip") {
+            // SAFETY: `extra_found_in` just found `k2` in the live table at `tab`.
+            let holder = unsafe { rn_core::table::TableRef::from_raw(tab as *mut _) };
+            let v = holder.get_short_str(k2);
+            if v.as_lclosure().is_none_or(|c| c.as_ptr() as u64 != want) {
+                tp.midfold_xstale.set(true);
+                return 0;
+            }
         }
     }
     ok

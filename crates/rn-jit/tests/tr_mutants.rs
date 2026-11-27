@@ -2236,6 +2236,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s79_push_programs")],
     },
     Row {
+        name: "mfconst_check_skip",
+        owner: "S79",
+        dets: &[d("tr_core", "s79_mfside_programs")],
+    },
+    Row {
         name: "rootproto_any_ref",
         owner: "S79",
         dets: &[d("tr_core", "s79_mfside_programs")],

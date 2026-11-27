@@ -458,6 +458,8 @@ pub const NAMES: &[&str] = &[
     "chainlive_args",
     // section 79.3 (`rootproto`): any callee of the root prototype goes unguarded, not only the root frame's own closure ref
     "rootproto_any_ref",
+    // section 79.10 (`mfconst`): the region check does not compare the extra methods' values
+    "mfconst_check_skip",
     // section 77.3 (`uvk`): writes into read-only variables flush nothing / the closure's identity is not guarded / any upvalue is folded /
     // the collection of a closure held by identity is not reported
     "uvk_flush_skip",
@@ -1238,7 +1240,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 918);
+        assert_eq!(NAMES.len(), 919);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

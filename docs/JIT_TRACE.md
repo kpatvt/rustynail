@@ -9385,3 +9385,46 @@ storms, budget 17, GC stress 2). No mutant: policy only.
 * `+emuverify`: the verification re-run did not know E5's region-check helper (`jit_tr_midfold_check`), which `mfside` traces reach in
   `s79_mfside`: it is read-only and now runs for real in `VerifyHelpers::call`.
 * The mutant registry's frozen count (918).
+
+### 79.9 `pushroom`: tried, not kept (no knob in the tree)
+
+Trace 11 (the `sidepush` side trace) pays the R2 room checks of a frameful side trace that needs more than its parent guarantees (about 16
+instructions per run: the stack and the two-level spare `CallInfo` check, with the function-slot registers saved around them). The form tried
+raised the entry requirement of every trace with chain frames by the room of a push from its deepest chain frame (`base + 2 * maxstack +
+numparams`, one more `CallInfo`), so that its side traces need no checks. At the default size it worked (permute unchanged at 112.2 M), at
+N = 1000 permute went from 1052.6 M to 3361.8 M instructions: near the deepest recursion levels the over-approximated room is not available,
+the continuation roots' entries fail persistently, get flushed (`Rerec`, then `Identical`), and the family collapses into tier 1. Dropped; the
+reduced form (hoisting only into parents that push themselves, whose room already covers the push) gains nothing for trace 11, whose parent
+is the returning trace 8.
+
+### 79.10 `mfconst`: the extra methods of an E5 family as constants under the region check (`TrLimits::mfconst`, default 1)
+
+After 79.1-79.6 the method chain that remained in permute's traces 7 and 8 is the `self:swap` lookup of `mfkeys` (75.12): the class table's
+shape guard, `HREFK`, the typed `HLOAD` and the `EQREF` prototype guard of the inlined `swap` (about 12 instructions per run). `mfkeys` fixes the
+*place* of an extra key `K` (it is found in table `T`) at every region entry, and the family rule keeps `T[K]` unchanged inside a region (75.14);
+its *value* was loaded because foreign code may rebind it between regions. Now:
+
+* *Fixed* at the E5 decision (`midfold_extra_keys`): the closure each extra key finds (`TrProto::midfold_xv`).
+* *Established* at every checked entry (`jit_tr_midfold_check`, both the outer entry and the root-return slow path): the key is found in `T`
+  (as before) **and** `T[K]` is that closure (address compare). A mismatch fails the check (tier 1 runs the frame) and marks the prototype
+  stale.
+* *Used* by the recording (`Rec::mfkey_self`): when the record-time value is the fixed closure, `R[A]` is a `KPTR` of it (registered with the
+  lockstep model); the inlined call of that constant skips its prototype guard (`uvk_holds`, 77.3), so no load, no type guard, no shape
+  guard, no prototype guard remain.
+* *Kept alive / unique*: the closure is registered as section 77.3's held-by-identity closures (`uvk_cl`, `uvk_register` at install:
+  `LClosure::jitdep`, its collection flushes the trace), so a new closure at a reused address can never meet a trace compiled for the old
+  one. `T[K]` holds the closure while any region check passes, so the constant is live whenever a trace runs.
+* *Rebinding*: the first region check that sees another value marks the family stale; the next recording start of the prototype
+  (`driver_start` -> `cache::mfconst_stale_flush`) flushes every root of the prototype (`Unsink`, no penalty) and clears the fixed values for
+  good: from then on the recordings load `T[K]` as `mfkeys` without `mfconst` did (no cliff: the frames run in tier 1 only until a head
+  re-records, which the persistent entry failures of the traces trigger).
+
+Exactness: a trace using the constant runs only inside a region whose checked entry verified `T[K] == C`; inside a region nothing stores `K`
+(family rule, 75.12) or runs foreign code (I6); a trace compiled for an old closure is flushed at that closure's collection or at the stale
+flush. Mutant `mfconst_check_skip` (the region check does not compare the value), caught by `tr_core::s79_mfside_programs` (case (6) of
+`tests/vm/s79_mfside.lua`: `swap` rebound between runs to a closure of the same prototype with another upvalue, to another function, back to
+the first, with full collections in between).
+
+Measured (one binary, `mfconst=0` against `=1`, SEED 0): permute 120.73 -> **111.22** instructions per call, default size 111.74 -> 103.43 M
+(**-7.4 %**). Whole set: permute -7.44 %; nothing else beyond 0.3 % but the noise programs (astar_jumper -1.8 %, testrunner_luaunit +0.30 %,
+real_dis_x86 +0.6 %, re-measured: 4914 .. 4945 M for either setting); geomean -0.04 %.
