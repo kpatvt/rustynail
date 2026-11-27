@@ -4959,6 +4959,56 @@ const TABLE: &[Row] = &[
         owner: "S64",
         dets: &[d("tr_core", "s64_wgcall_programs")],
     },
+    Row {
+        name: "sideback_no_wait",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideback_programs")],
+    },
+    Row {
+        name: "sideblf_never",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideblf_programs")],
+    },
+    Row {
+        name: "carena_recycle_live",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
+        name: "carena_grow_any",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_carena_blocks")],
+    },
+    Row {
+        name: "fixsum_shift",
+        owner: "S76",
+        dets: &[d("tr_record", "count_model_is_exact")],
+    },
+    Row {
+        name: "pruneq_copy_all",
+        owner: "S76",
+        dets: &[d("tr_ir", "prune_snaps_drops_only_dead_numbers")],
+    },
+    Row {
+        name: "t1exit_pc_off",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
+    Row {
+        name: "hdrcse_no_barrier",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_hdrcse_programs")],
+    },
+    Row {
+        name: "htramp_swap_args",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
+    Row {
+        name: "chain_end_nil",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_t1exit_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

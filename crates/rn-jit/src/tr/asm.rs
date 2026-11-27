@@ -11252,7 +11252,9 @@ pub mod support {
             None => lower_ex(p.code(), cfg, None, false),
         }
         .ok_or("the prototype does not lower")?;
-        let em = x86::emit(&low.prog).map_err(|e| format!("emit: {e:?}"))?;
+        // (section 76.10: the helper trampolines as the real compile had them)
+        let em = x86::with_htramp(env.t1exit & 2 != 0, || x86::emit(&low.prog))
+            .map_err(|e| format!("emit: {e:?}"))?;
         if em.code.len() > jpr.block.size() {
             return Err("the re-derived tier-1 code is larger than the placed block".into());
         }

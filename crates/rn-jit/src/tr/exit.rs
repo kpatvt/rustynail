@@ -3087,7 +3087,9 @@ pub unsafe extern "C" fn jit_tr_exit(th: *mut Thread, ci: *mut CallInfo, _a: u32
             if area.exitno & EXIT_DEFER != 0 {
                 area.exitno &= !EXIT_DEFER;
                 let t0 = super::phase::now();
+                rn_core::carena::enter();
                 let built = defer_build(&mut st, area);
+                rn_core::carena::leave();
                 super::phase::add(super::phase::LAZYSTUB, t0);
                 if let Some(addr) = built {
                     area.args[0] = addr as u64;

@@ -172,6 +172,16 @@ pub const RECINL_PROCESS: u32 = 2;
 pub const SIDEPUSH_PROCESS: u32 = 1;
 /// Section 75.12 (`mfkeys`): the process default of [`TrLimits::mfkeys`] (also the struct default).
 pub const MFKEYS_PROCESS: u32 = 1;
+/// Section 76.2 (`sideback`): the process default of [`TrLimits::sideback`] (also the struct default).
+pub const SIDEBACK_PROCESS: u32 = 0;
+/// Section 76.3 (`sideblf`): the process default of [`TrLimits::sideblf`] (also the struct default).
+pub const SIDEBLF_PROCESS: u32 = 65;
+/// Section 76.4 (`carena`): the process default of [`TrLimits::carena`] (also the struct default).
+pub const CARENA_PROCESS: u32 = 1;
+/// Section 76.10 (`t1exit`): the process default of [`TrLimits::t1exit`] (also the struct default).
+pub const T1EXIT_PROCESS: u32 = 7;
+/// Section 76.11 (`hdrcse`): the process default of [`TrLimits::hdrcse`] (also the struct default).
+pub const HDRCSE_PROCESS: u32 = 2;
 /// Section 75.13 (`mfdeep`): the process default of [`TrLimits::mfdeep`] (also the struct default).
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
@@ -883,6 +893,35 @@ pub struct TrLimits {
     /// `T`, raw `T[K]` is a Lua closure) and kept by the family rule; a recording then reads them as `T[K]` (a constant table) instead of walking the chain.
     /// 0 = off, 1 = on (default [`MFKEYS_PROCESS`]).
     pub mfkeys: u32,
+    /// Section 76.2 (`sideback`, docs/JIT_TRACE.md section 76.2): exponential back-off of side recordings at an exit whose last recording failed. After
+    /// the `n`th failed recording (a fault) that leaves the exit a retry, the next attempt waits `2^(s * n) - 1` more report windows of `hot_exit` exits
+    /// (`s` = bits 0-1, 1..3; at most 255 windows) instead of one. Bit 2: only after the failures whose cause is a property of the code (`unchangeable`,
+    /// the ones whose identical repeat blacklists the exit); without it after every fault. Bit 3: only after the causes the bytecode path alone decides
+    /// ([`sideback_path_reason`]: `CFunc`, `Nyi`, `Recursion`, `Depth`, ...). 0 = off (default [`SIDEBACK_PROCESS`]).
+    pub sideback: u32,
+    /// Section 76.3 (`sideblf`, docs/JIT_TRACE.md section 76.3): a side exit is blacklisted at the FIRST failed recording whose cause is a property of the
+    /// code (`unchangeable`) and in this mask of cause classes (instead of at the second identical one): 1 `Depth`, 2 `Recursion`, 4 `LeaveFrame`,
+    /// 8 `SideShort`, 16 `CFunc` / `Nyi(..)`, 32 `InnerLoop`, 64 `TooLong`, 128 `LeaveLoop`, 256 the other unchangeable causes. A retry that
+    /// `sbump2` still has pending is kept. 0 = off (default [`SIDEBLF_PROCESS`] = 65: `Depth` and `TooLong`, section 76.3).
+    pub sideblf: u32,
+    /// Section 76.4 (`carena`, docs/JIT_TRACE.md section 76.4): the compile arena of `rn_core::carena` (bump allocation from recycled 16 KiB chunks
+    /// while a recorder step, a trace pipeline, a tier-1 compile or a deferred exit stub runs). Process-wide: read when the process's JIT is set up.
+    /// Only where the binary registers `rn_core::carena::CArena` as its allocator (`rnlua`, the trace test binaries). 0 = off, 1 = on (default [`CARENA_PROCESS`]).
+    pub carena: u32,
+    /// Section 76.10 (`t1exit`, docs/JIT_TRACE.md section 76.10): tier 1's out-of-line exit sequences (`savedpc = pc`, an optional refund, `ret`
+    /// through the thunk's epilogue: about 45 bytes each) become `mov eax, pc; jmp` to one shared exit per prototype that computes the address of
+    /// `pc` and leaves (12-20 bytes each); also the inline exit stubs of the instructions tier 1 does not compile and the `MMBIN` stubs.
+    /// Bit 1: helper calls go through one trampoline per helper and prototype (`call rel32` instead of `mov rdi; mov rsi; movabs; call rax`).
+    /// Bit 2: the inline `__index` chain walk of a constant-key read is one level body in a counted loop instead of `idx_levels` unrolled copies.
+    /// 0 = off, 7 = all (default [`T1EXIT_PROCESS`]).
+    pub t1exit: u32,
+    /// Section 76.11 (`hdrcse`, docs/JIT_TRACE.md section 76.11): the recorder reuses an `FLOAD` of the same table ref and header field emitted
+    /// earlier in the recording when no instruction since may change a table header (`opt_mem::header_safe`, rule 4: allocation, key insertion,
+    /// `TSET`, `TLEN`, library calls are barriers), so the node-count guard and the node / metatable loads of repeated field accesses of one table
+    /// are recorded once (the loop pass, which does this for allocation-free root traces, gives up on traces with a barrier). Bit 0: in root
+    /// recordings, bit 1: in side recordings. Default 2 ([`HDRCSE_PROCESS`]): side recordings only (bit 0 moves the root formation of
+    /// apps/expr_lang, +3 % instructions, section 76.11).
+    pub hdrcse: u32,
     /// Section 75.13 (`mfdeep`, docs/JIT_TRACE.md section 75.13): E5's fold of the family key also in an inlined chain frame (`unr`) that was called with
     /// the root's closure ref and whose register 0 is the root's entry register 0. 0 = off, 1 = on (default [`MFDEEP_PROCESS`]).
     pub mfdeep: u32,
@@ -1184,6 +1223,11 @@ impl Default for TrLimits {
             recinl: RECINL_PROCESS,
             sidepush: SIDEPUSH_PROCESS,
             mfkeys: MFKEYS_PROCESS,
+            sideback: SIDEBACK_PROCESS,
+            sideblf: SIDEBLF_PROCESS,
+            carena: CARENA_PROCESS,
+            t1exit: T1EXIT_PROCESS,
+            hdrcse: HDRCSE_PROCESS,
             mfdeep: MFDEEP_PROCESS,
             mfshare: MFSHARE_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
@@ -1424,6 +1468,11 @@ impl TrLimits {
                 "recinl" => l.recinl = v.min(15),
                 "sidepush" => l.sidepush = v.min(1),
                 "mfkeys" => l.mfkeys = v.min(1),
+                "sideback" => l.sideback = v.min(15),
+                "sideblf" => l.sideblf = v.min(511),
+                "carena" => l.carena = v.min(1),
+                "t1exit" => l.t1exit = v.min(7),
+                "hdrcse" => l.hdrcse = v.min(3),
                 "mfdeep" => l.mfdeep = v.min(1),
                 "mfshare" => l.mfshare = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
@@ -3067,6 +3116,8 @@ pub struct TrStats {
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
     pub heat_granted: u64,
+    /// Section 76.2 (`sideback`): exit reports skipped by the back-off after a failed side recording.
+    pub side_backoff: u64,
     /// Section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings (closed or not).
     pub restarts: u64,
     /// P3: chain checks made ([`chain_check`]).
@@ -3306,6 +3357,8 @@ struct Trace {
     /// Section 39.2 (T3): per exit, how often a full family deferred it under the `heatside` rule (its own count: the `polyside` counter `defer`
     /// keeps its meaning, and an exit deferred here counts once in the `loopany` guard's side attempts, at its first report).
     hdefer: Vec<u8>,
+    /// Section 76.2 (`sideback`): per exit, the report windows still to wait before the next side attempt (set by a failed recording).
+    bwait: Vec<u8>,
     /// P3: per snapshot, whether the exit counter counts twice per exit (`Asm::dbl`).
     dbl: Vec<bool>,
     /// P3 (`ncallee`): the entry segment of this root holds a callee identity guard (`EQREF` on an empty-map snapshot).
@@ -3922,6 +3975,8 @@ fn side_failed(
     }
     let sbump2 = d.tr.cfg.limits.sbump2;
     let blfirst = d.tr.cfg.limits.blfirst;
+    let sideback = d.tr.cfg.limits.sideback;
+    let sideblf = d.tr.cfg.limits.sideblf;
     let Some(Slot {
         body: Body::Trace(t),
         ..
@@ -3937,7 +3992,9 @@ fn side_failed(
     if fault {
         t.fails[k] = t.fails[k].saturating_add(1);
         repeat = unchangeable
-            && (t.last[k] == Some(reason) || blfirst_applies(blfirst, reason, true))
+            && (t.last[k] == Some(reason)
+                || blfirst_applies(blfirst, reason, true)
+                || sideblf_applies(sideblf, reason))
             && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
@@ -3951,9 +4008,64 @@ fn side_failed(
         // the counter stays where it is (past the divert value `hot_exit - 1`): the inline stub reports this exit no more
         black_exit(&mut t.exit_st, &t.exits, k);
     } else {
+        // section 76.2 (`sideback`): a failed recording that leaves a retry waits `2^(s * fails) - 1` more windows first
+        if fault && k < t.bwait.len() {
+            t.bwait[k] = sideback_wait(sideback, u32::from(t.fails[k]), unchangeable, reason);
+        }
         // the inline stub reports an exit when its counter passes `hot_exit - 1`: count `hot_exit` more
         t.exits[k].set(0);
     }
+}
+
+/// Section 76.2 (`sideback`): the report windows a side attempt waits after its exit's `fails`th failed recording (`unchangeable`: the cause is a
+/// property of the code). `sideback`: bits 0-1 the shift `s` (0 = off), bit 2 only after `unchangeable` causes. `2^(s * fails) - 1`, at most 255.
+pub fn sideback_wait(sideback: u32, fails: u32, unchangeable: bool, reason: &str) -> u8 {
+    let s = sideback & 3;
+    if s == 0 || fails == 0 || (sideback & 4 != 0 && !unchangeable) {
+        return 0;
+    }
+    // bit 3: only the causes that are a property of the bytecode path itself (a C function, an unsupported instruction, the recursion / depth limits,
+    // varargs, multiple results, tail calls, a table hash), not of the trace graph around the exit (`LeaveFrame`, `LeaveLoop`, `SideShort`,
+    // `InnerLoop`: a trace for the frame or loop reached may appear) nor of the length (`TooLong`)
+    if sideback & 8 != 0 && !sideback_path_reason(reason) {
+        return 0;
+    }
+    if mutants::active("sideback_no_wait") {
+        return 0;
+    }
+    let e = (s * fails).min(8);
+    ((1u32 << e) - 1).min(255) as u8
+}
+
+/// Section 76.3 (`sideblf`): does the first failed side recording with the unchangeable cause `reason` blacklist its exit (mask of cause classes,
+/// see [`TrLimits::sideblf`])?
+pub fn sideblf_applies(mask: u32, reason: &str) -> bool {
+    if mask == 0 || mutants::active("sideblf_never") {
+        return false;
+    }
+    let bit = match reason {
+        "Depth" => 1,
+        "Recursion" => 2,
+        "LeaveFrame" => 4,
+        "SideShort" => 8,
+        "CFunc" => 16,
+        "InnerLoop" => 32,
+        "TooLong" => 64,
+        "LeaveLoop" => 128,
+        // the exit policy's own reasons (`side_failed` callers) are not recorder aborts
+        "ChainDepth" | "InnerFamily" | "MaxSide" | "FrameKind" => 0,
+        r if r.starts_with("Nyi(") => 16,
+        _ => 256,
+    };
+    mask & bit != 0
+}
+
+/// Section 76.2 (`sideback` bit 3): is `reason` a cause that the bytecode path alone decides?
+pub fn sideback_path_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "CFunc" | "Vararg" | "MultRet" | "TailCall" | "Recursion" | "Depth" | "TableHash"
+    ) || reason.starts_with("Nyi(")
 }
 
 /// K3 (`fretry`): is the side attempt at an exit inside inlined frames (`framed`) whose previous attempt ended `last` exempt from `framemin`? Only the retry after `SideShort`.
@@ -5101,6 +5213,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         la_any: false,
         defer: vec![0; nex],
         hdefer: vec![0; nex],
+        bwait: vec![0; nex],
         dbl: Vec::new(),
         entry_callee: false,
         hoisted: false,
@@ -6276,6 +6389,21 @@ fn side_attempt(
     };
     if state != Some(SideSt::Free) {
         return HotAction::None;
+    }
+    // section 76.2 (`sideback`): the exit's last recording failed: wait out the back-off windows (re-armed, no fault, not a side attempt)
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d.tr.slot_mut(id)
+    {
+        if let Some(w) = t.bwait.get_mut(k as usize) {
+            if *w > 0 {
+                *w -= 1;
+                d.tr.stats.side_backoff += 1;
+                side_failed(d, link, false, "BackWait", false);
+                return HotAction::None;
+            }
+        }
     }
     if d.tr.cfg.limits.loopanymax != 0
         && !snap.frames.is_empty()
@@ -9628,9 +9756,9 @@ pub fn tier1_bytes(st: &mut State) -> Option<(Vec<u8>, Vec<u8>)> {
         consts: p.k(),
         t15_warmup: None,
     };
-    let expected = x86::emit(&crate::lower::lower(p.code(), cfg)?.prog)
-        .ok()?
-        .code;
+    let htramp = env.t1exit & 2 != 0;
+    let low = crate::lower::lower(p.code(), cfg)?;
+    let expected = x86::with_htramp(htramp, || x86::emit(&low.prog)).ok()?.code;
     // SAFETY: the block is the committed, readable code of the live descriptor.
     let actual = unsafe {
         std::slice::from_raw_parts(

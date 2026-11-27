@@ -19,6 +19,10 @@
 //! every job's statistics).
 #![cfg(feature = "trace")]
 
+/// Section 76.4 (`carena`): the jobs run with the process allocator of `rnlua` (the compile arena; on by default, `carena=0` switches it off).
+#[global_allocator]
+static GLOBAL: rn_core::carena::CArena = rn_core::carena::CArena;
+
 #[path = "tr_core/a1_progs.rs"]
 mod a1_progs;
 #[path = "tr_core/h1_progs.rs"]
@@ -51,6 +55,8 @@ mod s60_progs;
 mod s64_progs;
 #[path = "tr_core/s68_progs.rs"]
 mod s68_progs;
+#[path = "tr_core/s76_progs.rs"]
+mod s76_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -79,6 +85,7 @@ use s59_progs::S59_PROGS;
 use s60_progs::S60_PROGS;
 use s64_progs::S64_PROGS;
 use s68_progs::S68_PROGS;
+use s76_progs::S76_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -214,6 +221,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S60_PROGS)
         .chain(S68_PROGS)
         .chain(S64_PROGS)
+        .chain(S76_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -613,6 +621,8 @@ struct TStats {
     deep_probes: u64,
     /// docs/JIT_TRACE.md section 39.2 (`heatside`): side traces granted beyond `maxside`.
     heat_granted: u64,
+    /// docs/JIT_TRACE.md section 76.2 (`sideback`): exit reports skipped by the back-off after failed side recordings.
+    side_backoff: u64,
     /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings.
     restarts: u64,
     /// docs/JIT_TRACE.md section 49 (`ccheck`): compiles compared with the old paths of `cspeed`, and those that differed.
@@ -877,6 +887,8 @@ impl TStats {
                 ];
             } else if let Some(r) = l.strip_prefix("heatside: granted ") {
                 s.heat_granted = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("sideback: reports waited ") {
+                s.side_backoff = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("links: nest roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 let g = |k: &str| {
@@ -10305,6 +10317,190 @@ fn s64_wgcall_programs() {
         "weighted calls open the gate: {}",
         res[1].1.stats.line()
     );
+}
+
+/// Section 76.2 (`sideback`): exponential back-off of side recordings at exits whose recordings failed. The program with repeatedly failing side
+/// exits runs identically with the knob at 3 (every fault), 11 (path causes only), 6 (unchangeable causes, shift 2) and 0 (control) in every mode
+/// (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves), and the back-off really waits at 3. Mutant `sideback_no_wait`.
+#[test]
+fn s76_sideback_programs() {
+    let limits = ["sideback=3", "sideback=11", "sideback=6", "sideback=0"];
+    let res = compare(b1_jobs(&["s76_side_fail"], &limits));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().sideback, 0);
+    assert_eq!(TrLimits::parse("sideback=11").0.sideback, 11);
+    let mut j = Job::new("s76_side_fail", "on");
+    j.limits = "sideback=3".into();
+    let res = compare(vec![j]);
+    assert!(
+        res[0].1.stats.side_backoff >= 1,
+        "failed side recordings back off: {}",
+        res[0].1.stats.line()
+    );
+}
+
+/// Section 76.3 (`sideblf`): side exits blacklisted at the first failed recording of the cause classes of the mask. The program with repeatedly failing
+/// side exits runs identically with the mask at 65 (`Depth`, `TooLong`), 511 (every class), 18 and 0 (control) in every mode, and at 511 it records
+/// fewer side traces than at 0 (the second attempts are gone). Mutant `sideblf_never`.
+#[test]
+fn s76_sideblf_programs() {
+    let limits = ["sideblf=65", "sideblf=511", "sideblf=18", "sideblf=0"];
+    let res = compare(b1_jobs(&["s76_side_fail"], &limits));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::parse("sideblf=65").0.sideblf, 65);
+    let mut jobs = Vec::new();
+    for l in ["sideblf=0", "sideblf=511"] {
+        let mut j = Job::new("s76_side_fail", "on");
+        j.limits = l.into();
+        jobs.push(j);
+    }
+    let res = compare(jobs);
+    assert!(
+        res[1].1.stats.side_recorded < res[0].1.stats.side_recorded,
+        "the first failure blacklists: {} / {}",
+        res[0].1.stats.line(),
+        res[1].1.stats.line()
+    );
+}
+
+/// Section 76.4 (`carena`): the compile arena, driven directly. Inside a compile (`enter`) with the arena on, blocks of many sizes are allocated,
+/// filled with a pattern, grown and shrunk (`realloc`: the newest block in place, others by copy), and freed in a scrambled order; after every
+/// 64 steps every live block must still hold its pattern (no two live blocks overlap, a recycled chunk held no live block). Blocks freed after
+/// the compile ended mix in. Mutants `carena_recycle_live`, `carena_grow_any` (selected in rn-core through `apply_vm_mutants`).
+#[test]
+fn s76_carena_blocks() {
+    use std::alloc::{GlobalAlloc, Layout};
+    #[cfg(feature = "tr_mutants")]
+    rn_jit::tr::mutants::apply_vm_mutants();
+    let a = rn_core::carena::CArena;
+    // (the test thread becomes the arena's owner thread unless a compile of this process took it first: then the blocks below come from the
+    // system allocator and the test checks the patterns all the same; the test binary's parent process compiles nothing itself)
+    rn_core::carena::set_enabled(true);
+    rn_core::carena::enter();
+    let mut live: Vec<(*mut u8, usize, u8)> = Vec::new();
+    let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let check = |live: &[(*mut u8, usize, u8)]| {
+        for &(p, n, v) in live {
+            // a live block of `n` bytes filled with `v`
+            let s = unsafe { std::slice::from_raw_parts(p, n) };
+            assert!(
+                s.iter().all(|&b| b == v),
+                "block {p:?} ({n} bytes) lost its pattern {v}"
+            );
+        }
+    };
+    let served0 = rn_core::carena::stats().0;
+    for step in 0..20_000u32 {
+        let r = rnd();
+        match r % 8 {
+            0..=3 => {
+                let n = 1 + (rnd() % 600) as usize * if r % 64 == 0 { 9 } else { 1 };
+                let l = Layout::from_size_align(n, 8).unwrap();
+                let p = unsafe { a.alloc(l) };
+                assert!(!p.is_null());
+                let v = (step % 251) as u8;
+                unsafe { std::ptr::write_bytes(p, v, n) };
+                live.push((p, n, v));
+            }
+            4 | 5 if !live.is_empty() => {
+                // grow or shrink the newest block or a random one
+                let i = if r % 3 == 0 {
+                    live.len() - 1
+                } else {
+                    (rnd() as usize) % live.len()
+                };
+                let (p, n, v) = live[i];
+                let m = 1 + (rnd() % 900) as usize;
+                let q = unsafe { a.realloc(p, Layout::from_size_align(n, 8).unwrap(), m) };
+                assert!(!q.is_null());
+                let s = unsafe { std::slice::from_raw_parts(q, n.min(m)) };
+                assert!(s.iter().all(|&b| b == v), "realloc lost the contents");
+                unsafe { std::ptr::write_bytes(q, v, m) };
+                live[i] = (q, m, v);
+            }
+            6 | 7 if !live.is_empty() => {
+                let i = (rnd() as usize) % live.len();
+                let (p, n, _) = live.swap_remove(i);
+                unsafe { a.dealloc(p, Layout::from_size_align(n, 8).unwrap()) };
+            }
+            _ => {}
+        }
+        if step % 64 == 0 {
+            check(&live);
+        }
+        if step == 15_000 {
+            // the compile ends: later blocks come from the system allocator, frees of arena blocks still go back to their chunks
+            rn_core::carena::leave();
+        }
+    }
+    check(&live);
+    for (p, n, _) in live {
+        unsafe { a.dealloc(p, Layout::from_size_align(n, 8).unwrap()) };
+    }
+    assert!(
+        rn_core::carena::stats().0 > served0,
+        "the arena served no block"
+    );
+}
+
+/// Section 76.4 (`carena`): programs with many compiles (side traces, failed side recordings, tier-1 compiles, deferred stubs) run identically with
+/// the compile arena on and off in every mode (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves).
+#[test]
+fn s76_carena_programs() {
+    let progs = ["s76_side_fail", "s64_call_loops", "s64_call_observers"];
+    let res = compare(b1_jobs(&progs, &["carena=1", "carena=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().carena, 1);
+    assert_eq!(TrLimits::parse("carena=0").0.carena, 0);
+}
+
+/// Section 76.10 (`t1exit`): tier 1's shared exit sequence (`pc | refund << 20` in one register, one sequence per prototype, the trap variant
+/// after helpers that may have run a finalizer). Programs with exit stubs, refunding guard exits, metamethod fallbacks and a finalizer that
+/// installs a count hook run identically with the knob on and off in every mode (`+verify`, exit storms, budgets 3 / 17, `-loop`, GC stress
+/// 1 / 2 except for the program that prints the hook's first firing, stack moves), and with traces off (tier 1 alone). Mutant
+/// `t1exit_pc_off`.
+#[test]
+fn s76_t1exit_programs() {
+    let progs = ["s76_t1_exits", "s64_call_observers", "s76_side_fail"];
+    // (`s76_t1_exits` prints where the finalizer's hook first fired: GC stress moves the finalizer, so its stress jobs are left out)
+    let mut jobs: Vec<Job> = b1_jobs(&progs, &["t1exit=7", "t1exit=3", "t1exit=0"])
+        .into_iter()
+        .filter(|j| {
+            !(j.prog == "s76_t1_exits" && j.env.iter().any(|(k, _)| k == "RUSTYNAIL_GC_STRESS"))
+        })
+        .collect();
+    for p in progs {
+        for l in ["t1exit=7", "t1exit=4", "t1exit=2", "t1exit=0"] {
+            for b in [0, 3, 17] {
+                let mut j = Job::new(p, "off").limits_s(l);
+                if b != 0 {
+                    j = j.budget(b);
+                }
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().t1exit, 7);
+}
+
+/// Section 76.11 (`hdrcse`): the recorder's reuse of header loads (`FLOAD`) until a header barrier. A program that reads fields of one table
+/// around key insertions that rehash and allocations, and the field-heavy programs, run identically
+/// with the knob at 3 (roots and sides), 2 (sides, the default) and 0 in every mode (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2,
+/// stack moves). Mutant `hdrcse_no_barrier`.
+#[test]
+fn s76_hdrcse_programs() {
+    let progs = ["s76_hdr_reuse", "s64_call_loops", "s76_side_fail"];
+    let res = compare(b1_jobs(&progs, &["hdrcse=3", "hdrcse=2", "hdrcse=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().hdrcse, 2);
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at

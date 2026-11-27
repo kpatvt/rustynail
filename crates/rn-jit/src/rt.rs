@@ -169,6 +169,8 @@ pub fn register_with(cfg: Config) -> bool {
             if crate::tr::cache::TrConfig::process().limits.memtune != 0 {
                 memtune();
             }
+            // Section 76.4 (`carena`): the compile arena (effective where the binary registered `rn_core::carena::CArena`)
+            rn_core::carena::set_enabled(crate::tr::cache::TrConfig::process().limits.carena != 0);
         }
         jit_hooks::install(VTable {
             hot_call,
@@ -944,6 +946,8 @@ pub fn set_trace(st: &mut State, cfg: crate::tr::cache::TrConfig) {
             let q = (*dp).arena.quarantine_enabled();
             (*dp).arena.set_dual(cfg.limits.codemap != 0 && !q);
         }
+        // Section 76.4 (`carena`): the compile arena follows the state's knob (process-wide: the last configured state decides)
+        rn_core::carena::set_enabled(cfg.limits.carena != 0 && !off);
         // SAFETY: as in `set_mode`.
         unsafe { (*dp).tr.cfg = cfg };
         if off {
@@ -1069,6 +1073,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         e.str_mt = str_mt_addr(st, d);
         (e.inl, e.inl_mut) = t1inline_bits(d);
         e.t1q = t1q_bits(d);
+        e.t1exit = t1exit_bits(d);
         e.t1g = t1g_bits(d);
         e.ccall_helper = ccall_helper(d);
         e.hints = &d.t1i_hints;
@@ -1093,6 +1098,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl: 0,
         inl_mut: 0,
         t1q: 0,
+        t1exit: 0,
         t1g: 0,
         hints: std::ptr::null(),
         jret: 0,
@@ -1112,6 +1118,7 @@ pub(crate) fn call_env(st: &mut State, d: &mut JitData) -> CallEnv {
         inl,
         inl_mut,
         t1q: t1q_bits(d),
+        t1exit: t1exit_bits(d),
         t1g: t1g_bits(d),
         hints: &d.t1i_hints,
         ccall_helper: ccall_helper(d),
@@ -1190,6 +1197,24 @@ fn t1inline_bits(d: &JitData) -> (u16, u16) {
     }
     let _ = d;
     (0, 0)
+}
+
+/// Section 76.10 (`t1exit`): the shared exit sequence of tier 1 (the limit as configured; without traces the struct default).
+fn t1exit_bits(d: &JitData) -> u32 {
+    #[cfg(feature = "trace")]
+    {
+        d.tr.cfg.limits.t1exit
+            | if crate::tr::mutants::active("t1exit_pc_off") {
+                0x100
+            } else {
+                0
+            }
+    }
+    #[cfg(not(feature = "trace"))]
+    {
+        let _ = d;
+        1
+    }
 }
 
 /// BUNDLE-Q (`t1q`): the tier-1 exits removed (bits 0-1 of the limit) plus the test-only mutants (bits 8..). With traces off only when the limit was named.
@@ -1316,7 +1341,9 @@ fn compile(st: &mut State, p: &Proto) -> Result<(), Fail> {
         unsafe { (*data_ptr(st)).deny = 32 };
         return Err(Fail::Retry);
     }
+    rn_core::carena::enter();
     let r = compile_inner(st, p, desc, &nests, ncells);
+    rn_core::carena::leave();
     jit_hooks::uncharge_code(st, transient);
     if r.is_err() {
         jit_hooks::uncharge_code(st, desc);
@@ -1655,19 +1682,77 @@ fn compile_inner(
     if d.heuristic && !low.worth_compiling() {
         return Err(Fail::Permanent);
     }
-    let em = x86::emit(&low.prog).map_err(|_| Fail::Permanent)?;
+    // Section 76.10 (`t1exit` bit 1): the helper trampolines
+    let htramp = env.t1exit & 2 != 0;
+    let em = x86::with_htramp(htramp, || x86::emit(&low.prog)).map_err(|_| Fail::Permanent)?;
     #[cfg(feature = "trace")]
     crate::tr::phase::add(crate::tr::phase::TIER1, t_tier1);
     // Section 49 (`ccheck`): the encoder of the old paths gives the same bytes and label offsets
     #[cfg(feature = "trace")]
     if d.tr.cfg.limits.ccheck != 0 {
-        let same = crate::cspeed::with(0, || x86::emit(&low.prog))
+        let same = crate::cspeed::with(0, || x86::with_htramp(htramp, || x86::emit(&low.prog)))
             .is_ok_and(|e2| e2.code == em.code && e2.label_off == em.label_off);
         crate::tr::CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !same {
             crate::tr::CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Err(Fail::Permanent);
         }
+    }
+    if std::env::var_os("RUSTYNAIL_JIT_T1SIZE").is_some() {
+        // section 76.10 (diagnostic): the tier-1 code bytes of each instruction (from its label to the next label in code order; the
+        // out-of-line code after the last label is reported as `cold`), one line per prototype and opcode on stderr
+        let mut offs: Vec<(usize, Option<u32>)> = low
+            .pc_labels
+            .iter()
+            .enumerate()
+            .filter_map(|(pc, l)| {
+                l.and_then(|l| em.label_off.get(l as usize).copied().flatten())
+                    .map(|o| (o as usize, Some(pc as u32)))
+            })
+            .collect();
+        offs.sort_unstable();
+        offs.push((em.code.len(), None));
+        let mut per: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut last_main = 0usize;
+        for w in offs.windows(2) {
+            let (o, pc) = w[0];
+            let n = w[1].0 - o;
+            let name = pc.map_or_else(
+                || "cold".to_string(),
+                |pc| {
+                    rn_core::instruction::Instruction(p.code()[pc as usize])
+                        .opcode()
+                        .map_or_else(|| "?".to_string(), |op| format!("{op:?}"))
+                },
+            );
+            *per.entry(name).or_default() += n;
+            last_main = last_main.max(o);
+        }
+        for (k, v) in per {
+            eprintln!("[t1size] {k} {v}");
+        }
+        eprintln!("[t1size] TOTAL {}", em.code.len());
+        let rets = low
+            .prog
+            .ops
+            .iter()
+            .filter(|o| matches!(o, crate::ir::Op::Ret(_)))
+            .count();
+        eprintln!("[t1size] RETS {rets}");
+        let sec = crate::lower::T1SEC.with(std::cell::Cell::get);
+        let off = |l: u32| em.label_off.get(l as usize).copied().flatten().unwrap_or(0) as usize;
+        let (s0, s1, s2, s3) = (off(sec[0]), off(sec[1]), off(sec[2]), off(sec[3]));
+        eprintln!("[t1size] SEC_main {s0}");
+        eprintln!("[t1size] SEC_mmbin {}", s1 - s0);
+        eprintln!("[t1size] SEC_cold {}", s2 - s1);
+        eprintln!("[t1size] SEC_land {}", s3 - s2);
+        eprintln!("[t1size] SEC_exits {}", em.code.len() - s3);
+        let cold = crate::lower::T1COLD.with(|v| std::mem::take(&mut *v.borrow_mut()));
+        for (i, (k, l)) in cold.iter().enumerate() {
+            let end = cold.get(i + 1).map_or(s2, |n| off(n.1));
+            eprintln!("[t1size] COLD_{k} {}", end.saturating_sub(off(*l)));
+        }
+        eprintln!("[t1size] OPS {}", low.prog.ops.len());
     }
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
         // debugging aid: raw machine code per prototype (`objdump -D -b binary -mi386:x86-64`)
@@ -1855,7 +1940,9 @@ pub(crate) fn recompile_with(
         unsafe { (*dp).deny = 32 };
         return Err(Fail::Retry);
     }
+    rn_core::carena::enter();
     let r = recompile_inner(st, p, jpp, dp, plans, ver);
+    rn_core::carena::leave();
     jit_hooks::uncharge_code(st, transient);
     // MUTANT `vbytes_no_credit`: the version bytes of a failed recompile are not refunded
     if r.is_err() && !vbytes_mutant("vbytes_no_credit") {
@@ -2003,7 +2090,8 @@ fn recompile_inner(
     if !same {
         return Err(Fail::Permanent);
     }
-    let em = x86::emit(&low.prog).map_err(|_| Fail::Permanent)?;
+    let em = x86::with_htramp(env.t1exit & 2 != 0, || x86::emit(&low.prog))
+        .map_err(|_| Fail::Permanent)?;
     if let Ok(dir) = std::env::var("RUSTYNAIL_JIT_DUMP") {
         let _ = std::fs::write(
             format!("{dir}/proto-{:x}-v{ver}.bin", p.code_ptr() as usize),

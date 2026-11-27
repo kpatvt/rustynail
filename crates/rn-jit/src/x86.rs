@@ -12,6 +12,20 @@ use rn_core::jit_layout::callinfo;
 
 const VREG: [Gpr; crate::ir::NV] = [RSI, RDI, R8, R9, R10, R11, RCX, RAX, RDX, RBP, R14];
 
+thread_local! {
+    /// Section 76.10 (`t1exit` bit 1): helper calls (`CallH`) go through one trampoline per helper and program (`mov rdi, r12; mov rsi, r13;
+    /// movabs rax, f; jmp rax`, reached by `call rel32`: the helper sees the same stack and return address as with `call rax` at the site).
+    static HTRAMP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Section 76.10: runs `f` with the helper trampolines on or off (the tier-1 compile sets them from `t1exit`).
+pub fn with_htramp<T>(on: bool, f: impl FnOnce() -> T) -> T {
+    let old = HTRAMP.with(|c| c.replace(on));
+    let r = f();
+    HTRAMP.with(|c| c.set(old));
+    r
+}
+
 /// Stack bytes the thunk reserves after its six pushes (alignment).
 const THUNK_PAD: i32 = 8;
 
@@ -99,6 +113,8 @@ pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
     };
     let labels: Vec<Label> = (0..prog.nlabels).map(|_| a.new_label()).collect();
     let lab = |l: L| labels[l as usize];
+    let htramp = HTRAMP.with(std::cell::Cell::get);
+    let mut tramps: Vec<(u64, Label)> = Vec::new();
     let mut skip_pad = false;
     for (oi, op) in prog.ops.iter().enumerate() {
         match *op {
@@ -323,6 +339,20 @@ pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
                 a.alu_rr(Alu::Add, Size::S64, RAX, RDX);
                 a.lea(Size::S64, RBX, Mem::base_disp(RAX, 16));
             }
+            Op::CallH { f, a: x, b } if htramp => {
+                let l = match tramps.iter().find(|t| t.0 == f) {
+                    Some(t) => t.1,
+                    None => {
+                        let l = a.new_label();
+                        tramps.push((f, l));
+                        l
+                    }
+                };
+                a.mov_ri(RDX, i64::from(x));
+                a.mov_ri(RCX, i64::from(b));
+                a.call_label(l);
+                a.mov_rr(Size::S32, RSI, RAX); // V0 = eax (zero-extended)
+            }
             Op::CallH { f, a: x, b } => {
                 a.mov_rr(Size::S64, RDI, R12);
                 a.mov_rr(Size::S64, RSI, R13);
@@ -338,6 +368,18 @@ pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
                 a.call_r(RAX);
             }
         }
+    }
+    for (f, l) in tramps {
+        a.bind(l);
+        a.mov_rr(Size::S64, RDI, R12);
+        a.mov_rr(Size::S64, RSI, R13);
+        // MUTANT `htramp_swap_args` (rn-jit `tr_mutants`): the trampoline passes `ci` and the thread exchanged
+        if crate::tr_mut_htramp_swap() {
+            a.mov_rr(Size::S64, RDI, R13);
+            a.mov_rr(Size::S64, RSI, R12);
+        }
+        a.mov_ri64(RAX, f);
+        a.jmp_r(RAX);
     }
     let label_off = labels.iter().map(|&l| a.label_offset(l)).collect();
     // (the labels were created first, in order: an assembler label's index is the program's label)

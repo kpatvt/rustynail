@@ -386,6 +386,8 @@ pub struct RecCfg {
     pub retf_sel: bool,
     /// BUNDLE-V V2 (`TrLimits::upbar`): record `SETUPVAL` of a collectable value into a real upvalue cell (`USTORE` + the upvalue write barrier).
     pub upbar: u32,
+    /// Section 76.11 (`TrLimits::hdrcse`): reuse header loads of the recording until a header barrier.
+    pub hdrcse: bool,
     /// N3a: (prototype, pc) head query for the root frame of a side recording AFTER a `RETF` (its root is the caller `C`, not the entry
     /// prototype the side configuration's `head_state` is bound to).
     pub retf_head: Option<FrameHeadQuery>,
@@ -641,6 +643,7 @@ impl Default for RecCfg {
             retfmax: 0,
             retf_sel: false,
             upbar: 0,
+            hdrcse: false,
             f2mt: false,
             f2cmp: false,
             f1floor: false,
@@ -773,6 +776,7 @@ pub fn lower_for_landing(p: &Proto) -> Option<Lowered> {
                 inl: 0,
                 inl_mut: 0,
                 t1q: 0,
+                t1exit: 0,
                 t1g: 0,
                 hints: std::ptr::null(),
                 tset: 0,
@@ -1330,6 +1334,10 @@ struct Rec {
     oframe_floor: Option<(u32, usize, usize)>,
     /// Section 75.14 (`mfshare`): the value refs of the `mfkeys` lookups made so far in this recording, by constant index.
     mfk_seen: Vec<(u32, Ref)>,
+    /// Section 76.11 (`hdrcse`): the `FLOAD`s since the last header barrier, `(table ref, field, type, load ref)`, and how many IR
+    /// instructions were checked for barriers.
+    hdr_cache: Vec<(Ref, Ref, Ty, Ref)>,
+    hdr_scan: usize,
     /// P-M3: the native `RETURN1` that ended the recording (`end_rec_ret`) and the returned value.
     rec_ret: Option<(RecRet, Ref)>,
     /// F3: absolute stack index of the register the last recorded class-A instruction (`NEWTABLE`, `LEN`) writes; the
@@ -1701,6 +1709,8 @@ impl Rec {
             oframe_wb: None,
             oframe_floor: None,
             mfk_seen: Vec::new(),
+            hdr_cache: Vec::new(),
+            hdr_scan: 0,
             rec_ret: None,
             post_slot: None,
             stale: HashSet::default(),
@@ -1899,6 +1909,8 @@ impl Rec {
         self.oframe_wb = None;
         self.oframe_floor = None;
         self.mfk_seen.clear();
+        self.hdr_cache.clear();
+        self.hdr_scan = 0;
         self.inl_back.set(0);
         self.la_seen.borrow_mut().clear();
         self.first_store = None;
@@ -4534,7 +4546,34 @@ impl Rec {
 
     /// `FLOAD t field`.
     fn fload(&mut self, t: Ref, f: Field, ty: Ty) -> R<Ref> {
-        self.ins(TOp::Fload, ty, t, f as Ref)
+        if !self.cfg.hdrcse {
+            return self.ins(TOp::Fload, ty, t, f as Ref);
+        }
+        // section 76.11 (`hdrcse`): forget every cached load at a header barrier emitted since the last look (rule 4 of `opt_mem`)
+        let n = self.b.ir.ins.len();
+        if self.hdr_scan > n {
+            // (the IR was cut back: an in-place restart)
+            self.hdr_cache.clear();
+            self.hdr_scan = 0;
+        }
+        if !mutants::active("hdrcse_no_barrier")
+            && self.b.ir.ins[self.hdr_scan..n]
+                .iter()
+                .any(|i| !super::opt_mem::header_safe_ins(i, 0))
+        {
+            self.hdr_cache.clear();
+        }
+        self.hdr_scan = n;
+        if let Some(&(_, _, _, r)) = self.hdr_cache.iter().find(|e| {
+            e.0 == t && e.1 == f as Ref && e.2 == ty && (e.3 as usize) < REF_BIAS as usize + n
+        }) {
+            return Ok(r);
+        }
+        let r = self.ins(TOp::Fload, ty, t, f as Ref)?;
+        if TraceIr::is_ins(r) {
+            self.hdr_cache.push((t, f as Ref, ty, r));
+        }
+        Ok(r)
     }
 
     /// The guards of an array access on a table without metatable (4.3): `metatable == 0`, `0 <= key - 1 < asize`;

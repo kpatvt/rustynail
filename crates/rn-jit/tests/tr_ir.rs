@@ -979,13 +979,25 @@ fn prune_snaps_drops_only_dead_numbers() {
         top: 3,
         ..Snap::default()
     };
-    for s in [plain, framed, open_top] {
+    // section 76.9: a snapshot at a pc without dead set (pc 1: past the analysis) is copied whole by the quick path (`cspeed` lever `PRUNEQ`)
+    let beyond = Snap {
+        pc: 1,
+        ..Snap::default()
+    };
+    for s in [plain, framed, open_top, beyond] {
         ir.snapshot(s, &entries);
     }
+    let mut old_path = ir.clone();
+    rn_jit::cspeed::with(0, || prune_snaps(&mut old_path));
     prune_snaps(&mut ir);
+    assert_eq!(
+        ir.snapmap, old_path.snapmap,
+        "PRUNEQ keeps the old path's maps"
+    );
     let slots = |n: u32| -> Vec<u16> { ir.snap_entries(n).iter().map(|e| e.slot).collect() };
     // nil and numbers that are dead go; the table and the string (dead too), the live number, the sunk table and the function slot stay
     assert_eq!(slots(0), vec![0, 1, 5, 6, 9]);
     assert_eq!(slots(1), vec![0, 1, 2, 3, 4, 5, 6, 9]);
     assert_eq!(slots(2), vec![0, 1, 2, 3, 4, 5, 6, 9]);
+    assert_eq!(slots(3), vec![0, 1, 2, 3, 4, 5, 6, 9]);
 }
