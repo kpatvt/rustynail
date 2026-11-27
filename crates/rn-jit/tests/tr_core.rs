@@ -51,6 +51,8 @@ mod s60_progs;
 mod s64_progs;
 #[path = "tr_core/s68_progs.rs"]
 mod s68_progs;
+#[path = "tr_core/s76_progs.rs"]
+mod s76_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -79,6 +81,7 @@ use s59_progs::S59_PROGS;
 use s60_progs::S60_PROGS;
 use s64_progs::S64_PROGS;
 use s68_progs::S68_PROGS;
+use s76_progs::S76_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -214,6 +217,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S60_PROGS)
         .chain(S68_PROGS)
         .chain(S64_PROGS)
+        .chain(S76_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -613,6 +617,8 @@ struct TStats {
     deep_probes: u64,
     /// docs/JIT_TRACE.md section 39.2 (`heatside`): side traces granted beyond `maxside`.
     heat_granted: u64,
+    /// docs/JIT_TRACE.md section 76.2 (`sideback`): exit reports skipped by the back-off after failed side recordings.
+    side_backoff: u64,
     /// docs/JIT_TRACE.md section 43.1 (TR24c, `restarts`): in-place `Unstable` restarts of root recordings.
     restarts: u64,
     /// docs/JIT_TRACE.md section 49 (`ccheck`): compiles compared with the old paths of `cspeed`, and those that differed.
@@ -877,6 +883,8 @@ impl TStats {
                 ];
             } else if let Some(r) = l.strip_prefix("heatside: granted ") {
                 s.heat_granted = r.trim().parse().unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("sideback: reports waited ") {
+                s.side_backoff = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("links: nest roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 let g = |k: &str| {
@@ -10304,6 +10312,26 @@ fn s64_wgcall_programs() {
         res[1].1.stats.recorded >= 1,
         "weighted calls open the gate: {}",
         res[1].1.stats.line()
+    );
+}
+
+/// Section 76.2 (`sideback`): exponential back-off of side recordings at exits whose recordings failed. The program with repeatedly failing side
+/// exits runs identically with the knob at 3 (every fault), 11 (path causes only), 6 (unchangeable causes, shift 2) and 0 (control) in every mode
+/// (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves), and the back-off really waits at 3. Mutant `sideback_no_wait`.
+#[test]
+fn s76_sideback_programs() {
+    let limits = ["sideback=3", "sideback=11", "sideback=6", "sideback=0"];
+    let res = compare(b1_jobs(&["s76_side_fail"], &limits));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().sideback, 0);
+    assert_eq!(TrLimits::parse("sideback=11").0.sideback, 11);
+    let mut j = Job::new("s76_side_fail", "on");
+    j.limits = "sideback=3".into();
+    let res = compare(vec![j]);
+    assert!(
+        res[0].1.stats.side_backoff >= 1,
+        "failed side recordings back off: {}",
+        res[0].1.stats.line()
     );
 }
 

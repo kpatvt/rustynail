@@ -401,6 +401,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         if s.resink_sides > 0 {
             let _ = writeln!(o, "[trace] resink: side traces {}", s.resink_sides);
         }
+        if s.side_backoff > 0 {
+            let _ = writeln!(o, "[trace] sideback: reports waited {}", s.side_backoff);
+        }
         if s.heat_granted > 0 {
             let _ = writeln!(o, "[trace] heatside: granted {}", s.heat_granted);
         }

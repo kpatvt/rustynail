@@ -2201,6 +2201,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s75_oframe_programs")],
     },
     Row {
+        name: "sideback_no_wait",
+        owner: "S76",
+        dets: &[d("tr_core", "s76_sideback_programs")],
+    },
+    Row {
         name: "retfuse_site_next",
         owner: "S75",
         dets: &[d("tr_core", "s75_oframe_programs")],

@@ -1109,6 +1109,8 @@ pub const NAMES: &[&str] = &[
     "regcall_arg2_skip",
     // docs/JIT_TRACE.md section 64 (`wgcall`): the call weight of the start gate's loop length is ignored
     "wgcall_weight_skip",
+    // docs/JIT_TRACE.md section 76.2 (`sideback`): a failed side recording sets no back-off wait
+    "sideback_no_wait",
 ];
 
 #[cfg(feature = "tr_mutants")]
