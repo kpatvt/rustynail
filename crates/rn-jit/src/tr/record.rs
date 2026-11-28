@@ -3196,6 +3196,15 @@ impl Rec {
         ir.head = (ProtoKey(self.entry_proto), self.head);
         if !self.segs.is_empty() {
             ir.segs = self.segs.clone();
+            // section 98.1: the refund right behind each `RETURN` (`seg_steps[k]` is the first step after the k-th pop)
+            ir.seg_refund = self
+                .seg_steps
+                .iter()
+                .map(|&st| {
+                    let fetched: u32 = self.cost[..(st as usize).min(self.cost.len())].iter().sum();
+                    n as i32 - fetched as i32
+                })
+                .collect();
             // snapshots of the steps behind a `RETF` belong to its segment
             for (s, m) in ir.snaps.iter_mut().zip(&self.meta) {
                 s.seg = self.seg_steps.iter().filter(|&&st| m.step >= st).count() as u8;

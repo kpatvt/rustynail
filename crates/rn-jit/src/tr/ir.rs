@@ -876,6 +876,10 @@ pub struct TraceIr {
     /// Section 63 (`bhmin`): the trip estimate of the loop instance the root recording ran, taken at the last integer `FORLOOP` of the root frame:
     /// iterations left + 1 + for an upward loop `(index - 1) / step` (the iterations done if the loop started at 1); 0 when none / in a side trace.
     pub rec_trip: u64,
+    /// Section 98.1: per `RETF` (index `k`: the pop that ends segment `k`), the refund of a path that leaves the trace right behind the
+    /// `RETURN` (`n - fetches` through the `RETURN`, no landing label: the continuation charges itself), as the out-of-line native returns of
+    /// lazy `RETF`s at another site (`lzretf` bit 2) need it. Empty: no `RETF`.
+    pub seg_refund: Vec<i32>,
     /// Section 78.1 (`stitch` bit 2): the end guard behind a `GMATCH` helper (`NE %gm, 1`) is an ordinary site, not an allocation site, so the loop's
     /// end gets a side trace (which records the end with `GMATCH_END`).
     pub gm_end_site: bool,
@@ -1016,6 +1020,7 @@ impl TraceIr {
         self.midfold = false;
         self.dyn_sites.clear();
         self.rec_trip = 0;
+        self.seg_refund.clear();
         self.lib_site = false;
     }
 

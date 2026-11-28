@@ -5456,11 +5456,16 @@ impl<'a> Cx<'a> {
             let snap = aux_snap(self.ir.ins[i].aux) as usize;
             // (the `RETURN` itself runs: the refund is the one of the first snapshot behind the pop, the path after the `RETURN`; without one,
             // the `RETURN`'s charge of 1)
+            // (section 98.1: the refund of the steps after the `RETURN` exactly, `TraceIr::seg_refund`; the first snapshot behind the pop
+            // also subtracted the steps up to its own pc and the landing label of the recorded site's continuation)
             let seg = self.ir.snaps[snap].seg;
-            let after = self.ir.snaps[snap + 1..]
-                .iter()
-                .find(|s| s.seg > seg)
-                .map_or(self.ir.snaps[snap].refund - 1, |s| s.refund);
+            let after = match self.ir.seg_refund.get(usize::from(seg)) {
+                Some(&r) if !mutants::active("lzretf_alt_snap_refund") => r,
+                _ => self.ir.snaps[snap + 1..]
+                    .iter()
+                    .find(|s| s.seg > seg)
+                    .map_or(self.ir.snaps[snap].refund - 1, |s| s.refund),
+            };
             let refund = after + i32::from(mutants::active("lzretf_alt_refund_off"));
             let n = usize::from(self.env.rec_nsites);
             for k in 0..n {

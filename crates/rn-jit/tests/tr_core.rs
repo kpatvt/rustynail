@@ -4976,6 +4976,44 @@ fn s89_lzretf_programs() {
     compare(jobs);
 }
 
+/// Section 98.1: the out-of-line native return of a lazy `RETF` at another site (`lzretf` bit 2) refunds exactly the steps after the `RETURN`
+/// (`TraceIr::seg_refund`). `bc_sbump` at budget 200 pops into the other site of `add` where the first snapshot behind the pop lies several
+/// steps after it: that snapshot's refund over-counted 60887 instructions (`always`) / 13409 (`on2`) in `instruction_count_identity`.
+/// Mutants `lzretf_alt_snap_refund`, `lzretf_alt_refund_off`.
+#[cfg(feature = "t15_oracle")]
+#[test]
+fn s98_lzretf_alt_refund_identity() {
+    let mut jobs = Vec::new();
+    for (t, o) in [
+        ("always", ""),
+        ("on2", ""),
+        ("always", "-fold -cse +exitstorm=7"),
+    ] {
+        for lim in ["", "lzretf=29", "lzretf=5", "nest=2,stitchmin=4"] {
+            for b in [None, Some(17), Some(200)] {
+                let mut j = Job::new("bc_sbump", t).opts(o).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let n = jobs.len();
+    let res = run_all(jobs);
+    let mut bad = Vec::new();
+    for (j, o) in &res {
+        if let Err(e) = ident_check(o) {
+            bad.push(format!("{}: {e}", j.tag()));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of {n} identity failures:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
 /// Section 93.1 (`peep`): fused field compares, the `TBAR` test form and its out-of-line slow path, `HMISS` without the key-tag compare:
 /// `tests/vm/s93_peep.lua` (barriers of fresh objects into old tables under both collector modes, node vectors and array parts that change size
 /// under a reading loop, method keys and keys of other types added to receivers) with every bit alone, all and none, the trace modes with

@@ -5157,7 +5157,15 @@ const TABLE: &[Row] = &[
     Row {
         name: "lzretf_alt_refund_off",
         owner: "S89",
-        dets: &[d("tr_core", "s89_lzretf_programs")],
+        dets: &[
+            d("tr_core", "s89_lzretf_programs"),
+            d("tr_core", "s98_lzretf_alt_refund_identity"),
+        ],
+    },
+    Row {
+        name: "lzretf_alt_snap_refund",
+        owner: "S98",
+        dets: &[d("tr_core", "s98_lzretf_alt_refund_identity")],
     },
     Row {
         name: "peep_tbar_white_skip",
@@ -5262,6 +5270,7 @@ const V55_ONLY: &[&str] = &[
     // section 89.1: the lazy RETF is a RETF (inert on 5.4)
     "lzretf_root_pops",
     "lzretf_alt_refund_off",
+    "lzretf_alt_snap_refund",
     "gfor_end_meta_skip",
     "gfor_end_guard_skip",
     "gfor_end_always",

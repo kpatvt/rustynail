@@ -219,6 +219,7 @@ impl<'a> Em<'a> {
         b.ir.depth = rec.ir.depth;
         b.ir.deps = rec.ir.deps.clone();
         b.ir.segs = rec.ir.segs.clone();
+        b.ir.seg_refund = rec.ir.seg_refund.clone();
         // H1: the flags of a function-entry / recursion root (`run_fwd` is the first pass that sees them)
         b.ir.fn_root = rec.ir.fn_root;
         b.ir.rec_call = rec.ir.rec_call;
