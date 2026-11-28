@@ -12039,3 +12039,6 @@ the side recording whose body calls `packers[type(v)]`) is not built. Default st
   metatable before the identity compare with the loop-invariant `mt` (8; with the identity guard first the check is on an invariant and could
   be hoisted), the metatable loaded twice (`p64` and `tab`), two dead table PHIs kept for the head snapshot (tables are not pruned: GC
   timing). Not built.
+
+Gate: `scripts/gate-light.sh tailf0_,tailnat0_,tailf_,retf_ --fast` on f9eaa30: every step PASS (trace suites 5.5 / 5.4, vm_corpus with the new
+process default, jit-diff 1-50, the 4 mutant groups) except the mutant map, regenerated in 946e13a (PASS). The heavy gate is the lead's.
