@@ -10116,3 +10116,620 @@ Not built this round (the coordinator's queue, in rank order, with what the prof
    per-guard exit stubs of the method chains.
 2. Deeper subtrees (`MAX_INL`), 3. memo_cache +0.47 % (per-site `lzretfmax`), 4. the `RETURN1` alt tails: not started (89.4 has the analysis).
 5. The latent stale-slot crash of 93.1.
+## 80. The compile cost of the trace back end: measurement, and the structural levers (2026-11-27, base c707218)
+
+Task: make compiling a trace cost a fraction of today's (stages M0 measure, M1 memory, M2 fused allocation + emission, M3 direct encoding and
+compact exits, M4 what the profiles rank next), each stage behind its own knob with the old path as the oracle.
+
+### 80.0 M0: the compile-cost harness and the baseline
+
+**Counters.** `RUSTYNAIL_JIT_PHASECTR=1` makes the phase timers of `tr::phase` count user-mode instructions of the thread (a `perf_event_open`
+counter read with `read`; deterministic at `RUSTYNAIL_SEED=0`) instead of TSC ticks, independently of `RUSTYNAIL_JIT_VERBOSE`, and prints the
+totals at exit (`[trace] phases (Minstr/calls): ... sizes ins .. snaps .. snapents .. ops .. bytes .. stubops .. sharedops ..`). New phases: `front`
+(`pipeline_front`: sinking, the root passes or the side subset, forwarding, presizing), `pipe_side` (the pipelines of side traces), `res_env` (cells,
+counters, `AsmEnv`); sizes summed over the compiles: IR instructions, snapshots, snapshot entries, micro-ops, code bytes, micro-ops of the stubs and
+cold tails, micro-ops of the embedded shared exit routine. Without the variable nothing changes (one load of a `OnceLock` per timer read).
+
+**Harness.** `scripts/compile-cost.sh phases BIN=name ... [--programs ...]` (one run per binary and program: total instructions, compile
+instructions = recorder steps + pipelines + tier-1 compiles + deferred stubs, their share, k instructions per pipeline and per phase, sizes per
+trace), `cycles` (min of N interleaved `perf stat` runs, 300 ms spin, `RUSTYNAIL_SEED=0`), `whole` (instructions of every program of the 9 sets, one
+run each, geomean against the first binary). Memory cap and timeout are in the wrapper; pin with `--cpu`.
+
+**Baseline** (base c707218 + the counters, release `rn-cli`, 5.5, CPU 5; instructions):
+
+| program | instr M | compile M | share | recording M | pipelines M | n | k / pipeline | side n | k / side | tier 1 M | n | stubs M |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| apps/raytrace | 274.56 | 70.36 | 25.6 % | 27.83 | 32.46 | 42 | 773 | 35 | 554 | 9.01 | 15 | 1.06 |
+| awfy/cd | 609.84 | 178.95 | 29.3 % | 44.99 | 106.79 | 261 | 409 | 235 | 307 | 18.02 | 40 | 9.15 |
+| awfy/towers | 162.61 | 18.10 | 11.1 % | 4.57 | 11.21 | 27 | 415 | 21 | 452 | 1.48 | 5 | 0.84 |
+| awfy/json | 417.07 | 45.36 | 10.9 % | 12.86 | 21.12 | 64 | 330 | 51 | 247 | 10.28 | 15 | 1.10 |
+| lib/fmt_s | 22.87 | 1.62 | 7.1 % | 0.18 | 0.44 | 2 | 220 | 1 | 90 | 0.99 | 1 | 0.01 |
+| awfy/richards | 154.81 | 36.46 | 23.6 % | 10.92 | 17.40 | 31 | 561 | 29 | 571 | 7.30 | 18 | 0.84 |
+| awfy/deltablue | 294.18 | 62.40 | 21.2 % | 26.08 | 20.19 | 47 | 430 | 35 | 218 | 15.14 | 48 | 0.99 |
+| apps/expr_lang | 485.20 | 51.32 | 10.6 % | 10.98 | 27.58 | 66 | 418 | 50 | 321 | 10.79 | 15 | 1.97 |
+
+(The cycle shares of section 76.0 are higher: compile code misses the caches.) Per pipeline (k instructions, per compile that reached the
+assembler) and per trace sizes:
+
+| program | k / pipeline | front | ra | exits | res_env | asm | x86 | hash | install | rest | IR ins | snaps | snap entries | micro-ops | code bytes | stub + tail ops | shared-exit ops | ra+exits+asm+x86 per IR ins |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| apps/raytrace | 773 | 261 | 180 | 98 | 3 | 116 | 80 | 10 | 4 | 21 | 125 | 37 | 491 | 543 | 3436 | 246 | 73 | 3793 |
+| awfy/cd | 409 | 123 | 91 | 47 | 3 | 65 | 54 | 4 | 6 | 17 | 57 | 20 | 205 | 356 | 2248 | 180 | 73 | 4508 |
+| awfy/towers | 415 | 85 | 106 | 41 | 3 | 78 | 81 | 2 | 4 | 14 | 73 | 20 | 179 | 528 | 3188 | 228 | 73 | 4220 |
+| awfy/json | 330 | 49 | 87 | 27 | 2 | 69 | 70 | 5 | 5 | 14 | 65 | 19 | 91 | 449 | 2688 | 199 | 73 | 3911 |
+| lib/fmt_s | 220 | 60 | 50 | 10 | 0 | 35 | 45 | 5 | 5 | 10 | 32 | 8 | 20 | 290 | 1842 | 179 | 73 | 4444 |
+
+What this says: (1) the back end spends **3800-4500 instructions per IR instruction** (allocator ~1500, assembler ~1100, encoder ~150 per micro-op);
+LuaJIT's whole compile is about 70 k cycles per trace. (2) Traces are small (57-125 IR instructions) and **half of the micro-ops are cold stubs and
+tails**; every trace embeds its own copy of the shared exit routine (73 micro-ops, about 480 bytes: 21 % of cd's average trace). (3) The front passes
+are the largest phase on raytrace and cd (`opt_loop::transform` about half of it, sinking 20-47 %). (4) No function dominates inside a phase
+(frame-pointer profile of cd, `perf record -e instructions:u --call-graph fp`, samples classified by the innermost phase function on the chain):
+allocator = main loop 34 %, prologue passes 22 %, `open_snap` 10 %, `pick_free` 8 %; encoder = byte encoding 31 %, the per-op dispatch 30 %;
+assembler = stub planning / `ExitSnap` clones 20 %, instruction selection 25 %; exits = the per-snapshot loop 36 %, `slot_value` 10 %;
+allocation inside the phases 3-6 %.
+
+### 80.1 M3a `gexit`: one shared exit routine per state, compact generic stubs (`TrLimits::gexit`, default 3 = `GEXIT_PROCESS`)
+
+Every trace embedded its own copy of the shared exit routine (store every register to the exit area, call `jit_tr_exit`, land or resume a deferred
+stub): 73 micro-ops and about 480 bytes, 21 % of cd's average trace. Bit 0: the routine is assembled once per state (two variants, with and without
+the resume path of the deferred stubs; `TrState::gexit`, placed with `rt::place_code` at the first compile that needs it, never freed) and the trace's
+shared label is a trampoline `mov rax, routine; jmp rax` (`KEEP_R14`: not a jump out of compiled code). Bit 1: a generic stub is `mov eax, exitno; jmp
+trampoline` (10 bytes instead of 27: two 32-bit stores of the exit and trace numbers and the jump); the trampoline stores `V7` (dead at every exit)
+as the exit number and the trace number once, then jumps; the generic twins of the deferred stubs, which store both numbers themselves, enter the
+trampoline behind the stores (`Asm::shared_label`). Not under `+emurun` / `+emuverify` (the emulator runs the program it was given: the embedded copy
+stays). Code bytes per trace (base -> `gexit=1` -> `gexit=3`): raytrace 3436 -> 2938 -> 2625, cd 2248 -> 1750 -> 1583, towers 3188 -> 2690 -> 2514,
+json 2688 -> 2190 -> 1992, fmt_s 1842 -> 1344 -> 1256; encoder instructions per pipeline -15 .. -33 %. Whole set (223 programs, instructions, `gexit=1`
+against the base): geomean -0.02 %, no output differs, largest rise +0.31 % (real_dis_x86, testrunner_luaunit: the two extra instructions of the
+trampoline on programs that exit through the handler often). Test `tr_core::s80_gexit_programs` (`gexit` 3 / 1 / 0 in every mode); mutants
+`gexit_no_resume` (the routine of a state with deferred stubs lacks the resume path), `gexit_exitno_imm` (the trampoline stores a constant exit number).
+
+### 80.2 M1: copies and scans out of the back end (`cspeed` lever `M1` = 4096, in `cspeed::ALL`)
+
+Identical code to the old paths (`ccheck=1` compares allocation, exits, passes and machine code against `cspeed=0`; `tr_core::c1_cspeed_identical_code`
+runs it over the corpus): the allocator's free register from masks (`Ra::held`; the pools are in register order, so the first free register is the
+lowest bit), its operands after fusion computed once per instruction (`Ra::opr`, used by the snapshot-only marks, the indexed-base marks, the homes and
+the main loop), `fuse_index_adds` returns before the snapshot scan when no candidate is left; the assembler reads the exit snapshots in place (it cloned
+the `ExitSnap` of every stub: `Vec`s and an `Arc`) and the reload / spill-store lists of the allocation without copying them; the loop / forwarding
+pass marks a snapshot's map live once (`cleanup_dead` walked it once per guard) and formats its summary only when `last_note` asks; sinking's alias and
+candidate maps are tables indexed by instruction instead of FxHash maps. Mutant `m1_free_highest` (`c1_cspeed_identical_code`).
+
+### 80.3 Numbers (base c707218 + counters against the final binary, `RUSTYNAIL_SEED=0`, CPU 5)
+
+Instructions per pipeline and phase (k), sizes per trace:
+
+| program | k / pipeline | front | ra | exits | asm | x86 | ra+exits+asm+x86 per IR ins | micro-ops | code bytes |
+|---|---|---|---|---|---|---|---|---|---|
+| apps/raytrace | 773 -> 707 (-8.5 %) | 261 -> 253 | 180 -> 153 | 98 -> 98 | 116 -> 103 | 80 -> 62 | 3793 -> 3326 | 543 -> 447 | 3436 -> 2625 (-24 %) |
+| awfy/cd | 409 -> 370 (-9.5 %) | 123 -> 119 | 91 -> 78 | 47 -> 47 | 65 -> 58 | 54 -> 39 | 4508 -> 3894 | 356 -> 273 | 2248 -> 1583 (-30 %) |
+| awfy/towers | 415 -> 375 (-9.6 %) | 85 -> 81 | 106 -> 93 | 41 -> 41 | 78 -> 71 | 81 -> 65 | 4220 -> 3710 | 528 -> 445 | 3188 -> 2514 (-21 %) |
+| awfy/json | 330 -> 296 (-10.3 %) | 49 -> 48 | 87 -> 77 | 27 -> 27 | 69 -> 62 | 70 -> 53 | 3911 -> 3392 | 449 -> 364 | 2688 -> 1992 (-26 %) |
+| lib/fmt_s | 220 -> 200 (-9.1 %) | 60 -> 55 | 50 -> 45 | 10 -> 10 | 35 -> 30 | 45 -> 30 | 4444 -> 3651 | 290 -> 214 | 1842 -> 1256 (-32 %) |
+| awfy/richards | 562 -> 508 (-9.6 %) | 132 -> 126 | 153 -> 133 | 41 -> 41 | 124 -> 114 | 83 -> 65 | 3139 -> 2757 | 497 -> 407 | 3300 -> 2553 (-23 %) |
+
+Whole programs (instructions M, one run; cycles Mcyc min of 15 interleaved, 300 ms spin; the machine's load average was 40-60 from other sessions, so
+the cycle columns of the two series differ by up to 40 % in absolute terms and only the paired ratio is meaningful):
+
+| program | instructions | cycles, series 1 (base / M1 without the sinking + loop-pass levers) | cycles, series 2 (base / final) |
+|---|---|---|---|
+| apps/raytrace | 274.39 -> 271.62 (-1.0 %) | -1.2 % | -2.2 % |
+| awfy/cd | 609.86 -> 599.76 (-1.7 %) | -3.5 % | -2.8 % |
+| awfy/towers | 162.61 -> 161.55 (-0.7 %) | -4.0 % | -1.6 % |
+| awfy/json | 417.07 -> 414.96 (-0.5 %) | -0.7 % | -0.7 % |
+| lib/fmt_s | 22.87 -> 22.84 (-0.1 %) | +0.0 % | +2.1 % (noise: the instruction count moves by -0.1 %, the first series +0.0 %) |
+| awfy/richards | 154.82 -> 153.18 (-1.1 %) | -4.6 % | -4.1 % |
+| awfy/deltablue | | -0.9 % | -2.3 % |
+| apps/expr_lang | | | -3.3 % |
+
+Whole set (223 programs, instructions, final binary against the base): geomean **-0.08 %**, no output differs (each run's stdout compared with its
+`.expected`), largest rise +0.21 % (real_dis_ppc), largest falls astar_jumper -4.4 %, cd -1.7 %, lru_cache -1.1 %, richards -1.1 %, raytrace -1.0 %.
+
+### 80.4 What resists, measured, and why M2 and the rest of M3 were not built
+
+**The bar was a fraction of today's per-trace cost; the result is -8.5 .. -10.3 % per pipeline (-12 .. -14 % in the four back-end phases per IR
+instruction) and -21 .. -32 % code per trace.** Where the remaining cost is (80.0 profile, unchanged in shape after M1):
+
+1. **No phase dominates.** The pipeline is seven phases of 10-35 % each (front, allocator, exits, assembler, encoder, rest). Even a free allocator
+   and a free assembler (a perfect M2) would leave cd at 370 - 78 - 58 = 234 k per pipeline, -43 %, and that bound is far above what a fused pass
+   costs in practice. Inside every phase the profile is flat (80.0): the allocator's main loop 34 %, its prologue 22 %, `open_snap` 10 %; the
+   encoder's byte encoding 31 % and dispatch 30 %; the assembler's instruction selection 25 % and stub planning 20 %; the exit builder's per-entry
+   loop. After M1 the top allocator lines are the per-instruction `process` (29 %) and the snapshot validity / unfusing passes over every snapshot
+   entry; no line is above 7 %.
+2. **The volume is snapshots and stubs, not instructions.** A cd trace has 57 IR instructions but 20 snapshots with 205 entries (raytrace 125 /
+   37 / 491; sunk tables add field entries), and half of the micro-ops were cold stubs and tails (180 of 356; 97 of 273 after `gexit`). Every
+   snapshot entry is touched by the recorder, sinking, the forwarding pass, the allocator (unfuse, validity, weak marks, `open_snap`), the exit
+   builder (one `SlotRestore` or sunk field each) and the stub planner: about 1 k instructions per entry over the pipeline. Section 55's lever (side
+   snapshots as deltas to the parent's exit) attacks that volume; it changes the snapshot format every stage reads (recorder, sink, forwarding,
+   allocator, exits, stubs, `ccheck`, the exit handler, the deferred stubs and their tests) and was not reached.
+3. **Root traces cost 4x a side trace** (cd: about 1.3 M per root against 273 k per side; raytrace 1.9 M against 498 k): the peeled loop doubles the
+   IR and runs the full pass list. 26 of cd's 261 compiles are 32 % of its pipeline instructions.
+4. **M2 (fused allocation + emission) needs a backward assembler.** The allocator is already LuaJIT's backward linear scan, but the assembler
+   (`tr/asm.rs`, 11 k lines, 277 mutant sites) emits forwards and depends on the complete allocation before it starts: lookahead fusions
+   (`HREFK`+`HLOAD`, the counted-loop tail, the in-place last `ADD`, the hoisted budget plan, the dense / carry stubs), per-exit stub plans from the
+   final exit maps (`stub_plan` reads every location of the snapshot), the call-site save sets, and the second / third entries. Fusing means
+   rewriting it to emit backwards like `lj_asm.c`, every lever of sections 7-79 included. The materialised allocation itself (the `InsAlloc` per
+   instruction and its re-read) is a few percent of the two phases in the profile, so a fusion that keeps the forward assembler gains little.
+5. **Direct encoding (rest of M3) is bounded by the dispatch, not the layer.** The micro-op program is also what the emulator runs (`+emurun`,
+   `+emuverify`, the oracle suites) and what the deferred stubs, `dlink` / `slink` link entries and the tier-1 re-derivation reuse; the encoder's
+   cost is the per-op `match` and the ModRM encoding, which a direct path keeps. The measured share of writing and re-reading the `Op` vector (part of
+   `Program::push` 4.7 % of the assembler, part of the 30 % dispatch of the encoder) bounds it at roughly 5 % of the pipeline.
+
+**Next steps** (in order of measured volume): (a) delta snapshots for side traces (item 2: about 40 % of the per-entry cost is in the allocator and
+the exit builder); (b) a cheaper root path (item 3: the peeled copy through the forwarding machinery); (c) recording (cd 45 M = 27 % of its compile,
+raytrace 28 M = 41 %, section 76.9) and tier-1 compiles (cd 18 M, raytrace 9 M), which are outside the trace back end.
+
+### 80.5 Round 2 state: measurements for the items (a)-(e), what was tried, and the plan for the next builder
+
+New diagnostics (counter mode only): `[trace] root phases (Minstr): ...` (the phase totals of root-trace pipelines alone, `phase::set_root`), and with
+`RUSTYNAIL_JIT_SNAPSTAT=1` the snapshot redundancy counts appended to the `sizes` of the phase line (`snapsame` = entries the previous snapshot
+holds too, same slot / ref / flags; `snapdup` = snapshots whose entries and frame count equal the previous snapshot's; `sidesame` / `sideents` the
+same for side traces). The statistics run inside the timed pipeline, so they are off by default.
+
+**(a) Snapshot volume: the redundancy a delta format would remove (measured, final binary of 80.3).**
+
+| program | snapshots | entries | entries also in the previous snapshot | snapshots equal to the previous | side traces: same / entries |
+|---|---:|---:|---:|---:|---:|
+| apps/raytrace | 1453 | 19131 | 16346 (85 %) | 207 (14 %) | 8772 / 10523 (83 %) |
+| awfy/cd | 5156 | 54736 | 47541 (87 %) | 1149 (22 %) | 30936 / 35844 (86 %) |
+| awfy/towers | 545 | 4824 | 4237 (88 %) | 94 (17 %) | 3683 / 4164 (88 %) |
+| awfy/json | 1303 | 6567 | 5402 (82 %) | 389 (30 %) | 2515 / 3118 (81 %) |
+| awfy/richards | 800 | 3918 | 3042 (78 %) | 140 (18 %) | 3003 / 3836 (78 %) |
+
+A delta chain (each snapshot = previous snapshot + changed / removed slots) would make the entries stored and walked 5-7x fewer. It was **not
+built in round 2**: every consumer reads `TraceIr::snap_entries(s)` as a full sorted map (recorder `snap::take` / `prune_snaps` / `fixup`, sinking's
+rebuild, the forwarding pass's renaming (`FWDSNAP`), `split_type_snaps`, `entry_checks`, the allocator (unfusing, validity, weak marks, `open_snap`,
+homes), the exit builder (`SlotRestore` per entry, sunk fields), `stack_ents`, the stub planner and inline stubs, `dlink` / `slink` sources, `ccheck`
+texts, the exit handler's `ExitMeta`). Design for the next builder: keep the flat map as the format of record (the oracle), add `Snap::base: u32`
+(previous snapshot whose map this one extends, or none) and store only the delta entries, with an iterator `TraceIr::snap_iter(s)` that merges base
+and delta in slot order; convert the stages one at a time behind a knob (`snapdelta`), starting with the two that walk entries per snapshot and do
+the most work per entry (allocator `open_snap`: an entry whose ref is unchanged keeps the location of the base snapshot unless its register was
+reassigned between the two guards; exit builder: the base's `SlotRestore` list is reused and only delta entries are resolved, which needs the
+`ExitSnap` slots to become a chain too, so the exit handler's restore and the inline stubs follow the chain). `ccheck` compares the materialised
+maps / exits against the flat path. Expected: the allocator's per-entry share (about 25 % of its cost) and most of the exit builder (47 k on cd).
+
+**(b) Roots** (counter mode, root pipelines only; k instructions per root): cd 26 roots, 1170 k each: front 427 (root pass list 203, sinking 58), ra
+207, exits 139, asm 139, x86 95, rest about 160; raytrace 7 roots, 1860 k each: front 861 (sinking 280, pass list 351), ra 289, exits 229, asm 177,
+x86 99. Every phase is 2-3x a side trace's because the peeled trace is 2x the IR and snapshots (the pre-roll copy and the body). Not changed in round
+2. Leads: the body copy's snapshots are the pre-roll's with renamed refs (share the maps through the delta format of (a)); the root pass list re-runs
+CSE / forwarding over both copies.
+
+**(c) Recording** (cd 44-45 M instructions, raytrace 28 M): the leaf profile of the recorder (cd, % of recorder samples): `record_one` 7.6,
+`guard_with` 6.8, `light_new` 5.9, `handle` (closure handles) 5.5, `fload` 3.2, `fill_closure` 2.8, `oframe_prune` 2.7, `val_of` 2.6,
+`prune_snaps` 2.3, hashing 2.2, `rd_slot` 2.0, `close` 1.8. Flat again; not changed in round 2.
+
+**(d) Tier 1** (cd 18 M for 40 compiles, raytrace 9 M for 15): `lower::peephole` was 36 % of the lowering's leaf samples (a copy of the whole
+micro-op program); an in-place version was built and measured: tier-1 instructions 9.01 -> 9.00 M (raytrace), 18.01 -> 18.00 M (cd), i.e. the
+samples were the copy's memory traffic, not instructions; dropped. `lower::Ty` comparisons were 10 % of the lowering's samples (not examined).
+
+**(e) M2 / M3** keep the ranking of 80.4 (free allocator + assembler = -43 % on cd is the ceiling of a perfect fusion, not its expected gain).
+
+State: committed with the diagnostics only; no round-2 lever is on. Next steps in order: (a) as designed above, (b) on top of it, then (e) the backward
+assembler if the phase table still ranks it first.
+
+## 85. Compile cost, round 3: the snapshot-delta premise measured, sinking without hash sets (2026-11-27, base 9cdbdf0)
+
+Task: cut the per-trace compile cost in converted, gated steps (S1 delta snapshots, S2 roots, S3 backward assembler, S4 what the phase table
+ranks next). Numbers are user-mode instructions (`RUSTYNAIL_JIT_PHASECTR=1`, `RUSTYNAIL_SEED=0`, CPU 5), deterministic; the machine's load
+was 30-50 from other sessions throughout, so no cycle claim is made without its load.
+
+### 85.0 Diagnostics: the per-pipeline log, and what the snapshot entries cost
+
+`RUSTYNAIL_JIT_PIPELOG=1` (with the counter mode) prints one line per successful pipeline: side flag, total, front, sinking, root passes,
+allocator, exits, assembler, encoder, IR instructions, snapshots, snapshot entries, micro-ops (`phase::pipelog`, `phase::acc`,
+`phase::size_acc`). A least-squares fit of each phase over the 418 pipelines of cd, raytrace, richards, json and towers (cost = a * IR + b *
+snapshots + c * entries + d) gives, for side traces (mean 64 IR, 18 snapshots, 160 entries, 322 k instructions): allocator 1069 per IR
+instruction and 46 per entry (entries 9 % of the phase), assembler 722 per IR instruction and none per entry, encoder 496 per IR instruction,
+exits 176 per entry (68 % of the phase), front 443 per entry (r2 0.83, collinear with the sunk-table traces). Entries explain about a third of
+the pipeline, not the "about 1 k instructions per entry" of 80.4: the allocator, assembler and encoder scale with instructions.
+
+**Kill test of S1 in its largest consumer, the exit builder (built, measured, dropped).** `TraceIr::snap_delta_into` (each entry of snapshot
+`s` mapped to the equal entry of `s - 1` by a merge on the slot order; maps with sunk-table entries or unordered slots refused) and an exit
+builder that copied the previous snapshot's `SlotRestore` for an equal entry at an equal location. On cd it hit 25.7 k of 61.3 k entries (42 %;
+26.4 k entries are in snapshots it refuses, mostly sunk tables), and the A/B on one binary (`snapdelta=0` / `1`) moved the exits phase
+14.82 -> 14.71 M (-0.7 %), while the extra code made the binary's flat path slower than the base (13.57 M). The per-entry work it skips
+(`slot_value`, about 90 instructions measured with a counter pair per call) is the same order as the merge and the bookkeeping it adds. The
+exit builder's entry loop is 63 % of the phase (8.6 M of 13.6 M on cd, plain snapshots ~145 instructions per entry including the restore push,
+one allocation per snapshot ~45), so only an exit format that is itself a chain (the runtime restore and the stub planner following the base
+snapshot) would remove the volume; that changes the exit handler, the inline stubs, `lazystub`, `dlink` / `slink` and the oracles, and its
+ceiling is the exits phase (13 % of a pipeline). Not built; the code was removed.
+
+Where the front goes (counter pairs around the passes, cd / raytrace, M instructions of the whole run): side forwarding `opt_loop::run_fwd`
+14.09 / 2.03 (14 % / 7 % of all pipelines, 58 k per side trace on cd), sinking 8.39 / 4.28 (of which the candidate analysis 3.60 / 1.56 = 33 k /
+43 k per `TNEW`, the rebuild 4.36 / 2.44), the root `loop` pass 5.00 / 2.10 (312 k / 175 k per root), entry checks 1.0 / 0.2.
+
+### 85.1 `SINKD`: allocation sinking without hash sets (`cspeed` lever 8192, in `cspeed::ALL`: default on)
+
+Identical passes (`ccheck` compares the front with `cspeed=0`; `tr_core::c1_cspeed_identical_code`). (1) The candidate analysis (`sink::analyse`)
+kept seven hash sets of instruction indices (removed, the metatable / `lsizenode` / node field loads, the `HREFK`s with their keys, the `NEWREF`s,
+the metatable loads after a `SETMT`) and looked every operand of every later instruction up in five of them, per `TNEW`; with the lever they are one
+byte of flags per instruction and a key table (`sink::Marks`). (2) The snapshot rebuild re-derived, for every snapshot that names a sunk table, its
+header constant (an interning lookup) and its field group from the store events before the snapshot's first guard; with the lever the header
+constant is computed once per table and a snapshot whose store prefix (and metatable entry) equals the previous group's copies that group from the
+new map; the per-snapshot candidate -> group-slot map is a short list instead of a hash map. Sinking on cd 8.39 -> 6.18 M instructions (-26 %),
+raytrace 4.28 -> 3.28 M (-23 %), measured against the same binary with the lever off. Mutants `sinkd_ls_miss` (the dense marks miss the
+`lsizenode` loads), `sinkd_group_any` (the group is reused whatever its store prefix), both caught by `c1_cspeed_identical_code`; a first mutant
+`sinkd_fld_newref` (the `NEWREF` marks not counted as derived values) survived and is equivalent: the users of a `NEWREF` (its `NE` and `HSTORE`)
+are marked removed when it is accepted, so the analysis never reaches them. Dropped.
+
+| program | k / pipeline | front | instructions M (whole run) |
+|---|---|---|---|
+| apps/raytrace | 707 -> 684 (-3.3 %) | 253 -> 229 | 271.70 -> 270.70 (-0.37 %) |
+| awfy/cd | 370 -> 362 (-2.2 %) | 119 -> 111 | 599.91 -> 597.75 (-0.36 %) |
+| awfy/towers, awfy/json, lib/fmt_s, awfy/richards | unchanged (no sunk table) | | +-0.00 % |
+
+### 85.2 `FWDK`: the constant map of the loop / forwarding copy as a table (`cspeed` lever 16384, in `cspeed::ALL`: default on)
+
+The side forwarding pass (`opt_loop::run_fwd` -> `roll`) re-emits every instruction of a side trace through the builder (fold, CSE, the memory log)
+and copies its snapshots; counter pairs on cd (208 rolls, 12,219 input instructions): set-up 0.43 M, the instruction copy 6.91 M (565 per
+instruction), the snapshot copy 3.41 M, the clean-up 1.64 M. 103 of the 208 rolls forward or CSE no load, 98 of them leave the length unchanged, but
+the copy drops 25 % of the instructions overall (9,115 of 12,219 remain), so the pass is not a no-op that could be skipped by a cheap test. Every
+constant operand and snapshot entry went through a hash map from the source constant ref to the output's (`Em::kmap`); with the lever it is a table
+indexed by the constant ref. Identical passes (`ccheck`); mutant `fwdk_key_shift` (the copy also memoised under the next constant), caught by
+`c1_cspeed_identical_code`. The instruction copy 6.92 -> 6.47 M and the snapshot copy 3.43 -> 3.17 M on cd.
+
+| program | k / pipeline, base -> 85.1 + 85.2 | instructions M (whole run) |
+|---|---|---|
+| apps/raytrace | 707 -> 679 (-4.0 %) | 271.70 -> 270.52 (-0.43 %) |
+| awfy/cd | 370 -> 358 (-3.2 %) | 599.92 -> 596.79 (-0.52 %) |
+| awfy/towers | 375 -> 373 (-0.5 %) | 161.58 -> 161.52 (-0.04 %) |
+| awfy/json | 296 -> 294 (-0.7 %) | 415.03 -> 414.92 (-0.03 %) |
+| lib/fmt_s | 200 -> 200 | 22.86 -> 22.86 |
+| awfy/richards | 508 -> 503 (-1.0 %) | 153.23 -> 153.07 (-0.10 %) |
+
+Whole set (223 programs, instructions, one run each, base 9cdbdf0 against 85.1 + 85.2): geomean -0.012 %, no output differs, largest falls raytrace
+-0.43 %, lru_cache -0.07 %, game_loop -0.07 %; the two rises are noise: corpus/astar_jumper +2.02 % (the same binary measures 4.24 / 4.34 G and
+4.49 / 4.32 G in repeated runs: the program's instruction count varies by +-3 % run to run), real_dis_ppc +0.25 % (the program 80.3 also lists as
+its largest rise).
+
+### 85.3 State, what the measurements say, and the plan for the next round
+
+**Result of this round: -3.2 .. -4.0 % per pipeline on cd and raytrace, -0.4 .. -0.5 % of the whole run; nothing on the others.** That is not the
+"substantial cut" asked for, and the reason is measured, not assumed:
+
+1. **The snapshot-delta format (S1) has a small ceiling at identical code.** Entries explain a third of a pipeline by the regression of 85.0,
+   but the per-entry work in each stage is cheap (exits: `slot_value` about 90 instructions; allocator: 46-66 per entry by the fit), so reading a
+   delta instead of the flat map saves about what the merge costs (the exit-builder kill test: -0.7 % of the phase). The volume would go only if
+   the *products* were chains too (the `ExitSnap` restore list, the stub plan, the allocator's `snap_locs`), which is a change of the exit handler
+   and of every stage reading `ExitSnap.slots`, bounded by the exits phase (13 % of a pipeline) plus the allocator's snapshot passes (~10 % of
+   the allocator).
+2. **The cost is per IR instruction in the back end** (allocator ~1070, assembler ~720, encoder ~500 instructions per IR instruction on side
+   traces by the fit, r2 0.88-0.99) and **per copied instruction in the front** (the forwarding copy 530 per instruction after `FWDK`, the
+   recorder ~4 k per recorded bytecode). The profiles are flat inside each (no symbol of the compile above 1.5 % of cd's run).
+3. Concretely ranked for cd per pipeline (k instructions, after 85.2): allocator 78, assembler 58, exits 47, encoder 39, side forwarding ~50
+   per side trace, sinking 24 -> 17 per side trace; roots 2-3x in every phase (the root `loop` pass 312 k per root on cd, 175 k on raytrace).
+
+**Next steps, in order** (each with its own knob and the `ccheck` oracle): (a) S3, the backward assembler fused with allocation (the allocator
+and assembler together are 37 % of a cd pipeline and both scale with IR instructions: the only lever left that attacks the per-instruction cost
+of two phases at once); start with straight-line ranges without lookahead fusions and the exit stubs, old path as the code oracle. (b) The
+forwarding copy: emit side traces with forwarding at record time (the recorder's builder already folds and CSEs; the memory log is the missing
+part), so that `run_fwd` is not a second pass over every instruction (14 % of cd's pipelines). (c) The recorder's per-step cost (4 k
+instructions per bytecode; `driver_step` with `record_one` inlined is 1.5 % of cd's whole run). (d) Chained exit products (item 1) only after
+(a), because the stub planner is part of the assembler being rewritten.
+
+### 85.4 Gates
+
+85.1 (commit 5d1e184) and 85.2: `scripts/gate-light.sh fwdk_,sinkd_` with `GATE_CPUS=5-7`, `GATE_LOAD_MAX=0` (load 30-50 from other sessions): every
+step PASS except `tests-5.5-trace` / `tests-5.4-trace` on `tr_core::h2_newkey_programs`, whose `RUSTYNAIL_GC_STRESS=2` + `GC_VERIFY=1` children hit
+the 120 s child leash under that load (101-120 s); the test passes alone (11.8 s on 5.5, 19.3 s on 5.4). The first run also caught the stale
+`registry_is_the_frozen_list` count (fixed). Mutants `sinkd_ls_miss`, `sinkd_group_any`, `fwdk_key_shift`: 3 ran, 3 caught.
+
+### 85.5 S3 (round 2 request): the fused backward allocate + emit pass, design for the builder who starts it (nothing built yet)
+
+The coordinator asked for S3a-S3d after 85.3. This builder's context was nearly used up by round 1, so it wrote the design down against the
+current interfaces and built nothing; a fresh builder starts here.
+
+**Interfaces today.** `ra::allocate_hinted` (backward linear scan, `Ra::process` per instruction, `open_snap` per snapshot at its last guard)
+materialises an `Allocation`: per instruction an `InsAlloc { dst, ops[3], stores, pre, post }` (three `Vec`s each), `snap_locs` per snapshot,
+the entry / back-edge moves, `calls`, `homes`. `exit::build_exits_ex` turns `snap_locs` into `ExitSnap`s. `asm::assemble_dl` (`Cx`, 11 k lines)
+walks the IR **forwards**, reads `InsAlloc` and the `ExitSnap`s, selects micro-ops into a `Program` (with lookahead fusions: `HREFK`+`HLOAD`,
+the counted-loop tail, the in-place last `ADD`, the hoisted budget, dense / carry stubs) and plans stubs; `x86::emit_ex` encodes the micro-ops.
+Per IR instruction on side traces (85.0 fit): allocator ~1070, assembler ~720, encoder ~500 instructions.
+
+**S3a shape (knob `asmfuse`, `TrLimits` + `ASMFUSE_PROCESS = 0` until it wins; `ccheck` compares the machine code of the old path).** One
+backward pass in the order LuaJIT's `asm_trace` uses: start at the end (the back-edge / link / writeback), walk instructions from the last to
+the first; for each instruction (1) its destination: the register the later uses already chose (or a spill slot: emit the spill store *here*,
+since emission is backwards the store lands after the definition), free it; (2) its operands: allocate at the use (`ra_alloc` with hints), an
+evicted value gets its restore emitted at this point (= after its later uses in program order); (3) emit the instruction's machine code into a
+**backwards growing** code buffer (LuaJIT `mcp` decreasing): x86 bytes written from the end, so no fix-up pass and no `Program`; (4) a guard
+emits its branch to the exit stub, whose snapshot map is resolved from the current register state at that moment (no `snap_locs` vector, no
+`open_snap` pin pass: the state *is* the map), and generic stubs are emitted into a separate cold buffer. No `InsAlloc`, no forward re-walk.
+
+**Staging that keeps every commit complete:**
+1. Range split: a trace is fused only if every instruction is in the converted class set (start: `SLOAD` typed / untyped, integer and float
+   arithmetic without overflow checks and with them, compare guards, `FLOAD`, `ALOAD` / `ASTORE` with fused bases, `HREFK` + `HLOAD` / `HSTORE`,
+   `SSTORE`, `POLL` / `BUDGET`, `LOOP` / `PHI` later), and the trace has no deferred stubs, `dlink` / `slink` entries, carry entries or sunk tables;
+   otherwise the old pipeline runs unchanged. Measure first which share of cd / raytrace / json side traces is fully in the start set
+   (`RUSTYNAIL_JIT_PIPELOG` plus a class histogram): a fused side trace skips `allocate_hinted`, `build_exits_ex`'s location part, `assemble_dl`
+   and `x86::emit_ex`.
+2. The exit metadata (`ExitSnap` for the handler, `lazystub`, side-trace entry tags) is still needed: build it from the per-guard register state
+   captured during the pass (same `SlotRestore`s), so `ccheck` can compare `ExitSnap`s too.
+3. Oracle: for a fused trace under `ccheck`, also run the old path and compare the code bytes. Bytes will differ (different register choices and
+   order), so the identity check is not the oracle for S3: use the `+verify` lockstep oracle, `+emuverify` cannot apply (no micro-ops), the
+   `tr_core` matrix (`always`, `on2`, GC stress 1 / 2, exit storms) and jit-diff 1-200 in the seven modes; add a `tr_core` test that runs the
+   corpus with `asmfuse=1` against `asmfuse=0` outputs, and per class a mutant (wrong operand register, missing spill store, missing restore,
+   stale snapshot location at a guard).
+4. Grow the class set one class per commit, measuring per-pipeline instructions after each (`compile-cost.sh phases`, cd / raytrace / towers /
+   json / fmt_s / richards). The deferred stubs, `dlink` / `slink` link entries, the emulator modes and the tier-1 re-derivation keep consuming
+   micro-ops: they stay on the old path (S3b: a fused trace that needs them falls back, or the micro-ops of those pieces are generated lazily).
+
+**S3c / S3d** stay as in 85.3 (forwarding at record time with `run_fwd` as the oracle; the recorder's per-step cost).
+
+Expected bound: a side trace that is fully fused drops the four back-end phases (about 230 k of cd's 267 k per side trace after 85.2, 86 %) to
+the cost of one pass; LuaJIT's whole compile is ~70 k per trace. The win is gated by the coverage of step 1, which must be measured before
+writing the emitters.
+
+## 87. S3: the fused backward allocate + emit pass (`asmfuse`, 2026-11-27, base 4b33c65)
+
+### 87.0 Step 0: coverage of the class sets (`RUSTYNAIL_JIT_OPSTAT=1`)
+
+`RUSTYNAIL_JIT_OPSTAT=1` prints per pipeline (before allocation) the trace's traits and its op histogram (`[opstat]`), and the fused pass's verdict
+(`[fuse] fused|old`, `[fuse] refused: <first reason>`, `[fuse] fallback: <reason>` and the running counters of `asm::fuse::stats()`). Over the
+six target programs (cd, raytrace, towers, json, fmt_s, richards; 377 side traces, 52 roots, base 4b33c65):
+
+- the 85.5 start set (stack loads, arithmetic, compare guards, `FLOAD`, `BUDGET` / `POLL`) covers 21 side traces (221 of 24620 side-trace
+  instructions); with the hash / upvalue memory ops (`HREFK` / `HLOAD` / `HMISS` / `HSHAPE` / `UREF` / `UVREL` / `ULOAD`) 138 (3854); with the stores
+  and array ops 181 (8146). Every side trace has a `BUDGET`, 376 an `EQ`; 293 `HREFK` + `HLOAD`, 200 `HSHAPE`, 138 `TBAR` (a helper call).
+- traits: 303 side traces have inlined frames in their snapshots (no obstacle: the stubs are the old code), 117 are native-recursion traces
+  (`rec_call` / `rec_ret`), 63 have sunk tables, 8 `RETF` segments, 6 preludes, none carry.
+- deferred stubs (`lazystub`, default on) and `dlink` entries are on nearly every side trace: excluding them (85.5 step 1) would leave nothing,
+  so the fused traces keep them (both are built from the `ExitSnap`s, which the fused pass produces as the old one does).
+
+### 87.1 Shape built (stage S3a-1)
+
+`asm::fuse` (`crates/rn-jit/src/tr/fuse.rs`, a child module of `asm` so that it drives `Cx`). For an eligible trace (`asmfuse` >= 1; side
+trace, no loop / carry / segments / native frames / lazy region / prelude / body room checks / `+randra`, every instruction in `fuse::converted`),
+`fuse::body` runs at the place of `ra::allocate_hinted`:
+
+1. one forward scan of the IR: the fusion flags (`ra::fusion`: the same rules as the allocator's), `defines`, the register class, the
+   clobbered registers, the first / last guard of each snapshot (and the B2 known-tag facts for `HSTORE`, a forward fact of the code);
+2. the end of the trace first: the writeback values get their end locations;
+3. one backward scan: per instruction the allocation (`Fa::process`: the result takes the register its later uses chose and is freed, the
+   operands get registers at the use with the two-address rule and the destination hint, an evicted value gets a spill slot whose store is
+   emitted at its definition and a reload right behind the evicting instruction, at the last guard of a snapshot its exit map is the register
+   state there and the registers it names are pinned until its first guard), then at once the micro-ops of that instruction: the old
+   per-instruction emitters of `Cx` read the record just made (`Cx::fal` / `Cx::fsnap` override `Allocation::ins` / `snap_locs`; `ffree_x`
+   replaces the whole-trace free-XMM scan of `FCMP` by a register free at that point). The ops of each instruction are appended reversed to a
+   buffer that grows backwards (one reversal at the end). An `HREFK` + `HLOAD` pair is emitted forwards once both are allocated (the B4-3
+   fusion decision needs both records). The extension slots start at `fuse::FUSE_EXT` (24): a trace needing more spill slots falls back.
+4. `FuseBody::allocation` hands the records in the old form to the stages that read one (`build_exits_ex` reads the maps; the shape hash,
+   dumps); `FuseBody::finish` lays out the program as `assemble_dl` does for a side trace (entry checks and budget load, `dlink` entry, body,
+   writeback, link, stubs and cold blocks through the old `stubs_and_tail`), so deferred stubs, `dlink` / `slink`, `gexit`, the emulator
+   modes (they run the `Program`) and the exit handler are unchanged.
+
+Anything the pass does not handle (only pinned eviction victims, too many slots, an emitter refusing) returns `Err` and the old pipeline runs:
+the fallback is complete because nothing of the pass is visible outside it. To make the pass possible the per-trace environment (`AsmEnv`) is
+now built before allocation in every pipeline: `pipeline_inner` computes the allocation, the exits, the counters and the cells after the
+environment and patches the three cell fields (`counters`, `exit_cells`, `exit_rcells`) and the frame-link cell of the snapshots afterwards.
+
+`asmfuse=2` (tests): three general and four double registers, so that evictions, spills, reloads and pinned exit maps are everywhere. In debug
+builds every guard of an open snapshot asserts that the registers its map names still hold their values (the pin invariant).
+
+Converted classes: constants, `SLOAD`, integer arithmetic including `IDIV` / `MOD` / shifts, float arithmetic and conversions, every compare
+guard, `EQREF`, `FLOAD`, `BUDGET`, `POLL`, `SSTORE`, `TVIRT`, the hash ops (`HREFK`, `HLOAD`, `HMISS`, `HSHAPE`, `HSTORE`, `HREFV`), the upvalue
+ops, `AREF` / `ALOAD` / `ASTORE`, `XLOAD`, string `TLEN`. Not converted: helper calls (`TBAR`, `CALLN`, class A), `NEWREF`, `RETF`, loops.
+
+Stage 3 (commit 9c75995): helper calls are converted too (`TBAR`, `TLEN`, `TNEW`, `NEWREF`, `TSET`, `LIB`, `CALLN`, `SNEW`, `CONCAT`, `STRTO`;
+not `TNEXT`): the call site's saved registers are the pass's live registers at the call minus the ones evicted there, and `RAPOL_CALLSPILL`
+evicts the unpinned values across an always-taken call as the allocator does. Side traces with entry room checks are eligible (the entry is
+the old `entry_checks`). The allocation's `used` masks are the pass's own (the old `uses_gpr` scanned the whole allocation in
+`stubs_and_tail`); `Cx::pre` / `post` skip empty records.
+
+### 87.2 Numbers (CPU 5, `RUSTYNAIL_SEED=0`, instructions; pipelines matched by order between `asmfuse=0` and `asmfuse=1`, same traces)
+
+Coverage after stage 3 (fused / pipelines): cd 90 / 267, raytrace 26 / 39, json 18 / 58, richards 4 / 31, towers 1 / 27, fmt_s 0 / 2. The
+refusals over the six programs (stage 2): native-recursion traces 117, roots 52, `lazy` 11, `RETF` segments 6, preludes 6 (room checks and
+calls were the rest, now converted).
+
+Per fused side pipeline (`scripts`-style per-pipeline log, `RUSTYNAIL_JIT_PIPELOG=1`):
+
+| program | IR ins / snapshot entries | old total | fused total | allocator(+fused body) | assembler | exits | encoder |
+|---|---|---|---|---|---|---|---|
+| cd | 34 / 143 | 273.6 k | 256.9 k (-6.1 %) | 46.7 -> 49.0 k | 40.1 -> 21.3 k | 41.8 k (=) | 23.7 k (=) |
+| raytrace | 56 / 202 | 415.5 k | 388.5 k (-6.5 %) | 71.3 -> 73.3 k | 54.3 -> 25.4 k | 56.9 k (=) | 26.2 k (=) |
+| json | 51 / 45 | 278.7 k | 262.8 k (-5.7 %) | 58.5 -> 72.2 k | 51.7 -> 22.3 k | 20.4 k (=) | 35.4 k (=) |
+| richards | 88 / 76 | 451.3 k | 423.8 k (-6.1 %) | 95.4 -> 116.4 k | 79.8 -> 31.6 k | 27.5 k (=) | 40.5 k (=) |
+
+All pipelines of a run: cd -0.95 %, raytrace -1.85 %, json -0.85 %, richards -0.05 %. The fused pass (allocation + body selection) costs
+what the old allocator alone cost; the saving is the old forward walk and the whole-allocation scans of the assembler (-47 .. -60 % of the
+`asm` phase). A sub-phase probe on raytrace (stage 2, per trace of 52 instructions / 189 entries): fusion flags 5.8 k, setup 3.8 k, `Cx`
+state 6.6 k, allocation 25.7 k (about 490 per instruction, dominated by the snapshot entries), emission through the old emitters 28.4 k (about
+545 per instruction), tail 1.5 k.
+
+Generated code (whole-run instructions, asmfuse 0 / 1, each run twice, outputs identical): nbody -0.006 %, fib 0.000 %, queens -0.005 %,
+lua_lexer 0.000 %, cd -0.076 %, raytrace -0.130 %, towers +0.001 %, json +0.001 %, fmt_s +0.005 %, richards +0.009 %, deltablue -0.026 %,
+havlak -0.006 % (stage 2 binary): no bar miss. Whole set (stage 3 binary, `scripts/compile-cost.sh whole`, 223 programs, wrappers setting `asmfuse` 0 / 1 on one binary): no output
+mismatch, geomean -0.033 %; the largest increases (`corpus/serpent_ser` +0.25 %, `corpus/classic_vector` +0.08 %) rerun twice: serpent_ser
+-0.21 % / 0.00 % (noise), classic_vector +0.08 % both times (below the 0.5 % bar); `corpus/astar_jumper` (-5.3 %, then +0.9 %, +1.8 %) varies
+by 1.4 % between two `asmfuse=0` runs (not deterministic).
+
+### 87.3 Gates and oracles
+
+- `tr_core::s87_asmfuse_programs` (`s87_fuse_arith`, `s87_fuse_fields`, `s76_side_fail`, `s64_call_loops`; `asmfuse` 2 / 1 / 0 in the `b1_jobs`
+  matrix: always / on2 / on, `+verify`, exit storms 3 and 7, budgets 3 / 17, `-loop`, GC stress 1 / 2, stack moves).
+- `TR_ASMFUSE=N` runs every `tr_core` job without its own `asmfuse` at level N: the whole suite (286 tests) passes with `TR_ASMFUSE=2`
+  (stage 2 classes).
+- tests/vm corpus, `asmfuse=0` against `asmfuse=1` / `2` (always, hot 2,2, `sidemin=0`; plain, `+verify`, `+exitstorm=3` in `on` mode): 252
+  programs identical (two `+verify` runs of `tables_14` / `tables_15` hit the 60 s leash of the ad-hoc script under load, without fused traces,
+  identical when rerun).
+- Mutants `asmfuse_no_reload`, `asmfuse_no_store`, `asmfuse_two_addr`, `asmfuse_call_live`: caught by `s87_asmfuse_programs`. A pin mutant
+  (`asmfuse_pin_skip`: the registers of a snapshot shared by several guards not pinned) was written and dropped: no program of the suite
+  takes an exit of an earlier guard of such a snapshot after an eviction would have moved one of its values (the pin skips do happen: 84 on cd
+  under `asmfuse=2`); the invariant is checked instead by the debug assertion at every guard of an open snapshot.
+- gate-light (`GATE_CPUS=5-7`, `GATE_LOAD_MAX=0`) on dd7afe2: every step PASS (mutant group `asmfuse_`); on 9c75995: every step PASS except
+  `tests-5.5-trace` / `tests-5.4-trace` on `tr_core::h2_newkey_programs` (its `GC_STRESS=2` + `GC_VERIFY=1` child at the 120 s leash under load,
+  as in 85.4), which passes alone (13.8 s on 5.5, 14.1 s on 5.4).
+
+### 87.4 State and the remaining stages (for the next builder)
+
+What S3a-1..3 shows: with the old emitters, fusing the allocation into the emission removes the forward walk and the whole-allocation
+scans, not the per-instruction cost of the emitters (~545 per IR instruction) nor the per-snapshot-entry cost, which is now spread over the
+pass's exit-map capture (~100-150 per entry), `build_exits_ex` (~290 per entry) and `stub_plan` (per entry again, even for deferred stubs).
+The four remaining levers, in order of size:
+
+1. **Lean emitters writing bytes** for the hot classes (`SLOAD`, compare guards, integer / float arithmetic, `HREFK` + `HLOAD`, `FLOAD`,
+   `BUDGET`): the encoder (24-40 k per side pipeline) and the old emitters (~545 per instruction) are about 40 % of a fused pipeline. Shape:
+   per class a function that appends the x86 bytes in reverse into the backwards buffer (each instruction's encoding is produced forwards
+   into a 16-byte scratch and copied), guards as `jcc rel32` with a fix-up list against the stub buffer, encoded separately by the old
+   encoder and placed behind the body. A trace whose every instruction has a lean emitter skips `x86::emit_ex` for the body; the stubs stay.
+   The emulator modes need the `Program`: such traces use the micro-op path (`+emurun` / `+emuverify` is a test mode).
+2. **Exit maps as products of the pass**: build each `ExitSnap` at its snapshot's open point from the state (`exit::build_exits_ex`'s
+   per-snapshot body factored out; the cells only need the location-free part), and share the slot list of consecutive snapshots with equal
+   maps (the stub planner then plans once per distinct map).
+3. **Coverage**: native-recursion side traces (117 of 377 over the six programs: `rec_ret_guards` reads the end locations and whether an
+   earlier instruction defines a register, a forward question: answer it from the pass's `used` masks after the body, emitting the guards in
+   `finish`), roots (loops: `PHI` / homes / back-edge moves; the pass would start at the back-edge with the PHI locations as end locations),
+   `TNEXT`, preludes.
+4. The cost of the pass itself: the fusion flags (5.8 k per raytrace trace) can come from the recorder's builder, the per-value arrays can be
+   one arena, and the snapshot open can skip entries whose value has not changed location since the previous snapshot of the same map
+   prefix.
+
+S3c (forwarding at record time) and S3d (the recorder's per-step cost) were not started.
+
+### 87.5 Round 2: `asmfuse=1` by default (commit 13d92c2), and the hand-off
+
+`ASMFUSE_PROCESS` = 1 (and the struct default): the whole-set gate of 87.2 holds (no program above +0.1 % instructions, geomean -0.03 %).
+gate-light (`GATE_CPUS=5-7`, `GATE_LOAD_MAX=0`) on 13d92c2 with the mutant group `asmfuse_` plus every allocator mutant whose site is in
+`ra.rs` (`callspill_no_reload`, `cspeed_ra_last_free`, `cspeed_ra_unfuse_skip`, `cycle_stale_xmm`, `exit_rename_ignored`, `m1_free_highest`,
+`spill_no_reload`): 11 of 11 caught (the old allocator keeps its detectors: roots and the refused side traces still use it, and `tr_ra` tests
+it directly); every step PASS except `tests-5.4-trace` on `h2_newkey_programs` (the 120 s leash of its GC-stress child under load, 85.4; it
+passed alone on 9c75995 in 14.1 s, and the 5.5 suite passed with the new default).
+
+Whole-run compile share (instructions, CPU 6, same binary path for both configurations through `exec` wrappers that only set
+`RUSTYNAIL_JIT_TRACE_LIMITS=asmfuse=0|1`; compile = recorder + pipelines + tier 1 + deferred stubs):
+
+| program | compile M (0 -> 1) | share (0 -> 1) |
+|---|---|---|
+| raytrace | 66.55 -> 65.86 | 24.4 % -> 24.2 % |
+| cd | 166.21 -> 164.76 | 27.7 % -> 27.6 % |
+| json | 43.20 -> 42.78 | 10.4 % -> 10.3 % |
+| towers | 17.01 -> 16.99 | 10.4 % (=) |
+| fmt_s | 1.58 (=) | 6.3 % (=) |
+| richards | 34.75 -> 34.65 | 22.4 % -> 22.3 % |
+
+Cycles (min of 15 interleaved, CPU 7, same binary path): raytrace +0.49 %, cd -0.29 %, json -2.36 %, classic_vector -2.20 % (instructions
+-0.25 %, -0.24 %, -0.11 %, +0.08 %). The cycle moves of json / classic_vector are larger than their instruction moves: trace formation and
+code placement noise, not a compile effect (the compile is under 0.1 M instructions apart).
+
+What the share table says: the fused pass covers the cheap part of the compile. The pipelines are 27.85 M of raytrace's 66.55 M of
+compile and 45 M of cd's 166 M (the rest is the recorder, tier 1 and the deferred stubs), and the fused side pipelines are a fraction of
+those. The round-2 stages (87.4 items 1-4: lean byte emitters, exit maps built in the pass and shared, roots and native-recursion
+coverage, a cheaper pass, then S3c / S3d) were not started in this session (context): the design notes of 87.4 stand, with the coordinator's
+order: (1) lean emitters writing bytes for the hot classes, micro-ops generated lazily only for the emulator modes / deferred stubs / link
+entries; (2) `ExitSnap`s built inside the pass, entry lists interned, register state recorded per distinct snapshot; (3) roots (fuse the
+peeled copy and the loop body in one backward pass, the PHI locations as end locations, the snapshot maps shared), native-recursion side
+traces, lazy regions, `TNEXT`, preludes; (4) the pass's own cost, then S3c and S3d.
+
+## 91. Compile cost, round 4: coverage of the fused pass (`fusecov`), and where the remaining compile goes (2026-11-28, base be06bff)
+
+Numbers are user-mode instructions (`RUSTYNAIL_JIT_PHASECTR=1`, `RUSTYNAIL_SEED=0`, CPU 6), the same binary path for both sides of a comparison
+(`exec` wrappers that only set `RUSTYNAIL_JIT_TRACE_LIMITS`).
+
+### 91.0 What the trace kinds cost (measured before changing anything)
+
+`RUSTYNAIL_JIT_OPSTAT=1` + `RUSTYNAIL_JIT_PIPELOG=1`, the per-pipeline totals grouped by the fused pass's verdict (base be06bff; the `[opstat]`
+printing inflates each total by ~80 k, the shares are what matters):
+
+| program | fused sides | room sides (R2) | native sides | roots | lazy / segs |
+|---|---|---|---|---|---|
+| awfy/cd (106.9 M) | 90, 21.6 % | 47, 30.2 % (688 k each) | 85, 17.7 % | 25, 28.1 % | 9, 1.7 % |
+| apps/raytrace (32.6 M) | 26, 31.0 % | 1, 3.6 % | 6, 25.2 % (1.37 M each) | 4, 36.0 % | 2, 4.1 % |
+| awfy/richards (20.3 M) | 4, 8.4 % | 25, 86.8 % | 0 | 2, 4.8 % | 0 |
+| awfy/json (24.9 M) | 21, 22.9 % | 3, 2.3 % | 15, 11.7 % | 13, 52.0 % | 9, 11 % |
+| awfy/towers (12.7 M) | 1, 2.0 % | 3, 4.6 % | 11, 58.4 % | 6, 15.0 % | 6, 20.0 % |
+
+The roots are mostly **not loops**: of cd's 25 roots 3 are peeled loops (11.6 M), 3 rolled roots without native frames (9.4 M) and 19
+native-recursion roots (9.1 M, 480 k each); raytrace 2 loops + 2 rolled, json 4 loops + 5 rolled + 4 native, towers 1 rolled + 5 native,
+richards 2 loops. So the coverage that matters first is the R2 room checks (cd, richards), native recursion (sides and roots) and rolled roots.
+
+### 91.1 `fusecov` bit 0: R2 room checks, pinned victims, high extension slots (commit fb09076)
+
+New knob `TrLimits::fusecov` (`FUSECOV_PROCESS`, bits; `TR_FUSECOV=N` runs the `tr_core` jobs that do not name it at level N). Bit 0: (1) side
+traces with body room checks (`env.side_room`) are eligible: the R2 block (`Cx::side_room_block`, factored out of `assemble_dl`) is emitted in
+front of the `BUDGET`'s code inside the fused group; (2) when every eviction candidate is pinned by an open snapshot, the lowest pinned value is
+evicted and the open exit maps naming its register are patched to its spill slot (it is stored at its definition, so it holds the value at every
+guard of those snapshots: `ra::Ra::patch_pins`' rule); (3) the extension slots of a fused trace start at `FUSE_EXT_COV` = `ITER_SLOT - 16` instead
+of 24, so a trace no longer falls back for "spill slots" (every spill slot is a disp32 access either way). Before (2) and (3), 8 of cd's 47 room
+traces fell back after running the pass (1.35 M each, wasted work as large as the gain). Mutant `fusecov_patch_skip` (the patch left out).
+
+### 91.2 `fusecov` bits 1 / 2: native recursion and rolled roots through `assemble_dl_in`
+
+The fused pass no longer lays out the trace itself (`FuseBody::finish` is gone): it hands the assembler state (`asm::CxState`, every owned field
+of `Cx`: program, stubs, label tables, cold blocks; `take_state` / `put_state`) and per instruction the body op where its code starts behind the
+R2 block (`FusedBody::at`) to `asm::assemble_dl_in`, which lays out entries, second / inner entries, writeback, link, native tails and stubs exactly
+as for a walked body (its label numbers continue after the body's). The native-recursion placeholder guard emits nothing in the pass; the native
+return's guards are spliced in at `at[budget]` (or emitted at the end with `rec_late`), the second entry's label is bound at `at[p.0]`. Bit 1:
+native-recursion traces (`rec_call` / `rec_ret`, not lazy); bit 2: rolled roots (no loop, not lazy; a root's `head` is its entry bookkeeping).
+Mutant `fusecov_rrg_skip` (the native return's guards left out of a fused body).
+
+**Bit 2 is not on by default**: `tr_core::m1_interp_shapes` crashes in `m1_interp [on +verify]` with it (tier-1 code calls `jit_get` with a
+bad table after an exit of the fused root `proto:27 pc 4`, a rolled root ending in the always-false stitch guard with a `HREFV dyn` call). The
+fused allocation and program of that trace were compared with the old ones (`ra::dump`, the micro-ops, the `ExitSnap`s): they are equivalent
+up to spill-slot numbers, the extension-slot base and the order of the stubs (created backwards); the crash disappears with `lazystub=0`, not
+with the old extension base (24) or the stubs sorted by snapshot. So the suspect is the deferred stub of one of its exits (assembled at the
+first exit from `DeferCtx` with an empty allocation): the next builder should dump the deferred stub of each exit of that trace in both
+configurations. Repro: `TR_FUSECOV=7 TR_CORE_JOB='m1_interp|on|+verify||||0' target/debug/deps/tr_core-* child_entry --exact`.
+
+Also: under `ccheck=1` a fused trace's `ExitSnap`s are now compared with the old exit builder's on the same allocation (before, `ccheck` skipped
+fused traces entirely).
+
+Numbers (default binary, `fusecov` 0 -> 3 on the same binary; compile = recorder + pipelines + tier 1 + deferred stubs; instructions M):
+
+| program | pipelines M | compile M | share | k / pipeline |
+|---|---|---|---|---|
+| apps/raytrace | 28.21 -> 27.51 (-2.5 %) | 66.14 -> 65.43 | 24.5 % -> 24.3 % | 672 -> 655 |
+| awfy/cd | 93.44 -> 90.80 (-2.8 %) | 165.70 -> 163.07 | 27.8 % -> 27.5 % | 358 -> 348 |
+| awfy/richards | 15.79 -> 14.82 (-6.1 %) | 34.86 -> 33.91 | 22.8 % -> 22.3 % | 509 -> 478 |
+| awfy/json | 18.78 -> 18.64 | 43.03 -> 42.89 | 10.4 % -> 10.3 % | 293 -> 291 |
+| awfy/towers | 10.20 (=) | 17.10 (=) | 10.6 % | 378 (its native traces are lazy: refused) |
+| lib/fmt_s | 0.41 (=) | 1.59 (=) | 6.9 % | 205 |
+
+With bit 2 as well (`fusecov=7`, measured before the crash was found): raytrace 64.98 M, cd 162.14 M, json 42.52 M of compile. Fused / pipelines
+on cd: 138 -> 216 (bit 1) -> 232 (bit 2). Whole set (223 programs, `fusecov` 0 against 3, one binary): no output differs, geomean -0.033 %,
+largest rise corpus/testrunner_luaunit +0.32 % (rerun twice: -0.00 %, -0.00 %: the program varies run to run), largest falls astar_jumper
+-4.5 % (varies), richards -0.61 %, cd -0.44 %, lru_cache -0.32 %, raytrace -0.27 %.
+
+**What this says.** Coverage multiplies the per-trace gain of the fused pass, and that gain is small (~6 % of a pipeline: the pass costs what the
+old allocator cost and saves the forward walk). Even with every trace fused, the pipelines would drop by ~6 %, i.e. ~3 % of compile. The fused
+pass must get cheaper per instruction (lean emission) before coverage pays.
+
+### 91.3 Exit restores copied from an equal previous snapshot: killed by measurement
+
+`build_exits_ex` with a `cspeed` lever copying the previous snapshot's `SlotRestore`s when the maps (`snap_entries`) and the locations are equal
+(identical exits, `ccheck` clean, mutant caught): cd pipelines 90.80 -> 90.69 M (-0.1 %), towers +0.4 %, richards +0.1 %. The slice comparisons cost
+what the skipped `slot_value` calls save (as 85.0 found for the delta merge). Removed.
+
+### 91.4 State and the remaining stages (for the next builder)
+
+Where cd's compile goes after 91.2 (163 M): recorder 45 M (28 %), pipelines 91 M (56 %), tier 1 18 M (11 %), deferred stubs 9 M (6 %). Inside
+the pipelines (k / pipeline, all traces): front 107 (sinking + `run_fwd` + root passes), fused pass / allocator 87, exits 47, assembler 39,
+encoder 39. A flat instruction profile of the whole cd run (`perf record -m 8 -e instructions:u -c 20000`, no call graph: `-g` fails to open
+the event here; `-m 8` is needed because `perf_event_mlock_kb` is 516) ranks the compile symbols: `x86::emit_ex` 2.95 % of the run (17.6 M:
+pipelines, tier 1 and deferred stubs), `exit::build_exits_ex` 1.88 %, `driver_step` 1.47 %, `lower::lower_ex` 0.93 %, `fuse::run` +
+`Fa::process` 1.62 %, `Ra::run` + `allocate_hinted` 1.46 %, `Builder::find` 0.66 %, `Em::copy_one` 0.64 %, allocation (`finish_grow`,
+`__rust_alloc`, `realloc`) 1.8 %, `sink::rebuild` 0.59 %, `slot_value` 0.58 %, `stub_plan` 0.56 %, `TraceIr::konst` 0.54 %.
+
+Remaining stages, in the coordinator's order, with what 91.0-91.3 measured about each:
+
+1. **Looped roots in the fused pass** (PHIs as end locations, homes, entry / back-edge moves, `cloop` / in-place add / `budhoist` decided at
+   the `LOOP` crossing): 11 traces over the six programs (cd 3 = 11.6 M of its pipelines, raytrace 2 = 4.9 M, json 4 = 3.0 M, richards 2 =
+   1.0 M). At the fused pass's ~6 % per pipeline that is ~0.7 M on cd. Plan: hold the emission of `POLL` / `BUDGET` / the PHIs until the `LOOP`
+   crossing (the `HREFK` + `HLOAD` hold generalised), compute the back-edge moves there (the PHI locations are known), decide `cloop` / `bh` with
+   the fused records, emit the tail instructions normally and truncate / replace them in `assemble_dl_in` when `cloop` or `last_add_in_place`
+   applies (the op index of each instruction is in `FusedBody::at`). Fix bit 2 first (91.2): the same layout path.
+2. **Lean emission**: the encoder alone is 17.6 M on cd (all users); a fused trace spends ~545 instructions per IR instruction in the old
+   emitters plus ~150 per micro-op in the encoder. Direct byte emission for the hot classes (oracle: under `ccheck`, the bytes of the old
+   emitters + encoder for the same allocation) is the largest lever left inside the pipelines (estimate ~8 % of a fused pipeline).
+3. **Recorder** (45 M on cd, `driver_step` 1.47 % of the run, `Builder::find` + `konst` + `emit_flags` + `fold` 2.2 %): untouched.
+4. **Tier 1** (18 M on cd, 450 k per compile): untouched; `lower_ex` is 5.5 M of it.
+5. Lazy-aware native traces (towers: all its native traces are refused `lazy`), preludes, `TNEXT`.
+
+Gates: 91.1 (fb09076): `s91_fusecov_programs`, mutant `fusecov_patch_skip` caught, whole set clean. 91.2 (87a5d45): gate-light
+(`GATE_CPUS=5-7`, `GATE_LOAD_MAX=0`, mutant groups `fusecov_,asmfuse_,side_room,rec_ret,t4_late`: 16 ran, 16 caught): fmt, mutant map, clippy x3,
+core x2, 5.5 trace suite, vm_corpus, jit-diff 1-50 PASS; the 5.4 trace suite failed only `h2_newkey_programs` / `h2_setmt_programs` on the 120 s
+leash of their `GC_STRESS=2` + `GC_VERIFY=1` children under load (as in 85.4), both pass alone (22 s). The whole `tr_core` suite with
+`TR_ASMFUSE=2` and `fusecov=7` failed only `m1_interp_shapes` (bit 2, above) and `pm3_rec` under `stackmove` (133 s with `fusecov=0` too: the
+job is over the leash in debug builds; dropped from the s91 program list).
+
+Cycles (`fusecov` 0 / 3, same binary path, min of N interleaved; load average 40-45 from other sessions, so not conclusive): 15 runs CPU 6: cd
++3.4 %, richards -2.2 %, raytrace -12 % (noise), json +0.0 %; 25 runs CPU 7: cd +1.6 %, raytrace -0.6 %. cd's instructions fall 0.44 %; its cycle
+rise repeated in both series and should be re-measured on a quiet machine (suspects: code placement of the 78 newly fused traces; the R2 room
+checks' extension slots now sit at spill offset ~2.1 KB instead of a few hundred bytes, another cache line at every room-checked entry).

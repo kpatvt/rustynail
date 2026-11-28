@@ -56,7 +56,7 @@ use super::ir::*;
 /// N5: clears the short / long variant bit of a string tag byte (`ctb(LUA_VSHRSTR)` = 0x44, `ctb(LUA_VLNGSTR)` = 0x54).
 const ANYSTR_MASK: i32 = 0xEF;
 use super::mutants;
-use super::ra::{Allocation, CallSite, Loc, Move, SCRATCH_SPILL};
+use super::ra::{Allocation, CallSite, InsAlloc, Loc, Move, SCRATCH_SPILL};
 use super::{exit_area, NSPILL};
 use crate::ir::{Base, Cc, FOp, Mi, Op, Program, Src, L, M, V, W, X};
 use rn_core::gc::{BLACKBIT, WHITEBITS};
@@ -121,6 +121,11 @@ pub struct AsmEnv {
     pub hot_exit: u32,
     /// Address of a shared exit routine (a per-arena copy), or `0`: the program embeds its own.
     pub shared_exit: u64,
+    /// Section 80.1 (`gexit`): the address of the state's shared exit routine; non-zero (and `shared_exit == 0`): the trace's shared label is a
+    /// trampoline into it instead of an embedded copy.
+    pub shared_global: u64,
+    /// Section 80.1 (`gexit` bit 1): generic stubs are `mov V7, exitno; jmp shared` and the trampoline stores the numbers (needs `shared_global`).
+    pub compact_exits: bool,
     /// `jit_tr_exit` (for the embedded shared routine).
     pub exit_handler: u64,
     /// Offset of the stack data pointer inside the `Thread` (`ReloadFrame` of the shared routine).
@@ -399,6 +404,8 @@ impl Default for AsmEnv {
             counters: 0,
             hot_exit: 16,
             shared_exit: 0,
+            shared_global: 0,
+            compact_exits: false,
             exit_handler: 0,
             stack_off: 0,
             pcl_h: 0,
@@ -2772,6 +2779,79 @@ struct Cx<'a> {
     far: Vec<(L, u64)>,
     /// BUNDLE-K L1: labels of the shared leave blocks (`[0]`: plain, `[1]`: the innermost frame was just pushed natively), see [`Cx::lazy_leave_block`].
     lz_leave: [Option<L>; 2],
+    /// Section 87 (`asmfuse`): the per-instruction allocation of the fused pass (owned, filled backwards as the pass goes; empty: read `al`).
+    fal: Vec<InsAlloc>,
+    /// Section 87: the snapshot maps of the fused pass (filled when a snapshot's last guard is allocated; read by `hk_same_state`).
+    fsnap: Vec<Vec<Loc>>,
+    /// Section 87: the fused pass's free double register for the constant operands of `FCMP` (`Some`: use it instead of the whole-trace scan of `al`:
+    /// in a backward pass the registers of the earlier instructions are not known, a register free at this point holds no live value here).
+    ffree_x: Option<Option<u8>>,
+    /// Section 87: the snapshot exits are not built yet (the fused pass registers stub labels before `build_exits_ex` runs).
+    fbody: bool,
+    /// Section 87: the call site of the instruction the fused pass is emitting (the registers to save around its helper call).
+    fcall: Option<CallSite>,
+}
+
+/// Section 91: the owned assembler state that the fused pass (`fuse`) hands to [`assemble_fused`]: the body's program and every stub, cold block
+/// and label table its emitters created (label numbers continue from it).
+macro_rules! cx_state {
+    ($($f:ident : $t:ty),* $(,)?) => {
+        #[derive(Default)]
+        pub(crate) struct CxState {
+            $($f: $t),*
+        }
+        impl Cx<'_> {
+            fn take_state(&mut self) -> CxState {
+                CxState { $($f: std::mem::take(&mut self.$f)),* }
+            }
+            fn put_state(&mut self, s: CxState) {
+                $(self.$f = s.$f;)*
+            }
+        }
+    };
+}
+
+cx_state! {
+    p: Program,
+    stubs: Vec<Stub>,
+    stub_ix: crate::fx::HashMap<(u32, u8), L>,
+    disp_ix: crate::fx::HashMap<u32, L>,
+    disps: Vec<Disp>,
+    saved: Vec<(Loc, u16)>,
+    mat_shared: Vec<(Vec<MatKey>, L)>,
+    mat_frames: Vec<Vec<exit::FrameRestore>>,
+    mat_codes: Vec<u64>,
+    hk_fused: Option<usize>,
+    hk_cold: Vec<HkCold>,
+    shape_cold: Vec<ShapeCold>,
+    rec_ci_cold: Vec<(L, L)>,
+    root_ci_cold: Vec<(L, L, L)>,
+    bud_cold: Vec<(L, L, i32)>,
+    bh_tramps: Vec<(L, L, i32)>,
+    bh_tramp_ix: std::collections::HashMap<(L, i32), L>,
+    rc_cold: Vec<(L, L, Vec<(u16, Ref, Loc)>)>,
+    dense_cold: Vec<(L, L, Vec<Op>)>,
+    carry_slow: Vec<(L, L, u64, ExitSnap)>,
+    hk_fused_n: u32,
+    hk_split_n: u32,
+    dbl: Vec<u32>,
+    dl_ok: Vec<u32>,
+    defer_g: Vec<(u32, L)>,
+    shared_l: Option<L>,
+    rf_sites: Vec<L>,
+    rf_nr: Vec<L>,
+    ext_leave_used: [bool; 2],
+    tramps: Vec<(L, u64)>,
+    far: Vec<(L, u64)>,
+    lz_leave: [Option<L>; 2],
+}
+
+/// Section 91: what the fused pass (`fuse::run`) hands to [`assemble_dl_in`] in place of the per-instruction walk: the assembler state with the
+/// body's micro-ops in program order, and per instruction the index of the body op where its code starts behind the R2 room checks (the place of the
+/// native return's guards and of the second entry's label).
+pub(crate) struct FusedBody {
+    pub(crate) st: CxState,
+    pub(crate) at: Vec<u32>,
 }
 
 impl<'a> Cx<'a> {
@@ -2839,6 +2919,11 @@ impl<'a> Cx<'a> {
             tramps: Vec::new(),
             far: Vec::new(),
             lz_leave: [None, None],
+            fal: Vec::new(),
+            fsnap: Vec::new(),
+            ffree_x: None,
+            fbody: false,
+            fcall: None,
         }
     }
 
@@ -3114,7 +3199,7 @@ impl<'a> Cx<'a> {
     }
 
     fn stub_label(&mut self, snap: u32, entry: bool) -> Result<L, AsmError> {
-        if (snap as usize) >= self.snaps.len() {
+        if (snap as usize) >= self.snaps.len() && !self.fbody {
             return incons(format!("snapshot {snap} has no exit"));
         }
         if let Some(&l) = self.stub_ix.get(&(snap, u8::from(entry))) {
@@ -3167,7 +3252,7 @@ impl<'a> Cx<'a> {
     }
 
     fn poll_stub_label(&mut self, snap: u32) -> Result<L, AsmError> {
-        if (snap as usize) >= self.snaps.len() {
+        if (snap as usize) >= self.snaps.len() && !self.fbody {
             return incons(format!("snapshot {snap} has no exit"));
         }
         if self.ir.snaps[snap as usize].land != Land::Pre {
@@ -3193,7 +3278,7 @@ impl<'a> Cx<'a> {
     /// S4: the label of the shape-miss stub of `snap`: a generic stub whose exit number carries `exit::EXIT_SHAPE` (the cold path of an `HSHAPE`
     /// has stored the node vector and its size in the exit area).
     fn shape_stub_label(&mut self, snap: u32) -> Result<L, AsmError> {
-        if (snap as usize) >= self.snaps.len() {
+        if (snap as usize) >= self.snaps.len() && !self.fbody {
             return incons(format!("snapshot {snap} has no exit"));
         }
         if let Some(&l) = self.stub_ix.get(&(snap, 3)) {
@@ -3407,6 +3492,20 @@ pub fn assemble_dl(
     env: &AsmEnv,
     dl: Option<&DlinkIn>,
 ) -> Result<Asm, AsmError> {
+    assemble_dl_in(ir, al, snaps, writeback, env, dl, None)
+}
+
+/// [`assemble_dl`]; section 91: with `fb`, the body is the fused pass's (its micro-ops and assembler state, `al` its allocation) instead of the
+/// per-instruction walk; the entries, writeback, link / native tails and stubs are laid out around it as for any trace.
+pub(crate) fn assemble_dl_in(
+    ir: &TraceIr,
+    al: &Allocation,
+    snaps: &[ExitSnap],
+    writeback: &[SnapEntry],
+    env: &AsmEnv,
+    dl: Option<&DlinkIn>,
+    fb: Option<FusedBody>,
+) -> Result<Asm, AsmError> {
     if al.ins.len() != ir.ins.len() || snaps.len() != ir.snaps.len() {
         return incons("allocation / exits do not match the IR");
     }
@@ -3456,6 +3555,20 @@ pub fn assemble_dl(
     cx.first_flag = rolled
         && env.head != 0
         && (0..ir.ins.len()).any(|i| cx.entry_kind(i) == EntryKind::FirstIter);
+    // section 91: the fused body's state first (its labels are numbered from 0, everything allocated below follows them)
+    let fused_body = match fb {
+        Some(mut fb) => {
+            if !rolled {
+                return incons("fused body of a looped trace");
+            }
+            let ops = std::mem::take(&mut fb.st.p.ops);
+            let keep = std::mem::take(&mut cx.p.ops);
+            cx.put_state(fb.st);
+            cx.p.ops = keep;
+            Some((ops, fb.at))
+        }
+        None => None,
+    };
     let entry = cx.label();
     let loop_l = cx.label();
     let entry_fail = cx.label();
@@ -3595,8 +3708,56 @@ pub fn assemble_dl(
         e2plan.as_ref().map(|p| p.0),
     );
     let mut cloop_done = false;
+    if let Some((ops, at)) = &fused_body {
+        // section 91: the fused body, with the native return's guards (in front of the first budget charge, or at the end with `rec_late`) and the
+        // second entry's label spliced in where the walk below would emit them
+        let n = ir.ins.len();
+        if at.len() != n {
+            return incons("fused body positions do not match the IR");
+        }
+        let mut k = 0usize;
+        for i in 0..n {
+            let rrg = matches!(
+                (ir.rec_ret, ir.ins[i].op, env.rec_late),
+                (Some(_), TOp::Budget, false)
+            );
+            let e2 = e2plan.as_ref().is_some_and(|p| p.0 == i);
+            // (MUTANT `fusecov_rrg_skip`: the native return's guards are left out of a fused body)
+            let rrg = rrg && !mutants::active("fusecov_rrg_skip");
+            if rrg || e2 {
+                let pos = at[i] as usize;
+                cx.p.ops.extend_from_slice(&ops[k..pos]);
+                k = pos;
+            }
+            if rrg {
+                if let Some(rr) = ir.rec_ret {
+                    cx.rec_ret_guards(i, rr)?;
+                }
+            }
+            if e2 {
+                cx.bind(e2_after);
+            }
+        }
+        cx.p.ops.extend_from_slice(&ops[k..]);
+        if let (Some(rr), true, false) = (
+            ir.rec_ret,
+            env.rec_late,
+            mutants::active("fusecov_rrg_skip"),
+        ) {
+            let i = n - 1;
+            if !cx.al.ins[i].pre.is_empty() {
+                return incons("reloads in front of a native return's placeholder guard");
+            }
+            let at = if mutants::active("t4_late_start_snap") {
+                ir.ins.iter().position(|x| x.op == TOp::Budget).unwrap_or(i)
+            } else {
+                i
+            };
+            cx.rec_ret_guards(at, rr)?;
+        }
+    }
     for i in 0..ir.ins.len() {
-        if cloop_done {
+        if cloop_done || fused_body.is_some() {
             break;
         }
         if let Some((g, cnt, ref adds)) = cloop {
@@ -3636,26 +3797,7 @@ pub fn assemble_dl(
             }
             continue;
         }
-        if env.side_room && ir.ins[i].op == TOp::Budget && !mutants::active("side_room_check_skip")
-        {
-            // R2: the room checks of a frameful side trace that needs more than its parent guarantees: in front of the first budget
-            // charge, behind the loads of the frames' function slots (the start snapshot restores them), failing through that snapshot
-            // (V0 and V1 may hold the loaded function slots the snapshot restores: they are saved around the checks)
-            let x = cx.guard_label(i)?;
-            let (m0, m1) = (spill_m(cx.ext_slot(2)), spill_m(cx.ext_slot(3)));
-            cx.st(W::B8, m0, Src::V(0));
-            cx.st(W::B8, m1, Src::V(1));
-            let (fail, done) = (cx.label(), cx.label());
-            cx.room_checks(fail);
-            cx.ld(0, W::B8, m0);
-            cx.ld(1, W::B8, m1);
-            cx.push(Op::Jmp(done));
-            cx.bind(fail);
-            cx.ld(0, W::B8, m0);
-            cx.ld(1, W::B8, m1);
-            cx.push(Op::Jmp(x));
-            cx.bind(done);
-        }
+        cx.side_room_block(i)?;
         if let (Some(rr), TOp::Budget, false) = (ir.rec_ret, ir.ins[i].op, env.rec_late) {
             // (the guards depend on the frame only, which nothing in the trace changes: they sit in front of the first charge
             // and fail to the state at the start of the trace, where every register is free)
@@ -4039,7 +4181,7 @@ pub fn assemble_deferred<'a>(
     })
 }
 
-impl Cx<'_> {
+impl<'a> Cx<'a> {
     /// B2 (`b2tag`): the update of the known node tags after instruction `i` (see [`Cx::ktag`]). Ops that cannot write a hash node's
     /// tag byte or move a table's nodes keep the facts; a store to another address may alias (two tables can be the same at run
     /// time), so it replaces them all; anything else (helpers, allocation, the loop marker, where two paths meet) forgets them.
@@ -5352,6 +5494,33 @@ impl Cx<'_> {
     }
 
     /// TR6a / TR6b: stack room and spare `CallInfo` nodes of the running frame (failures jump to `fail`; `V0`, `V1`).
+    /// R2: the room checks of a frameful side trace that needs more than its parent guarantees: in front of the first budget charge, behind the
+    /// loads of the frames' function slots (the start snapshot restores them), failing through that snapshot (V0 and V1 may hold the loaded function
+    /// slots the snapshot restores: they are saved around the checks). Nothing unless `env.side_room` and `i` is a `BUDGET`.
+    fn side_room_block(&mut self, i: usize) -> Result<(), AsmError> {
+        if !self.env.side_room
+            || self.ir.ins[i].op != TOp::Budget
+            || mutants::active("side_room_check_skip")
+        {
+            return Ok(());
+        }
+        let x = self.guard_label(i)?;
+        let (m0, m1) = (spill_m(self.ext_slot(2)), spill_m(self.ext_slot(3)));
+        self.st(W::B8, m0, Src::V(0));
+        self.st(W::B8, m1, Src::V(1));
+        let (fail, done) = (self.label(), self.label());
+        self.room_checks(fail);
+        self.ld(0, W::B8, m0);
+        self.ld(1, W::B8, m1);
+        self.push(Op::Jmp(done));
+        self.bind(fail);
+        self.ld(0, W::B8, m0);
+        self.ld(1, W::B8, m1);
+        self.push(Op::Jmp(x));
+        self.bind(done);
+        Ok(())
+    }
+
     fn room_checks(&mut self, fail: L) {
         self.room_stack_check(fail);
         self.room_ci_check(fail);
@@ -5791,16 +5960,37 @@ impl Cx<'_> {
     }
 
     fn pre(&mut self, i: usize) {
-        let v = self.al.ins[i].pre.clone();
-        for r in &v {
+        if !self.fal.is_empty() {
+            // (section 87: the fused pass's own record; the lists are almost always empty)
+            if self.fal[i].pre.is_empty() {
+                return;
+            }
+            for r in &self.fal[i].pre.clone() {
+                self.reload(r);
+            }
+            return;
+        }
+        // (section 80.2: the allocation outlives the assembler state, so its lists are read in place)
+        let al: &'a Allocation = self.al;
+        for r in &al.ins[i].pre {
             self.reload(r);
         }
     }
 
     fn post(&mut self, i: usize) {
-        let a = &self.al.ins[i];
-        let (dst, stores, post) = (a.dst, a.stores.clone(), a.post.clone());
-        for s in stores {
+        if !self.fal.is_empty() && self.fal[i].stores.is_empty() && self.fal[i].post.is_empty() {
+            return;
+        }
+        let owned;
+        let a: &InsAlloc = if self.fal.is_empty() {
+            let al: &'a Allocation = self.al;
+            &al.ins[i]
+        } else {
+            owned = self.fal[i].clone();
+            &owned
+        };
+        let (dst, stores, post) = (a.dst, &a.stores, &a.post);
+        for &s in stores {
             if self.home_of(s).is_some() {
                 // (section 77.6: the value is its stack slot's payload; nothing to store)
                 continue;
@@ -5814,7 +6004,7 @@ impl Cx<'_> {
                 l => panic!("store of {l:?}"),
             }
         }
-        for r in &post {
+        for r in post {
             self.reload(r);
         }
     }
@@ -5822,11 +6012,37 @@ impl Cx<'_> {
     // ---- instructions -------------------------------------------------------------------------------------------------
 
     fn ops(&self, i: usize) -> [Loc; 3] {
-        self.al.ins[i].ops
+        if self.fal.is_empty() {
+            self.al.ins[i].ops
+        } else {
+            self.fal[i].ops
+        }
     }
 
     fn dst(&self, i: usize) -> Loc {
-        self.al.ins[i].dst
+        if self.fal.is_empty() {
+            self.al.ins[i].dst
+        } else {
+            self.fal[i].dst
+        }
+    }
+
+    /// The allocation record of instruction `i` (section 87: the fused pass's own while it runs).
+    fn ia(&self, i: usize) -> &InsAlloc {
+        if self.fal.is_empty() {
+            &self.al.ins[i]
+        } else {
+            &self.fal[i]
+        }
+    }
+
+    /// The exit map of snapshot `s` (section 87: the fused pass's own while it runs).
+    fn snap_locs_of(&self, s: usize) -> Option<&Vec<Loc>> {
+        if self.fbody {
+            self.fsnap.get(s)
+        } else {
+            self.al.snap_locs.get(s)
+        }
     }
 
     /// Section 59: the chunk setup of a hoisted loop, at the loop entry (behind the entry moves) and at every chunk end with a nonzero bias. The count
@@ -7033,7 +7249,10 @@ impl Cx<'_> {
         // constant operands go through a temporary X register: one the allocation never uses (no save, no store/load
         // pair on the dependency chain of the compared value: mandelbrot's `zr*zr + zi*zi < 4.0` lost a third of its
         // speed to the save of the live register the old code picked), else a register saved around the compare
-        let free_x = (0..16u8).rev().find(|&x| !self.al.uses_xmm(x));
+        let free_x = match self.ffree_x {
+            Some(f) => f,
+            None => (0..16u8).rev().find(|&x| !self.al.uses_xmm(x)),
+        };
         self.saved.clear();
         let mut regs = [0u8; 2];
         let mut used: Vec<X> = ops[..2]
@@ -7635,8 +7854,8 @@ impl Cx<'_> {
     fn hk_same_state(&self, i: usize, sh: usize, sl: usize) -> bool {
         if sh >= self.ir.snaps.len()
             || sl >= self.ir.snaps.len()
-            || sh >= self.al.snap_locs.len()
-            || sl >= self.al.snap_locs.len()
+            || self.snap_locs_of(sh).is_none()
+            || self.snap_locs_of(sl).is_none()
         {
             return false;
         }
@@ -7644,7 +7863,7 @@ impl Cx<'_> {
         if self.entry_kind(i) != self.entry_kind(i + 1) {
             return false;
         }
-        if !self.al.ins[i].post.is_empty() || !self.al.ins[i + 1].pre.is_empty() {
+        if !self.ia(i).post.is_empty() || !self.ia(i + 1).pre.is_empty() {
             return false;
         }
         let (a, b) = (&self.ir.snaps[sh], &self.ir.snaps[sl]);
@@ -7660,7 +7879,7 @@ impl Cx<'_> {
         let win = |s: &super::ir::Snap| {
             &self.ir.snapmap[s.map.0 as usize..s.map.0 as usize + usize::from(s.map.1)]
         };
-        win(a) == win(b) && self.al.snap_locs[sh] == self.al.snap_locs[sl]
+        win(a) == win(b) && self.snap_locs_of(sh) == self.snap_locs_of(sl)
     }
 
     /// H1: the base register and the displacement of the node an `HLOAD` / `HSTORE` at `i` accesses: `(node, idx * 24)` when its address is a
@@ -8381,6 +8600,9 @@ impl Cx<'_> {
     // ---- helper calls (7.5) ----------------------------------------------------------------------------------------
 
     fn call_site(&self, i: usize) -> Result<CallSite, AsmError> {
+        if let Some(c) = self.fcall.filter(|c| c.at == i) {
+            return Ok(c);
+        }
         match self.al.calls.iter().find(|c| c.at == i) {
             Some(c) => Ok(*c),
             None => incons(format!("no call site for instruction {i}")),
@@ -10310,6 +10532,13 @@ impl Cx<'_> {
     // ---- stubs (7.6) ---------------------------------------------------------------------------------------------------
 
     fn stubs_and_tail(&mut self, entry_fail: L, rec_fail: Option<L>) -> Result<(), AsmError> {
+        let at0 = self.p.ops.len();
+        let r = self.stubs_and_tail_in(entry_fail, rec_fail);
+        super::phase::size(super::phase::SZ_STUBOPS, self.p.ops.len() - at0);
+        r
+    }
+
+    fn stubs_and_tail_in(&mut self, entry_fail: L, rec_fail: Option<L>) -> Result<(), AsmError> {
         // TR6 failures: entry-failure bookkeeping, then tier 1 at pcl[H]
         self.bind(entry_fail);
         self.entry_failure_ops(false, true);
@@ -10539,7 +10768,15 @@ impl Cx<'_> {
             };
             k += 1;
             self.nstubs += 1;
-            let es = self.snaps[snap as usize].clone();
+            // Section 80.2 (`cspeed` lever `M1`): the snapshot in place (the slice outlives the assembler state)
+            let snaps: &'a [ExitSnap] = self.snaps;
+            let owned;
+            let es: &ExitSnap = if crate::cspeed::on(crate::cspeed::M1) {
+                &snaps[snap as usize]
+            } else {
+                owned = snaps[snap as usize].clone();
+                &owned
+            };
             if !es.usable {
                 return incons(format!("snapshot {snap} is used by a guard but unusable"));
             }
@@ -10555,7 +10792,7 @@ impl Cx<'_> {
             if entry {
                 self.entry_failure_ops(true, false);
             }
-            let plan = self.stub_plan(snap, entry, &es);
+            let plan = self.stub_plan(snap, entry, es);
             // S1 (`lazystub`): a stub with an inline part is assembled when its exit is first taken (entry checks keep theirs: they use the extension slots)
             if self.env.defer && !entry && !matches!(plan, StubPlan::Generic) {
                 // E6 (`dlink`): an exit whose stub is an inline stub continuing through its cell (frameless, or a frame cell), counted only to find the hot
@@ -10593,7 +10830,7 @@ impl Cx<'_> {
                 self.defer_stub(snap, plan, label, &mut shared);
                 continue;
             }
-            self.emit_stub(snap, entry, &es, plan, &mut shared)?;
+            self.emit_stub(snap, entry, es, plan, &mut shared)?;
         }
         self.emit_tails(shared);
         Ok(())
@@ -10644,7 +10881,38 @@ impl Cx<'_> {
             self.push(Op::SetK(4));
             self.push(Op::JmpR(6));
         }
-        if let (Some(l), 0) = (shared, self.env.shared_exit) {
+        if let (Some(l), 0, g) = (shared, self.env.shared_exit, self.env.shared_global) {
+            if g != 0 {
+                // Section 80.1 (`gexit`): a trampoline into the state's routine (`V7` is dead at every exit; `r14` is saved there: not a jump out
+                // of compiled code)
+                self.bind(l);
+                let plain = if self.env.compact_exits {
+                    // bit 1: the compact generic stubs left their exit number in `V7`; the trace number is stored here once (the generic twins of
+                    // the deferred stubs store both themselves and enter at `plain`)
+                    let src = if mutants::active("gexit_exitno_imm") {
+                        // MUTANT: the trampoline stores a constant exit number instead of the stub's
+                        Src::Imm(0)
+                    } else {
+                        Src::V(7)
+                    };
+                    self.st(W::B4, area_m(exit::GENERIC_STUB_STORES[1].0), src);
+                    self.st(
+                        W::B4,
+                        area_m(exit::GENERIC_STUB_STORES[0].0),
+                        Src::Imm(self.env.trace_id as i32),
+                    );
+                    let plain = self.label();
+                    self.bind(plain);
+                    plain
+                } else {
+                    l
+                };
+                self.push(Op::Mov(7, g));
+                self.push(KEEP_R14);
+                self.push(Op::JmpR(7));
+                self.shared_l = Some(plain);
+                return;
+            }
             // the embedded copy of the shared routine (every stub ends in a jump: nothing falls into it)
             let at = self.p.ops.len();
             exit::append_shared_exit(
@@ -10656,6 +10924,7 @@ impl Cx<'_> {
                 },
             );
             self.p.ops.insert(at, Op::Bind(l));
+            super::phase::size(super::phase::SZ_SHAREDOPS, self.p.ops.len() - at);
             self.shared_l = Some(l);
         }
     }
@@ -10863,6 +11132,13 @@ impl Cx<'_> {
             self.push(ops[2]);
             self.push(KEEP_R14);
             self.push(ops[3]);
+            return;
+        }
+        if self.env.compact_exits && self.env.shared_exit == 0 && self.env.shared_global != 0 {
+            // Section 80.1 (`gexit` bit 1): `mov eax, exitno; jmp shared` (10 bytes instead of 27): the trampoline stores the exit and trace numbers
+            self.push(Op::Mov(7, u64::from(exitno)));
+            let l = *shared.get_or_insert_with(|| self.p.label());
+            self.push(Op::Jmp(l));
             return;
         }
         let ops = exit::generic_stub_ops(self.env.trace_id, exitno, self.env.shared_exit);
@@ -11646,6 +11922,9 @@ impl Cx<'_> {
 
 /// Support for tests and for the pipeline driver until `cache` keeps a per-prototype pc -> address map.
 #[doc(hidden)]
+#[path = "fuse.rs"]
+pub mod fuse;
+
 pub mod support {
     use crate::lower::{lower_ex, LowerCfg};
     use crate::tr::cache::{emit_dispatch, Dispatch, DispatchCfg, TrMode};

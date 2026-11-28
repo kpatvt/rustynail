@@ -1983,8 +1983,53 @@ fn pipeline(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> 
     // Section 49: the compile-speed levers of this state
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     crate::cspeed::set(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cspeed });
+    let side = rec.side.is_some();
+    phase::set_root(!side);
+    // (section 85.0: `RUSTYNAIL_JIT_PIPELOG=1`, one line per pipeline: side, total, front, sinking, root passes, allocator, exits, assembler,
+    // encoder, IR instructions, snapshots, snapshot entries, micro-ops)
+    let log = phase::pipelog();
+    const LOGPH: [usize; 7] = [
+        phase::FRONT,
+        phase::PASS_SINK,
+        phase::PASS_OTHER,
+        phase::RA,
+        phase::EXITS,
+        phase::ASM,
+        phase::X86,
+    ];
+    const LOGSZ: [usize; 4] = [
+        phase::SZ_INS,
+        phase::SZ_SNAPS,
+        phase::SZ_SNAPENTS,
+        phase::SZ_OPS,
+    ];
+    let snap_log = || -> Vec<u64> {
+        LOGPH
+            .iter()
+            .map(|&p| phase::acc(p))
+            .chain(LOGSZ.iter().map(|&k| phase::size_acc(k)))
+            .collect()
+    };
+    let before = if log { snap_log() } else { Vec::new() };
     let r = pipeline_inner(st, act, rec);
     phase::add(phase::PIPELINE, t0);
+    if log && r.is_ok() {
+        let d: Vec<String> = snap_log()
+            .iter()
+            .zip(&before)
+            .map(|(a, b)| (a - b).to_string())
+            .collect();
+        eprintln!(
+            "[pipelog] {} {} {}",
+            u8::from(side),
+            phase::now().wrapping_sub(t0),
+            d.join(" ")
+        );
+    }
+    phase::set_root(false);
+    if side {
+        phase::add(phase::PIPE_SIDE, t0);
+    }
     r
 }
 
@@ -2096,6 +2141,38 @@ pub static CCHECK: [std::sync::atomic::AtomicU64; 2] = [
 
 /// Section 53: the snapshots of a recording as text for the `ccheck` comparison of the passes (`print::dump` shows the instructions only):
 /// per snapshot its header without the map offset, its entries and its frame links; then the step of every snapshot and the entry snapshot.
+/// Section 87.0: `RUSTYNAIL_JIT_OPSTAT=1` prints one line per pipeline (before allocation): side, the trace's traits and its op histogram (the coverage
+/// measurement of the fused back end's class sets).
+pub(crate) fn opstat_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("RUSTYNAIL_JIT_OPSTAT").is_some_and(|v| v == "1"))
+}
+
+fn opstat_line(ir: &ir::TraceIr, side: bool, act: &Active) {
+    let mut h: std::collections::BTreeMap<&'static str, u32> = Default::default();
+    for i in &ir.ins {
+        let g = if i.flags & ir::F_GUARD != 0 { "g" } else { "" };
+        let n = intern(format!("{}{}", i.op.name(), g));
+        *h.entry(n).or_default() += 1;
+    }
+    let frames = ir.snaps.iter().any(|s| s.nframes != 0 || s.frame != 0);
+    let sunk = ir.snapmap.iter().any(|e| e.flags & !ir::SNAP_FUNC != 0);
+    let ops: Vec<String> = h.iter().map(|(k, v)| format!("{k}:{v}")).collect();
+    eprintln!(
+        "[opstat] side={} n={} loop={} carry={} segs={} rec={} frames={} sunk={} prelude={} ops={}",
+        u8::from(side),
+        ir.ins.len(),
+        u8::from(ir.loop_at.is_some()),
+        u8::from(!ir.carry_in.is_empty() || !ir.carry_store.is_empty() || !ir.carry.is_empty()),
+        u8::from(!ir.segs.is_empty()),
+        u8::from(ir.rec_call.is_some() || ir.rec_ret.is_some()),
+        u8::from(frames),
+        u8::from(sunk),
+        u8::from(act.prelude),
+        ops.join(",")
+    );
+}
+
 fn ccheck_snaps_text(r: &Recorded) -> String {
     use std::fmt::Write;
     let mut o = String::new();
@@ -2120,6 +2197,38 @@ fn ccheck_alloc_text(a: &ra::Allocation) -> String {
     format!("{c:?}")
 }
 
+/// Section 80.1 (`gexit`): the address of the state's shared exit routine (`resume`: with the resume path of the deferred stubs), assembled and
+/// placed at its first use; `None` when it cannot be placed (the trace then embeds its copy).
+fn global_exit(st: &mut State, resume: bool) -> Option<u64> {
+    let dp = crate::rt::data_ptr(st);
+    // SAFETY: the per-state data is live (see `rt::data_ptr`).
+    let have = unsafe { (*dp).tr.gexit[usize::from(resume)] };
+    if have != 0 {
+        return Some(have);
+    }
+    let mut p = Program::default();
+    let l = exit::append_shared_exit(
+        &mut p,
+        &exit::SharedExitEnv {
+            handler: exit::jit_tr_exit as *const () as usize as u64,
+            stack_off: thr::stack_ptr_offset(st) as i32,
+            // (MUTANT `gexit_no_resume`: the routine of a state with deferred stubs lacks their resume path)
+            resume: resume && !mutants::active("gexit_no_resume"),
+        },
+    );
+    let em = crate::x86::with_htramp(false, || x86::emit(&p)).ok()?;
+    let off = em.label_off.get(l as usize).copied().flatten()?;
+    let placed = crate::rt::place_code(st, dp, &em.code, 16).ok()?;
+    let addr = (placed.block.addr() + off) as u64;
+    // SAFETY: as above.
+    unsafe {
+        (*dp).tr.gexit[usize::from(resume)] = addr;
+    }
+    // (the block is never freed: it lives until the arena is dropped with the state)
+    let _ = placed;
+    Some(addr)
+}
+
 fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> {
     let opts = &act.opts;
     // Section 49 (`cspeed` lever `REC`): the pipeline owns the recording (it copied it before; nothing reads it after a compile)
@@ -2139,7 +2248,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     let ccheck_on = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0;
     let orig = ccheck_on.then(|| rec.clone());
-    pipeline_front(st, act, &mut rec, link_root, stitched)?;
+    let t_front = phase::now();
+    let fr = pipeline_front(st, act, &mut rec, link_root, stitched);
+    phase::add(phase::FRONT, t_front);
+    fr?;
     if let Some(mut o) = orig {
         let slow = crate::cspeed::with(0, || pipeline_front(st, act, &mut o, link_root, stitched));
         if slow.is_err()
@@ -2248,40 +2360,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         }
         _ => Vec::new(),
     };
-    let t_ra = phase::now();
-    let mut al = ra::allocate_hinted(ir, &end, &end_hints, &ropts).map_err(|e| {
-        abort_err(
-            match e {
-                ra::RaError::Phi => "phi",
-                ra::RaError::Spill => "spill",
-                ra::RaError::BadIr(_) => "ra-badir",
-                ra::RaError::Pressure => "ra-pressure",
-            },
-            format!("ra: {e:?}"),
-        )
-    })?;
-    // P2 bundle 1: `r14` (`V10`) costs a reload from `ci.kcache` in front of every jump out of the trace (a dependent load right before tier 1 reads its
-    // constants; `rbp` (`V9`) costs nothing). A trace keeps the allocation with `V10` only if it removes a loop-carried memory round trip (a PHI in a spill
-    // slot, a back-edge move through one) that the allocation without it has: spills off the loop-carried chain are cheap (store forwarding) and
-    // never paid for the reload on the short, exit-heavy traces of the awfy / corpus programs (+2-6 % cycles measured).
-    if ropts.xregs & 2 != 0 && al.uses_gpr(10) && !mutants::active("xregs_rec_r14") {
-        let without = RaOpts {
-            xregs: ropts.xregs & !2,
-            ..ropts.clone()
-        };
-        if let Ok(a2) = ra::allocate_hinted(ir, &end, &end_hints, &without) {
-            if a2.carried_spills(ir) <= al.carried_spills(ir) {
-                al = a2;
-            }
-        }
+    if opstat_on() {
+        opstat_line(ir, side.is_some(), act);
     }
-    phase::add(phase::RA, t_ra);
-    if act.verbose >= 2 && (!ir.carry_in.is_empty() || !ir.carry_store.is_empty()) {
-        eprintln!(
-            "[trace] carry-in: parent locs {:?}; stored at entry {:?}; allocation {:?}; writeback {:?}",
-            ir.carry_in, ir.carry_store, al.carry, rec.writeback
-        );
-    }
+    let t_env = phase::now();
     // tier-1 label addresses of the root and every inlined prototype (TR4: the code version installed now)
     let mut res = Res {
         protos: crate::fx::HashMap::default(),
@@ -2313,56 +2395,6 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             ),
         );
     }
-    let t_ex = phase::now();
-    let exit_tags =
-        (act.guarddiet && side.is_some()).then(|| side.map_or([0xFD; 256], |si| si.entry_tags));
-    let (mut snaps, mut descs) =
-        exit::build_exits_ex(ir, &al, &res, exit_tags).map_err(|e| abort_err("exits", e))?;
-    phase::add(phase::EXITS, t_ex);
-    // Section 49 (`ccheck`): the allocation and the exits of the old paths, compared now (the snapshots are completed below)
-    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
-    let ccheck = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0
-        && !opts.emurun
-        && !opts.emuverify;
-    if ccheck {
-        let slow = crate::cspeed::with(0, || -> Result<(), String> {
-            let mut a2 = ra::allocate_hinted(ir, &end, &end_hints, &ropts)
-                .map_err(|e| format!("slow allocation failed: {e:?}"))?;
-            if ropts.xregs & 2 != 0 && a2.uses_gpr(10) && !mutants::active("xregs_rec_r14") {
-                let without = RaOpts {
-                    xregs: ropts.xregs & !2,
-                    ..ropts.clone()
-                };
-                if let Ok(a3) = ra::allocate_hinted(ir, &end, &end_hints, &without) {
-                    if a3.carried_spills(ir) <= a2.carried_spills(ir) {
-                        a2 = a3;
-                    }
-                }
-            }
-            if ccheck_alloc_text(&a2) != ccheck_alloc_text(&al) {
-                return Err("allocation".into());
-            }
-            let (s2, d2) = exit::build_exits_ex(ir, &a2, &res, exit_tags)?;
-            if format!("{s2:?}{d2:?}") != format!("{snaps:?}{descs:?}") {
-                return Err("exits".into());
-            }
-            Ok(())
-        });
-        CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if let Err(what) = slow {
-            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Err(abort_err("ccheck", format!("cspeed differs: {what}")));
-        }
-    }
-    // The entry snapshot's exits are entry-check failures: the entry-failure rule of 3.3 (`entry_fail` / free peel)
-    // decides about them, not the hot type-guard rule, so they never flush.
-    if let Some(e) = rec.entry_snap {
-        for d in descs.iter_mut().filter(|d| d.snap == e) {
-            d.site = cache::ExitSite::Other;
-        }
-    }
-    let counters = cache::alloc_exit_counters(st, act.id, snaps.len())
-        .ok_or_else(|| abort_err("counters", "alloc_exit_counters"))?;
     let pc = ir.head.1;
     let root = act.root;
     // SAFETY: the root prototype is live (running frame).
@@ -2376,44 +2408,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // E5: a first root trace without a folded method lookup turns folding off
         cache::midfold_first(st, rpr, ir.midfold);
     }
-    // TR8: every exit continues through its cell, which starts at the tier-1 landing address. A prelude (F2a) is
-    // reached from the head's dispatch cell: when its entry checks fail it continues in the root trace's entry, which
-    // is what tier 1 would have reached through the dispatch cell without it. That holds for the snapshots that are
-    // the state at the head (empty map, the head's pc): the entry checks and the budget exits.
-    let mut init: Vec<usize> = snaps.iter().map(|s| s.land_addr as usize).collect();
-    // S1: the cell of an exit with virtual-able frames is 0 until a side trace is attached (the stub / handler then
-    // restores the frames); a trace that ends with a native frame push or a function-entry root keeps its landings
     let frame_cells_on = (!ir.fn_root && ir.rec_call.is_none() && ir.rec_ret.is_none())
         || !crate::tr::mutants::active("fcfn_cells_off");
-    if frame_cells_on {
-        for (k, (c, s)) in init.iter_mut().zip(&snaps).enumerate() {
-            let linking = side.is_some_and(|si| si.frame_link && si.link_snap as usize == k);
-            if s.frame_side_ok() && !linking {
-                *c = 0;
-            }
-        }
-    }
-    if act.prelude && !crate::tr::mutants::active("prelude_no_chain") {
-        let (root_entry, _) = cache::head_entry(st, rpr, pc)
-            .filter(|e| e.0 != 0)
-            .ok_or_else(|| abort_err("no-root-entry", format!("pc {pc}")))?;
-        for (c, s) in init.iter_mut().zip(&snaps) {
-            if s.slots.is_empty() && s.frames.is_empty() && s.pc == pc {
-                *c = root_entry;
-            }
-        }
-    }
-    if act.verbose >= 2 && act.side {
-        eprintln!(
-            "[trace] side cells: prelude {} pc {pc} init {:x?} snaps {:?}",
-            act.prelude,
-            init,
-            snaps
-                .iter()
-                .map(|s| (s.pc, s.slots.len(), s.frames.len()))
-                .collect::<Vec<_>>()
-        );
-    }
     // R1: the carry cells of the exits (zero until a side trace compiled for register-carried entry is attached), behind the exit cells
     let carry_exits_on = carry_limit(st)
         && vbreg == Some(ra::BUDGET_GPR)
@@ -2421,24 +2417,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         && ir.rec_ret.is_none()
         && ir.segs.is_empty()
         && !cache::proto_lazy(st, rpr);
-    if carry_exits_on {
-        let n = init.len();
-        init.extend(std::iter::repeat_n(0, n));
-    }
-    // Section 52 (`resink`): the replay cells of the exits (the stubs of replayable exits copy the field values and skip the materialisation when the
-    // attached side trace keeps them sunk)
-    let rcells = if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.resink } != 0 {
-        let n = if carry_exits_on {
-            init.len() / 2
-        } else {
-            init.len()
-        };
-        cache::alloc_exit_rcells(st, act.id, n).map_or(0, |p| p as u64)
-    } else {
-        0
-    };
-    let cells = cache::alloc_exit_cells(st, act.id, &init)
-        .ok_or_else(|| abort_err("cells", "alloc_exit_cells"))?;
+    // (section 87: the exit cell, set below once the exits are built)
+    let mut frame_link_cell: Option<(usize, u64)> = None;
     let (head, pcl) = if act.side {
         // a side trace books no entry counters; a failing TR6 check lands at the tier-1 label it was entered at
         let si = side.expect("side recording without SideInfo");
@@ -2494,7 +2474,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             .ok_or_else(|| abort_err("no-head", format!("link pc {}", si.link_pc)))?;
             if si.frame_link && !crate::tr::mutants::active("frame_link_cell_ignored") {
                 // the exit continues at the dispatch cell of the callee's head
-                snaps[si.link_snap as usize].link_cell = link_cell;
+                frame_link_cell = Some((si.link_snap as usize, link_cell));
             }
             // A2: the guard-free entry of the root the head has now (same prototype, a plain frameless link: no prelude, frames or segments)
             // (section 77.2, `flink`: also a frameful side trace; its slots are root-relative and `link_proof` refuses native frames / segments)
@@ -2762,11 +2742,25 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // (the emulator cannot run the pinned-register switch of a native frame push)
         return Err(abort_err("emu-unsupported", "native self-call"));
     }
-    let env = asm::AsmEnv {
+    // Section 80.1 (`gexit`): the state's shared exit routine (not under the emulator modes)
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let shared_global = if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.gexit } != 0
+        && !emurun
+        && !emuverify
+    {
+        global_exit(st, defer_on).unwrap_or(0)
+    } else {
+        0
+    };
+    let mut env = asm::AsmEnv {
         trace_id: act.id.slot,
-        counters: counters as u64,
+        counters: 0,
         hot_exit: act.hot_exit,
         shared_exit: 0,
+        shared_global,
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        compact_exits: shared_global != 0
+            && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.gexit } & 2 != 0,
         exit_handler: exit::jit_tr_exit as *const () as usize as u64,
         stack_off: thr::stack_ptr_offset(st) as i32,
         pcl_h: pcl,
@@ -2788,7 +2782,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         generic_only: emuverify,
         count_iterations: opts.verify,
         budget_reg: vbreg,
-        exit_cells: cells as u64,
+        exit_cells: 0,
         side: side_env,
         entry_tags: side.map_or([0xFD; 256], |si| si.entry_tags),
         guarddiet: act.guarddiet,
@@ -2926,7 +2920,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         sink_stub: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkstub != 0 },
         // SAFETY: as above.
         sink_mm: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sinkmm != 0 },
-        exit_rcells: rcells,
+        exit_rcells: 0,
         mat_fn: exit::jit_tr_mat as *const () as usize as u64,
         carry_head: carry_env.0,
         carry_sig: carry_env.1,
@@ -2943,6 +2937,200 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             || side.is_some_and(|s| s.frameful),
         defer: defer_on,
     };
+    phase::add(phase::RES_ENV, t_env);
+    // Section 87 (`asmfuse`): the fused backward allocate + emit pass of an eligible trace (its allocation replaces `ra::allocate_hinted`)
+    let t_ra = phase::now();
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let fuse_lim = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.asmfuse };
+    // SAFETY: as above.
+    let fuse_cov = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.fusecov };
+    let mut fused = asm::fuse::body(
+        ir,
+        &rec.writeback,
+        &end,
+        &end_hints,
+        &ropts,
+        &env,
+        opts,
+        fuse_lim,
+        fuse_cov,
+    );
+    if opstat_on() {
+        eprintln!(
+            "[fuse] {} n={} stats {:?}",
+            if fused.is_some() { "fused" } else { "old" },
+            ir.ins.len(),
+            asm::fuse::stats()
+        );
+    }
+    let al = if let Some(fz) = fused.as_mut() {
+        fz.allocation()
+    } else {
+        let mut al = ra::allocate_hinted(ir, &end, &end_hints, &ropts).map_err(|e| {
+            abort_err(
+                match e {
+                    ra::RaError::Phi => "phi",
+                    ra::RaError::Spill => "spill",
+                    ra::RaError::BadIr(_) => "ra-badir",
+                    ra::RaError::Pressure => "ra-pressure",
+                },
+                format!("ra: {e:?}"),
+            )
+        })?;
+        // P2 bundle 1: `r14` (`V10`) costs a reload from `ci.kcache` in front of every jump out of the trace (a dependent load right before tier 1 reads its
+        // constants; `rbp` (`V9`) costs nothing). A trace keeps the allocation with `V10` only if it removes a loop-carried memory round trip (a PHI in a spill
+        // slot, a back-edge move through one) that the allocation without it has: spills off the loop-carried chain are cheap (store forwarding) and
+        // never paid for the reload on the short, exit-heavy traces of the awfy / corpus programs (+2-6 % cycles measured).
+        if ropts.xregs & 2 != 0 && al.uses_gpr(10) && !mutants::active("xregs_rec_r14") {
+            let without = RaOpts {
+                xregs: ropts.xregs & !2,
+                ..ropts.clone()
+            };
+            if let Ok(a2) = ra::allocate_hinted(ir, &end, &end_hints, &without) {
+                if a2.carried_spills(ir) <= al.carried_spills(ir) {
+                    al = a2;
+                }
+            }
+        }
+        al
+    };
+    phase::add(phase::RA, t_ra);
+    if act.verbose >= 2 && (!ir.carry_in.is_empty() || !ir.carry_store.is_empty()) {
+        eprintln!(
+            "[trace] carry-in: parent locs {:?}; stored at entry {:?}; allocation {:?}; writeback {:?}",
+            ir.carry_in, ir.carry_store, al.carry, rec.writeback
+        );
+    }
+    let t_ex = phase::now();
+    let exit_tags =
+        (act.guarddiet && side.is_some()).then(|| side.map_or([0xFD; 256], |si| si.entry_tags));
+    let (mut snaps, mut descs) =
+        exit::build_exits_ex(ir, &al, &res, exit_tags).map_err(|e| abort_err("exits", e))?;
+    phase::add(phase::EXITS, t_ex);
+    // Section 49 (`ccheck`): the allocation and the exits of the old paths, compared now (the snapshots are completed below)
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let ccheck = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0
+        && !opts.emurun
+        && !opts.emuverify
+        && fused.is_none();
+    if ccheck {
+        let slow = crate::cspeed::with(0, || -> Result<(), String> {
+            let mut a2 = ra::allocate_hinted(ir, &end, &end_hints, &ropts)
+                .map_err(|e| format!("slow allocation failed: {e:?}"))?;
+            if ropts.xregs & 2 != 0 && a2.uses_gpr(10) && !mutants::active("xregs_rec_r14") {
+                let without = RaOpts {
+                    xregs: ropts.xregs & !2,
+                    ..ropts.clone()
+                };
+                if let Ok(a3) = ra::allocate_hinted(ir, &end, &end_hints, &without) {
+                    if a3.carried_spills(ir) <= a2.carried_spills(ir) {
+                        a2 = a3;
+                    }
+                }
+            }
+            if ccheck_alloc_text(&a2) != ccheck_alloc_text(&al) {
+                return Err("allocation".into());
+            }
+            let (s2, d2) = exit::build_exits_ex(ir, &a2, &res, exit_tags)?;
+            if format!("{s2:?}{d2:?}") != format!("{snaps:?}{descs:?}") {
+                return Err("exits".into());
+            }
+            Ok(())
+        });
+        CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Err(what) = slow {
+            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(abort_err("ccheck", format!("cspeed differs: {what}")));
+        }
+    }
+    // Section 91.3: a fused trace's exits are compared with the old exit builder's on the same allocation (the allocation itself has no old twin)
+    // SAFETY: as above.
+    if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0
+        && !opts.emurun
+        && !opts.emuverify
+        && fused.is_some()
+    {
+        let slow = crate::cspeed::with(0, || exit::build_exits_ex(ir, &al, &res, exit_tags));
+        CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let same =
+            slow.is_ok_and(|(s2, d2)| format!("{s2:?}{d2:?}") == format!("{snaps:?}{descs:?}"));
+        if !same {
+            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(abort_err(
+                "ccheck",
+                "cspeed differs: fused exits".to_string(),
+            ));
+        }
+    }
+    // The entry snapshot's exits are entry-check failures: the entry-failure rule of 3.3 (`entry_fail` / free peel)
+    // decides about them, not the hot type-guard rule, so they never flush.
+    if let Some(e) = rec.entry_snap {
+        for d in descs.iter_mut().filter(|d| d.snap == e) {
+            d.site = cache::ExitSite::Other;
+        }
+    }
+    let counters = cache::alloc_exit_counters(st, act.id, snaps.len())
+        .ok_or_else(|| abort_err("counters", "alloc_exit_counters"))?;
+    // TR8: every exit continues through its cell, which starts at the tier-1 landing address. A prelude (F2a) is
+    // reached from the head's dispatch cell: when its entry checks fail it continues in the root trace's entry, which
+    // is what tier 1 would have reached through the dispatch cell without it. That holds for the snapshots that are
+    // the state at the head (empty map, the head's pc): the entry checks and the budget exits.
+    let mut init: Vec<usize> = snaps.iter().map(|s| s.land_addr as usize).collect();
+    // S1: the cell of an exit with virtual-able frames is 0 until a side trace is attached (the stub / handler then
+    // restores the frames); a trace that ends with a native frame push or a function-entry root keeps its landings
+    if frame_cells_on {
+        for (k, (c, s)) in init.iter_mut().zip(&snaps).enumerate() {
+            let linking = side.is_some_and(|si| si.frame_link && si.link_snap as usize == k);
+            if s.frame_side_ok() && !linking {
+                *c = 0;
+            }
+        }
+    }
+    if act.prelude && !crate::tr::mutants::active("prelude_no_chain") {
+        let (root_entry, _) = cache::head_entry(st, rpr, pc)
+            .filter(|e| e.0 != 0)
+            .ok_or_else(|| abort_err("no-root-entry", format!("pc {pc}")))?;
+        for (c, s) in init.iter_mut().zip(&snaps) {
+            if s.slots.is_empty() && s.frames.is_empty() && s.pc == pc {
+                *c = root_entry;
+            }
+        }
+    }
+    if act.verbose >= 2 && act.side {
+        eprintln!(
+            "[trace] side cells: prelude {} pc {pc} init {:x?} snaps {:?}",
+            act.prelude,
+            init,
+            snaps
+                .iter()
+                .map(|s| (s.pc, s.slots.len(), s.frames.len()))
+                .collect::<Vec<_>>()
+        );
+    }
+    if carry_exits_on {
+        let n = init.len();
+        init.extend(std::iter::repeat_n(0, n));
+    }
+    // Section 52 (`resink`): the replay cells of the exits (the stubs of replayable exits copy the field values and skip the materialisation when the
+    // attached side trace keeps them sunk)
+    let rcells = if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.resink } != 0 {
+        let n = if carry_exits_on {
+            init.len() / 2
+        } else {
+            init.len()
+        };
+        cache::alloc_exit_rcells(st, act.id, n).map_or(0, |p| p as u64)
+    } else {
+        0
+    };
+    let cells = cache::alloc_exit_cells(st, act.id, &init)
+        .ok_or_else(|| abort_err("cells", "alloc_exit_cells"))?;
+    if let Some((k, c)) = frame_link_cell {
+        snaps[k].link_cell = c;
+    }
+    env.counters = counters as u64;
+    env.exit_cells = cells as u64;
+    env.exit_rcells = rcells;
     let t_asm = phase::now();
     // E6 (`dlink`, docs/JIT_TRACE.md section 36.3): a side trace attached to an exit that can take a direct link gets a link entry: the parent's exit map
     // stores (the slot part of the parent's inline stub) and the exit's refund
@@ -3002,20 +3190,31 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     } else {
         None
     };
-    let mut a = asm::assemble_dl(ir, &al, &snaps, &rec.writeback, &env, dlink_in.as_ref())
-        .map_err(|e| {
-            if act.verbose >= 2 {
-                eprintln!("[trace] FAILIR\n{}\n{}", print::dump(ir), ra::dump(ir, &al));
-            }
-            abort_err(
-                match e {
-                    asm::AsmError::Unsupported(_) => "asm-unsupported",
-                    asm::AsmError::Inconsistent(_) => "asm-inconsistent",
-                    asm::AsmError::Spill => "asm-spill",
-                },
-                format!("asm: {e:?}"),
-            )
-        })?;
+    let assembled = match fused.take() {
+        Some(fz) => asm::assemble_dl_in(
+            ir,
+            &al,
+            &snaps,
+            &rec.writeback,
+            &env,
+            dlink_in.as_ref(),
+            Some(fz.into_body()),
+        ),
+        None => asm::assemble_dl(ir, &al, &snaps, &rec.writeback, &env, dlink_in.as_ref()),
+    };
+    let mut a = assembled.map_err(|e| {
+        if act.verbose >= 2 {
+            eprintln!("[trace] FAILIR\n{}\n{}", print::dump(ir), ra::dump(ir, &al));
+        }
+        abort_err(
+            match e {
+                asm::AsmError::Unsupported(_) => "asm-unsupported",
+                asm::AsmError::Inconsistent(_) => "asm-inconsistent",
+                asm::AsmError::Spill => "asm-spill",
+            },
+            format!("asm: {e:?}"),
+        )
+    })?;
     phase::add(phase::ASM, t_asm);
     let hk_fused = a.hk_fused;
     let hk_split = a.hk_split;
@@ -3042,6 +3241,33 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     }
     let em = x86::emit_ex(&a.prog, &want).map_err(|e| abort_err("x86", format!("x86: {e:?}")))?;
     phase::add(phase::X86, t_x86);
+    phase::size(phase::SZ_INS, ir.ins.len());
+    phase::size(phase::SZ_SNAPS, ir.snaps.len());
+    phase::size(phase::SZ_SNAPENTS, ir.snapmap.len());
+    // (section 80.5: the snapshot redundancy statistics only with `RUSTYNAIL_JIT_SNAPSTAT=1`: they cost instructions inside the timed pipeline)
+    static SNAPSTAT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *SNAPSTAT
+        .get_or_init(|| std::env::var_os("RUSTYNAIL_JIT_SNAPSTAT").is_some_and(|v| v == "1"))
+        && phase::now() != 0
+    {
+        let (mut same, mut dup) = (0usize, 0usize);
+        for s in 1..ir.snaps.len() as u32 {
+            let (a, b) = (ir.snap_entries(s - 1), ir.snap_entries(s));
+            let k = b.iter().filter(|e| a.contains(e)).count();
+            same += k;
+            if a == b && ir.snaps[s as usize].nframes == ir.snaps[s as usize - 1].nframes {
+                dup += 1;
+            }
+        }
+        phase::size(phase::SZ_SNAPSAME, same);
+        phase::size(phase::SZ_SNAPDUP, dup);
+        if side.is_some() {
+            phase::size(phase::SZ_SIDESAME, same);
+            phase::size(phase::SZ_SIDEENTS, ir.snapmap.len());
+        }
+    }
+    phase::size(phase::SZ_OPS, a.prog.ops.len());
+    phase::size(phase::SZ_BYTES, em.code.len());
     if ccheck && !emurun && !emuverify {
         // Section 49 (`ccheck`): the assembler and the encoder of the old paths on the same (checked) allocation and exits
         let same = crate::cspeed::with(0, || {

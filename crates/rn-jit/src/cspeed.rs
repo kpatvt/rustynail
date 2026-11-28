@@ -46,9 +46,35 @@ pub const FIXSUM: u32 = 1024;
 /// (inlined frames, an open top, or no dead temporary at its pc) instead of testing every entry.
 pub const PRUNEQ: u32 = 2048;
 
+/// Section 80.2 (M1): the back end without per-compile copies and scans: the allocator's free register from a mask of the held registers (the
+/// pool is in register order, so the first free register is the lowest bit), the assembler's stubs read the exit snapshots in place (no clone per
+/// stub) and its reloads / spill stores without copying the allocation's lists, the label tables of the exit builder copied without a lookup per pc.
+pub const M1: u32 = 4096;
+
+/// Section 85.1: allocation sinking without hash sets: the analysis of a candidate marks the instructions it derives from the table in one byte
+/// per instruction (it looked every operand of every later instruction up in five hash sets), and the rebuild of the snapshots derives the
+/// contents of a sunk table once per prefix of its stores and its header constant once per table (it re-derived both for every snapshot).
+pub const SINKD: u32 = 8192;
+
+/// Section 85.2: the copies of the loop / forwarding pass map a constant of the source trace to the output's through a table indexed by the
+/// constant ref (a hash lookup for every constant operand and snapshot entry before).
+pub const FWDK: u32 = 16384;
+
 /// All levers.
-pub const ALL: u32 =
-    MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP | FIXSUM | PRUNEQ;
+pub const ALL: u32 = MASKS
+    | ENC
+    | FXHASH
+    | PASSES
+    | RA
+    | REC
+    | SIDEHASH
+    | FWDSNAP
+    | SINKSKIP
+    | FIXSUM
+    | PRUNEQ
+    | M1
+    | SINKD
+    | FWDK;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

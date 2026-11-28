@@ -238,6 +238,100 @@ fn slot_is_dead_at(head: (ProtoKey, u32), slot: u16) -> bool {
     usize::from(slot) >= nact
 }
 
+const M_REMOVED: u8 = 1;
+const M_META: u8 = 2;
+const M_LS: u8 = 4;
+const M_NODE: u8 = 8;
+const M_NEWREF: u8 = 16;
+const M_MTF: u8 = 32;
+
+/// The instruction sets of [`analyse`]. Section 85.1 (`cspeed` lever `SINKD`): one byte of `M_*` flags per instruction and a table of the `HREFK`
+/// keys (the analysis looked every operand of every later instruction up in five hash sets, per candidate: 30-40 k instructions per `TNEW` on
+/// `awfy/cd` and `apps/raytrace`); without the lever the hash sets of the old path.
+struct Marks {
+    dense: bool,
+    flags: Vec<u8>,
+    keys: Vec<Ref>,
+    sets: [HashSet<usize>; 6],
+    hrefks: HashMap<usize, Ref>,
+}
+
+impl Marks {
+    fn new(n: usize, dense: bool) -> Marks {
+        Marks {
+            dense,
+            flags: if dense { vec![0; n + 4] } else { Vec::new() },
+            keys: if dense {
+                vec![NOREF; n + 4]
+            } else {
+                Vec::new()
+            },
+            sets: Default::default(),
+            hrefks: HashMap::default(),
+        }
+    }
+
+    fn has(&self, m: u8, j: usize) -> bool {
+        if self.dense {
+            // (MUTANT `sinkd_ls_miss`: the `lsizenode` loads are not found: their shape guards end the candidate)
+            let m = if m == M_LS && mutants::active("sinkd_ls_miss") {
+                0
+            } else {
+                m
+            };
+            self.flags.get(j).is_some_and(|&f| f & m != 0)
+        } else {
+            self.sets[m.trailing_zeros() as usize].contains(&j)
+        }
+    }
+
+    fn ins(&mut self, m: u8, j: usize) {
+        if self.dense {
+            if j >= self.flags.len() {
+                self.flags.resize(j + 1, 0);
+            }
+            self.flags[j] |= m;
+        } else {
+            self.sets[m.trailing_zeros() as usize].insert(j);
+        }
+    }
+
+    /// Is `j` one of the derived values of the table (a field load, an `HREFK`, a `NEWREF`)?
+    fn fld(&self, j: usize) -> bool {
+        if self.dense {
+            self.flags
+                .get(j)
+                .is_some_and(|&f| f & (M_META | M_LS | M_NODE | M_NEWREF) != 0)
+                || self.keys.get(j).is_some_and(|&k| k != NOREF)
+        } else {
+            self.has(M_META, j)
+                || self.has(M_LS, j)
+                || self.has(M_NODE, j)
+                || self.hrefks.contains_key(&j)
+                || self.has(M_NEWREF, j)
+        }
+    }
+
+    fn hrefk(&self, j: usize) -> Option<Ref> {
+        if self.dense {
+            self.keys.get(j).copied().filter(|&k| k != NOREF)
+        } else {
+            self.hrefks.get(&j).copied()
+        }
+    }
+
+    fn set_hrefk(&mut self, j: usize, k: Ref) {
+        if self.dense {
+            if j >= self.keys.len() {
+                self.keys.resize(j + 1, NOREF);
+            }
+            self.keys[j] = k;
+        } else {
+            self.hrefks.insert(j, k);
+        }
+    }
+}
+
 fn analyse(
     rec: &Recorded,
     t: usize,
@@ -262,40 +356,27 @@ fn analyse(
         vbytes: u32::try_from(vbytes).ok()?,
         ..Cand::default()
     };
-    let mut removed: HashSet<usize> = HashSet::default();
-    let mut meta_flds: HashSet<usize> = HashSet::default();
-    let mut ls_flds: HashSet<usize> = HashSet::default();
-    let mut node_flds: HashSet<usize> = HashSet::default();
-    let mut hrefks: HashMap<usize, Ref> = HashMap::default();
-    let mut newrefs: HashSet<usize> = HashSet::default();
-    let mut mtf: HashSet<usize> = HashSet::default(); // BUNDLE-2: `FLOAD metatable` after the `SETMT` (aliased to the metatable ref)
+    // (the removed instructions, the `FLOAD`s of the metatable / `lsizenode` / node fields, the `HREFK`s with their keys, the `NEWREF`s, and
+    // BUNDLE-2's `FLOAD metatable` after the `SETMT` (aliased to the metatable ref); section 85.1: dense with the lever `SINKD`)
+    let mut mk = Marks::new(n, crate::cspeed::on(crate::cspeed::SINKD));
     let mut setmt: Option<(usize, Ref)> = None;
     let mut store: Vec<(Ref, Ref)> = Vec::new(); // key -> value, insertion order
     let is_const_int = |r: Ref, v: i64| ir.as_int(r) == Some(v);
     let mut j = t + 1;
     while j < n {
         let i = ir.ins[j];
-        if removed.contains(&j) {
+        if mk.has(M_REMOVED, j) {
             j += 1;
             continue;
         }
         let ops = operands(&i);
         let uses_t = ops.contains(&tr);
-        let uses_fld = ops.iter().any(|&r| {
-            TraceIr::is_ins(r) && {
-                let k = idx(r);
-                meta_flds.contains(&k)
-                    || ls_flds.contains(&k)
-                    || node_flds.contains(&k)
-                    || hrefks.contains_key(&k)
-                    || newrefs.contains(&k)
-            }
-        });
+        let uses_fld = ops.iter().any(|&r| TraceIr::is_ins(r) && mk.fld(idx(r)));
         // BUNDLE-2: `metatable != 0` of a sunk table that was given one: true (any other user of that load is renamed to the metatable ref)
         if sinkmt
             && i.op == TOp::Ne
             && TraceIr::is_ins(i.a)
-            && mtf.contains(&idx(i.a))
+            && mk.has(M_MTF, idx(i.a))
             && is_const_int(i.b, 0)
         {
             cand.remove.push(j);
@@ -315,25 +396,21 @@ fn analyse(
                 if f == Field::Metatable as Ref {
                     if let Some((_, mt)) = setmt {
                         // BUNDLE-2: after the `SETMT` the metatable of the sunk table is the one it was given
-                        mtf.insert(j);
+                        mk.ins(M_MTF, j);
                         cand.alias.push((j, mt));
                     } else {
-                        meta_flds.insert(j);
+                        mk.ins(M_META, j);
                     }
                 } else if f == Field::Lsizenode as Ref {
-                    ls_flds.insert(j);
+                    mk.ins(M_LS, j);
                 } else if f == Field::Node as Ref {
-                    node_flds.insert(j);
+                    mk.ins(M_NODE, j);
                 } else {
                     return None;
                 }
                 cand.remove.push(j);
             }
-            TOp::Eq
-                if TraceIr::is_ins(i.a)
-                    && meta_flds.contains(&idx(i.a))
-                    && is_const_int(i.b, 0) =>
-            {
+            TOp::Eq if TraceIr::is_ins(i.a) && mk.has(M_META, idx(i.a)) && is_const_int(i.b, 0) => {
                 cand.remove.push(j);
             }
             // BUNDLE-2: `setmetatable(t, mt)` of the sunk table with a table `mt` (an instruction's value): the helper and its guard `NE %lib, 0` are
@@ -365,8 +442,8 @@ fn analyse(
                 setmt = Some((j, mt));
                 cand.setmt = Some((j, mt));
                 cand.setmt_ne = Some(ne);
-                removed.insert(j);
-                removed.insert(j + 1);
+                mk.ins(M_REMOVED, j);
+                mk.ins(M_REMOVED, j + 1);
                 cand.remove.push(j);
                 cand.remove.push(j + 1);
             }
@@ -374,7 +451,7 @@ fn analyse(
             TOp::Hmiss
                 if sinkmt
                     && TraceIr::is_ins(i.a)
-                    && node_flds.contains(&idx(i.a))
+                    && mk.has(M_NODE, idx(i.a))
                     && TraceIr::is_const(i.b) =>
             {
                 if store.iter().any(|&(k, _)| k == i.b) {
@@ -382,11 +459,7 @@ fn analyse(
                 }
                 cand.remove.push(j);
             }
-            TOp::Eq
-                if TraceIr::is_ins(i.a)
-                    && ls_flds.contains(&idx(i.a))
-                    && TraceIr::is_const(i.b) =>
-            {
+            TOp::Eq if TraceIr::is_ins(i.a) && mk.has(M_LS, idx(i.a)) && TraceIr::is_const(i.b) => {
                 cand.remove.push(j);
             }
             TOp::Newref if i.a == tr => {
@@ -419,10 +492,10 @@ fn analyse(
                     upto = j + 3;
                 }
                 for k in j..=upto {
-                    removed.insert(k);
+                    mk.ins(M_REMOVED, k);
                     cand.remove.push(k);
                 }
-                newrefs.insert(j);
+                mk.ins(M_NEWREF, j);
                 store.push((i.b, val));
                 cand.events.push(Ev {
                     at: j + 2,
@@ -431,15 +504,15 @@ fn analyse(
                     insert: true,
                 });
             }
-            TOp::Hrefk if TraceIr::is_ins(i.a) && node_flds.contains(&idx(i.a)) => {
+            TOp::Hrefk if TraceIr::is_ins(i.a) && mk.has(M_NODE, idx(i.a)) => {
                 if !TraceIr::is_const(i.b) || !store.iter().any(|&(k, _)| k == i.b) {
                     return None;
                 }
-                hrefks.insert(j, i.b);
+                mk.set_hrefk(j, i.b);
                 cand.remove.push(j);
             }
-            TOp::Hload if TraceIr::is_ins(i.a) && hrefks.contains_key(&idx(i.a)) => {
-                let key = hrefks[&idx(i.a)];
+            TOp::Hload if TraceIr::is_ins(i.a) && mk.hrefk(idx(i.a)).is_some() => {
+                let key = mk.hrefk(idx(i.a))?;
                 let (_, v) = *store.iter().find(|&&(k, _)| k == key)?;
                 if ir.ty_of(v) != i.t {
                     return None;
@@ -447,8 +520,8 @@ fn analyse(
                 cand.alias.push((j, v));
                 cand.remove.push(j);
             }
-            TOp::Hstore if TraceIr::is_ins(i.a) && hrefks.contains_key(&idx(i.a)) && i.b != tr => {
-                let key = hrefks[&idx(i.a)];
+            TOp::Hstore if TraceIr::is_ins(i.a) && mk.hrefk(idx(i.a)).is_some() && i.b != tr => {
+                let key = mk.hrefk(idx(i.a))?;
                 let val = i.b;
                 let vt = ir.ty_of(val);
                 if vt == Ty::Nil || matches!(vt, Ty::I64 | Ty::P64 | Ty::U32) {
@@ -463,13 +536,13 @@ fn analyse(
                     insert: false,
                 });
                 cand.remove.push(j);
-                removed.insert(j);
+                mk.ins(M_REMOVED, j);
                 if collectable(vt) {
                     let tb = *ir.ins.get(j + 1)?;
                     if !(tb.op == TOp::Tbar && tb.a == tr && tb.b == val) {
                         return None;
                     }
-                    removed.insert(j + 1);
+                    mk.ins(M_REMOVED, j + 1);
                     cand.remove.push(j + 1);
                 }
             }
@@ -688,6 +761,35 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         }
         sunk_of.insert(ref_of(c.t), ci);
     }
+    // Section 80.2 (`cspeed` lever `M1`): the alias and candidate maps as tables indexed by instruction (empty with the lever off)
+    let m1 = crate::cspeed::on(crate::cspeed::M1);
+    let mut alias_d: Vec<Ref> = Vec::new();
+    let mut sunk_d: Vec<u32> = Vec::new();
+    if m1 {
+        alias_d = vec![NOREF; n];
+        sunk_d = vec![u32::MAX; n];
+        for (&h, &v) in &alias {
+            if h < n {
+                alias_d[h] = v;
+            }
+        }
+        for (ci, c) in cands.iter().enumerate() {
+            if c.t < n {
+                sunk_d[c.t] = ci as u32;
+            }
+        }
+    }
+    let sunk_get = |r: Ref| -> Option<usize> {
+        if m1 {
+            if r < REF_BIAS || idx(r) >= n {
+                return None;
+            }
+            let c = sunk_d[idx(r)];
+            (c != u32::MAX).then_some(c as usize)
+        } else {
+            sunk_of.get(&r).copied()
+        }
+    };
     // first guard index and last guard index of every snapshot
     let nsn = rec.ir.snaps.len();
     let mut first_g = vec![usize::MAX; nsn];
@@ -743,7 +845,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
             }
             let (st, len) = rec.ir.snaps[s].map;
             for e in &rec.ir.snapmap[st as usize..st as usize + usize::from(len)] {
-                if let Some(&ci) = sunk_of.get(&e.r) {
+                if let Some(ci) = sunk_get(e.r) {
                     if named[ci].last() != Some(&s) {
                         named[ci].push(s);
                     }
@@ -816,6 +918,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
     fn resolve(
         r: Ref,
         alias: &HashMap<usize, Ref>,
+        alias_d: &[Ref],
         newidx: &[Option<usize>],
     ) -> Result<Ref, String> {
         if r < REF_BIAS {
@@ -824,7 +927,12 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         let mut r = r;
         for _ in 0..64 {
             let i = idx(r);
-            if let Some(&a) = alias.get(&i) {
+            let hit = if alias_d.is_empty() {
+                alias.get(&i).copied()
+            } else {
+                alias_d.get(i).copied().filter(|&a| a != NOREF)
+            };
+            if let Some(a) = hit {
                 r = a;
                 if r < REF_BIAS {
                     return Ok(r);
@@ -849,7 +957,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
             let (Some((_, mt)), Some(ne), Some((bit, z))) = (c.setmt, c.setmt_ne, mt_consts) else {
                 return Err("sink: setmt without constants".into());
             };
-            let mtr = resolve(mt, &alias, &newidx)?;
+            let mtr = resolve(mt, &alias, &alias_d, &newidx)?;
             let flags_ref = ref_of(out.len());
             let band_ref = ref_of(out.len() + 1);
             let seq = [
@@ -901,10 +1009,9 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         let mut i = rec.ir.ins[o];
         let cand = if crate::cspeed::on(crate::cspeed::PASSES) {
             // (the candidate allocated at `o`: `sunk_of` holds every candidate's table ref)
-            sunk_of
-                .get(&ref_of(o))
+            sunk_get(ref_of(o))
                 .filter(|_| !mutants::active("cspeed_sink_cand_miss"))
-                .map(|&ci| &cands[ci])
+                .map(|ci| &cands[ci])
         } else {
             cands.iter().find(|c| c.t == o)
         };
@@ -928,13 +1035,13 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         } else {
             let (ra, rb) = i.op.ref_operands();
             if ra {
-                i.a = resolve(i.a, &alias, &newidx)?;
+                i.a = resolve(i.a, &alias, &alias_d, &newidx)?;
             }
             if rb {
-                i.b = resolve(i.b, &alias, &newidx)?;
+                i.b = resolve(i.b, &alias, &alias_d, &newidx)?;
             }
             if let Some(v) = i.third() {
-                i.aux = i.aux_with_third(resolve(v, &alias, &newidx)?);
+                i.aux = i.aux_with_third(resolve(v, &alias, &alias_d, &newidx)?);
             }
         }
         i.prev = heads[i.op as usize];
@@ -944,15 +1051,33 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
     // ---- snapshots ----
     let old_map = std::mem::take(&mut rec.ir.snapmap);
     let mut new_map: Vec<SnapEntry> = Vec::with_capacity(old_map.len());
+    // Section 85.1 (`cspeed` lever `SINKD`): per candidate, its header constant and the last field group it wrote (the number of its stores
+    // before the snapshot's first guard, whether the metatable entry was written, and where the group's entries are in `new_map`): a
+    // snapshot with the same store prefix copies the group (the group is a function of that prefix: `events` are in program order); the
+    // candidate -> group slot map of a snapshot is a short list instead of a hash map
+    let sinkd = crate::cspeed::on(crate::cspeed::SINKD);
+    let mut hk_m: Vec<Ref> = vec![NOREF; if sinkd { cands.len() } else { 0 }];
+    let mut grp_m: Vec<Option<(usize, bool, usize, usize)>> = vec![None; hk_m.len()];
+    let sorted: Vec<bool> = cands
+        .iter()
+        .map(|c| sinkd && c.events.windows(2).all(|w| w[0].at <= w[1].at))
+        .collect();
+    let mut first_v: Vec<(usize, u16)> = Vec::new();
     #[allow(clippy::needless_range_loop)]
     // `s` also indexes the snapshot table, `last_g` and the output
     for s in 0..nsn {
         let (st, len) = rec.ir.snaps[s].map;
         let at = new_map.len();
         let mut first_slot: HashMap<usize, u16> = HashMap::default(); // candidate -> slot of its group
+        first_v.clear();
         for e in &old_map[st as usize..st as usize + usize::from(len)] {
-            if let Some(&ci) = sunk_of.get(&e.r) {
-                if let Some(&fs) = first_slot.get(&ci) {
+            if let Some(ci) = sunk_get(e.r) {
+                let seen = if sinkd {
+                    first_v.iter().find(|x| x.0 == ci).map(|x| x.1)
+                } else {
+                    first_slot.get(&ci).copied()
+                };
+                if let Some(fs) = seen {
                     let k = rec.ir.konst(KVal::Int(i64::from(fs)));
                     new_map.push(SnapEntry {
                         slot: e.slot,
@@ -961,7 +1086,11 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
                     });
                     continue;
                 }
-                first_slot.insert(ci, e.slot);
+                if sinkd {
+                    first_v.push((ci, e.slot));
+                } else {
+                    first_slot.insert(ci, e.slot);
+                }
                 let c = &cands[ci];
                 let g = first_g[s];
                 if g != usize::MAX && g <= c.t {
@@ -969,14 +1098,44 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
                         "sink: snapshot {s} names a table before its allocation"
                     ));
                 }
-                let hk = rec
-                    .ir
-                    .konst(KVal::Int(i64::from(c.b) | i64::from(c.c) << 16));
+                let hk = match hk_m.get(ci) {
+                    Some(&k) if k != NOREF => k,
+                    _ => {
+                        let k = rec
+                            .ir
+                            .konst(KVal::Int(i64::from(c.b) | i64::from(c.c) << 16));
+                        if let Some(m) = hk_m.get_mut(ci) {
+                            *m = k;
+                        }
+                        k
+                    }
+                };
                 new_map.push(SnapEntry {
                     slot: e.slot,
                     r: hk,
                     flags: SNAP_SUNK,
                 });
+                let with_mt = c.setmt.is_some_and(|(at, _)| g != usize::MAX && g > at);
+                let pfx = if sorted[ci] {
+                    // (MUTANT `sinkd_group_any`: the prefix length is not part of the key)
+                    if mutants::active("sinkd_group_any") {
+                        0
+                    } else {
+                        c.events.partition_point(|ev| ev.at < g)
+                    }
+                } else {
+                    usize::MAX
+                };
+                if let Some((_, _, gs, gl)) = grp_m
+                    .get(ci)
+                    .copied()
+                    .flatten()
+                    .filter(|&(p, m, _, _)| pfx != usize::MAX && p == pfx && m == with_mt)
+                {
+                    new_map.extend_from_within(gs..gs + gl);
+                    continue;
+                }
+                let gstart = new_map.len();
                 // the contents: inserted keys in insertion order with their latest value before the snapshot
                 let mut keys: Vec<(Ref, Ref)> = Vec::new();
                 for ev in c.events.iter().filter(|ev| ev.at < g) {
@@ -989,7 +1148,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
                     }
                 }
                 for (k, v) in keys {
-                    let v = resolve(v, &alias, &newidx)?;
+                    let v = resolve(v, &alias, &alias_d, &newidx)?;
                     new_map.push(SnapEntry {
                         slot: SNAP_PSEUDO,
                         r: k,
@@ -1006,14 +1165,19 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
                     if g != usize::MAX && g > at {
                         new_map.push(SnapEntry {
                             slot: SNAP_PSEUDO,
-                            r: resolve(mt, &alias, &newidx)?,
+                            r: resolve(mt, &alias, &alias_d, &newidx)?,
                             flags: SNAP_SMT,
                         });
                     }
                 }
+                if pfx != usize::MAX {
+                    if let Some(m) = grp_m.get_mut(ci) {
+                        *m = Some((pfx, with_mt, gstart, new_map.len() - gstart));
+                    }
+                }
             } else {
                 new_map.push(SnapEntry {
-                    r: resolve(e.r, &alias, &newidx)?,
+                    r: resolve(e.r, &alias, &alias_d, &newidx)?,
                     ..*e
                 });
             }
@@ -1025,11 +1189,11 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
     // ---- writeback ----
     let wb = std::mem::take(&mut rec.writeback);
     for e in wb {
-        if sunk_of.contains_key(&e.r) {
+        if sunk_get(e.r).is_some() {
             continue; // a dead slot (checked by `analyse`)
         }
         rec.writeback.push(SnapEntry {
-            r: resolve(e.r, &alias, &newidx)?,
+            r: resolve(e.r, &alias, &alias_d, &newidx)?,
             ..e
         });
     }

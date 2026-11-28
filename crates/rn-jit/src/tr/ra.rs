@@ -80,6 +80,8 @@ pub const RAPOL_RBP: u32 = 4;
 pub const RAPOL_ALL: u32 = RAPOL_VICTIM | RAPOL_CALLSPILL | RAPOL_RBP;
 
 const GPR_POOL: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10];
+/// [`GPR_POOL`] as a mask (section 80.2: the pool is in register order).
+const GPR_POOL_MASK: u16 = 0x77F;
 
 const NOREG: u8 = 255;
 const NONE: u32 = u32::MAX;
@@ -540,7 +542,7 @@ pub fn has_call(ir: &TraceIr) -> bool {
     ir.ins.iter().any(|i| is_call(ir, i))
 }
 
-fn is_call(ir: &TraceIr, ins: &Ins) -> bool {
+pub(crate) fn is_call(ir: &TraceIr, ins: &Ins) -> bool {
     // P-B: the length of a string is two loads in the assembler, not a helper call
     if ins.op == TOp::Tlen && matches!(ir.ty_of(ins.a), Ty::ShrStr | Ty::LngStr) {
         return false;
@@ -572,7 +574,7 @@ fn is_call_op(op: TOp) -> bool {
 /// Section 51 (`RAPOL_CALLSPILL`): a call site whose helper call is on the main path of the assembled code, whatever the assembler's options:
 /// the instructions with an inline fast path (`TLEN` / `TNEXT`, the `LIB` kinds `BYTE`, `STREQ`, `TYPE`, `TYPENAME`, `SETMT`, `CCALLS`,
 /// `RANDOM`, `RANDF`; `TBAR`'s test of the colours) keep the save / reload of the call site, which their fast path does not execute.
-fn always_calls(ins: &Ins) -> bool {
+pub(crate) fn always_calls(ins: &Ins) -> bool {
     match ins.op {
         TOp::Calln | TOp::Tnew | TOp::Newref | TOp::Tset | TOp::Snew | TOp::Concat | TOp::Strto => {
             true
@@ -664,7 +666,7 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
 }
 
 /// Does the instruction define a value (a register result)?
-fn defines(op: TOp, fused: bool) -> bool {
+pub(crate) fn defines(op: TOp, fused: bool) -> bool {
     match op {
         TOp::Eq
         | TOp::Ne
@@ -695,6 +697,55 @@ fn defines(op: TOp, fused: bool) -> bool {
     }
 }
 
+/// Section 87 (`asmfuse`): the fusion flags [`allocate_hinted`] computes (`Aref` / `Uref`, `hkaddr` `HREFK`s, `ixfuse` index sums), for the fused back end.
+/// The same rules: a fusable address stays fused only if every user is a memory op reading it as its address, no snapshot of a guard and no end use
+/// names it.
+pub fn fusion(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> Vec<bool> {
+    let mut fused: Vec<bool> = ir
+        .ins
+        .iter()
+        .map(|i| {
+            matches!(i.op, TOp::Aref | TOp::Uref)
+                || (opts.hkaddr && i.op == TOp::Hrefk && TraceIr::is_ins(i.a))
+        })
+        .collect();
+    if !fused.iter().any(|&f| f) {
+        return fused;
+    }
+    let n = fused.len();
+    let unfuse = |fused: &mut Vec<bool>, r: Ref| {
+        if TraceIr::is_ins(r) && idx(r) < n {
+            fused[idx(r)] = false;
+        }
+    };
+    let mut seen = vec![false; ir.snaps.len()];
+    for ins in &ir.ins {
+        let (ra, rb) = ins.op.ref_operands();
+        let a_ok = is_mem(ins.op) && ins.a != ins.b;
+        if ra && !a_ok {
+            unfuse(&mut fused, ins.a);
+        }
+        if rb {
+            unfuse(&mut fused, ins.b);
+        }
+        if ins.flags & F_GUARD != 0 {
+            let s = aux_snap(ins.aux) as usize;
+            if s < seen.len() && !std::mem::replace(&mut seen[s], true) {
+                for e in ir.snap_entries(s as u32) {
+                    unfuse(&mut fused, e.r);
+                }
+            }
+        }
+    }
+    for &r in end_uses {
+        unfuse(&mut fused, r);
+    }
+    if opts.ixfuse {
+        fuse_index_adds(ir, &mut fused, end_uses);
+    }
+    fused
+}
+
 /// Largest `|c|` of a fused index `ADD x, #c` (the displacements `4 + c` and `8 * (c + 1)` fit 32 bits with room to spare).
 pub const IXFUSE_MAX: i64 = 1 << 20;
 
@@ -716,6 +767,11 @@ fn fuse_index_adds(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
                     .is_some_and(|c| c.unsigned_abs() <= IXFUSE_MAX as u64)
         })
         .collect();
+    // Section 80.2 (`M1`): nothing to do without a candidate (most traces)
+    let m1 = crate::cspeed::on(crate::cspeed::M1);
+    if m1 && !cand.contains(&true) {
+        return;
+    }
     let mut users = vec![0u32; n];
     let kill = |cand: &mut Vec<bool>, r: Ref| {
         if TraceIr::is_ins(r) && idx(r) < n {
@@ -744,6 +800,10 @@ fn fuse_index_adds(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
         if let Some(t) = ins.third() {
             kill(&mut cand, t);
         }
+    }
+    // (`M1`: no candidate with a user left: the snapshot scan cannot add one)
+    if m1 && !(0..n).any(|k| cand[k] && users[k] > 0) {
+        return;
     }
     for e in &ir.snapmap {
         kill(&mut cand, e.r);
@@ -1007,6 +1067,10 @@ struct Ra<'a> {
     vals: Vec<Val>,
     gpr: [u32; NGPR],
     xmm: [u32; NXMM],
+    /// Section 80.2 (`cspeed` lever `M1`): the registers that hold a value (`gpr` / `xmm` not `NONE`).
+    held: Mask,
+    /// Section 80.2 (`M1`): [`operand_refs`] of every instruction (empty with the lever off).
+    opr: Vec<[Ref; 3]>,
     /// Double registers that held a value at some point of the trace (the others are free at the loop moves).
     used_x: u16,
     avail: Mask,
@@ -1298,6 +1362,19 @@ pub fn allocate_hinted(
         .zip(&fused)
         .map(|(i, &f)| defines(i.op, f))
         .collect();
+    // Section 80.2 (`cspeed` lever `M1`): the operands after fusion, once per instruction (fusion is final here)
+    let opr: Vec<[Ref; 3]> = if crate::cspeed::on(crate::cspeed::M1) {
+        (0..n).map(|i| operand_refs(ir, &fused, i)).collect()
+    } else {
+        Vec::new()
+    };
+    let oprs = |i: usize| -> [Ref; 3] {
+        if opr.is_empty() {
+            operand_refs(ir, &fused, i)
+        } else {
+            opr[i]
+        }
+    };
     // snapshot refs must be values (the first guard of a snapshot is the strictest test: `idx >= i` only grows with `i`)
     for (&(i, s), _) in guard_snaps
         .iter()
@@ -1349,7 +1426,7 @@ pub fn allocate_hinted(
         let mut real = vec![false; n];
         let mut snapped = vec![false; n];
         for i in 0..n {
-            for r in operand_refs(ir, &fused, i) {
+            for r in oprs(i) {
                 if TraceIr::is_ins(r) {
                     real[idx(r)] = true;
                 }
@@ -1405,7 +1482,7 @@ pub fn allocate_hinted(
     let mut idxbase = vec![false; n];
     for i in 0..n {
         if matches!(ir.ins[i].op, TOp::Aload | TOp::Astore) {
-            let [base, index, _] = operand_refs(ir, &fused, i);
+            let [base, index, _] = oprs(i);
             if TraceIr::is_ins(base) && TraceIr::is_ins(index) && idx(base) < n {
                 idxbase[idx(base)] = true;
             }
@@ -1436,6 +1513,8 @@ pub fn allocate_hinted(
         ],
         gpr: [NONE; NGPR],
         xmm: [NONE; NXMM],
+        held: Mask::default(),
+        opr,
         used_x: 0,
         avail,
         free_slots: Vec::new(),
@@ -1479,6 +1558,15 @@ pub fn allocate_hinted(
 }
 
 impl Ra<'_> {
+    /// [`operand_refs`] of instruction `i` (section 80.2: from the cache when it is built).
+    fn oprs(&self, i: usize) -> [Ref; 3] {
+        if self.opr.is_empty() {
+            operand_refs(self.ir, &self.fused, i)
+        } else {
+            self.opr[i]
+        }
+    }
+
     fn rnd(&mut self, num: u64, den: u64) -> bool {
         match self.rng.as_mut() {
             Some(r) => r.chance(num, den),
@@ -1524,12 +1612,21 @@ impl Ra<'_> {
     }
 
     fn set_holder(&mut self, x: bool, r: u8, v: u32) {
+        let bit = 1u16 << r;
         if x {
             if v != NONE {
                 self.used_x |= 1 << r;
+                self.held.x |= bit;
+            } else {
+                self.held.x &= !bit;
             }
             self.xmm[usize::from(r)] = v;
         } else {
+            if v != NONE {
+                self.held.g |= bit;
+            } else {
+                self.held.g &= !bit;
+            }
             self.gpr[usize::from(r)] = v;
         }
     }
@@ -1608,6 +1705,29 @@ impl Ra<'_> {
 
     /// A free register of the class (not excluded), preferring `hint`.
     fn pick_free(&mut self, x: bool, excl: Mask, hint: u8) -> Option<u8> {
+        if self.rng.is_none()
+            && crate::cspeed::on(crate::cspeed::M1)
+            && crate::cspeed::on(crate::cspeed::RA)
+            && !mutants::active("cspeed_ra_last_free")
+        {
+            // Section 80.2 (`M1`): the same choice from masks (the pools are in register order: the first free register is the lowest bit)
+            let m = if x {
+                self.avail.x & !self.held.x & !excl.x & !self.cur.x
+            } else {
+                self.avail.g & !self.held.g & !excl.g & !self.cur.g & GPR_POOL_MASK
+            };
+            if m == 0 {
+                return None;
+            }
+            if hint != NOREG && hint < 16 && m >> hint & 1 != 0 {
+                return Some(hint);
+            }
+            if mutants::active("m1_free_highest") {
+                // MUTANT: the highest free register instead of the lowest
+                return Some(15 - m.leading_zeros() as u8);
+            }
+            return Some(m.trailing_zeros() as u8);
+        }
         if crate::cspeed::on(crate::cspeed::RA) {
             // Section 49 (`cspeed` lever `RA`): the same choice from a list on the stack (the pool is at most 16 registers)
             let (pool, np) = Self::pool_arr(x);
@@ -2028,7 +2148,7 @@ impl Ra<'_> {
                 bump(&mut rc, ins.b);
                 continue;
             }
-            for r in operand_refs(ir, &self.fused, j) {
+            for r in self.oprs(j) {
                 bump(&mut rc, r);
             }
             if ins.flags & F_GUARD != 0 {
@@ -2280,7 +2400,7 @@ impl Ra<'_> {
             None
         };
         // (b) the operands
-        let refs = operand_refs(ir, &self.fused, i);
+        let refs = self.oprs(i);
         let mut locs = [Loc::None; 3];
         for k in 0..3 {
             let r = refs[k];

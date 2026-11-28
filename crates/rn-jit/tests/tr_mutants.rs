@@ -5117,6 +5117,66 @@ const TABLE: &[Row] = &[
         owner: "S93",
         dets: &[d("tr_core", "s93_smallkeys_programs")],
     },
+    Row {
+        name: "gexit_no_resume",
+        owner: "S80",
+        dets: &[d("tr_core", "s80_gexit_programs")],
+    },
+    Row {
+        name: "gexit_exitno_imm",
+        owner: "S80",
+        dets: &[d("tr_core", "s80_gexit_programs")],
+    },
+    Row {
+        name: "m1_free_highest",
+        owner: "S80",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
+    Row {
+        name: "sinkd_ls_miss",
+        owner: "S85",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
+    Row {
+        name: "sinkd_group_any",
+        owner: "S85",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
+    Row {
+        name: "fwdk_key_shift",
+        owner: "S85",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },    Row {
+        name: "asmfuse_no_reload",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
+    Row {
+        name: "asmfuse_no_store",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
+    Row {
+        name: "asmfuse_two_addr",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
+    Row {
+        name: "asmfuse_call_live",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
+    Row {
+        name: "fusecov_patch_skip",
+        owner: "S91",
+        dets: &[d("tr_core", "s91_fusecov_programs")],
+    },
+    Row {
+        name: "fusecov_rrg_skip",
+        owner: "S91",
+        dets: &[d("tr_core", "s91_fusecov_programs")],
+    },
+
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

@@ -1169,6 +1169,30 @@ pub const NAMES: &[&str] = &[
     "peep_tbar_white_skip",
     // section 93.2 (`smallkeys`): the last node of a small node vector is not checked
     "smallkeys_last_skip",
+    // section 80.1 (`gexit`): the state's shared exit routine is built without the resume path of the deferred stubs
+    "gexit_no_resume",
+    // section 80.1 (`gexit` bit 1): the trampoline stores a constant exit number instead of the compact stub's
+    "gexit_exitno_imm",
+    // section 80.2 (`cspeed` lever `M1`): the allocator's mask path picks the highest free register
+    "m1_free_highest",
+    // section 85.1 (`cspeed` lever `SINKD`): the dense marks of the sinking analysis miss the `lsizenode` loads
+    "sinkd_ls_miss",
+    // section 85.1 (`cspeed` lever `SINKD`): the snapshot rebuild reuses the last field group of a sunk table whatever its store prefix
+    "sinkd_group_any",
+    // section 85.2 (`cspeed` lever `FWDK`): the constant table of the loop / forwarding copy memoises a copy under the next constant too
+    "fwdk_key_shift",
+    // section 87 (`asmfuse`): the fused pass evicts a value without its reload behind the evicting instruction
+    "asmfuse_no_reload",
+    // section 87 (`asmfuse`): the fused pass gives a spilled value its slot but no store at its definition
+    "asmfuse_no_store",
+    // section 87 (`asmfuse`): the second operand of a two-address op may get the destination's register
+    "asmfuse_two_addr",
+    // section 87 (`asmfuse`): the call site of a helper call saves no general register
+    "asmfuse_call_live",
+    // section 91 (`fusecov`): an evicted pinned value's open exit maps keep its register
+    "fusecov_patch_skip",
+    // section 91 (`fusecov` bit 1): the native return's guards are left out of a fused body
+    "fusecov_rrg_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1285,7 +1309,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 930);
+        assert_eq!(NAMES.len(), 942);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

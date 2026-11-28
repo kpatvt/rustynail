@@ -66,8 +66,16 @@ pub const SLOTLIVE_PROCESS: u32 = 1;
 pub const MEMTUNE_PROCESS: u32 = 0;
 /// Section 53: the process default of [`TrLimits::codemap`] (also the struct default).
 pub const CODEMAP_PROCESS: u32 = 1;
+/// Section 87: the process default of [`TrLimits::asmfuse`] (also the struct default): on (87.5: strictly cheaper, oracle-clean, whole set
+/// geomean -0.03 %, no program above +0.1 %).
+pub const ASMFUSE_PROCESS: u32 = 1;
+/// Section 91 (`fusecov`): the process default of [`TrLimits::fusecov`] (also the struct default): room checks and native recursion (bit 2, rolled
+/// roots, is not on: `tr_core::m1_interp_shapes` crashes with it in `on +verify` through a deferred stub, docs/JIT_TRACE.md 91.2).
+pub const FUSECOV_PROCESS: u32 = 3;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
 pub const LAZYSTUB_PROCESS: u32 = 1;
+/// Section 80.1 (`gexit`): the process default of [`TrLimits::gexit`] (also the struct default).
+pub const GEXIT_PROCESS: u32 = 3;
 /// P1: the process default of [`TrLimits::presize`] (also the struct default).
 pub const PRESIZE_PROCESS: u32 = 1;
 /// E1: the process default of [`TrLimits::recunroll`] (also the struct default).
@@ -1077,6 +1085,20 @@ pub struct TrLimits {
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
     pub lazystub: u32,
+    /// Section 87 (`asmfuse`, docs/JIT_TRACE.md section 87): an eligible trace is allocated and selected in one backward pass (`asm::fuse`) instead of
+    /// `ra::allocate_hinted` + the forward `assemble_dl` walk. 0 off, 1 on, 2 on with three general and four double registers (tests: evictions
+    /// and spills everywhere).
+    pub asmfuse: u32,
+    /// Section 91 (`fusecov`, docs/JIT_TRACE.md section 91): the trace kinds the fused pass of `asmfuse` covers beyond plain side traces. Bit 0: side
+    /// traces with body room checks (R2 `side_room`), evictions of pinned values, extension slots high in the exit area; bit 1: native-recursion
+    /// traces (`rec_call` / `rec_ret`); bit 2: rolled roots (not lazy, no loop). Default [`FUSECOV_PROCESS`].
+    pub fusecov: u32,
+    /// Section 80.1 (`gexit`, docs/JIT_TRACE.md section 80.1): the shared exit routine (save every register, call the exit handler, land) is one
+    /// routine per state instead of a copy embedded in every trace (73 micro-ops, about 480 bytes); a trace's generic stubs jump to a 3-op
+    /// trampoline into it. Not under the emulator modes (they run the program they were given). Bit 0: per state; bit 1 (with bit 0): compact
+    /// generic stubs, `mov eax, exitno; jmp trampoline` (10 bytes instead of 27), the trampoline stores the exit and trace numbers. 0 = embedded,
+    /// default 3 ([`GEXIT_PROCESS`]).
+    pub gexit: u32,
     /// P1 (`presize`, docs/JIT_TRACE.md section 32): a group of constant-key insertions into a table the trace allocated, with nothing that can exit or
     /// look at the table in between, inserts its first key into the hash part the interpreter's growth reaches after the group (the growth steps
     /// replayed on the allocator) and the others inline, when the recorded interpreter layout equals the presized one: 1 = on (default
@@ -1399,6 +1421,9 @@ impl Default for TrLimits {
             peep: PEEP_PROCESS,
             smallkeys: SMALLKEYS_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
+            asmfuse: ASMFUSE_PROCESS,
+            fusecov: FUSECOV_PROCESS,
+            gexit: GEXIT_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
             unrollk: UNROLLK_PROCESS,
@@ -1667,6 +1692,9 @@ impl TrLimits {
                 "peep" => l.peep = v.min(31),
                 "smallkeys" => l.smallkeys = v.min(7),
                 "lazystub" => l.lazystub = v.min(1),
+                "asmfuse" => l.asmfuse = v.min(2),
+                "fusecov" => l.fusecov = v.min(15),
+                "gexit" => l.gexit = v.min(3),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
                 "unrollk" => l.unrollk = v.clamp(1, MAX_UNROLL_K),
@@ -3789,6 +3817,9 @@ pub struct TrState {
     pub(crate) centry: crate::fx::HashSet<usize>,
     /// BUNDLE-J: hot events of registered C-entered functions so far (key: code address; the entries start at the `centrywait`-th).
     pub(crate) centry_seen: crate::fx::HashMap<usize, u32>,
+    /// Section 80.1 (`gexit`): the state's shared exit routines (address; index 1: with the resume path of the deferred stubs), 0 = not built yet.
+    /// Their code blocks live until the arena is dropped.
+    pub(crate) gexit: [u64; 2],
 }
 
 /// BUNDLE-P: the state of one hop-rate check: `streak` the checks in a row that found the rate due.
@@ -3837,6 +3868,7 @@ impl TrState {
             rr_paths: Default::default(),
             centry: Default::default(),
             centry_seen: Default::default(),
+            gexit: [0; 2],
         }
     }
 
