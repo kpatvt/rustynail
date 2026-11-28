@@ -2116,7 +2116,7 @@ fn t9_innerlink_knob() {
 /// T5 (`t5`, docs/JIT_TRACE.md section 48): the knob (struct default = shipped, parse, cap at the three bits).
 #[test]
 fn t5_objkey_knob() {
-    use rn_jit::tr::cache::{TrConfig, TrMode, T5_PROCESS};
+    use rn_jit::tr::cache::{TrConfig, TrMode, T5_PROCESS, T5_PROCESS_ON};
     let l = TrConfig::for_mode(TrMode::On).limits;
     assert_eq!(l.t5, T5_PROCESS, "struct default (tests) = shipped");
     for (env, want) in [
@@ -2125,7 +2125,7 @@ fn t5_objkey_knob() {
         (Some("t5=3"), 3),
         (Some("t5=7"), 7),
         (Some("t5=99"), 7),
-        (None, T5_PROCESS),
+        (None, T5_PROCESS_ON),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
         c.apply_process_limits(env);

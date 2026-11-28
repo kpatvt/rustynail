@@ -1514,7 +1514,9 @@ fn finish_outcome(st: &mut State) {
         RecOutcome::Closed(rec) => {
             // section 92.1: a constrained re-record of a peeled root that would not peel is dropped like one that completed the avoided prefix (a rolled
             // loop has no pre-roll: the probation of `rerootchk` never sees it, and the old peeled root was the better trace)
+            // (section 94.2: not a function root: it never peels, every re-record would be dropped)
             if !act.side
+                && !rec.ir.fn_root
                 && cache::reroot_pending(st, act.id)
                 && !opt_loop::peelable(&rec.ir, crate::rt::trace_config(st).limits.hdrlib)
             {
