@@ -11434,3 +11434,39 @@ Committed in this round: 97.1 (the stale-slot crash, a `+verify`-only clobber, f
 Debugging aids that found 97.1 (worth keeping in mind): `perf record -e mem:<addr>:w:u -c 1` works at `perf_event_paranoid` 2 and gives the
 instruction after the write (the machine code of a trace is in `TR_CORE_DUMPDIR`'s `trace-<slot + 1>.bin`, deferred stubs are placed later);
 `setarch -R` makes the heap and stack addresses of a `tr_core` child repeatable for one environment (the environment's length shifts the stack).
+
+## 98. Heavy-gate repairs of integ10 (2026-11-28, base 6d3cdf1 + ebca249)
+
+### 98.1 The lazy RETF's native return at another site refunded the wrong count
+
+**Symptom.** `tr_core::instruction_count_identity` (5 jobs) and `tr_identity::identity_trace_modes` / `identity_budget_sweep` /
+`identity_options`: `bc_sbump` with a count budget (200, and 26-40 in the sweep) gave `fetches + insns > off` (+60887 `always`, +13409 `on2`).
+Bisected with the single job and every process knob set to 0 (`TR_CORE_JOB="bc_sbump|always||200|<knob>=0||1"`): `lzretf` bit 2 (4) alone.
+
+**Cause.** `Cx::lzretf_alt_tails` (89.1 fix (c)) took the refund of the first snapshot behind the pop. That snapshot's refund is
+`n - fetches(its step) - land(its pc)`: it also subtracts the steps between the `RETURN` and the snapshot's pc, and the landing label of the
+*recorded* site's continuation. The alternative path leaves right behind the `RETURN` into the other site's continuation entry (which charges
+itself, like every native return), so the exact refund is `n - fetches through the RETURN`. `bc_sbump` at budget 200 forms a side trace whose
+first post-pop snapshot lies several steps after the pop: those steps were counted and never run.
+
+**Fix.** The recorder stores, per `RETF`, `TraceIr::seg_refund[k] = n - sum(cost[..seg_steps[k]])` at close (`seg_steps[k]` is the first step
+after the k-th pop); the copy passes (`fold`, `opt_loop`) carry it; the alternative tail uses `seg_refund[seg]` of the RETF's snapshot segment.
+Test `tr_core::s98_lzretf_alt_refund_identity` (`bc_sbump`, three trace configurations, `lzretf` default / 29 / 5 / links, budgets none / 17 /
+200); mutant `lzretf_alt_snap_refund` (the old refund) caught by it, which also catches `lzretf_alt_refund_off`. 5.4: RETF is inert, nothing to do.
+
+**The three mutant survivors** (`fside_rem_root`, `t1i_tail_count_extra`, `tfor_lua_ret_cost_skip`) had the failing
+`instruction_count_identity` as their only detector: the runner drops a detector that fails without a mutant (baseline), so they survived with
+no test run. With the identity exact again they are detected as before.
+
+### 98.3 `+tracemove` on deep stacks
+
+`twins_options s83_subtree [always +tracemove]` ran 67-90 s alone: part (6) of `tests/vm/s83_subtree.lua` recurses until the stack overflows
+and enters a trace at every level, and `+tracemove` copied the whole stack (up to 1M slots) at every entry. `jit_tr_move` now moves a stack
+above 32K slots once every `cap / 32K` entries (a bounded amortized copy per entry); small stacks still move at every entry. 3 s.
+
+### 98.4 Not fixed: `jit_t5_01_object_keys` in `tr_identity_pre`
+
+`tr_identity_pre::fetch_plus_insns_identity` also shows `tests/vm/jit_t5_01_object_keys [always]` +2 (tier 1 alone, trace pinned off; also in
+the gate logs of 2026-11-25, so older than integ10, and inside the known entry of that test). Reduced: `for i = 1, n do set[nil] = i end` under
+`pcall` counts one instruction too many per raised error (block `LOADNIL; SETTABLE; FORLOOP` prepaid, the error at `SETTABLE` does not give
+back the `FORLOOP`), while `t[k] = 1` with `k = nil` in a straight-line function is exact.
