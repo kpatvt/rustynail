@@ -9591,3 +9591,5 @@ after `r.value`, before the link into the fold member (nothing to carry); (c) ma
 and tracebacks inside the tail-called function, `debug.getinfo` levels, hooks, deep tail recursion) and mutants on the moved slots and the
 `ci->func` store; (2) measure `retf=951+1024` with and without `lazyci=0`, then bit 9's per-site rule for `lazyci`; (3) the fold member's
 `InnerLoop` aborts at `filter`'s loop (record `filter`'s retry path as a side trace instead of aborting the member root); (4) (c).
+
+**Gates** (82.1 + bit 8, commit e56f0e3, `GATE_CPUS=2-4`, load 35-53): `gate-light.sh pfam_` all steps PASS (5.5 trace suite, vm_corpus, jit-diff 1-50, both `pfam_*` mutants caught) except 5.4 `tr_core::h2_newkey_programs`, whose only failures were two 120 s child timeouts of the GC-stress-2 + `RUSTYNAIL_GC_VERIFY` jobs; rerun alone it passes (17.6 s). Not run: the heavy gate.
