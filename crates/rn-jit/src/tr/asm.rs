@@ -2872,6 +2872,10 @@ cx_state! {
     rec_ci_cold: Vec<(L, L)>,
     root_ci_cold: Vec<(L, L, L)>,
     bud_cold: Vec<(L, L, i32)>,
+    // (section 100.5: the two cold lists of sections 93.1 / 89.1 were missing here: a fused body's `TBAR` slow paths and lazy-`RETF` tails were
+    // dropped between the passes, `UnboundLabel` for every fused side trace with a cold `TBAR`, e.g. awfy/richards)
+    tbar_cold: Vec<(L, L, usize, CallSite, [Loc; 2])>,
+    lzretf_alts: Vec<(L, L, usize, u64)>,
     bh_tramps: Vec<(L, L, i32)>,
     bh_tramp_ix: std::collections::HashMap<(L, i32), L>,
     rc_cold: Vec<(L, L, Vec<(u16, Ref, Loc)>)>,
