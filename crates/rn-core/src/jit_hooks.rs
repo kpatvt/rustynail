@@ -647,6 +647,13 @@ pub fn stress_moves() -> u64 {
     STRESS_MOVES.load(Ordering::Relaxed)
 }
 
+/// The capacity (slots) of `st`'s stack (section 98.3: the `+tracemove` test option rate-limits its moves of big stacks).
+pub fn stack_cap(st: &mut State) -> usize {
+    let th = st.th_ptr();
+    // SAFETY: ST1; the running thread is alive.
+    unsafe { (*th).stack.cap() }
+}
+
 /// Moves the stack of `st` to a fresh block (stress mode); see `state::move_stack`.
 pub fn stress_move_stack(st: &mut State) {
     STRESS_MOVES.fetch_add(1, Ordering::Relaxed);

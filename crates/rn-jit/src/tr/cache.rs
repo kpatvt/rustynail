@@ -10193,9 +10193,30 @@ fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
 pub unsafe extern "C" fn jit_tr_move(th: *mut Thread, _ci: *mut CallInfo, _a: u32, _b: u32) -> u32 {
     // SAFETY: as in `jit_tr_hot`.
     let mut st = unsafe { jit_hooks::state_from_thread(th.cast()) };
+    // Section 98.3: a stack above `TRACEMOVE_BIG` slots moves once every `cap / TRACEMOVE_BIG` entries (each move copies the whole stack: a
+    // recursion that enters a trace at every level until the stack overflows was quadratic, `s83_subtree` (6) ran 90 s under `+tracemove`)
+    let every = (jit_hooks::stack_cap(&mut st) / TRACEMOVE_BIG).max(1) as u64;
+    if every > 1 {
+        let tick = TRACEMOVE_TICK.with(|c| {
+            let v = c.get().wrapping_add(1);
+            c.set(v);
+            v
+        });
+        if tick % every != 0 {
+            return 0;
+        }
+    }
     d_of(&mut st).tr.stats.moves += 1;
     jit_hooks::stress_move_stack(&mut st);
     0
+}
+
+/// Section 98.3: the stack size (slots) above which `+tracemove` moves only every `cap / TRACEMOVE_BIG`-th trace entry.
+const TRACEMOVE_BIG: usize = 32 * 1024;
+
+thread_local! {
+    /// Section 98.3: the trace entries of big stacks under `+tracemove` (see [`jit_tr_move`]).
+    static TRACEMOVE_TICK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 // ---- tier-1 lowering hook ---------------------------------------------------------------------------------

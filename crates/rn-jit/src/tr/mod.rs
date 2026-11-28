@@ -200,7 +200,7 @@ pub struct TraceOpts {
     pub emurun: bool,
     /// `+emuverify`: compare emulator and native state at each entry.
     pub emuverify: bool,
-    /// `+tracemove`: move the stack right before every trace entry.
+    /// `+tracemove`: move the stack right before every trace entry (a stack above 32K slots: every `cap / 32K`-th entry, section 98.3).
     pub tracemove: bool,
     /// `+membudget` (PI): keep the budget in the budget word (the memory form of 7.7) instead of in
     /// [`ra::BUDGET_GPR`].
