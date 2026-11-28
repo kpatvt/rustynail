@@ -81,6 +81,9 @@ pub fn add(ph: usize, t0: u64) {
     let d = now().wrapping_sub(t0);
     ACC.with(|a| a[ph].set(a[ph].get() + d));
     CALLS.with(|a| a[ph].set(a[ph].get() + 1));
+    if ROOT.with(Cell::get) {
+        ACC_ROOT.with(|a| a[ph].set(a[ph].get() + d));
+    }
     if ph == PIPELINE {
         MAXPIPE.with(|m| m.set(m.get().max(d)));
     }
@@ -161,14 +164,18 @@ pub fn report() -> String {
     };
     let mut o = format!("[trace] phases ({unit}/calls):");
     let sizes = format!(
-        " sizes ins {} snaps {} snapents {} ops {} bytes {} stubops {} sharedops {}",
+        " sizes ins {} snaps {} snapents {} ops {} bytes {} stubops {} sharedops {} snapsame {} snapdup {} sidesame {} sideents {}",
         SIZES.with(|s| s[0].get()),
         SIZES.with(|s| s[1].get()),
         SIZES.with(|s| s[2].get()),
         SIZES.with(|s| s[3].get()),
         SIZES.with(|s| s[4].get()),
         SIZES.with(|s| s[5].get()),
-        SIZES.with(|s| s[6].get())
+        SIZES.with(|s| s[6].get()),
+        SIZES.with(|s| s[7].get()),
+        SIZES.with(|s| s[8].get()),
+        SIZES.with(|s| s[9].get()),
+        SIZES.with(|s| s[10].get())
     );
     ACC.with(|a| {
         CALLS.with(|c| {
@@ -184,7 +191,24 @@ pub fn report() -> String {
     });
     o += &format!(" max_pipeline {}", MAXPIPE.with(|m| m.get()));
     o += &sizes;
+    o += "\n[trace] root phases (Minstr):";
+    ACC_ROOT.with(|a| {
+        for i in 0..NAMES.len() {
+            o += &format!(" {} {:.2}", NAMES[i], a[i].get() as f64 / 1e6);
+        }
+    });
     o
+}
+
+thread_local! {
+    /// Section 80.5: a root trace's pipeline is running (its phases are added to `ACC_ROOT` too).
+    static ROOT: Cell<bool> = const { Cell::new(false) };
+    static ACC_ROOT: [Cell<u64>; NPH] = const { [const { Cell::new(0) }; NPH] };
+}
+
+/// Section 80.5: marks the pipeline running on this thread as a root trace's (`true`) or not.
+pub fn set_root(on: bool) {
+    ROOT.with(|c| c.set(on));
 }
 
 /// Section 80.0: sizes summed over the compiles (0 IR instructions, 1 snapshots, 2 snapshot entries, 3 micro-ops, 4 code bytes); counted only while
@@ -198,7 +222,14 @@ pub const SZ_BYTES: usize = 4;
 pub const SZ_STUBOPS: usize = 5;
 /// Micro-ops of the embedded shared exit routine.
 pub const SZ_SHAREDOPS: usize = 6;
-const NSZ: usize = 7;
+/// Section 80.5: snapshot entries that the previous snapshot holds too (same slot, ref and flags).
+pub const SZ_SNAPSAME: usize = 7;
+/// Section 80.5: snapshots whose entries and frames are those of the previous snapshot.
+pub const SZ_SNAPDUP: usize = 8;
+/// Section 80.5: the same two counts for side traces only (entries, all entries).
+pub const SZ_SIDESAME: usize = 9;
+pub const SZ_SIDEENTS: usize = 10;
+const NSZ: usize = 11;
 
 thread_local! {
     static SIZES: [Cell<u64>; NSZ] = const { [const { Cell::new(0) }; NSZ] };

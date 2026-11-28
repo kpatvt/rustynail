@@ -9378,3 +9378,51 @@ instruction) and -21 .. -32 % code per trace.** Where the remaining cost is (80.
 **Next steps** (in order of measured volume): (a) delta snapshots for side traces (item 2: about 40 % of the per-entry cost is in the allocator and
 the exit builder); (b) a cheaper root path (item 3: the peeled copy through the forwarding machinery); (c) recording (cd 45 M = 27 % of its compile,
 raytrace 28 M = 41 %, section 76.9) and tier-1 compiles (cd 18 M, raytrace 9 M), which are outside the trace back end.
+
+### 80.5 Round 2 state: measurements for the items (a)-(e), what was tried, and the plan for the next builder
+
+New diagnostics (counter mode only): `[trace] root phases (Minstr): ...` (the phase totals of root-trace pipelines alone, `phase::set_root`), and with
+`RUSTYNAIL_JIT_SNAPSTAT=1` the snapshot redundancy counts appended to the `sizes` of the phase line (`snapsame` = entries the previous snapshot
+holds too, same slot / ref / flags; `snapdup` = snapshots whose entries and frame count equal the previous snapshot's; `sidesame` / `sideents` the
+same for side traces). The statistics run inside the timed pipeline, so they are off by default.
+
+**(a) Snapshot volume: the redundancy a delta format would remove (measured, final binary of 80.3).**
+
+| program | snapshots | entries | entries also in the previous snapshot | snapshots equal to the previous | side traces: same / entries |
+|---|---:|---:|---:|---:|---:|
+| apps/raytrace | 1453 | 19131 | 16346 (85 %) | 207 (14 %) | 8772 / 10523 (83 %) |
+| awfy/cd | 5156 | 54736 | 47541 (87 %) | 1149 (22 %) | 30936 / 35844 (86 %) |
+| awfy/towers | 545 | 4824 | 4237 (88 %) | 94 (17 %) | 3683 / 4164 (88 %) |
+| awfy/json | 1303 | 6567 | 5402 (82 %) | 389 (30 %) | 2515 / 3118 (81 %) |
+| awfy/richards | 800 | 3918 | 3042 (78 %) | 140 (18 %) | 3003 / 3836 (78 %) |
+
+A delta chain (each snapshot = previous snapshot + changed / removed slots) would make the entries stored and walked 5-7x fewer. It was **not
+built in round 2**: every consumer reads `TraceIr::snap_entries(s)` as a full sorted map (recorder `snap::take` / `prune_snaps` / `fixup`, sinking's
+rebuild, the forwarding pass's renaming (`FWDSNAP`), `split_type_snaps`, `entry_checks`, the allocator (unfusing, validity, weak marks, `open_snap`,
+homes), the exit builder (`SlotRestore` per entry, sunk fields), `stack_ents`, the stub planner and inline stubs, `dlink` / `slink` sources, `ccheck`
+texts, the exit handler's `ExitMeta`). Design for the next builder: keep the flat map as the format of record (the oracle), add `Snap::base: u32`
+(previous snapshot whose map this one extends, or none) and store only the delta entries, with an iterator `TraceIr::snap_iter(s)` that merges base
+and delta in slot order; convert the stages one at a time behind a knob (`snapdelta`), starting with the two that walk entries per snapshot and do
+the most work per entry (allocator `open_snap`: an entry whose ref is unchanged keeps the location of the base snapshot unless its register was
+reassigned between the two guards; exit builder: the base's `SlotRestore` list is reused and only delta entries are resolved, which needs the
+`ExitSnap` slots to become a chain too, so the exit handler's restore and the inline stubs follow the chain). `ccheck` compares the materialised
+maps / exits against the flat path. Expected: the allocator's per-entry share (about 25 % of its cost) and most of the exit builder (47 k on cd).
+
+**(b) Roots** (counter mode, root pipelines only; k instructions per root): cd 26 roots, 1170 k each: front 427 (root pass list 203, sinking 58), ra
+207, exits 139, asm 139, x86 95, rest about 160; raytrace 7 roots, 1860 k each: front 861 (sinking 280, pass list 351), ra 289, exits 229, asm 177,
+x86 99. Every phase is 2-3x a side trace's because the peeled trace is 2x the IR and snapshots (the pre-roll copy and the body). Not changed in round
+2. Leads: the body copy's snapshots are the pre-roll's with renamed refs (share the maps through the delta format of (a)); the root pass list re-runs
+CSE / forwarding over both copies.
+
+**(c) Recording** (cd 44-45 M instructions, raytrace 28 M): the leaf profile of the recorder (cd, % of recorder samples): `record_one` 7.6,
+`guard_with` 6.8, `light_new` 5.9, `handle` (closure handles) 5.5, `fload` 3.2, `fill_closure` 2.8, `oframe_prune` 2.7, `val_of` 2.6,
+`prune_snaps` 2.3, hashing 2.2, `rd_slot` 2.0, `close` 1.8. Flat again; not changed in round 2.
+
+**(d) Tier 1** (cd 18 M for 40 compiles, raytrace 9 M for 15): `lower::peephole` was 36 % of the lowering's leaf samples (a copy of the whole
+micro-op program); an in-place version was built and measured: tier-1 instructions 9.01 -> 9.00 M (raytrace), 18.01 -> 18.00 M (cd), i.e. the
+samples were the copy's memory traffic, not instructions; dropped. `lower::Ty` comparisons were 10 % of the lowering's samples (not examined).
+
+**(e) M2 / M3** keep the ranking of 80.4 (free allocator + assembler = -43 % on cd is the ceiling of a perfect fusion, not its expected gain).
+
+State: committed with the diagnostics only; no round-2 lever is on. Next steps in order: (a) as designed above, (b) on top of it, then (e) the backward
+assembler if the phase table still ranks it first.

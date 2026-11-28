@@ -1928,8 +1928,10 @@ fn pipeline(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> 
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     crate::cspeed::set(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cspeed });
     let side = rec.side.is_some();
+    phase::set_root(!side);
     let r = pipeline_inner(st, act, rec);
     phase::add(phase::PIPELINE, t0);
+    phase::set_root(false);
     if side {
         phase::add(phase::PIPE_SIDE, t0);
     }
@@ -2961,6 +2963,28 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     phase::size(phase::SZ_INS, ir.ins.len());
     phase::size(phase::SZ_SNAPS, ir.snaps.len());
     phase::size(phase::SZ_SNAPENTS, ir.snapmap.len());
+    // (section 80.5: the snapshot redundancy statistics only with `RUSTYNAIL_JIT_SNAPSTAT=1`: they cost instructions inside the timed pipeline)
+    static SNAPSTAT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *SNAPSTAT
+        .get_or_init(|| std::env::var_os("RUSTYNAIL_JIT_SNAPSTAT").is_some_and(|v| v == "1"))
+        && phase::now() != 0
+    {
+        let (mut same, mut dup) = (0usize, 0usize);
+        for s in 1..ir.snaps.len() as u32 {
+            let (a, b) = (ir.snap_entries(s - 1), ir.snap_entries(s));
+            let k = b.iter().filter(|e| a.contains(e)).count();
+            same += k;
+            if a == b && ir.snaps[s as usize].nframes == ir.snaps[s as usize - 1].nframes {
+                dup += 1;
+            }
+        }
+        phase::size(phase::SZ_SNAPSAME, same);
+        phase::size(phase::SZ_SNAPDUP, dup);
+        if side.is_some() {
+            phase::size(phase::SZ_SIDESAME, same);
+            phase::size(phase::SZ_SIDEENTS, ir.snapmap.len());
+        }
+    }
     phase::size(phase::SZ_OPS, a.prog.ops.len());
     phase::size(phase::SZ_BYTES, em.code.len());
     if ccheck && !emurun && !emuverify {
