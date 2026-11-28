@@ -46,9 +46,14 @@ pub const FIXSUM: u32 = 1024;
 /// (inlined frames, an open top, or no dead temporary at its pc) instead of testing every entry.
 pub const PRUNEQ: u32 = 2048;
 
+/// Section 80.2 (M1): the back end without per-compile copies and scans: the allocator's free register from a mask of the held registers (the
+/// pool is in register order, so the first free register is the lowest bit), the assembler's stubs read the exit snapshots in place (no clone per
+/// stub) and its reloads / spill stores without copying the allocation's lists, the label tables of the exit builder copied without a lookup per pc.
+pub const M1: u32 = 4096;
+
 /// All levers.
 pub const ALL: u32 =
-    MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP | FIXSUM | PRUNEQ;
+    MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP | FIXSUM | PRUNEQ | M1;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

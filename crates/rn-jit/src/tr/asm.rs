@@ -3962,7 +3962,7 @@ pub fn assemble_deferred<'a>(
     })
 }
 
-impl Cx<'_> {
+impl<'a> Cx<'a> {
     /// B2 (`b2tag`): the update of the known node tags after instruction `i` (see [`Cx::ktag`]). Ops that cannot write a hash node's
     /// tag byte or move a table's nodes keep the facts; a store to another address may alias (two tables can be the same at run
     /// time), so it replaces them all; anything else (helpers, allocation, the loop marker, where two paths meet) forgets them.
@@ -5486,16 +5486,18 @@ impl Cx<'_> {
     }
 
     fn pre(&mut self, i: usize) {
-        let v = self.al.ins[i].pre.clone();
-        for r in &v {
+        // (section 80.2: the allocation outlives the assembler state, so its lists are read in place)
+        let al: &'a Allocation = self.al;
+        for r in &al.ins[i].pre {
             self.reload(r);
         }
     }
 
     fn post(&mut self, i: usize) {
-        let a = &self.al.ins[i];
-        let (dst, stores, post) = (a.dst, a.stores.clone(), a.post.clone());
-        for s in stores {
+        let al: &'a Allocation = self.al;
+        let a = &al.ins[i];
+        let (dst, stores, post) = (a.dst, &a.stores, &a.post);
+        for &s in stores {
             if self.home_of(s).is_some() {
                 // (section 77.6: the value is its stack slot's payload; nothing to store)
                 continue;
@@ -5509,7 +5511,7 @@ impl Cx<'_> {
                 l => panic!("store of {l:?}"),
             }
         }
-        for r in &post {
+        for r in post {
             self.reload(r);
         }
     }
@@ -10129,7 +10131,15 @@ impl Cx<'_> {
             };
             k += 1;
             self.nstubs += 1;
-            let es = self.snaps[snap as usize].clone();
+            // Section 80.2 (`cspeed` lever `M1`): the snapshot in place (the slice outlives the assembler state)
+            let snaps: &'a [ExitSnap] = self.snaps;
+            let owned;
+            let es: &ExitSnap = if crate::cspeed::on(crate::cspeed::M1) {
+                &snaps[snap as usize]
+            } else {
+                owned = snaps[snap as usize].clone();
+                &owned
+            };
             if !es.usable {
                 return incons(format!("snapshot {snap} is used by a guard but unusable"));
             }
@@ -10145,7 +10155,7 @@ impl Cx<'_> {
             if entry {
                 self.entry_failure_ops(true, false);
             }
-            let plan = self.stub_plan(snap, entry, &es);
+            let plan = self.stub_plan(snap, entry, es);
             // S1 (`lazystub`): a stub with an inline part is assembled when its exit is first taken (entry checks keep theirs: they use the extension slots)
             if self.env.defer && !entry && !matches!(plan, StubPlan::Generic) {
                 // E6 (`dlink`): an exit whose stub is an inline stub continuing through its cell (frameless, or a frame cell), counted only to find the hot
@@ -10176,7 +10186,7 @@ impl Cx<'_> {
                 self.defer_stub(snap, plan, label, &mut shared);
                 continue;
             }
-            self.emit_stub(snap, entry, &es, plan, &mut shared)?;
+            self.emit_stub(snap, entry, es, plan, &mut shared)?;
         }
         self.emit_tails(shared);
         Ok(())

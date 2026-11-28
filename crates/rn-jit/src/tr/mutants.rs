@@ -1145,6 +1145,8 @@ pub const NAMES: &[&str] = &[
     "gexit_no_resume",
     // section 80.1 (`gexit` bit 1): the trampoline stores a constant exit number instead of the compact stub's
     "gexit_exitno_imm",
+    // section 80.2 (`cspeed` lever `M1`): the allocator's mask path picks the highest free register
+    "m1_free_highest",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1238,7 +1240,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 918);
+        assert_eq!(NAMES.len(), 919);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

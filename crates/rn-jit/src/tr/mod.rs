@@ -2093,13 +2093,10 @@ fn global_exit(st: &mut State, resume: bool) -> Option<u64> {
     let addr = (placed.block.addr() + off) as u64;
     // SAFETY: as above.
     unsafe {
-        let _ = (*dp)
-            .arena
-            .register_symbol(&placed.block, "TRACE-SHARED-EXIT");
         (*dp).tr.gexit[usize::from(resume)] = addr;
     }
     // (the block is never freed: it lives until the arena is dropped with the state)
-    std::mem::forget(placed);
+    let _ = placed;
     Some(addr)
 }
 
