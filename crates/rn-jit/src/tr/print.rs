@@ -379,12 +379,20 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             let _ = writeln!(o, "[trace] budhoist: loops hoisted {h} kept by bhmin {k}");
         }
     }
-    if s.reroots > 0 || s.reroot_drops > 0 {
+    if s.reroots > 0 || s.reroot_drops > 0 || s.reroot_held > 0 {
         let _ = writeln!(
             o,
-            "[trace] reroot: roots {} drops {} given up {} kept {} reverted {}",
-            s.reroots, s.reroot_drops, s.reroot_gaveup, s.reroot_kept, s.reroot_reverts
+            "[trace] reroot: roots {} drops {} given up {} kept {} reverted {} held {}",
+            s.reroots,
+            s.reroot_drops,
+            s.reroot_gaveup,
+            s.reroot_kept,
+            s.reroot_reverts,
+            s.reroot_held
         );
+    }
+    if s.sretry_starts > 0 {
+        let _ = writeln!(o, "[trace] sretry: starts {}", s.sretry_starts);
     }
     if s.retried > 0 || s.ident_kept > 0 {
         let _ = writeln!(

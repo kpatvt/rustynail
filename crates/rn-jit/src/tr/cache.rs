@@ -661,6 +661,10 @@ pub struct TrLimits {
     /// Section 92.2 (`libsite`): the outcome guards of a `LIB` helper (`NE %find, 1` "found", any guard against a value other than 0) are ordinary
     /// exit sites with side traces, not allocation sites (0 = off: every `NE %lib, k` guard is an allocation site).
     pub libsite: u32,
+    /// Section 92.3 (`rerootgain`): `reroot` fires only when the side trace's path promises `rerootgain` percent of the old root's completed
+    /// iterations: `(c - x) * 100 >= (e - p) * rerootgain`, `c` the entries of the busiest pre-roll site's side trace, `x` the exits of that side
+    /// trace, `e` the root's entries and `p` its pre-roll exits (0 = no condition).
+    pub rerootgain: u32,
     /// BUNDLE-C: a side recording that starts inside inlined frames at an exit whose previous attempt ended `SideShort` gets `sbump` more recursion unrolls
     /// ([`SideStart::ubump`]). The common case: a stitch exit at the recursion limit; a side trace starting AT the limit stitches again at its first call and is too short
     /// by construction, so the exit is blacklisted and storms in tier 1 (`regex_nfa`: two exits of 1 M each). 0 = off; default [`SBUMP_PROCESS`] (process and tests).
@@ -1244,6 +1248,7 @@ impl Default for TrLimits {
             rerootfam: 0,
             sretry: 0,
             libsite: 0,
+            rerootgain: 0,
             sbump: SBUMP_PROCESS,
             fretry: FRETRY_PROCESS,
             ccalls: CCALLS_PROCESS,
@@ -1526,8 +1531,9 @@ impl TrLimits {
                 "rerootchk" => l.rerootchk = v,
                 "rerootkeep" => l.rerootkeep = v.min(100),
                 "rerootfam" => l.rerootfam = v.min(1024),
-                "sretry" => l.sretry = v.min(511),
+                "sretry" => l.sretry = v.min(1023),
                 "libsite" => l.libsite = v.min(1),
+                "rerootgain" => l.rerootgain = v.min(10000),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -3275,6 +3281,10 @@ pub struct TrStats {
     pub reroot_kept: u64,
     /// See `reroot_kept`.
     pub reroot_reverts: u64,
+    /// Section 92.3 (`rerootgain`): roots the `reroot` rule would have flushed whose side trace promised too few completed iterations.
+    pub reroot_held: u64,
+    /// Section 92.1 (`sretry`): side recordings started without `sidemin` after an exit's second `SideShort`.
+    pub sretry_starts: u64,
     /// P3: chain re-orders (child subtrees flushed by [`chain_check`]).
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
@@ -4276,6 +4286,11 @@ fn side_failed(
         // the inline stub reports an exit when its counter passes `hot_exit - 1`: count `hot_exit` more
         t.exits[k].set(0);
     }
+}
+
+/// Section 92.1 (`sretry`): count a side recording started without `sidemin`.
+pub fn stat_sretry(st: &mut State) {
+    d_of(st).tr.stats.sretry_starts += 1;
 }
 
 /// Section 92.1 (`sretry`): does the `fails`th failed side attempt of an exit, ended `reason`, wait for a third attempt without `sidemin` instead of
@@ -8310,9 +8325,48 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             _ => 0,
         };
         let fam_ok = fam == 0 || nside < fam;
-        if let Some((k, c, sid)) =
-            best.filter(|b| fam_ok && all_ok && b.1 * 100 >= e * u64::from(rr))
-        {
+        // section 92.3 (`rerootgain`): the re-record follows the side trace's path; the entries of the side trace that leave it before its end
+        // (its exits) are pre-roll exits of the re-record too: predict the completed iterations of both roots from counters
+        let gain = d.tr.cfg.limits.rerootgain;
+        let gain_ok = |c: u64, sid: TrId| -> bool {
+            if gain == 0 {
+                return true;
+            }
+            let x: u64 = match d.tr.slot(sid) {
+                Some(Slot {
+                    body: Body::Trace(t),
+                    ..
+                }) => t.exits.iter().map(|c| u64::from(exit_count(c.get()))).sum(),
+                _ => return false,
+            };
+            let new_done = c.saturating_sub(x);
+            let old_done = e.saturating_sub(p_all);
+            let ok = new_done * 100 >= old_done * u64::from(gain);
+            vlog(d, || {
+                format!(
+                    "rerootgain: root slot {} side slot {} entries {c} exits {x}: completes {new_done} against {old_done} of {e}: {}",
+                    id.slot,
+                    sid.slot,
+                    if ok { "fire" } else { "keep" }
+                )
+            });
+            ok
+        };
+        let held = std::cell::Cell::new(false);
+        let best = best.filter(|b| {
+            fam_ok && all_ok && b.1 * 100 >= e * u64::from(rr) && {
+                let ok = gain_ok(b.1, b.2);
+                if !ok {
+                    h.reroot_done.set(true);
+                    held.set(true);
+                }
+                ok
+            }
+        });
+        if held.get() {
+            d.tr.stats.reroot_held += 1;
+        }
+        if let Some((k, c, sid)) = best {
             h.reroot_done.set(true);
             if let Some(av) = reroot_avoid_path(&d.tr.rr_paths, id, sid, meta, k) {
                 let n = av.len();
@@ -8934,7 +8988,11 @@ pub fn reroot_pending(st: &mut State, id: TrId) -> bool {
     };
     let (root, head) = (r.root, r.head);
     root != 0
-        && tr_of(d, root).is_some_and(|tp| tp.heads.get(head).is_some_and(|h| h.reroot_avoid.borrow().is_some()))
+        && tr_of(d, root).is_some_and(|tp| {
+            tp.heads
+                .get(head)
+                .is_some_and(|h| h.reroot_avoid.borrow().is_some())
+        })
 }
 
 /// Section 59: the recording `id` closed (`side`: a side recording) with this path: kept for the `reroot` rule; a root recording ends its head's constraint.

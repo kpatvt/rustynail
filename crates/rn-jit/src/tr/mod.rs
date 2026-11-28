@@ -1133,8 +1133,22 @@ pub fn driver_start_side(
         return None;
     }
     let rem = snap::land_info(&inner_low, start.pc).1;
-    if start.sretry && cfg.verbose >= 2 {
-        eprintln!("[trace] sretry: side start at pc {} (exit of {:?}) without sidemin", start.pc, id);
+    // section 92.1 (`sretry`): not at a `TFORCALL` unless bit 9 (the short side of an iterator call re-enters the loop's own exit: msgpack_pure)
+    let sretry = start.sretry
+        && (cfg.limits.sretry & 512 != 0
+            || start.frames.is_empty()
+                && proto.code().get(start.pc as usize).is_none_or(|&i| {
+                    rn_core::instruction::Instruction(i).opcode()
+                        != Some(rn_core::ver::active::OpCode::Tforcall)
+                }));
+    if sretry {
+        cache::stat_sretry(st);
+    }
+    if sretry && cfg.verbose >= 2 {
+        eprintln!(
+            "[trace] sretry: side start at pc {} (exit of {:?}) without sidemin",
+            start.pc, id
+        );
     }
     let resolve: record::ResolveFn = Rc::new(|st, p| {
         cache::proto_ref(p).or_else(|| {
@@ -1162,7 +1176,7 @@ pub fn driver_start_side(
             known: start.known.clone(),
             head_state: hs,
             // a prelude replaces a failing entry (type_entry): it pays at any length
-            min_len: if start.prelude || start.sretry {
+            min_len: if start.prelude || sretry {
                 0
             } else {
                 cfg.limits.sidemin

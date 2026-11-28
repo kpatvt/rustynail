@@ -59,6 +59,8 @@ mod s68_progs;
 mod s76_progs;
 #[path = "tr_core/s77_progs.rs"]
 mod s77_progs;
+#[path = "tr_core/s92_progs.rs"]
+mod s92_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -89,6 +91,7 @@ use s64_progs::S64_PROGS;
 use s68_progs::S68_PROGS;
 use s76_progs::S76_PROGS;
 use s77_progs::S77_PROGS;
+use s92_progs::S92_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -226,6 +229,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S77_PROGS)
         .chain(S64_PROGS)
         .chain(S76_PROGS)
+        .chain(S92_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -567,6 +571,8 @@ struct TStats {
     bh_kept: u64,
     /// Section 62: `... kept K reverted V` of the same line.
     reroot_kept: u64,
+    reroot_held: u64,
+    sretry_starts: u64,
     reroot_reverts: u64,
     dstubs: u64,
     dstub_patched: u64,
@@ -820,6 +826,9 @@ impl TStats {
                 s.reroot_drops = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.reroot_kept = w.get(7).and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.reroot_reverts = w.get(9).and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.reroot_held = w.get(11).and_then(|v| v.parse().ok()).unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("sretry: starts ") {
+                s.sretry_starts = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("dlink: attached ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.dlink_attached = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -15689,6 +15698,95 @@ fn s60_reroot_programs() {
     assert!(
         get(&format!("s60_phases {all0}")).2 > 0,
         "s60_phases: the probation check never kept a re-record"
+    );
+}
+
+/// Section 92 (docs/JIT_TRACE.md section 92): `sretry`, `libsite`, `rerootgain`. The `s92_*` programs (short tails behind branches and loop ends,
+/// rows that grow, a sieve, an error and a count hook on short tails, a float change; a tokenizer whose `match` / `find` outcomes change between
+/// phases, an error behind a find outcome) and the section-60 programs in `always` / `on2` x the knobs off / on (`sidemin=4` as in a process,
+/// `sretry=1`: one report window of wait) x plain, `+verify`, budget 17; with the knobs on also `+exitstorm=3 +verify`, budget 3, GC stress 1 / 2
+/// in both collector modes, stack moves, and with the oracle feature the instruction-count identity. Outputs match the interpreter in every job.
+/// Asserts: `sretry` starts short side recordings in `s92_short_tails` and never with the knob off; `rerootgain=110` holds the root of
+/// `s60_worse` (its side trace completes no more iterations) and still re-roots `s60_queens`.
+#[test]
+fn s92_knob_programs() {
+    let progs = [
+        "s92_short_tails",
+        "s92_lib_outcomes",
+        "s60_queens",
+        "s60_worse",
+        "s60_phases",
+    ];
+    let off = "sidemin=4,sretry=0,libsite=0";
+    let on = "sidemin=4,sretry=1,libsite=1,reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=100,rerootgain=110";
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in [off, on] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            }
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify").limits_s(on));
+            jobs.push(Job::new(p, trace).budget(3).limits_s(on));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(on);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(on),
+            );
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                let mut j = Job::new(p, trace).limits_s(on);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    let mut sretry = std::collections::BTreeMap::<String, u64>::new();
+    let mut held = std::collections::BTreeMap::<String, (u64, u64)>::new();
+    for (j, o) in &res {
+        if j.limits == off {
+            assert_eq!(
+                o.stats.sretry_starts,
+                0,
+                "{}: sretry with the knob off",
+                j.tag()
+            );
+            assert_eq!(
+                o.stats.reroots + o.stats.reroot_held,
+                0,
+                "{}: reroot with the knob off",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if plain && j.limits == on {
+            *sretry.entry(j.prog.clone()).or_default() += o.stats.sretry_starts;
+            let e = held.entry(j.prog.clone()).or_default();
+            e.0 += o.stats.reroots;
+            e.1 += o.stats.reroot_held;
+        }
+    }
+    eprintln!("s92 sretry starts: {sretry:?}; reroot (fired, held): {held:?}");
+    assert!(
+        sretry.get("s92_short_tails").copied().unwrap_or(0) > 0,
+        "s92_short_tails: sretry never started a short side recording"
+    );
+    assert!(
+        held.get("s60_queens").copied().unwrap_or_default().0 > 0,
+        "s60_queens: rerootgain held the re-root of the queens loop"
     );
 }
 
