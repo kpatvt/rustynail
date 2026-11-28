@@ -47,6 +47,7 @@ pub fn run(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
         Ok(()) => Ok(()),
         // everything the optimiser gives up on keeps the recorded rolled trace
         Err(Gave::Up(why)) => {
+            NOTE_STATS.with(|c| c.set(None));
             NOTE.with(|n| *n.borrow_mut() = format!("loop: gave up: {why}"));
             Ok(())
         }
@@ -63,6 +64,7 @@ pub fn run_fwd(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
     match transform(rec, opts, false, true) {
         Ok(()) => Ok(()),
         Err(Gave::Up(why)) => {
+            NOTE_STATS.with(|c| c.set(None));
             NOTE.with(|n| *n.borrow_mut() = format!("fwd: gave up: {why}"));
             Ok(())
         }
@@ -72,10 +74,27 @@ pub fn run_fwd(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
 thread_local! {
     /// The summary of the last [`run`] on this thread (tests and `VERBOSE=2`).
     static NOTE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// Section 80.2 (`cspeed` lever `M1`): the statistics of the last successful run, formatted only when [`last_note`] asks (`NOTE` is then
+    /// stale).
+    static NOTE_STATS: std::cell::Cell<Option<(bool, Stats)>> = const { std::cell::Cell::new(None) };
+}
+
+fn note_text(peel: bool, stats: &Stats) -> String {
+    format!(
+        "{}: {} phis, {} hoisted, {} forwarded, {} loads cse'd",
+        if peel { "peeled" } else { "rolled+fwd" },
+        stats.phis,
+        stats.hoisted,
+        stats.forwarded,
+        stats.load_cse
+    )
 }
 
 /// The one-line summary of the last [`run`] of this thread (`peeled: 4 phis, 12 hoisted, 3 forwarded ...`).
 pub fn last_note() -> String {
+    if let Some((peel, st)) = NOTE_STATS.with(std::cell::Cell::get) {
+        return note_text(peel, &st);
+    }
     NOTE.with(|n| n.borrow().clone())
 }
 
@@ -1286,15 +1305,13 @@ fn transform(
     } else {
         roll(rec, opts, keep_snaps)?
     };
-    let note = format!(
-        "{}: {} phis, {} hoisted, {} forwarded, {} loads cse'd",
-        if peel { "peeled" } else { "rolled+fwd" },
-        out.stats.phis,
-        out.stats.hoisted,
-        out.stats.forwarded,
-        out.stats.load_cse
-    );
-    NOTE.with(|n| *n.borrow_mut() = note);
+    if crate::cspeed::on(crate::cspeed::M1) {
+        NOTE_STATS.with(|c| c.set(Some((peel, out.stats))));
+    } else {
+        NOTE_STATS.with(|c| c.set(None));
+        let note = note_text(peel, &out.stats);
+        NOTE.with(|n| *n.borrow_mut() = note);
+    }
     if peel {
         super::sink::PEELED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         super::sink::PHIS.fetch_add(out.stats.phis as u64, std::sync::atomic::Ordering::Relaxed);
@@ -1822,6 +1839,9 @@ fn cleanup_dead(o: &mut Out) -> Result<(), Gave> {
     for e in &o.writeback {
         mark(e.r, &mut live, &mut work);
     }
+    // Section 80.2 (`M1`): the map of a snapshot is marked once (every guard of it named the same refs)
+    let once = crate::cspeed::on(crate::cspeed::M1);
+    let mut snap_seen = vec![false; if once { ir.snaps.len() } else { 0 }];
     while let Some(x) = work.pop() {
         let i = ir.ins[x];
         let (ra, rb) = i.op.ref_operands();
@@ -1846,7 +1866,9 @@ fn cleanup_dead(o: &mut Out) -> Result<(), Gave> {
                 mark(t, &mut live, &mut work);
             }
         }
-        if i.flags & F_GUARD != 0 {
+        if i.flags & F_GUARD != 0
+            && (!once || !std::mem::replace(&mut snap_seen[aux_snap(i.aux) as usize], true))
+        {
             let (st, nn) = ir.snaps[aux_snap(i.aux) as usize].map;
             for k in st as usize..st as usize + usize::from(nn) {
                 let r = ir.snapmap[k].r;

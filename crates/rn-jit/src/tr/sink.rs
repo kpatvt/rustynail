@@ -688,6 +688,35 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         }
         sunk_of.insert(ref_of(c.t), ci);
     }
+    // Section 80.2 (`cspeed` lever `M1`): the alias and candidate maps as tables indexed by instruction (empty with the lever off)
+    let m1 = crate::cspeed::on(crate::cspeed::M1);
+    let mut alias_d: Vec<Ref> = Vec::new();
+    let mut sunk_d: Vec<u32> = Vec::new();
+    if m1 {
+        alias_d = vec![NOREF; n];
+        sunk_d = vec![u32::MAX; n];
+        for (&h, &v) in &alias {
+            if h < n {
+                alias_d[h] = v;
+            }
+        }
+        for (ci, c) in cands.iter().enumerate() {
+            if c.t < n {
+                sunk_d[c.t] = ci as u32;
+            }
+        }
+    }
+    let sunk_get = |r: Ref| -> Option<usize> {
+        if m1 {
+            if r < REF_BIAS || idx(r) >= n {
+                return None;
+            }
+            let c = sunk_d[idx(r)];
+            (c != u32::MAX).then_some(c as usize)
+        } else {
+            sunk_of.get(&r).copied()
+        }
+    };
     // first guard index and last guard index of every snapshot
     let nsn = rec.ir.snaps.len();
     let mut first_g = vec![usize::MAX; nsn];
@@ -743,7 +772,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
             }
             let (st, len) = rec.ir.snaps[s].map;
             for e in &rec.ir.snapmap[st as usize..st as usize + usize::from(len)] {
-                if let Some(&ci) = sunk_of.get(&e.r) {
+                if let Some(ci) = sunk_get(e.r) {
                     if named[ci].last() != Some(&s) {
                         named[ci].push(s);
                     }
@@ -816,6 +845,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
     fn resolve(
         r: Ref,
         alias: &HashMap<usize, Ref>,
+        alias_d: &[Ref],
         newidx: &[Option<usize>],
     ) -> Result<Ref, String> {
         if r < REF_BIAS {
@@ -824,7 +854,12 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         let mut r = r;
         for _ in 0..64 {
             let i = idx(r);
-            if let Some(&a) = alias.get(&i) {
+            let hit = if alias_d.is_empty() {
+                alias.get(&i).copied()
+            } else {
+                alias_d.get(i).copied().filter(|&a| a != NOREF)
+            };
+            if let Some(a) = hit {
                 r = a;
                 if r < REF_BIAS {
                     return Ok(r);
@@ -849,7 +884,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
             let (Some((_, mt)), Some(ne), Some((bit, z))) = (c.setmt, c.setmt_ne, mt_consts) else {
                 return Err("sink: setmt without constants".into());
             };
-            let mtr = resolve(mt, &alias, &newidx)?;
+            let mtr = resolve(mt, &alias, &alias_d, &newidx)?;
             let flags_ref = ref_of(out.len());
             let band_ref = ref_of(out.len() + 1);
             let seq = [
@@ -901,10 +936,9 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         let mut i = rec.ir.ins[o];
         let cand = if crate::cspeed::on(crate::cspeed::PASSES) {
             // (the candidate allocated at `o`: `sunk_of` holds every candidate's table ref)
-            sunk_of
-                .get(&ref_of(o))
+            sunk_get(ref_of(o))
                 .filter(|_| !mutants::active("cspeed_sink_cand_miss"))
-                .map(|&ci| &cands[ci])
+                .map(|ci| &cands[ci])
         } else {
             cands.iter().find(|c| c.t == o)
         };
@@ -928,13 +962,13 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         } else {
             let (ra, rb) = i.op.ref_operands();
             if ra {
-                i.a = resolve(i.a, &alias, &newidx)?;
+                i.a = resolve(i.a, &alias, &alias_d, &newidx)?;
             }
             if rb {
-                i.b = resolve(i.b, &alias, &newidx)?;
+                i.b = resolve(i.b, &alias, &alias_d, &newidx)?;
             }
             if let Some(v) = i.third() {
-                i.aux = i.aux_with_third(resolve(v, &alias, &newidx)?);
+                i.aux = i.aux_with_third(resolve(v, &alias, &alias_d, &newidx)?);
             }
         }
         i.prev = heads[i.op as usize];
@@ -951,7 +985,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
         let at = new_map.len();
         let mut first_slot: HashMap<usize, u16> = HashMap::default(); // candidate -> slot of its group
         for e in &old_map[st as usize..st as usize + usize::from(len)] {
-            if let Some(&ci) = sunk_of.get(&e.r) {
+            if let Some(ci) = sunk_get(e.r) {
                 if let Some(&fs) = first_slot.get(&ci) {
                     let k = rec.ir.konst(KVal::Int(i64::from(fs)));
                     new_map.push(SnapEntry {
@@ -989,7 +1023,7 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
                     }
                 }
                 for (k, v) in keys {
-                    let v = resolve(v, &alias, &newidx)?;
+                    let v = resolve(v, &alias, &alias_d, &newidx)?;
                     new_map.push(SnapEntry {
                         slot: SNAP_PSEUDO,
                         r: k,
@@ -1006,14 +1040,14 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
                     if g != usize::MAX && g > at {
                         new_map.push(SnapEntry {
                             slot: SNAP_PSEUDO,
-                            r: resolve(mt, &alias, &newidx)?,
+                            r: resolve(mt, &alias, &alias_d, &newidx)?,
                             flags: SNAP_SMT,
                         });
                     }
                 }
             } else {
                 new_map.push(SnapEntry {
-                    r: resolve(e.r, &alias, &newidx)?,
+                    r: resolve(e.r, &alias, &alias_d, &newidx)?,
                     ..*e
                 });
             }
@@ -1025,11 +1059,11 @@ fn rebuild(rec: &mut Recorded, cands: &[Cand]) -> Result<Vec<usize>, String> {
     // ---- writeback ----
     let wb = std::mem::take(&mut rec.writeback);
     for e in wb {
-        if sunk_of.contains_key(&e.r) {
+        if sunk_get(e.r).is_some() {
             continue; // a dead slot (checked by `analyse`)
         }
         rec.writeback.push(SnapEntry {
-            r: resolve(e.r, &alias, &newidx)?,
+            r: resolve(e.r, &alias, &alias_d, &newidx)?,
             ..e
         });
     }
