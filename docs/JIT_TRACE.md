@@ -9406,3 +9406,19 @@ So `stitch`, `fnleaf`, `efkeep` and `outerlink` miss the bar and ship OFF (proce
 five rises are not investigated (budget). The light gate on 8261dcb passed every step but two load timeouts (h2_newkey under GC stress 2 + verify on
 5.4, 120 s leash at load 44: passes alone in 16 s; the mutant runner's baseline `instruction_count_identity`; all 223 selected mutants caught).
 
+### 78.10 Round 4: causes of the 223-program rises (partial; nothing changed in the code)
+
+* **`fnleaf=16`, template_etlua +22.6 % (deterministic, cycles +24 %).** Not a trace-body cost: tier-1 compilation churn. `[jit] compiled` 80 ->
+  **625** prototypes, tier-1 code 4.2 -> **36.5 MB**, `tier1` phase 49.9 -> 312.9 Mtsc, OSR entries 154 -> 804; `perf` shows `x86::emit_ex` 5.6 %
+  and `lower::lower_ex` 5.0 % of the instructions (absent without the knob). The only trace that differs is the dynamic-leaf root of
+  `Parser:push_code` (`insert(self.chunks, {...})`, line 77, 2387 entries, no failures). The link between that root and the compiles (the
+  template's generated chunks are loaded per render) is not found yet: the next step is a per-compile log (which prototypes, from which call site:
+  `rt::ensure_compiled` from the recorder's `resolve`, the exit handler's landing, or the call counters).
+* **`outerlink=1`, class_middleclass +0.79 %.** Root entries 262 k -> 59 k, exits 7.91 M -> 8.96 M (+13 %), 7 outer links. A rule "outer body at
+  most 24 instructions outside the inner loop" was built and measured: class_middleclass unchanged (+0.78 %: its outer bodies are short too),
+  awfy/mandelbrot loses its gain (-5.2 % -> -0.1 %): reverted. The discriminator is not the body length; the extra exits come from the side
+  traces that passed the outer head (their other outer paths exit there), not yet attributed per exit.
+* **`stitch=95` (dijkstra_routes, msgpack_pure, csv_ini_yaml) and `efkeep=4` (roguelike_turns): not investigated.** Not built either: the raw-copy
+  materialisation template, the link for cd's unlinked exits before `put`'s `RETURN1`, the bit-12 discriminator, innerlink-style links for loops
+  inside callees. The four knobs stay OFF (78.9).
+
