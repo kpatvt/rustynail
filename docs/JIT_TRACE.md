@@ -10151,3 +10151,24 @@ default size equal (40.33 M). Whole set (223 programs, one run per setting, seri
 more than 0.3 % in instructions, outputs identical; the single-run cycle rises above 2 % are all programs whose instruction count did not
 move (noise); astar_jumper's instruction count varies run to run (noise program; min-of-5 cycles +0.5 %). C44 is closed by this
 measurement. Test: `tr_policy::p2_loopdiet_process_defaults` (default 1); the `tr_core` loop-diet controls run `pollr15=0` and the shipped value.
+
+### 97.3 State and the queue left (for the next builder)
+
+Committed in this round: 97.1 (the stale-slot crash, a `+verify`-only clobber, fixed; mutant `dlink_oracle_first`, registry 931) and 97.2
+(`pollr15=1`). towers 308.9 -> 307.85 instructions per move (LuaJIT 244), permute unchanged (43.9 per call). Not built, in rank order:
+
+1. towers (d), the self-push loop of the function-entry trace (about 40 of its 85 instructions per iteration, 0.5 iterations per move): a
+   guard-free inner entry behind the `SLOAD` type checks for the native self-push (A2's `lead_run` excludes `rec_call` traces; the pushed values'
+   types are known at the push) plus the `moveDisks` lookup carried across the push (the receiver is the pushed `self`: a fact, not a reload).
+   The CP3 note of section 75 applies to the push's `POLL` (a native push skips `luaD_precall`'s hook test): keep the poll, drop the guards.
+2. towers (a), method chains: a per-metatable version stamp bumped by every store into a table that is some metatable or `__index` target
+   (exact semantics needs the bump in the interpreter's, the C API's and the traces' store paths, `rawset` included) or facts carried across
+   links (section 28 (b)).
+3. towers (c), entry `POLL` / `BUDGET`: dropping the poll of push- or return-entered traces is unsound as built (section 75, CP3 retest: the
+   push skips the call hook test, `rec_link_cell` may point at a counting stub); sound only with the continuation depending on the entry trace
+   (flush together) or a poll in the counting stub.
+4. Deeper subtrees (`MAX_INL`), memo_cache per-site `lzretfmax`, the `RETURN1` other-site native return: as in 89.4, not started.
+
+Debugging aids that found 97.1 (worth keeping in mind): `perf record -e mem:<addr>:w:u -c 1` works at `perf_event_paranoid` 2 and gives the
+instruction after the write (the machine code of a trace is in `TR_CORE_DUMPDIR`'s `trace-<slot + 1>.bin`, deferred stubs are placed later);
+`setarch -R` makes the heap and stack addresses of a `tr_core` child repeatable for one environment (the environment's length shifts the stack).
