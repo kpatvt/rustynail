@@ -56,6 +56,10 @@ pub const M1: u32 = 4096;
 /// contents of a sunk table once per prefix of its stores and its header constant once per table (it re-derived both for every snapshot).
 pub const SINKD: u32 = 8192;
 
+/// Section 85.2: the copies of the loop / forwarding pass map a constant of the source trace to the output's through a table indexed by the
+/// constant ref (a hash lookup for every constant operand and snapshot entry before).
+pub const FWDK: u32 = 16384;
+
 /// All levers.
 pub const ALL: u32 = MASKS
     | ENC
@@ -69,7 +73,8 @@ pub const ALL: u32 = MASKS
     | FIXSUM
     | PRUNEQ
     | M1
-    | SINKD;
+    | SINKD
+    | FWDK;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

@@ -1151,6 +1151,8 @@ pub const NAMES: &[&str] = &[
     "sinkd_ls_miss",
     // section 85.1 (`cspeed` lever `SINKD`): the snapshot rebuild reuses the last field group of a sunk table whatever its store prefix
     "sinkd_group_any",
+    // section 85.2 (`cspeed` lever `FWDK`): the constant table of the loop / forwarding copy memoises a copy under the next constant too
+    "fwdk_key_shift",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1244,7 +1246,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 921);
+        assert_eq!(NAMES.len(), 922);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

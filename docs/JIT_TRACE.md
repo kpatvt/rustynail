@@ -9477,3 +9477,59 @@ are marked removed when it is accepted, so the analysis never reaches them. Drop
 | apps/raytrace | 707 -> 684 (-3.3 %) | 253 -> 229 | 271.70 -> 270.70 (-0.37 %) |
 | awfy/cd | 370 -> 362 (-2.2 %) | 119 -> 111 | 599.91 -> 597.75 (-0.36 %) |
 | awfy/towers, awfy/json, lib/fmt_s, awfy/richards | unchanged (no sunk table) | | +-0.00 % |
+
+### 85.2 `FWDK`: the constant map of the loop / forwarding copy as a table (`cspeed` lever 16384, in `cspeed::ALL`: default on)
+
+The side forwarding pass (`opt_loop::run_fwd` -> `roll`) re-emits every instruction of a side trace through the builder (fold, CSE, the memory log)
+and copies its snapshots; counter pairs on cd (208 rolls, 12,219 input instructions): set-up 0.43 M, the instruction copy 6.91 M (565 per
+instruction), the snapshot copy 3.41 M, the clean-up 1.64 M. 103 of the 208 rolls forward or CSE no load, 98 of them leave the length unchanged, but
+the copy drops 25 % of the instructions overall (9,115 of 12,219 remain), so the pass is not a no-op that could be skipped by a cheap test. Every
+constant operand and snapshot entry went through a hash map from the source constant ref to the output's (`Em::kmap`); with the lever it is a table
+indexed by the constant ref. Identical passes (`ccheck`); mutant `fwdk_key_shift` (the copy also memoised under the next constant), caught by
+`c1_cspeed_identical_code`. The instruction copy 6.92 -> 6.47 M and the snapshot copy 3.43 -> 3.17 M on cd.
+
+| program | k / pipeline, base -> 85.1 + 85.2 | instructions M (whole run) |
+|---|---|---|
+| apps/raytrace | 707 -> 679 (-4.0 %) | 271.70 -> 270.52 (-0.43 %) |
+| awfy/cd | 370 -> 358 (-3.2 %) | 599.92 -> 596.79 (-0.52 %) |
+| awfy/towers | 375 -> 373 (-0.5 %) | 161.58 -> 161.52 (-0.04 %) |
+| awfy/json | 296 -> 294 (-0.7 %) | 415.03 -> 414.92 (-0.03 %) |
+| lib/fmt_s | 200 -> 200 | 22.86 -> 22.86 |
+| awfy/richards | 508 -> 503 (-1.0 %) | 153.23 -> 153.07 (-0.10 %) |
+
+Whole set (223 programs, instructions, one run each, base 9cdbdf0 against 85.1 + 85.2): geomean -0.012 %, no output differs, largest falls raytrace
+-0.43 %, lru_cache -0.07 %, game_loop -0.07 %; the two rises are noise: corpus/astar_jumper +2.02 % (the same binary measures 4.24 / 4.34 G and
+4.49 / 4.32 G in repeated runs: the program's instruction count varies by +-3 % run to run), real_dis_ppc +0.25 % (the program 80.3 also lists as
+its largest rise).
+
+### 85.3 State, what the measurements say, and the plan for the next round
+
+**Result of this round: -3.2 .. -4.0 % per pipeline on cd and raytrace, -0.4 .. -0.5 % of the whole run; nothing on the others.** That is not the
+"substantial cut" asked for, and the reason is measured, not assumed:
+
+1. **The snapshot-delta format (S1) has a small ceiling at identical code.** Entries explain a third of a pipeline by the regression of 85.0,
+   but the per-entry work in each stage is cheap (exits: `slot_value` about 90 instructions; allocator: 46-66 per entry by the fit), so reading a
+   delta instead of the flat map saves about what the merge costs (the exit-builder kill test: -0.7 % of the phase). The volume would go only if
+   the *products* were chains too (the `ExitSnap` restore list, the stub plan, the allocator's `snap_locs`), which is a change of the exit handler
+   and of every stage reading `ExitSnap.slots`, bounded by the exits phase (13 % of a pipeline) plus the allocator's snapshot passes (~10 % of
+   the allocator).
+2. **The cost is per IR instruction in the back end** (allocator ~1070, assembler ~720, encoder ~500 instructions per IR instruction on side
+   traces by the fit, r2 0.88-0.99) and **per copied instruction in the front** (the forwarding copy 530 per instruction after `FWDK`, the
+   recorder ~4 k per recorded bytecode). The profiles are flat inside each (no symbol of the compile above 1.5 % of cd's run).
+3. Concretely ranked for cd per pipeline (k instructions, after 85.2): allocator 78, assembler 58, exits 47, encoder 39, side forwarding ~50
+   per side trace, sinking 24 -> 17 per side trace; roots 2-3x in every phase (the root `loop` pass 312 k per root on cd, 175 k on raytrace).
+
+**Next steps, in order** (each with its own knob and the `ccheck` oracle): (a) S3, the backward assembler fused with allocation (the allocator
+and assembler together are 37 % of a cd pipeline and both scale with IR instructions: the only lever left that attacks the per-instruction cost
+of two phases at once); start with straight-line ranges without lookahead fusions and the exit stubs, old path as the code oracle. (b) The
+forwarding copy: emit side traces with forwarding at record time (the recorder's builder already folds and CSEs; the memory log is the missing
+part), so that `run_fwd` is not a second pass over every instruction (14 % of cd's pipelines). (c) The recorder's per-step cost (4 k
+instructions per bytecode; `driver_step` with `record_one` inlined is 1.5 % of cd's whole run). (d) Chained exit products (item 1) only after
+(a), because the stub planner is part of the assembler being rewritten.
+
+### 85.4 Gates
+
+85.1 (commit 5d1e184) and 85.2: `scripts/gate-light.sh fwdk_,sinkd_` with `GATE_CPUS=5-7`, `GATE_LOAD_MAX=0` (load 30-50 from other sessions): every
+step PASS except `tests-5.5-trace` / `tests-5.4-trace` on `tr_core::h2_newkey_programs`, whose `RUSTYNAIL_GC_STRESS=2` + `GC_VERIFY=1` children hit
+the 120 s child leash under that load (101-120 s); the test passes alone (11.8 s on 5.5, 19.3 s on 5.4). The first run also caught the stale
+`registry_is_the_frozen_list` count (fixed). Mutants `sinkd_ls_miss`, `sinkd_group_any`, `fwdk_key_shift`: 3 ran, 3 caught.

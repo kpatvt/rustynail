@@ -5069,6 +5069,11 @@ const TABLE: &[Row] = &[
         owner: "S85",
         dets: &[d("tr_core", "c1_cspeed_identical_code")],
     },
+    Row {
+        name: "fwdk_key_shift",
+        owner: "S85",
+        dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

@@ -146,6 +146,8 @@ struct Em<'a> {
     /// The pre-roll copy's `sub`, kept for the body.
     pre_sub: Vec<Ref>,
     kmap: HashMap<Ref, Ref>,
+    /// Section 85.2 (`cspeed` lever `FWDK`): `kmap` as a table indexed by the source constant ref (`NOREF`: not copied yet); empty without the lever.
+    kmap_d: Vec<Ref>,
     snap_memo: HashMap<u32, u32>,
     snap_step: Vec<u32>,
     entry_snap_out: Option<u32>,
@@ -234,6 +236,11 @@ impl<'a> Em<'a> {
             sub: vec![NOREF; rec.ir.ins.len()],
             pre_sub: Vec::new(),
             kmap: HashMap::default(),
+            kmap_d: if crate::cspeed::on(crate::cspeed::FWDK) {
+                vec![NOREF; rec.ir.k.len() + 1]
+            } else {
+                Vec::new()
+            },
             snap_memo: HashMap::default(),
             snap_step: Vec::new(),
             entry_snap_out: None,
@@ -623,6 +630,18 @@ impl<'a> Em<'a> {
         if r == NOREF {
             NOREF
         } else if r < REF_BIAS {
+            if let Some(&k) = self.kmap_d.get(usize::from(r)) {
+                if k != NOREF {
+                    return k;
+                }
+                let k = self.b.ir.konst(self.src.k[usize::from(r) - 1]);
+                // (MUTANT `fwdk_key_shift`: the copy is memoised under the next constant too, which then maps to this one's copy)
+                if mutants::active("fwdk_key_shift") && usize::from(r) + 1 < self.kmap_d.len() {
+                    self.kmap_d[usize::from(r) + 1] = k;
+                }
+                self.kmap_d[usize::from(r)] = k;
+                return k;
+            }
             if let Some(&k) = self.kmap.get(&r) {
                 return k;
             }
