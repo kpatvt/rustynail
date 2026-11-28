@@ -345,8 +345,12 @@ pub const T1Q_PROCESS: u32 = 125;
 /// **1** `CLOSE` skips its helper when nothing is open at or above its level (no open upvalue there, no to-be-closed variable registered), **2** `TFORCALL`
 /// of the base library's `next` over a table calls the lean helper `jit_tfor_next` (no `savedpc`, no frame reload, no hook re-test: it cannot call, raise or
 /// allocate) and falls back to `jit_tforcall` for anything it does not answer. Bit 7 (0x80) = named explicitly (then it also applies with
-/// `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly).
-pub const T1G_PROCESS: u32 = 3;
+/// `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly). **4** (section 77.14) `TFORCALL` of a compiled Lua closure iterator is a flat frame push;
+/// on since section 82.1, whose per-iterator families keep the polymorphic heads it exposed (iter_pipeline) from being blacklisted.
+pub const T1G_PROCESS: u32 = 7;
+/// Section 82.1 (`pfam`): the default of [`TrLimits::pfam`]: 24 = eight members per generic-`for` head, keys with the upvalue closures' prototypes,
+/// families switched on by a second iterator key (0 = off: one root per loop head).
+pub const PFAM_PROCESS: u32 = 24;
 /// BUNDLE-S S2 (`amt`): process value of [`TrLimits::amt`] (K3a: also the struct default). **1:** array reads / stores of tables with a metatable are recorded (docs/PERF.md "BUNDLE-S").
 pub const AMT_PROCESS: u32 = 1;
 /// BUNDLE-D (`armm`): process value of [`TrLimits::armm`] (K3a: the process value is also the struct default). **0:** `programs/metamethods` 2.24x cycles (the tier-1 continuation keeps the loop out of the trace), nothing gains (docs/PERF.md "BUNDLE-D").
@@ -644,8 +648,12 @@ pub struct TrLimits {
     /// Section 77.17 (`polyhead`): `Ineffective` flushes of a loop head whose traces inlined different prototypes are not counted as repeats (at
     /// most this many; each backs off `hot * 16`); 0 = Q3 as before (the second `Ineffective` flush blacklists).
     pub polyhead: u32,
+    /// Section 82.1 (`pfam`): per-iterator trace families at generic-`for` loop heads. Bits 0-3: the most members (root traces) one head keeps, each keyed
+    /// by the iterator function the loop calls (a Lua closure's prototype, a C function's address); 0 = off (one root per head, as before). Bit 4: the key
+    /// also holds the prototypes of the iterator closure's upvalue closures (one level: `map(f, src)`'s `f` and `src`). Default [`PFAM_PROCESS`].
+    pub pfam: u32,
     /// R2 (`t1g`): bit mask of the tier-1 generic-`for` paths (1 = `CLOSE` without its helper when nothing is open, 2 = `TFORCALL` of `next` through the lean
-    /// helper, 4 = section 77.14: `TFORCALL` of a compiled Lua closure iterator as a flat frame push, off by default); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
+    /// helper, 4 = section 77.14: `TFORCALL` of a compiled Lua closure iterator as a flat frame push, on since section 82.1); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
     pub t1g: u32,
     /// BUNDLE-S S2 (`amt`): array reads and stores of a table that has a metatable are recorded (a non-nil element is a raw access; a nil element needs the flag guard of `__index` / `__newindex`) (default [`AMT_PROCESS`]).
     pub amt: u32,
@@ -1136,6 +1144,7 @@ impl Default for TrLimits {
         #[allow(unused_mut)]
         let mut l = TrLimits {
             polyhead: 0,
+            pfam: PFAM_PROCESS,
             maxtrace: 1000,
             maxrecord: 4000,
             maxsnap: 500,
@@ -1431,6 +1440,7 @@ impl TrLimits {
                 "t1q" => l.t1q = v.min(0x7f) | 0x80,
                 "t1g" => l.t1g = v.min(0x7f) | 0x80,
                 "polyhead" => l.polyhead = v.min(63),
+                "pfam" => l.pfam = v.min(63),
                 "amt" => l.amt = v.min(1),
                 "rearmside" => l.rearmside = v.min(64),
                 "rearmclean" => l.rearmclean = v.min(1),
@@ -1812,6 +1822,8 @@ pub struct HeadData {
     pub entry: Cell<usize>,
     /// The head's pc.
     pub pc: u32,
+    /// Section 82.1 (`pfam`): the family dispatch stub `F_H` of a family's main head in the current tier-1 version (0 = none: not a family head).
+    pub fam_addr: Cell<usize>,
     /// State.
     pub state: Cell<HeadState>,
     /// Abort count `k` (3.3).
@@ -1981,6 +1993,7 @@ impl HeadData {
             entry_ok: Cell::new(0),
             entry: Cell::new(0),
             pc,
+            fam_addr: Cell::new(0),
             state: Cell::new(HeadState::Warm),
             k: Cell::new(0),
             kt: Cell::new(0),
@@ -2031,6 +2044,11 @@ impl HeadData {
 
     /// Where `cell[H]` must point in the current state (TR20).
     pub fn target(&self) -> usize {
+        // Section 82.1: a family's main head never records itself; tier 1 reaches its members through the dispatch stub (a `Black` main head: J4 or a
+        // blacklist owns the loop, no member is entered)
+        if self.fam_addr.get() != 0 && self.state.get() != HeadState::Black {
+            return self.fam_addr.get();
+        }
         match self.state.get() {
             HeadState::Warm | HeadState::Recording => self.c_addr.get(),
             HeadState::Traced => {
@@ -2196,6 +2214,44 @@ pub struct TrProto {
     cent: Cell<bool>,
     /// BUNDLE-J (`centry`): the C-entered root trace is too light to repay the entry from C (see [`CENTRY_MIN_IR`]): the prototype is not entered from C any more.
     cent_off: Cell<bool>,
+    /// Section 82.1 (`pfam`): the per-iterator trace families of the prototype's generic-`for` heads.
+    fams: Box<[FamInfo]>,
+    /// Section 82.1: per head, the index + 1 of the family it is the main head or a member of (0 = none).
+    fam_ix: Box<[u32]>,
+}
+
+/// Section 82.1 (`pfam`): one per-iterator trace family: a generic-`for` loop head (`main`, the head tier 1 dispatches through) and its member
+/// heads, each a full head (state, penalties, root trace) keyed by the iterator function the loop calls. The main head never records: its dispatch
+/// stub `F_H` enters the member of the running iterator, so a polymorphic loop keeps one root per iterator and a member that fails is blacklisted
+/// alone. Members share the main head's pc and tier-1 labels; their cells are reached only through `F_H` and through links of their own traces.
+#[derive(Debug)]
+pub struct FamInfo {
+    /// The main head.
+    pub main: usize,
+    /// `A` of the loop's `TFORCALL` (the iterator function is `R[A]`, unchanged by the loop body).
+    pub a: u8,
+    /// Index of the first member head (the members are `first .. first + keys.len()`).
+    pub first: usize,
+    /// The key of each member (0 = free slot).
+    pub keys: Box<[Cell<u64>]>,
+    /// `pfam` bit 4: keys include the prototypes of the iterator closure's upvalue closures.
+    pub deep: bool,
+    /// The dispatch stub's one-entry cache: the iterator's payload word (0 = empty) and the address of the cell it jumps through.
+    pub cl: Cell<u64>,
+    /// See `cl`.
+    pub cc: Cell<usize>,
+    /// Cell holding the head's counting stub `C_H` (an iterator without a member while a slot is free).
+    pub to_count: Cell<usize>,
+    /// Cell holding the head's tier-1 label (an iterator without a member, every slot taken).
+    pub to_pcl: Cell<usize>,
+    /// Iterators refused a member because every slot was taken.
+    pub full: Cell<u32>,
+    /// The family is on: the main head dispatches through `F_H` (else it is a plain head until a recording sees a second iterator key).
+    pub on: Cell<bool>,
+    /// The key of the iterator of the last plain recording of the main head (0 = none yet).
+    pub key0: Cell<u64>,
+    /// `F_H` in the current tier-1 version.
+    pub stub: Cell<usize>,
 }
 
 /// F5: what a head knows about J4 (kept next to `HeadData`, whose layout machine code depends on).
@@ -2229,12 +2285,76 @@ impl TrProto {
         seed: u32,
         line: i32,
     ) -> TrProto {
+        Self::new_fam(
+            code_len,
+            head_pcs,
+            hot,
+            always,
+            seed,
+            line,
+            &[],
+            0,
+            false,
+            false,
+        )
+    }
+
+    /// [`TrProto::new`] with the per-iterator families of section 82.1: `fam` lists `(head pc, A of its TFORCALL)`, each family gets `k` member heads
+    /// (appended behind the heads of `head_pcs`, not in the pc index).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_fam(
+        code_len: usize,
+        head_pcs: &[u32],
+        hot: i32,
+        always: bool,
+        seed: u32,
+        line: i32,
+        fam: &[(u32, u8)],
+        k: usize,
+        deep: bool,
+        eager: bool,
+    ) -> TrProto {
         let mut index = vec![0u32; if head_pcs.is_empty() { 0 } else { code_len }];
         for (i, &pc) in head_pcs.iter().enumerate() {
             index[pc as usize] = i as u32 + 1;
         }
+        let k = if fam.is_empty() { 0 } else { k };
+        let mut all: Vec<u32> = head_pcs.to_vec();
+        let mut fams = Vec::new();
+        let mut fam_ix = vec![0u32; head_pcs.len()];
+        for &(pc, a) in fam {
+            let Some(main) = head_pcs.iter().position(|&p| p == pc) else {
+                continue;
+            };
+            if k == 0 {
+                break;
+            }
+            let first = all.len();
+            fam_ix[main] = fams.len() as u32 + 1;
+            for _ in 0..k {
+                all.push(pc);
+                fam_ix.push(fams.len() as u32 + 1);
+            }
+            fams.push(FamInfo {
+                main,
+                a,
+                first,
+                keys: (0..k).map(|_| Cell::new(0)).collect(),
+                deep,
+                cl: Cell::new(0),
+                cc: Cell::new(0),
+                to_count: Cell::new(0),
+                to_pcl: Cell::new(0),
+                full: Cell::new(0),
+                on: Cell::new(eager),
+                key0: Cell::new(0),
+                stub: Cell::new(0),
+            });
+        }
         TrProto {
-            heads: head_pcs.iter().map(|&pc| HeadData::new(pc)).collect(),
+            fams: fams.into_boxed_slice(),
+            fam_ix: fam_ix.into_boxed_slice(),
+            heads: all.iter().map(|&pc| HeadData::new(pc)).collect(),
             index: index.into_boxed_slice(),
             deps: RefCell::new(Vec::new()),
             pcs: (0..code_len).map(|_| Cell::new(0)).collect(),
@@ -2243,7 +2363,7 @@ impl TrProto {
             hot: hot.max(1),
             line,
             nests: std::cell::OnceCell::new(),
-            ext: head_pcs.iter().map(|_| HeadExt::default()).collect(),
+            ext: all.iter().map(|_| HeadExt::default()).collect(),
             fn_head: Cell::new(false),
             conts: RefCell::new(Vec::new()),
             recursive: Cell::new(false),
@@ -2498,6 +2618,88 @@ impl TrProto {
     /// Head `i`.
     pub fn head(&self, i: usize) -> &HeadData {
         &self.heads[i]
+    }
+
+    /// Section 82.1: the family head `i` belongs to (as the main head or a member).
+    pub fn fam_of(&self, i: usize) -> Option<&FamInfo> {
+        match self.fam_ix.get(i) {
+            Some(&f) if f != 0 => self.fams.get(f as usize - 1),
+            _ => None,
+        }
+    }
+
+    /// Section 82.1: is head `i` a family's main head?
+    pub fn is_fam_main(&self, i: usize) -> bool {
+        self.fam_of(i).is_some_and(|f| f.main == i)
+    }
+
+    /// Section 82.1: is head `i` a family member?
+    pub fn is_fam_member(&self, i: usize) -> bool {
+        self.fam_of(i).is_some_and(|f| f.main != i)
+    }
+
+    /// Section 82.1: the families of the prototype.
+    pub fn fams(&self) -> &[FamInfo] {
+        &self.fams
+    }
+
+    /// Section 82.1: the head pc `pc` stands for in the context of a recording whose head is `am` (the head of the active recording of this
+    /// prototype, if any): the member `am` when it belongs to the family of the head at `pc`, else the head at `pc`. Links, entry cells and the
+    /// recorder's per-head questions of a member's recordings go to the member, everything else to the head tier 1 dispatches through.
+    pub fn head_index_in(&self, pc: u32, am: Option<usize>) -> Option<usize> {
+        let i = self.head_index(pc)?;
+        match am {
+            Some(m) if m != i && self.fam_of(m).is_some_and(|f| f.main == i) => Some(m),
+            _ => Some(i),
+        }
+    }
+
+    /// Section 82.1: the member of family `fi` keyed `key`; `alloc`: take a free slot for it when there is none (the dispatch cache is cleared).
+    pub fn fam_member(&self, fi: &FamInfo, key: u64, alloc: bool) -> Option<usize> {
+        if let Some(k) = fi.keys.iter().position(|c| c.get() == key) {
+            return Some(fi.first + k);
+        }
+        if !alloc {
+            return None;
+        }
+        // (a free slot, else the slot of a member that never failed and holds no trace: its iterator's prototype was collected, or it was flushed
+        // as a dependency; a member with a penalty keeps its slot, the family's memory of that iterator)
+        let k = fi.keys.iter().position(|c| c.get() == 0).or_else(|| {
+            (0..fi.keys.len()).find(|&k| {
+                let h = &self.heads[fi.first + k];
+                h.state.get() == HeadState::Warm
+                    && h.fresh()
+                    && h.ineff.get() == 0
+                    && h.trace.get().is_none()
+            })
+        })?;
+        fi.keys[k].set(key);
+        fi.cl.set(0);
+        Some(fi.first + k)
+    }
+
+    /// Section 82.1: a new tier-1 version of family head `i` (its dispatch stub `f`, counting stub `c`, label `pcl`).
+    fn set_fam_version(&self, i: usize, f: usize, c: usize, pcl: usize) {
+        let Some(fi) = self.fam_of(i) else { return };
+        fi.to_count.set(c);
+        fi.to_pcl.set(pcl);
+        fi.cl.set(0);
+        if fi.cc.get() == 0 {
+            // (the cache cell always names a valid cell: a payload word equal to the empty mark jumps through it)
+            fi.cc.set(fi.to_pcl.as_ptr() as usize);
+        }
+        fi.stub.set(f);
+        self.heads[i].fam_addr.set(if fi.on.get() { f } else { 0 });
+        self.retarget(i);
+    }
+
+    /// Section 82.1: family head `i` turns its family on (a recording saw a second iterator key): tier 1 dispatches through `F_H` from now on.
+    fn fam_switch_on(&self, i: usize) {
+        let Some(fi) = self.fam_of(i) else { return };
+        fi.on.set(true);
+        fi.cl.set(0);
+        self.heads[i].fam_addr.set(fi.stub.get());
+        self.retarget(i);
     }
 
     /// Index of the head at `pc`.
@@ -3243,6 +3445,14 @@ pub struct TrStats {
     pub chain_deep: u64,
     /// P3: heads re-recorded with their callee guards out of the entry segment (`ncallee`).
     pub ncallee_heads: u64,
+    /// Section 82.1 (`pfam`): misses of the family dispatch stubs (`jit_tr_fam` calls), member recordings started, iterators refused a member.
+    pub fam_dispatch: u64,
+    /// See `fam_dispatch`.
+    pub fam_started: u64,
+    /// See `fam_dispatch`.
+    pub fam_full: u64,
+    /// Families turned on (a head's recording saw a second iterator key).
+    pub fam_on: u64,
     /// C36: persistent entry failures repaired by allocating spare `CallInfo` nodes (`cispare`).
     pub ci_repaired: u64,
     /// K4: root entries whose TR6b check found no spare `CallInfo` and was repaired in place (`jit_tr_ci_spare_root`).
@@ -3910,11 +4120,21 @@ pub enum Begin {
 /// Starts a recording of head `pc` of `pr` (what [`jit_tr_hot`] does before it calls the recorder): charges the
 /// recording buffers, allocates the [`TrId`], marks the head `Recording`.
 pub fn begin_recording(st: &mut State, pr: ProtoRef, pc: u32) -> Result<TrId, Begin> {
+    begin_recording_at(st, pr, pc, None)
+}
+
+/// [`begin_recording`] for head `at` (section 82.1: a family member, whose pc is `pc`) instead of the head at `pc`.
+pub fn begin_recording_at(
+    st: &mut State,
+    pr: ProtoRef,
+    pc: u32,
+    at: Option<usize>,
+) -> Result<TrId, Begin> {
     let d = d_of(st);
     let Some(tp) = tr_of(d, pr.0) else {
         return Err(Begin::NoHead);
     };
-    let Some(i) = tp.head_index(pc) else {
+    let Some(i) = at.or_else(|| tp.head_index(pc)) else {
         return Err(Begin::NoHead);
     };
     if d.tr.cfg.mode == TrMode::Off || !d.enabled {
@@ -6141,11 +6361,29 @@ pub struct SideFrame {
     pub mm: bool,
 }
 
+/// Section 82.1 (`pfam`): the head of the active recording when it is a family member of prototype `root` (the context of
+/// [`TrProto::head_index_in`]).
+pub fn active_member(st: &mut State, pr: ProtoRef) -> Option<usize> {
+    let root = pr.0;
+    let d = d_of(st);
+    let id = d.tr.active?;
+    match d.tr.slot(id) {
+        Some(Slot {
+            body: Body::Rec(r), ..
+        }) if r.root == root => {
+            let tp = tr_of(d, root)?;
+            tp.is_fam_member(r.head).then_some(r.head)
+        }
+        _ => None,
+    }
+}
+
 /// F2a: the entry address of the root trace of head `pc` of `pr` (0: none) and the address of the head's `entry` cell
 /// (the link target of a prelude, TR8: the cell, not the address, is embedded in the code).
 pub fn head_entry(st: &mut State, pr: ProtoRef, pc: u32) -> Option<(usize, u64)> {
+    let am = active_member(st, pr);
     with_tr(st, pr, |tp| {
-        tp.head_index(pc).map(|i| {
+        tp.head_index_in(pc, am).map(|i| {
             let h = tp.head(i);
             (h.entry.get(), &h.entry as *const Cell<usize> as u64)
         })
@@ -7036,8 +7274,9 @@ fn family_linked_in(d: &JitData, id: TrId) -> bool {
 
 /// T9 (`innerlink` bit 3): is head `pc` of `pr` the target of a root trace's frame-linking exit ([`HeadData::linked_in`])?
 pub fn head_linked_in(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    let am = active_member(st, pr);
     with_tr(st, pr, |tp| {
-        tp.head_index(pc)
+        tp.head_index_in(pc, am)
             .is_some_and(|i| tp.head(i).linked_in.get())
     })
     .unwrap_or(false)
@@ -7054,8 +7293,9 @@ pub fn note_inner(st: &mut State, link: bool, ret: bool) {
 /// The first time (bit 1 on): the exits of that head's family that were blacklisted after side recordings ended at the root `RETURN`
 /// (`LeaveFrame`: the pop the return half now allows was refused) try again with fresh counters.
 pub fn mark_linked_in(st: &mut State, pr: ProtoRef, pc: u32) {
+    let am = active_member(st, pr);
     let fam = with_tr(st, pr, |tp| {
-        tp.head_index(pc).and_then(|i| {
+        tp.head_index_in(pc, am).and_then(|i| {
             let h = tp.head(i);
             let first = !h.linked_in.replace(true);
             first.then(|| h.trace.get())
@@ -7702,24 +7942,44 @@ pub fn head_is_fn(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
 /// (`Some(false)`), or not a head (`None`)? The side recorder's question when it reaches a pc of the root frame.
 /// (The function-entry head of P-E2 is not a loop head: `None`.)
 pub fn head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
+    let am = active_member(st, pr);
     with_tr(st, pr, |tp| {
         if tp.is_fn_head(pc) || tp.is_cont_head(pc) {
             return None;
         }
-        tp.head_index(pc)
-            .map(|i| tp.head(i).state.get() == HeadState::Traced)
+        tp.head_index_in(pc, am).map(|i| match tp.fam_of(i) {
+            // Section 82.1: a family's main head is entered through its dispatch stub: traced when a member is
+            Some(fi) if fi.main == i && fi.on.get() => {
+                (0..fi.keys.len()).any(|k| tp.head(fi.first + k).state.get() == HeadState::Traced)
+            }
+            _ => tp.head(i).state.get() == HeadState::Traced,
+        })
     })
     .flatten()
+}
+
+/// Section 82.1: head `ix - 1` when `ix != 0` and it is a head at `pc`, else the head at `pc`.
+fn head_at(tp: &TrProto, pc: u32, ix: u32) -> Option<usize> {
+    let i = ix as usize;
+    if i != 0 && i <= tp.heads().len() && tp.head(i - 1).pc == pc {
+        return Some(i - 1);
+    }
+    tp.head_index(pc)
 }
 
 /// The entry-failure counters of head `pc` reached the threshold (`jit_tr_entry_fail`): queue the flush and
 /// re-record. Returns whether a flush was queued.
 pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    entry_fail_hot_at(st, pr, pc, 0)
+}
+
+/// [`entry_fail_hot`] of head `ix - 1` (section 82.1: a family member, which shares its pc with the main head); `ix == 0`: the head at `pc`.
+pub fn entry_fail_hot_at(st: &mut State, pr: ProtoRef, pc: u32, ix: u32) -> bool {
     let d = d_of(st);
     let Some(tp) = tr_of(d, pr.0) else {
         return false;
     };
-    let Some(i) = tp.head_index(pc) else {
+    let Some(i) = head_at(tp, pc, ix) else {
         return false;
     };
     if !tp.entry_fail_hot(i) {
@@ -7951,7 +8211,12 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
     let Some(tp) = tr_of(d, pr.0) else {
         return false;
     };
-    let Some(h) = tp.heads().iter().find(|h| h.trace.get() == Some(id)) else {
+    let Some((hix, h)) = tp
+        .heads()
+        .iter()
+        .enumerate()
+        .find(|(_, h)| h.trace.get() == Some(id))
+    else {
         return false;
     };
     let e = u64::from(h.entry_ok.get());
@@ -8066,10 +8331,8 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
     // (oop_methods: entry -> exit -> side -> entry per iteration, ~100 cycles apart; richards / deltablue: thousands of cycles of
     // work in the tree per entry). The rate is measured between two checks of the same trace with the time-stamp counter.
     let mut hopping = false;
-    if hop_rule_applies(
-        cover,
-        tp.head_deep(tp.head_index(h.pc).unwrap_or(0)) && d.tr.cfg.limits.deephop != 0,
-    ) && p_all * 100 >= e * COVER_PCT
+    if hop_rule_applies(cover, tp.head_deep(hix) && d.tr.cfg.limits.deephop != 0)
+        && p_all * 100 >= e * COVER_PCT
     {
         // BUNDLE-P: the default rule is deterministic (counters only): a root through which `hoptop` percent of the entries leave by ONE pre-roll
         // site, into the same side trace, never runs its own loop (a trampoline: the loop runs in the side trace, without the root's loop
@@ -8174,15 +8437,16 @@ pub fn entry_fail_hot_id(st: &mut State, ci: Ci, id: TrId) -> bool {
     let Some(tp) = tr_of(d, pr.0) else {
         return false;
     };
-    let Some(pc) = tp
+    let Some((i, pc)) = tp
         .heads()
         .iter()
-        .find(|h| h.trace.get() == Some(id))
-        .map(|h| h.pc)
+        .enumerate()
+        .find(|(_, h)| h.trace.get() == Some(id))
+        .map(|(i, h)| (i, h.pc))
     else {
         return false;
     };
-    entry_fail_hot(st, pr, pc)
+    entry_fail_hot_at(st, pr, pc, i as u32 + 1)
 }
 
 // ---- free_code / state hooks ------------------------------------------------------------------------------
@@ -8376,6 +8640,33 @@ pub(crate) fn report(d: &JitData) {
         "{}",
         super::diag::head_report(&d.tr.diag, prof.as_ref(), &live)
     );
+    // Section 82.1 (`pfam`): the members of the families that are on (the per-head table above merges them into their main head's row)
+    for &k in &d.live {
+        let Some(tp) = tr_of(d, k) else { continue };
+        for fi in tp.fams().iter().filter(|f| f.on.get()) {
+            let pc = tp.head(fi.main).pc;
+            eprintln!(
+                "[pfam] line {} pc {pc}: {} members, {} refused (full)",
+                tp.line,
+                fi.keys.len(),
+                fi.full.get()
+            );
+            for (j, key) in fi.keys.iter().enumerate().filter(|(_, c)| c.get() != 0) {
+                let h = tp.head(fi.first + j);
+                eprintln!(
+                    "[pfam]   member {j} key {:#x} {:?} k {} rerec {} ineff {} entries {} (fail {}) trace {:?}",
+                    key.get() & 0xffff_ffff,
+                    h.state.get(),
+                    h.k.get(),
+                    h.rerec.get(),
+                    h.ineff.get(),
+                    h.entry_ok.get(),
+                    h.entry_fail.get(),
+                    h.trace.get().map(|t| t.slot)
+                );
+            }
+        }
+    }
 }
 
 /// What the `loopany` guard flushes when it fires.
@@ -8580,9 +8871,10 @@ pub fn head_reroot_avoid(
     pr: ProtoRef,
     pc: u32,
 ) -> Option<std::rc::Rc<Vec<(u32, usize, u8)>>> {
+    let am = active_member(st, pr);
     let d = d_of(st);
     let tp = tr_of(d, pr.0)?;
-    let i = tp.head_index(pc)?;
+    let i = tp.head_index_in(pc, am)?;
     let a = tp.head(i).reroot_avoid.borrow();
     a.as_ref().map(|x| x.0.clone())
 }
@@ -8682,9 +8974,10 @@ fn reroot_avoid_path(
 
 /// BUNDLE-L B: is the head `pc` of `pr` to be recorded without hoisted bounds guards?
 pub fn head_nohoist(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    let am = active_member(st, pr);
     let d = d_of(st);
     tr_of(d, pr.0)
-        .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).nohoist.get()))
+        .and_then(|tp| tp.head_index_in(pc, am).map(|i| tp.head(i).nohoist.get()))
         .unwrap_or(false)
 }
 
@@ -8693,10 +8986,11 @@ pub fn head_ncallee(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
     if mutants::active("ncallee_never") {
         return false;
     }
+    let am = active_member(st, pr);
     let d = d_of(st);
     d.tr.cfg.limits.ncallee != 0
         && tr_of(d, pr.0)
-            .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).ncallee.get()))
+            .and_then(|tp| tp.head_index_in(pc, am).map(|i| tp.head(i).ncallee.get()))
             .unwrap_or(false)
 }
 
@@ -9107,7 +9401,45 @@ fn hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
         h.arm(i64::from(i32::MAX / 2));
         return false;
     };
-    let Ok(id) = begin_recording(st, pr, pc) else {
+    // Section 82.1 (`pfam`): the counter of a family's main head fired: the member of the running iterator records (a free slot is taken for a
+    // new iterator; every slot taken: refused, the dispatch stub then sends that iterator to tier 1)
+    let mut at = None;
+    if let Some(fi) = tp.fam_of(i).filter(|fi| fi.main == i) {
+        let v = st.get(rn_core::state::StkId(ci.r().func.0 + 1 + usize::from(fi.a)));
+        let key = fam_key(&v, fi.deep);
+        let d = d_of(st);
+        if !fi.on.get() {
+            // (a plain head until a recording of it sees an iterator other than the last one's: monomorphic loops never pay the dispatch)
+            if fi.key0.get() == 0 || fi.key0.get() == key {
+                fi.key0.set(key);
+            } else {
+                d.tr.stats.fam_on += 1;
+                tp.fam_switch_on(i);
+            }
+        }
+    }
+    if let Some(fi) = tp.fam_of(i).filter(|fi| fi.main == i && fi.on.get()) {
+        let v = st.get(rn_core::state::StkId(ci.r().func.0 + 1 + usize::from(fi.a)));
+        let key = fam_key(&v, fi.deep);
+        let d = d_of(st);
+        let Some(m) = tp.fam_member(fi, key, true) else {
+            d.tr.stats.fam_full += 1;
+            fi.cl.set(0);
+            tp.rearm(i);
+            return false;
+        };
+        if tp.head(m).state.get() != HeadState::Warm {
+            // (a stale cache entry sent a traced or blacklisted member's iterator here)
+            fi.cl.set(0);
+            tp.rearm(i);
+            return false;
+        }
+        d.tr.stats.fam_started += 1;
+        // (the counter of the main head starts over: the next fire is another iterator's, or this one's after a failed recording)
+        tp.rearm(i);
+        at = Some(m);
+    }
+    let Ok(id) = begin_recording_at(st, pr, pc, at) else {
         return false;
     };
     if start(st, ci, id, pc) {
@@ -9134,6 +9466,87 @@ pub unsafe extern "C" fn jit_tr_hot(th: *mut Thread, ci: *mut CallInfo, a: u32, 
     }
 }
 
+/// Section 82.1 (`pfam`): the family key of an iterator value: a Lua closure's prototype (with `deep`, mixed with the prototypes / functions of its
+/// upvalue closures), a C function's address, 1 for anything else. Never 0 (the free-slot mark).
+pub fn fam_key(v: &rn_core::value::Value, deep: bool) -> u64 {
+    let fkey = |v: &rn_core::value::Value| -> u64 {
+        if let Some(cl) = v.as_lclosure() {
+            cl.proto().as_ptr() as usize as u64
+        } else if let Some(f) = v.as_light_cfn() {
+            f as usize as u64
+        } else if let Some(c) = v.as_cclosure() {
+            c.f as usize as u64
+        } else {
+            0
+        }
+    };
+    let mut k = fkey(v);
+    if deep {
+        if let Some(cl) = v.as_lclosure() {
+            for i in 0..cl.nupvalues() {
+                let u = cl.upval(i).get();
+                let x = fkey(&u);
+                if x != 0 {
+                    k = (k ^ x.rotate_left(17 + 7 * i as u32)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                }
+            }
+        }
+    }
+    if k == 0 {
+        1
+    } else {
+        k
+    }
+}
+
+/// Section 82.1: the cell family `fi` sends iterator key `key` to, and whether the answer may be cached (`main`: the family's main head).
+fn fam_target(tp: &TrProto, fi: &FamInfo, key: u64) -> usize {
+    let main = tp.head(fi.main);
+    match tp.fam_member(fi, key, false) {
+        // (through the member's dispatch cell: its root's guarded entry, which checks everything the key does not)
+        Some(m) if mutants::active("pfam_guard_free_entry") && tp.head(m).e2.get() != 0 => {
+            tp.head(m).e2.as_ptr() as usize
+        }
+        Some(m) => tp.head(m).cell.as_ptr() as usize,
+        // (a free slot: the counting stub, whose fire takes it; every slot taken: tier 1 runs the loop, the per-family failure memory)
+        None if fi.keys.iter().any(|c| c.get() == 0) && main.state.get() == HeadState::Warm => {
+            fi.to_count.as_ptr() as usize
+        }
+        None => {
+            fi.full.set(fi.full.get().saturating_add(1));
+            fi.to_pcl.as_ptr() as usize
+        }
+    }
+}
+
+/// `jit_tr_fam(thread, ci, head_pc, 0) -> 0` (section 82.1): the miss path of the family dispatch stub `F_H` of the generic-`for` head `head_pc`:
+/// keys the running iterator `R[A]`, stores the cell the stub jumps through (a member's dispatch cell, the counting stub or the label) and the
+/// iterator word in the one-entry cache. No Lua code runs, nothing is allocated or collected.
+///
+/// # Safety
+/// Called only from compiled code with the running thread and its current Lua frame.
+pub unsafe extern "C" fn jit_tr_fam(th: *mut Thread, ci: *mut CallInfo, a: u32, _b: u32) -> u32 {
+    // SAFETY: as in `jit_tr_hot`.
+    let (mut st, ci) = unsafe { (jit_hooks::state_from_thread(th.cast()), Ci::from_raw(ci)) };
+    let Some(pr) = ci_proto_ref(&mut st, ci) else {
+        return 0;
+    };
+    let func = ci.r().func;
+    let d = d_of(&mut st);
+    d.tr.stats.fam_dispatch += 1;
+    let Some(tp) = tr_of(d, pr.0) else { return 0 };
+    let Some(i) = tp.head_index(a) else { return 0 };
+    let Some(fi) = tp.fam_of(i) else { return 0 };
+    let v = st.get(rn_core::state::StkId(func.0 + 1 + usize::from(fi.a)));
+    let key = fam_key(&v, fi.deep);
+    // SAFETY: the payload word of a value is its second word (`TValue` layout).
+    let word = unsafe { *(&v as *const rn_core::value::Value as *const u64).add(1) };
+    let cell = fam_target(tp, fi, key);
+    fi.cc.set(cell);
+    fi.cl.set(word);
+    0
+}
+
 /// `jit_tr_entry_fail(thread, ci, head_pc, 0)`: the persistent-entry-failure threshold of a trace was reached
 /// (3.3): queues the flush (the failure path runs inside the trace's code block, TR18) and returns 0.
 ///
@@ -9143,15 +9556,15 @@ pub unsafe extern "C" fn jit_tr_entry_fail(
     th: *mut Thread,
     ci: *mut CallInfo,
     a: u32,
-    _b: u32,
+    b: u32,
 ) -> u32 {
     // SAFETY: as in `jit_tr_hot`.
     let (mut st, ci) = unsafe { (jit_hooks::state_from_thread(th.cast()), Ci::from_raw(ci)) };
     if let Some(pr) = ci_proto_ref(&mut st, ci) {
         let d = d_of(&mut st);
         d.tr.in_handler += 1; // a trace's failure path is running: defer the flush to the next safe point
-        if !ci_spare_repair(&mut st, pr, a) {
-            entry_fail_hot(&mut st, pr, a);
+        if !ci_spare_repair(&mut st, pr, a, b) {
+            entry_fail_hot_at(&mut st, pr, a, b);
         }
         let d = d_of(&mut st);
         d.tr.in_handler -= 1;
@@ -9229,7 +9642,7 @@ pub unsafe extern "C" fn jit_tr_ci_spare_root(
 /// running frame lacks them, they are allocated, the head's failure account restarts and no flush happens. Returns whether it repaired.
 /// (Tier 1 with inlined built-ins (`t1inline`) never makes the call that would have extended the chain, so a leaf called at the deepest call depth reached so far
 /// fails every entry of a trace with an intrinsic call: a flush re-records the same code, which is then refused as `Identical` and the head is blacklisted.)
-fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32, ix: u32) -> bool {
     let d = d_of(st);
     if d.tr.cfg.limits.cispare & 1 == 0 || mutants::active("cispare_never") {
         return false;
@@ -9237,7 +9650,7 @@ fn ci_spare_repair(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
     let Some(tp) = tr_of(d, pr.0) else {
         return false;
     };
-    let Some(i) = tp.head_index(pc) else {
+    let Some(i) = head_at(tp, pc, ix) else {
         return false;
     };
     if !tp.entry_fail_hot(i) {
@@ -9295,6 +9708,8 @@ pub(crate) struct HeadLabels {
     m: Option<crate::ir::L>,
     /// F5: J4's promote-counter stub of the head (`None`: the nest is not warm in this version).
     w: Option<crate::ir::L>,
+    /// Section 82.1: the family dispatch stub `F_H` (`None`: not a family head).
+    f: Option<crate::ir::L>,
 }
 
 /// State of one run of the dispatch hook: the table it creates (or borrows, for a recompile of a prototype that
@@ -9374,7 +9789,22 @@ impl<'t> Dispatch<'t> {
             let c = hl.and_then(|l| off(l.c)).map_or(0, |o| base + o);
             let m = hl.and_then(|l| l.m).and_then(off).map_or(0, |o| base + o);
             let w = hl.and_then(|l| l.w).and_then(off).map_or(0, |o| base + o);
+            if tp.is_fam_member(i) {
+                // Section 82.1: a member has the main head's counting stub and label (never the dispatch stub: a member's fallback re-entering
+                // `F_H` would loop), no stack-move stub and no J4 stub
+                let c = if mutants::active("pfam_member_cell_stub") {
+                    hl.and_then(|l| l.f).and_then(off).map_or(c, |o| base + o)
+                } else {
+                    c
+                };
+                tp.set_version_w(i, c, 0, pcl, 0);
+                continue;
+            }
             tp.set_version_w(i, c, m, pcl, w);
+            if tp.is_fam_main(i) {
+                let f = hl.and_then(|l| l.f).and_then(off).map_or(0, |o| base + o);
+                tp.set_fam_version(i, f, c, pcl);
+            }
         }
     }
 
@@ -9421,6 +9851,8 @@ pub(crate) struct DispatchCfg {
     pub hot: i32,
     pub always: bool,
     pub tracemove: bool,
+    /// Section 82.1: `TrLimits::pfam` (0 with `+tracemove`).
+    pub pfam: u32,
     pub seed: u32,
     pub line: i32,
     /// P-E2: the prototype may get a function-entry head (not vararg, `fnroot` limit on).
@@ -9532,7 +9964,36 @@ pub(crate) fn emit_dispatch(
     let mut out = RegionOut::default();
     // (a function without loops still gets a table: it is the home of the dependency edges of its callers' traces)
     if dis.ext.is_none() {
-        let tp = TrProto::new(env.ins.len(), &pcs, c.hot, c.always, c.seed, c.line);
+        // Section 82.1 (`pfam`): the generic-`for` heads (the target of a `TFORLOOP` right behind its `TFORCALL`) get per-iterator families
+        let fam: Vec<(u32, u8)> = if c.pfam & 15 != 0 && !c.tracemove {
+            pcs.iter()
+                .filter(|&&h| h != 0 && !conts.contains(&h))
+                .filter_map(|&h| {
+                    env.backedges.iter().find_map(|&(j, hh)| {
+                        let j = j as usize;
+                        (hh == h
+                            && j >= 1
+                            && matches!(env.ops.get(j), Some(Some(OpCode::Tforloop)))
+                            && matches!(env.ops.get(j - 1), Some(Some(OpCode::Tforcall))))
+                        .then(|| (h, env.ins[j - 1].a() as u8))
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let tp = TrProto::new_fam(
+            env.ins.len(),
+            &pcs,
+            c.hot,
+            c.always,
+            c.seed,
+            c.line,
+            &fam,
+            (c.pfam & 15) as usize,
+            c.pfam & 16 != 0,
+            c.pfam & 32 != 0,
+        );
         // BUNDLE-K L1: a loop-free function with the entry head of native recursion is lazy-aware (all of its traces, cells and heads)
         // (and every `CALL` of it wants the same number of results: the leave then completes the chain in line; with different counts it
         // calls the Rust helper at every exit, which cost `awfy/list` 6 % instructions)
@@ -9632,6 +10093,39 @@ pub(crate) fn emit_dispatch(
         } else {
             None
         };
+        // Section 82.1: the family dispatch stub `F_H` (the main head's target): a hit of the one-entry cache (the iterator word of the last miss)
+        // jumps through the cell the miss chose; a miss asks `jit_tr_fam`, which picks the member of the running iterator (or the counting stub, or
+        // the label) and refills the cache
+        let f = tp.fam_of(i).filter(|fi| fi.main == i).map(|fi| {
+            let (f, slow) = (cx.p.label(), cx.p.label());
+            let cl_addr = fi.cl.as_ptr() as usize as u64;
+            let cc_addr = fi.cc.as_ptr() as usize as u64;
+            cx.op(Op::Bind(f));
+            cx.ld(1, W::B8, crate::lower::fr(u32::from(fi.a), 8));
+            cx.op(Op::Mov(7, cl_addr));
+            cx.ld(0, W::B8, mem(7, 0));
+            cx.br(Cc::Ne, 1, Src::V(0), slow);
+            cx.op(Op::Mov(7, cc_addr));
+            cx.ld(7, W::B8, mem(7, 0));
+            cx.ld(7, W::B8, mem(7, 0));
+            cx.op(Op::JmpR(7));
+            cx.op(Op::Bind(slow));
+            cx.op(Op::CallH {
+                f: jit_tr_fam as *const () as usize as u64,
+                a: pc,
+                b: 0,
+            });
+            if let Some(e) = cx.cfg.calls {
+                cx.op(Op::ReloadFrame {
+                    stack_off: e.stack_off,
+                });
+            }
+            cx.op(Op::Mov(7, cc_addr));
+            cx.ld(7, W::B8, mem(7, 0));
+            cx.ld(7, W::B8, mem(7, 0));
+            cx.op(Op::JmpR(7));
+            f
+        });
         out.heads.push((pc, d));
         out.resume_overrides.push((pc, d));
         dis.labels.push(HeadLabels {
@@ -9640,6 +10134,7 @@ pub(crate) fn emit_dispatch(
             c: cl,
             m,
             w: env.warm_stub.get(&pc).copied(),
+            f,
         });
     }
     out
@@ -9944,6 +10439,7 @@ pub fn lower_probe(st: &mut State, trace: bool) -> Option<Probe> {
             hot: 4,
             always: true,
             tracemove: d.tr.cfg.opts.tracemove,
+            pfam: d.tr.cfg.limits.pfam,
             seed: 1,
             line: p.linedefined,
             fn_root: false,

@@ -1646,6 +1646,7 @@ fn compile_inner(
                 hot: d.tr.cfg.hot_loop,
                 always: d.tr.cfg.mode == crate::tr::cache::TrMode::Always,
                 tracemove: d.tr.cfg.opts.tracemove,
+                pfam: d.tr.cfg.limits.pfam,
                 seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                 line: p.linedefined,
                 fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)
@@ -1979,6 +1980,7 @@ fn recompile_inner(
                         hot: d.tr.cfg.hot_loop,
                         always: d.tr.cfg.mode == crate::tr::cache::TrMode::Always,
                         tracemove: d.tr.cfg.opts.tracemove,
+                        pfam: d.tr.cfg.limits.pfam,
                         seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                         line: p.linedefined,
                         fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)

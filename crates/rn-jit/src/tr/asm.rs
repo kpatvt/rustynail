@@ -131,6 +131,8 @@ pub struct AsmEnv {
     pub head: u64,
     /// The head's pc (argument of `jit_tr_entry_fail`).
     pub head_pc: u32,
+    /// Section 82.1: the head's index + 1 (second argument of `jit_tr_entry_fail`: a family member shares its pc with the main head), 0 = unknown.
+    pub head_ix: u32,
     /// `cache::jit_tr_entry_fail`.
     pub entry_fail_fn: u64,
     /// `cache::jit_tr_ci_spare` (CP1: allocates the spare `CallInfo` nodes of a natively entered frame, instead of a tier-1 fall-back), or 0: none.
@@ -386,6 +388,7 @@ impl Default for AsmEnv {
             pcl_h: 0,
             head: 0,
             head_pc: 0,
+            head_ix: 0,
             entry_fail_fn: 0,
             ci_spare_fn: 0,
             ci_spare_root_fn: 0,
@@ -5457,7 +5460,7 @@ impl Cx<'_> {
         self.push(Op::CallH {
             f: self.env.entry_fail_fn,
             a: self.env.head_pc,
-            b: 0,
+            b: self.env.head_ix,
         });
         self.reload_vb();
         self.bind(done);
@@ -11284,6 +11287,7 @@ pub mod support {
                     hot: d.tr.cfg.hot_loop,
                     always: d.tr.cfg.mode == TrMode::Always,
                     tracemove: d.tr.cfg.opts.tracemove,
+                    pfam: d.tr.cfg.limits.pfam,
                     seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                     line: p.linedefined,
                     fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)

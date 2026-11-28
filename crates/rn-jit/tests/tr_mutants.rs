@@ -2291,6 +2291,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_policy", "s77_polyhead_rule")],
     },
     Row {
+        name: "pfam_member_cell_stub",
+        owner: "S82",
+        dets: &[d("tr_core", "s82_pfam_programs")],
+    },
+    Row {
+        name: "pfam_guard_free_entry",
+        owner: "S82",
+        dets: &[d("tr_core", "s82_pfam_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],

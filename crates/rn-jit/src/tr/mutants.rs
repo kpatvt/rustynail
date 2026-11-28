@@ -476,6 +476,10 @@ pub const NAMES: &[&str] = &[
     "retf_demote_recursive",
     // section 77.17 (`polyhead`): the polymorphic-head rule never applies
     "polyhead_never",
+    // section 82.1 (`pfam`): a family member's fallback cell is the family dispatch stub (a loop through `F_H`)
+    "pfam_member_cell_stub",
+    // section 82.1: the family dispatch enters a member through its guard-free second entry
+    "pfam_guard_free_entry",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1267,7 +1271,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 921);
+        assert_eq!(NAMES.len(), 923);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

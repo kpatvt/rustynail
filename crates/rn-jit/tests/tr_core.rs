@@ -4674,6 +4674,48 @@ fn s77_polyhead_programs() {
     compare(jobs);
 }
 
+/// Section 82.1 (`pfam`): per-iterator trace families: one generic-`for` head serving many pipelines (same prototype over different upvalue
+/// closures, nested), C-function iterators and a callable table through one head, fresh closures under collections, the iterator replaced by
+/// `debug.setlocal`, a yield and an error inside the iterator; families on demand / from the start (bit 5), with and without upvalue keys
+/// (bit 4), two members (slots recycled and refused), `t1g` 7 / 3, the trace modes, `+verify`, exit storms, budget 17, GC stress 2; and the
+/// pipeline programs of 77.14 / 77.17 with families. Mutants `pfam_member_cell_stub`, `pfam_guard_free_entry`.
+#[test]
+fn s82_pfam_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "t1g=7,pfam=24",
+            "t1g=3,pfam=56",
+            "t1g=7,pfam=34",
+            "t1g=7,pfam=36",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s82_pfam", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s82_pfam", trace)
+                .limits_s("t1g=7,pfam=56")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+        for name in ["s77_polyhead", "s77_tflat"] {
+            for limits in ["t1g=7,pfam=24", "t1g=7,pfam=36"] {
+                jobs.push(Job::new(name, trace).opts("+verify").limits_s(limits));
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 77.15 (`retf` bit 9): `RETF` pops into loop-free (maybe lazy-aware) callers that never recursed; the recursion programs (whose callers
 /// are lazy-aware and recursive, and must stay refused) with the bit on, in the trace modes. Mutant `retf_demote_recursive`.
 #[test]

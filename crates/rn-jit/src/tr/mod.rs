@@ -388,6 +388,8 @@ struct EmuTrace {
     verifiable: bool,
     root: usize,
     head_pc: u32,
+    /// Section 82.1: the head's `HeadData` (0: none), whose entry counters the emulation saves and restores.
+    head_ptr: u64,
     /// Address of the exit handler (the emulation intercepts it).
     exit_fn: u64,
     calln_fn: u64,
@@ -2165,10 +2167,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         {
             // SAFETY: the root prototype is live (running frame).
             let rootp = unsafe { &*(act.root as *const rn_core::func::Proto) };
+            let am = cache::proto_ref(rootp).and_then(|pr| cache::active_member(st, pr));
             let sig = cache::proto_ref(rootp)
                 .and_then(|pr| {
                     cache::with_tr(st, pr, |tp| {
-                        tp.head_index(si.link_pc)
+                        tp.head_index_in(si.link_pc, am)
                             .map(|i| tp.head(i).e3_sig_inst.get())
                     })
                     .flatten()
@@ -2381,6 +2384,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     };
     let cells = cache::alloc_exit_cells(st, act.id, &init)
         .ok_or_else(|| abort_err("cells", "alloc_exit_cells"))?;
+    let mut head_ix = 0u32;
     let (head, pcl) = if act.side {
         // a side trace books no entry counters; a failing TR6 check lands at the tier-1 label it was entered at
         let si = side.expect("side recording without SideInfo");
@@ -2389,16 +2393,19 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             .ok_or_else(|| abort_err("no-label", format!("pc {}", si.start_pc)))?;
         (0, pcl)
     } else {
-        let (head, pcl) = cache::with_tr(st, rpr, |tp| {
-            tp.head_index(pc).map(|i| {
+        let am = cache::active_member(st, rpr);
+        let (head, pcl, ix) = cache::with_tr(st, rpr, |tp| {
+            tp.head_index_in(pc, am).map(|i| {
                 (
                     tp.head(i) as *const HeadData as u64,
                     tp.head(i).pcl_addr.get() as u64,
+                    i as u32 + 1,
                 )
             })
         })
         .flatten()
         .ok_or_else(|| abort_err("no-head", format!("pc {pc}")))?;
+        head_ix = ix;
         (head, pcl)
     };
     let mut carry_env = (0u64, 0u32);
@@ -2423,8 +2430,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 let p = unsafe { &*(si.link_proto.0 as *const rn_core::func::Proto) };
                 cache::proto_ref(p).ok_or_else(|| abort_err("no-descriptor", "link proto"))?
             };
+            let am = cache::active_member(st, tpr);
             let link_cell = cache::with_tr(st, tpr, |tp| {
-                tp.head_index(si.link_pc).map(|i| {
+                tp.head_index_in(si.link_pc, am).map(|i| {
                     if prelude {
                         &tp.head(i).entry as *const std::cell::Cell<usize> as u64
                     } else {
@@ -2450,7 +2458,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 && rec.ir.segs.is_empty()
             {
                 cache::with_tr(st, tpr, |tp| {
-                    tp.head_index(si.link_pc).map(|i| {
+                    tp.head_index_in(si.link_pc, am).map(|i| {
                         let h = tp.head(i);
                         (
                             &h.e2 as *const std::cell::Cell<usize> as u64,
@@ -2473,7 +2481,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 )
             {
                 carry_env = cache::with_tr(st, tpr, |tp| {
-                    tp.head_index(si.link_pc).map(|i| {
+                    tp.head_index_in(si.link_pc, am).map(|i| {
                         let h = tp.head(i);
                         if h.e3_code.get() != 0 && h.e3_sig_inst.get() != 0 {
                             (h as *const HeadData as u64, h.e3_sig_inst.get())
@@ -2654,6 +2662,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         pcl_h: pcl,
         head,
         head_pc: pc,
+        head_ix,
         entry_fail_fn: cache::jit_tr_entry_fail as *const () as usize as u64,
         ci_spare_fn: cache::jit_tr_ci_spare as *const () as usize as u64,
         ci_spare_root_fn: if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cispare } & 2 != 0 {
@@ -3233,6 +3242,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             verifiable,
             root,
             head_pc: pc,
+            head_ptr: env.head,
             exit_fn: env.exit_handler,
             calln_fn: env.calln,
             entry_fail_fn: env.entry_fail_fn,
@@ -3592,7 +3602,7 @@ fn verify_probe(st: &mut State, id: TrId) {
         cnt: hdr.as_mut_ptr().cast::<i32>(),
     };
     // the emulation books entries in the head's counters again: save and restore them
-    let head_state = head_counters(st, t.root, t.head_pc);
+    let head_state = head_counters(st, t.root, t.head_pc, t.head_ptr);
     let mut hl = VerifyHelpers {
         t: &t,
         exit_reached: false,
@@ -3610,7 +3620,7 @@ fn verify_probe(st: &mut State, id: TrId) {
     let u = unsafe { emu.run(&t.prog, &[], &env, u64::MAX, &mut hl) };
     // SAFETY: as above.
     unsafe { *pre.ci.cast::<u8>().add(ci_layout::TRAP).cast::<i32>() = live_trap };
-    set_head_counters(st, t.root, t.head_pc, head_state);
+    set_head_counters(st, t.root, t.head_pc, t.head_ptr, head_state);
     assert!(
         matches!(u, Until::Stop(Stop::Unsupported)),
         "emuverify: emulator stopped with {u:?}"
@@ -3675,7 +3685,12 @@ fn verify_probe(st: &mut State, id: TrId) {
 
 thread_local! {}
 
-fn head_counters(st: &mut State, root: usize, pc: u32) -> (u32, u32, u32) {
+fn head_counters(st: &mut State, root: usize, pc: u32, hp: u64) -> (u32, u32, u32) {
+    if hp != 0 {
+        // SAFETY: `hp` is the `HeadData` of the trace's head, in the head table of its live root prototype (address-stable).
+        let h = unsafe { &*(hp as *const HeadData) };
+        return (h.entry_fail.get(), h.entry_ok.get(), h.pending.get());
+    }
     // SAFETY: the root prototype is live (the trace is running in it).
     let p = unsafe { &*(root as *const rn_core::func::Proto) };
     cache::proto_ref(p)
@@ -3689,7 +3704,15 @@ fn head_counters(st: &mut State, root: usize, pc: u32) -> (u32, u32, u32) {
         .unwrap_or((0, 0, 0))
 }
 
-fn set_head_counters(st: &mut State, root: usize, pc: u32, c: (u32, u32, u32)) {
+fn set_head_counters(st: &mut State, root: usize, pc: u32, hp: u64, c: (u32, u32, u32)) {
+    if hp != 0 {
+        // SAFETY: as in `head_counters`.
+        let h = unsafe { &*(hp as *const HeadData) };
+        h.entry_fail.set(c.0);
+        h.entry_ok.set(c.1);
+        h.pending.set(c.2);
+        return;
+    }
     // SAFETY: as in `head_counters`.
     let p = unsafe { &*(root as *const rn_core::func::Proto) };
     if let Some(pr) = cache::proto_ref(p) {

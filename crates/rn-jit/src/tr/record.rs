@@ -8483,14 +8483,19 @@ impl Rec {
             return NO;
         }
         let ci_ins = Instruction(ccode[call_pc]);
-        if ci_ins.opcode() != Some(OpCode::Call) {
-            return NO;
-        }
-        let ca = ci_ins.a() as usize;
+        // section 82.2 (`retf` bit 8): C may also be suspended at a `TFORCALL` whose Lua iterator tier 1 pushed as a flat frame (`t1g` bit 2): the
+        // iterator's frame starts at the call copy (`R[A+3]`, 5.4 `R[A+4]`), it wants `C` results, and C goes on at the `TFORLOOP` behind it
+        let (ca, wanted) = match ci_ins.opcode() {
+            Some(OpCode::Call) => (ci_ins.a() as usize, ci_ins.c() as i32 - 1),
+            Some(OpCode::Tforcall) if self.cfg.retf & 256 != 0 => {
+                let fa = if rn_core::jit_layout::LUA54 { 4 } else { 3 };
+                (ci_ins.a() as usize + fa, ci_ins.c() as i32)
+            }
+            _ => return NO,
+        };
         if f_ci.r().func.0 != cbase + ca || ca + 1 > 200 {
             return NO;
         }
-        let wanted = ci_ins.c() as i32 - 1;
         if (f_ci.r().callstatus & 0xFF) as i32 != wanted + 1 {
             return NO; // (a call through something that changed the wanted count)
         }

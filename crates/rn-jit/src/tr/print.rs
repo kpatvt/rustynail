@@ -312,6 +312,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.chain_deep
         );
     }
+    if s.fam_dispatch > 0 || s.fam_started > 0 || s.fam_on > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] pfam: families on {} dispatch misses {} member recordings {} refused (full) {}",
+            s.fam_on, s.fam_dispatch, s.fam_started, s.fam_full
+        );
+    }
     if s.ncallee_heads > 0 {
         let _ = writeln!(
             o,
