@@ -4924,7 +4924,13 @@ fn s77_home_programs() {
     }
     // (section 100.1: the reuse of case (5) shows only with some `pairs` orders, i.e. string-hash seeds: with the seed inherited the mutant
     // `sloadhome_slot_reused` was caught in about one run of four. These seeds catch it on every run.)
-    for (trace, seed) in [("always", 3), ("on2", 3), ("on2", 4), ("on2", 5), ("on2", 8)] {
+    for (trace, seed) in [
+        ("always", 3),
+        ("on2", 3),
+        ("on2", 4),
+        ("on2", 5),
+        ("on2", 8),
+    ] {
         jobs.push(
             Job::new("s77_home", trace)
                 .opts("+exitstorm=7 +verify +randra=5")
@@ -11589,7 +11595,11 @@ fn s87_asmfuse_programs() {
     // (`sloadhome=0`: the fused pass refuses every trace while `sloadhome` is on, and the shipped value is 3; section 100.1)
     let res = compare(b1_jobs(
         &progs,
-        &["asmfuse=2,sloadhome=0", "asmfuse=1,sloadhome=0", "asmfuse=0"],
+        &[
+            "asmfuse=2,sloadhome=0",
+            "asmfuse=1,sloadhome=0",
+            "asmfuse=0",
+        ],
     ));
     assert!(!res.is_empty());
     assert_eq!(TrLimits::default().asmfuse, 1);

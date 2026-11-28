@@ -269,6 +269,8 @@ pub struct AsmEnv {
     pub ccalls_inline: bool,
     /// BUNDLE-P P2 (`f2ifl`): `F2I_EXACT` of an `FFLOOR` result is `cvttsd2si; cmp r, 1; jo` ([`Op::F2IFloor`]).
     pub f2ifl: bool,
+    /// Section 100.4 (`headoff`): the loop head's offset inside its 64-byte line ([`HEAD_OFFSET`] by default).
+    pub head_off: u8,
     /// BUNDLE-F (`fibdiet`): the pieces of the slimmer native-recursion protocol (bit mask).
     pub fibdiet: u32,
     /// BUNDLE-K L1 (`lazyci`): the root prototype is lazy-aware: natively pushed frames are lazy (`ExitArea::lazy_root`), a native return of a
@@ -466,6 +468,7 @@ impl Default for AsmEnv {
             f2_byte_ext: false,
             ccalls_inline: false,
             f2ifl: false,
+            head_off: HEAD_OFFSET,
             fibdiet: 0,
             lazy: false,
             seg_oracle: false,
@@ -2969,10 +2972,11 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// Places the loop head at a deterministic position inside a 64-byte line: `HEAD_OFFSET` bytes after a line start.
+    /// Places the loop head at a deterministic position inside a 64-byte line: `env.head_off` ([`HEAD_OFFSET`] by default) bytes after a
+    /// line start.
     fn head_pad(&mut self) {
         self.push(Op::Align(LINE));
-        self.push(Op::Pad(HEAD_OFFSET));
+        self.push(Op::Pad(self.env.head_off));
     }
 
     fn push(&mut self, op: Op) {

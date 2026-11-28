@@ -418,6 +418,8 @@ pub const FRETRY_PROCESS: u32 = 1;
 pub const CCALLS_PROCESS: u32 = 1;
 /// BUNDLE-P P2 (`f2ifl`): process value of [`TrLimits::f2ifl`] (K3a: also the struct default). **1:** the float-to-integer guard behind `FFLOOR` is `cvttsd2si; cmp r, 1; jo` (docs/PERF.md "BUNDLE-P").
 pub const F2IFL_PROCESS: u32 = 1;
+/// Section 100.4 (`headoff`): process value of [`TrLimits::headoff`] (also the struct default), `asm::HEAD_OFFSET`.
+pub const HEADOFF_PROCESS: u32 = 48;
 /// BUNDLE-Q (`t1q`): process value of [`TrLimits::t1q`] (K3a: also the struct default), a bit mask: **1** tier-1 `EQ` of two tables / userdata / functions answers raw-equal
 /// and no-`__eq` pairs itself (inline: same payload, or both metatables absent / flagged without `__eq`; `jit_cmp` for the rest), **2** tier-1 `MOD` / `MODK` with a float
 /// operand calls `jit_fmod` instead of leaving (docs/PERF.md "BUNDLE-Q"), **4** (BUNDLE-S) a tier-1 table read whose `__index` is a Lua function runs the handler as an in-place
@@ -760,6 +762,9 @@ pub struct TrLimits {
     pub amt: u32,
     /// BUNDLE-P P2 (`f2ifl`): `F2I_EXACT` of an `FFLOOR` result (already integral or NaN/inf/out of range) is `cvttsd2si; cmp r, 1; jo exit` (an exact `-2^63` result also exits: the guard is conservative there) (default [`F2IFL_PROCESS`]).
     pub f2ifl: u32,
+    /// Section 100.4 (`headoff`): the byte offset of a trace's loop head inside its 64-byte line (`asm::Cx::head_pad`; 0..=63; docs/JIT_TRACE.md
+    /// section 100.4 and `asm::HEAD_OFFSET` for the layout effects it decides) (default [`HEADOFF_PROCESS`]).
+    pub headoff: u32,
     /// BUNDLE-P P1 (`rearmside`): a rearmed tick also enters a young head (fewer than [`REARM_MIN_ENTRIES`] entries) whose family has this many installed side traces (0 = off; default [`REARMSIDE_PROCESS`]).
     pub rearmside: u32,
     /// C45 (`rearmclean`): 1 = `rearmside` only enters young heads of clean families (default [`REARMCLEAN_PROCESS`]); 0 = the plain rule.
@@ -1441,6 +1446,7 @@ impl Default for TrLimits {
             ccalls: CCALLS_PROCESS,
             armm: ARMM_PROCESS,
             f2ifl: F2IFL_PROCESS,
+            headoff: HEADOFF_PROCESS,
             t1q: T1Q_PROCESS,
             t1g: T1G_PROCESS,
             amt: AMT_PROCESS,
@@ -1721,6 +1727,7 @@ impl TrLimits {
                 "ccalls" => l.ccalls = v.min(1),
                 "armm" => l.armm = v.min(1),
                 "f2ifl" => l.f2ifl = v.min(1),
+                "headoff" => l.headoff = v.min(63),
                 "t1q" => l.t1q = v.min(0x7f) | 0x80,
                 "t1g" => l.t1g = v.min(0x7f) | 0x80,
                 "polyhead" => l.polyhead = v.min(63),

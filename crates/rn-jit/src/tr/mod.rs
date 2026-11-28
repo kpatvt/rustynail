@@ -3106,6 +3106,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // SAFETY: as above.
         f2ifl: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.f2ifl != 0 },
         // SAFETY: as above.
+        head_off: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.headoff } as u8,
+        // SAFETY: as above.
         fibdiet: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.fibdiet },
         lean_sub: true,
         libcall: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.libcall },
