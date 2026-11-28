@@ -1278,7 +1278,13 @@ fn ident_check(o: &Out) -> Result<String, String> {
     };
     let (f0, f1, insns) = (num("off="), num("fetches="), num("insns="));
     if !o.ok || f0 < 0 || f0 != f1 + insns || !line.contains("same_output=true") {
-        Err(format!("{line} {}", tail(&o.stderr)))
+        // (a child killed at the leash has no IDENT line and an empty stderr: say so, section 77.18)
+        let why = if line.is_empty() {
+            o.result.lines().next().unwrap_or("")
+        } else {
+            ""
+        };
+        Err(format!("{line} {} {why}", tail(&o.stderr)))
     } else {
         Ok(format!("off={f0} fetches={f1} insns={insns}"))
     }
@@ -4627,6 +4633,68 @@ fn s75_recinl_programs() {
     compare(jobs);
 }
 
+/// Section 77.14 (`t1g` bit 2): generic `for` over Lua closure iterators pushed as flat frames by tier 1: results nil-filled and cut,
+/// iterators with three parameters and varargs, errors with levels and tracebacks, `debug.getinfo` of the caller, coroutine yields from inside
+/// the iterator, hooks installed mid-loop, deep recursion inside the iterator, callable tables / C functions as iterators, a closure pipeline;
+/// `t1g` 7 / 3 (also with `retf` bit 9, section 77.15) in the trace modes (and traces off), `+verify`, exit storms, budget 17, GC stress 2.
+/// Mutants `t1g_tflat_params_skip`, `t1g_tflat_top_short`.
+#[test]
+fn s77_tflat_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on", "t1x"] {
+        for limits in ["t1g=7", "t1g=3", "t1g=7,retf=695", "t1g=3,retf=695"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s77_tflat", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s77_tflat", trace)
+                .limits_s("t1g=7")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+    }
+    compare(jobs);
+}
+
+/// Section 77.17 (`polyhead`): one generic-`for` head serving many pipelines (nested, with data-dependent inner loops) under the polymorphic-head
+/// rule, `t1g` 7 / 3, in the trace modes, with `+verify` and exit storms.
+#[test]
+fn s77_polyhead_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["t1g=7,polyhead=52", "t1g=3,polyhead=52", "t1g=7,polyhead=2"] {
+            for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                jobs.push(Job::new("s77_polyhead", trace).opts(opts).limits_s(limits));
+            }
+        }
+    }
+    compare(jobs);
+}
+
+/// Section 77.15 (`retf` bit 9): `RETF` pops into loop-free (maybe lazy-aware) callers that never recursed; the recursion programs (whose callers
+/// are lazy-aware and recursive, and must stay refused) with the bit on, in the trace modes. Mutant `retf_demote_recursive`.
+#[test]
+fn s77_retf_demote_programs() {
+    let mut jobs = Vec::new();
+    for name in ["deep_recursion", "s77_rself", "s77_tflat"] {
+        for trace in ["always", "on2", "on"] {
+            for limits in ["retf=695", "retf=695,lazyci=2", "t1g=7,retf=695,retfmax=4"] {
+                jobs.push(Job::new(name, trace).limits_s(limits));
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 77.7 (`retf` bits 4-7): function-entry side traces that pop their root frame into a frame of the same closure (a recursion returning into
 /// the caller's loop) and go on in the caller: trees of varying shape, early returns, an error below the pop under `pcall`, a method recursion called
 /// from another function's loop; `retf` 179 (the default) / 51 / 19 / 3 / 7, the trace modes with `+verify`, exit storms, budget 17 and GC stress 2.
@@ -4661,7 +4729,7 @@ fn s77_rself_programs() {
 /// Section 77.6 (`sloadhome`): `SLOAD`s that live in their own stack slot (no spill store, reloads and exit restores read the stack): moves and swaps
 /// restored from them at exits, sunk tables built from them, link writebacks, loop-carried slots, XMM homes, a towers-shaped recursion with
 /// register-carrying links; `sloadhome` 3 / 1 / 0, the trace modes with `+verify`, `+wb` (TR3b `SSTORE`s), `+randra`, exit storms, budget 17 and
-/// GC stress 2. Mutants `sloadhome_snap_named`, `sloadhome_slot_written`.
+/// GC stress 2. Mutants `sloadhome_snap_named`, `sloadhome_slot_reused` (`sloadhome_carry_src`: `r1_regcarry_programs`).
 #[test]
 fn s77_home_programs() {
     let mut jobs = Vec::new();
@@ -4675,6 +4743,7 @@ fn s77_home_programs() {
                 ("+randra=3 +verify", 0),
                 ("+exitstorm=3 +verify", 0),
                 ("+exitstorm=1", 0),
+                ("-fwd -cse -sink", 0),
                 ("", 17),
             ] {
                 let mut j = Job::new("s77_home", trace).opts(opts).limits_s(limits);
@@ -4689,6 +4758,16 @@ fn s77_home_programs() {
                 .limits_s("sloadhome=3")
                 .env("RUSTYNAIL_GC_STRESS", "2"),
         );
+        // (random allocations: the loop-invariant home of case (5) shares the free-slot list with other spills only under some of them)
+        for seed in 1..=8 {
+            for storm in [3, 7] {
+                jobs.push(
+                    Job::new("s77_home", trace)
+                        .opts(&format!("+exitstorm={storm} +verify +randra={seed}"))
+                        .limits_s("sloadhome=3"),
+                );
+            }
+        }
     }
     compare(jobs);
 }

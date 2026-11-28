@@ -317,7 +317,6 @@ fn home_snap_entry(
     match by_slot.get(usize::from(e.slot)).copied() {
         None => {}
         Some(j) if j == u32::MAX - 1 => {}
-        Some(_) if mutants::active("sloadhome_slot_written") => {}
         Some(j) if j != u32::MAX => {
             if !(TraceIr::is_ins(e.r) && idx(e.r) == j as usize) {
                 home[j as usize] = None;
@@ -1258,6 +1257,23 @@ pub fn allocate_hinted(
         for i in 0..n {
             weak[i] = snapped[i] && !real[i];
         }
+        // section 77.6: snapshots no guard names are restored too (the always-taken exit at the end of a straight-line trace, link and
+        // placeholder snapshots): their entries count for the homes like the guards'
+        if !home_by_slot.is_empty() {
+            let mut seen = vec![false; ir.snaps.len()];
+            for &(_, s) in &guard_snaps {
+                if let Some(x) = seen.get_mut(s as usize) {
+                    *x = true;
+                }
+            }
+            for (si, done) in seen.iter().enumerate() {
+                if !done {
+                    for e in ir.snap_entries(si as u32) {
+                        home_snap_entry(&mut home_of, &home_by_slot, ir, e, opts.homes_snap);
+                    }
+                }
+            }
+        }
     }
     let is_x: Vec<bool> = ir.ins.iter().map(|i| i.t == Ty::Num).collect();
     // Section 57: the base of a fused array access with a register index (`[base + 8 * ~x]`, `[base + x + tag]`). With
@@ -2044,7 +2060,14 @@ impl Ra<'_> {
             if self.vals[v].slot_home {
                 self.vals[v].slot_home = false;
                 let perm = std::mem::take(&mut self.vals[v].perm);
-                self.vals[v].slots.extend(perm);
+                // (section 77.6: a home slot is never handed back for reuse: its number names the stack slot in `homes` for the whole
+                // trace, and another value spilled to it would be read from the stack; mutant `sloadhome_slot_reused`)
+                let (keep, free): (Vec<u16>, Vec<u16>) = perm.into_iter().partition(|s| {
+                    !mutants::active("sloadhome_slot_reused")
+                        && self.homes.iter().any(|h| h.0 == *s)
+                });
+                self.vals[v].perm = keep;
+                self.vals[v].slots.extend(free);
             }
         }
         let ir = self.ir;

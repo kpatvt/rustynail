@@ -2618,6 +2618,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     let mut rec_nsites = 0u8;
     let mut rec_link_cell = 0u64;
     if let Some(rc) = ir.rec_call {
+        // (section 77.15: a conservative guard, no test program reaches it: a pop into a traced, never recursive lazy-aware frame)
+        if cache::retf_pinned(st, rpr) {
+            return Err(abort_err("retf-pin", "native self-call of a RETF target"));
+        }
         cache::mark_recursive(st, rpr);
         if rc.ninl != 0 {
             cache::unroll_ok(st, rpr);

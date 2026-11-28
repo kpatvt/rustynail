@@ -3267,6 +3267,22 @@ impl<'a> Cx<'a> {
 
     // ---- moves -------------------------------------------------------------------------------------------------------
 
+    /// [`Cx::emit_move`] whose spill sources are spill slots of the exit area as they are (the parent's exit map of a carry entry), not homes.
+    fn emit_move_raw(&mut self, m: Move) {
+        match (m.dst, m.src) {
+            (Loc::G(d), Loc::Spill(s)) => self.ld(d, W::B8, spill_m(s)),
+            (Loc::X(d), Loc::Spill(s)) => self.push(Op::LdF {
+                dst: d,
+                m: spill_m(s),
+            }),
+            (Loc::Spill(d), Loc::Spill(s)) => {
+                self.ld(7, W::B8, spill_m(s));
+                self.st(W::B8, spill_m(d), Src::V(7));
+            }
+            _ => self.emit_move(m),
+        }
+    }
+
     fn emit_move(&mut self, m: Move) {
         match (m.dst, m.src) {
             (Loc::G(d), Loc::G(s)) => self.push(Op::MovR(d, s)),
@@ -3789,7 +3805,13 @@ pub fn assemble_dl(
         }
         let xscratch = (0..16u8).find(|&x| busy >> x & 1 == 0);
         for m in super::ra::sequentialise_x(&moves, SCRATCH_SPILL, xscratch) {
-            cx.emit_move(m);
+            // (section 77.6: the sources are the parent's exit locations: its spill slots, never this trace's homes; mutant
+            // `sloadhome_carry_src`)
+            if mutants::active("sloadhome_carry_src") {
+                cx.emit_move(m);
+            } else {
+                cx.emit_move_raw(m);
+            }
         }
         cx.push(Op::Jmp(start_l));
         entry_c = Some(l);
@@ -11302,7 +11324,9 @@ impl Cx<'_> {
             && es.usable
             && self.env.budget_reg.is_some()
             && !es.slots.iter().any(|s| {
-                matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_)) || s.tag == exit::TAG_DYN_STR
+                // (section 77.6: a home's entry has no register to carry)
+                matches!(s.src, ValSrc::Reg(10) | ValSrc::Imm(_) | ValSrc::Stack(_))
+                    || s.tag == exit::TAG_DYN_STR
             });
         // R1 (half A): `regcarry` leaves the exit's counter at the divert value once a side trace compiled for register-carried entry is attached
         // (`cache::install`): the equality test against it then lands in the cold block that looks at the carry cell, and the carry path costs the

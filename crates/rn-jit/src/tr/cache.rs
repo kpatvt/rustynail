@@ -186,10 +186,9 @@ pub const HDRCSE_PROCESS: u32 = 2;
 pub const MFDEEP_PROCESS: u32 = 1;
 /// Section 75.14 (`mfshare`): the process default of [`TrLimits::mfshare`] (also the struct default).
 pub const MFSHARE_PROCESS: u32 = 1;
-/// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default). OFF: wrong results in `tr_core` matrices
-/// with `+randra +exitstorm=7` (bh_next, n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants) and a crash of dm_dynkey (`-fwd -cse -sink`), not
-/// root-caused (they disappear with `guarddiet=0`), docs/JIT_TRACE.md section 77.6.
-pub const SLOADHOME_PROCESS: u32 = 0;
+/// Section 77.6 (`sloadhome`): the process default of [`TrLimits::sloadhome`] (also the struct default): 3 since section 77.10 fixed the two causes of
+/// the round-2 failures (a loop invariant's home slot reused, the carry entry reading a parent spill slot as a home).
+pub const SLOADHOME_PROCESS: u32 = 3;
 /// Section 79.1 (`chainlive`): the process default of [`TrLimits::chainlive`] (also the struct default).
 pub const CHAINLIVE_PROCESS: u32 = 1;
 /// Section 79.2 (`pushtag`): the process default of [`TrLimits::pushtag`] (also the struct default).
@@ -674,8 +673,11 @@ pub struct TrLimits {
     /// BUNDLE-Q (`t1q`): bit mask of the tier-1 exits removed (1 = `EQ` of objects without a real `__eq` call, 2 = float `MOD`, 4 = BUNDLE-S `__index` Lua function frames, 8 = BUNDLE-S `__newindex` Lua function frames); bit 7 (0x80) = named explicitly (then it also applies
     /// with `RUSTYNAIL_JIT_TRACE=off`, which otherwise stays J4 exactly) (default [`T1Q_PROCESS`]).
     pub t1q: u32,
+    /// Section 77.17 (`polyhead`): `Ineffective` flushes of a loop head whose traces inlined different prototypes are not counted as repeats (at
+    /// most this many; each backs off `hot * 16`); 0 = Q3 as before (the second `Ineffective` flush blacklists).
+    pub polyhead: u32,
     /// R2 (`t1g`): bit mask of the tier-1 generic-`for` paths (1 = `CLOSE` without its helper when nothing is open, 2 = `TFORCALL` of `next` through the lean
-    /// helper); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
+    /// helper, 4 = section 77.14: `TFORCALL` of a compiled Lua closure iterator as a flat frame push, off by default); bit 7 (0x80) = named explicitly (then it also applies with `RUSTYNAIL_JIT_TRACE=off`) (default [`T1G_PROCESS`]).
     pub t1g: u32,
     /// BUNDLE-S S2 (`amt`): array reads and stores of a table that has a metatable are recorded (a non-nil element is a raw access; a nil element needs the flag guard of `__index` / `__newindex`) (default [`AMT_PROCESS`]).
     pub amt: u32,
@@ -826,7 +828,8 @@ pub struct TrLimits {
     /// its root frame executes `RETF` (the pop is done natively and the trace continues in the caller); bit 1 (value 2): inline re-push
     /// stub; bit 2 (value 4): function-entry roots; bit 3 (8): test mode, the recording ends right after a pop. Section 77.7: bit 4 (16) a
     /// function-entry family's side recording pops when its root returns into a frame of the same closure; bit 5 (32) only into a call inside a
-    /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Default
+    /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Section 77.15: bit 9 (512) a
+    /// loop-free maybe-lazy caller is popped into when it never recursed (`TrProto::retf_demote`), off by default. Default
     /// [`RETF_PROCESS`] = 179 (0 = off, byte-identical IR and machine code).
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
@@ -986,8 +989,8 @@ pub struct TrLimits {
     /// chain's room covers the target's. 0 = off, 1 = on (default [`FLINK_PROCESS`]).
     pub flink: u32,
     /// Section 77.6 (`sloadhome`, docs/JIT_TRACE.md section 77.6): an `SLOAD` that no snapshot, no end use and no `SSTORE` names keeps its value in its
-    /// stack slot when the allocator spills it: no spill store at the definition, reloads from the stack (`ra::RaOpts::homes`). 0 = off, 1 = on
-    /// (default [`SLOADHOME_PROCESS`] = 0).
+    /// stack slot when the allocator spills it: no spill store at the definition, reloads from the stack (`ra::RaOpts::homes`); bit 1: also when plain
+    /// snapshot entries name it (restored from the stack, `exit::ValSrc::Stack`). 0 = off, 1, 3 (default [`SLOADHOME_PROCESS`] = 3).
     pub sloadhome: u32,
     /// Section 79.1 (`chainlive`, docs/JIT_TRACE.md section 79.1): the writeback of a native push leaves out the dead numeric temporaries of the
     /// pushed frame (the slots above its arguments that the callee's bytecode liveness proves written before read at its entry; the F4 rule of
@@ -1229,6 +1232,7 @@ impl Default for TrLimits {
     fn default() -> TrLimits {
         #[allow(unused_mut)]
         let mut l = TrLimits {
+            polyhead: 0,
             maxtrace: 1000,
             maxrecord: 4000,
             maxsnap: 500,
@@ -1540,6 +1544,7 @@ impl TrLimits {
                 "f2ifl" => l.f2ifl = v.min(1),
                 "t1q" => l.t1q = v.min(0x7f) | 0x80,
                 "t1g" => l.t1g = v.min(0x7f) | 0x80,
+                "polyhead" => l.polyhead = v.min(63),
                 "amt" => l.amt = v.min(1),
                 "rearmside" => l.rearmside = v.min(64),
                 "rearmclean" => l.rearmclean = v.min(1),
@@ -1583,7 +1588,7 @@ impl TrLimits {
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
                 "libcall" => l.libcall = v.min(4095),
-                "retf" => l.retf = v.min(255),
+                "retf" => l.retf = v.min(1023),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
@@ -1962,6 +1967,8 @@ pub struct HeadData {
     pub flushed_hash: Cell<u64>,
     /// Q3: number of `Ineffective` flushes of this head.
     pub ineff: Cell<u8>,
+    /// Section 77.17 (`polyhead`): hash of the inlined prototypes of the last trace of this head flushed `Ineffective` (0 = none).
+    pub ineff_deps: Cell<u64>,
     /// C36: the head had its `second` abort-count second chance.
     pub second: Cell<bool>,
     /// C39: `innerretry` rounds this head has had.
@@ -2117,6 +2124,7 @@ impl HeadData {
             pcl_addr: Cell::new(0),
             flushed_hash: Cell::new(0),
             ineff: Cell::new(0),
+            ineff_deps: Cell::new(0),
             second: Cell::new(false),
             inner_n: Cell::new(0),
             linked_in: Cell::new(false),
@@ -2267,6 +2275,9 @@ pub struct TrProto {
     conts: RefCell<Vec<u32>>,
     /// R2: a native self-call of this prototype was recorded (it recurses, a native return into itself can happen).
     recursive: Cell<bool>,
+    /// Section 77.15 (`retf` bit 9): a `RETF` recording popped into a frame of this lazy-aware (never recursive) prototype while it had a trace:
+    /// no native self-call of it is compiled from now on (its frames must never become lazy under the popping trace).
+    retf_pin: Cell<bool>,
     /// K6: a closure of this prototype reaches itself through an upvalue (seen by `driver_start`): its `FnShort` samples are leaf samples of a recursion.
     selfref: Cell<bool>,
     /// BUNDLE-K L1: every trace of this prototype is lazy-aware (`TrLimits::lazyci`; fixed when the dispatch table is made).
@@ -2371,6 +2382,7 @@ impl TrProto {
             fn_head: Cell::new(false),
             conts: RefCell::new(Vec::new()),
             recursive: Cell::new(false),
+            retf_pin: Cell::new(false),
             selfref: Cell::new(false),
             lazy: Cell::new(false),
             unroll_off: Cell::new(0),
@@ -2965,6 +2977,37 @@ impl TrProto {
         }
     }
 
+    /// Section 77.15 (`retf` bit 9): may a `RETF` pop into a frame of this loop-free prototype? Not lazy-aware: yes. Lazy-aware but never observed
+    /// recursing (no native self-call recorded, so none of its frames was ever lazy): yes; without an installed root trace it is also demoted to
+    /// eager for good (the heads' cells recomputed as the E4 decision does), so it never becomes lazy-aware under the popping trace. A recursive
+    /// one: no (its frames below a native push can be lazy).
+    pub fn retf_demote(&self) -> bool {
+        if self.lazy_st.get() != LAZY_STATIC {
+            return self.retf_into();
+        }
+        if !self.lazy.get() {
+            return true;
+        }
+        if self.recursive.get() && !mutants::active("retf_demote_recursive") {
+            return false;
+        }
+        if self
+            .heads()
+            .iter()
+            .any(|h| h.state.get() == HeadState::Traced)
+        {
+            self.retf_pin.set(true);
+        } else {
+            self.lazy_st.set(LAZY_OFF);
+            self.lazy.set(false);
+            for h in self.heads() {
+                h.lazy.set(false);
+                h.set_rec();
+            }
+        }
+        true
+    }
+
     /// E1: an unrolled recording failed in its unrolled part (`Unroll`). In the adaptive mode, [`UNROLL_FAILS`] failures in a row (no unrolled
     /// trace installed in between) lower `k` by one; below 2 the prototype is demoted to `k = 1` for good. `Some(reason)`: demoted now.
     pub fn on_unroll_fail(&self, mode: u32, k: u32) -> Option<UnrollDemote> {
@@ -3169,9 +3212,30 @@ impl TrProto {
 
     /// Q3: an `Ineffective` flush of head `i`. The second one of the same head blacklists at once (the first
     /// re-record did not cure it); otherwise the `Rerec` transition.
-    pub fn on_ineffective(&self, i: usize) -> Penalty {
+    pub fn on_ineffective(&self, i: usize, poly: u32, deps: u64, hot: i32) -> Penalty {
         let h = &self.heads[i];
         let n = h.ineff.get().saturating_add(1);
+        // Section 77.17 (`polyhead`): a polymorphic head (one loop serving several callees: a generic `for` over different iterator
+        // closures) whose flushed trace inlined other prototypes than the last ineffective one is not counted as a repeat: the
+        // first re-record did not fail again, it was made on another callee. At most `poly` such flushes; each waits `hot * 16`
+        // iterations before the head re-records, so the next recording tends to see the head's next callee rather than the same one.
+        if poly & 15 != 0 && h.inner_n.get() == 0 && !mutants::active("polyhead_never") {
+            let prev = h.ineff_deps.get();
+            h.ineff_deps.set(deps);
+            // (bit 4: the re-record waits `hot * 16 << (n - 2)` iterations instead of re-recording at once; bit 5: also a repeat on the same
+            // prototypes, i.e. a long back-off instead of the blacklist)
+            let wait = if poly & 16 != 0 {
+                (i64::from(hot) * 16) << (n.saturating_sub(2)).min(8)
+            } else {
+                1
+            };
+            if n >= 2 && (prev != deps || poly & 32 != 0) && u32::from(n) <= (poly & 15) + 1 {
+                h.ineff.set(n);
+                h.rerec.set(h.rerec.get().saturating_add(1));
+                self.to_warm(i, wait);
+                return Penalty::Wait(wait as i32);
+            }
+        }
         h.ineff.set(n);
         // C39 follow-up: a trace installed after retry rounds of `innerretry` (`inner_n > 0`) that turns out ineffective ends the head
         // for good (no re-record): the retried loop is the data-dependent inner loop the first rounds could not record, and its
@@ -3183,6 +3247,24 @@ impl TrProto {
             return Penalty::Black;
         }
         self.on_rerecord(i)
+    }
+
+    /// Section 77.17 (`polyhead` bit 5): a byte-identical re-record of a head whose `Ineffective` flushes are still inside the polymorphic budget
+    /// backs off like an `Ineffective` flush (the head serves other callees later), instead of [`TrProto::on_identical`]'s blacklist.
+    pub fn on_identical_poly(&self, i: usize, poly: u32, hot: i32) -> Penalty {
+        let h = &self.heads[i];
+        let n = h.ineff.get();
+        if poly & 32 != 0
+            && n >= 1
+            && u32::from(n) <= (poly & 15)
+            && !mutants::active("polyhead_never")
+        {
+            h.ineff.set(n.saturating_add(1));
+            let wait = (i64::from(hot) * 16) << n.min(8);
+            self.to_warm(i, wait);
+            return Penalty::Wait(wait as i32);
+        }
+        self.on_identical(i)
     }
 
     /// Q3: a new compile of head `i` is byte-identical to the trace flushed last: re-installing it would repeat the
@@ -4811,7 +4893,9 @@ fn finish_abort(st: &mut State, id: TrId, reason: &'static str, kind: AbortKind)
             d.tr.stats.refused += 1;
             tp.on_transient(r.head)
         }
-        AbortKind::Identical => tp.on_identical(r.head),
+        AbortKind::Identical => {
+            tp.on_identical_poly(r.head, d.tr.cfg.limits.polyhead, d.tr.cfg.hot_loop)
+        }
         AbortKind::Drop => {
             tp.on_dropped(r.head);
             Penalty::Wait(tp.hot)
@@ -5687,7 +5771,14 @@ fn flush_now(d: &mut JitData, id: TrId, why: FlushWhy) -> Option<Trace> {
                         d.tr.stats.ineffective += 1;
                     }
                     if why == FlushWhy::Ineffective {
-                        tp.on_ineffective(t.head)
+                        let deps = {
+                            let mut v: Vec<usize> = t.deps.clone();
+                            v.sort_unstable();
+                            v.iter().fold(0xcbf2_9ce4_8422_2325u64, |a, &x| {
+                                (a ^ x as u64).wrapping_mul(0x0100_0000_01b3)
+                            }) | 1
+                        };
+                        tp.on_ineffective(t.head, d.tr.cfg.limits.polyhead, deps, hot)
                     } else {
                         tp.on_rerecord(t.head)
                     }
@@ -7222,6 +7313,12 @@ pub fn rec_deep(st: &mut State, id: TrId) -> bool {
     deep
 }
 
+/// Section 77.15: may a native self-call of `pr` be compiled (not after a `RETF` popped into its lazy-aware frames, see `TrProto::retf_pin`)?
+pub fn retf_pinned(st: &mut State, pr: ProtoRef) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| tp.retf_pin.get() && tp.lazy.get())
+}
+
 /// R2: a native self-call of `pr` was recorded.
 pub fn mark_recursive(st: &mut State, pr: ProtoRef) {
     let d = d_of(st);
@@ -7806,6 +7903,18 @@ pub fn retf_into_loop_proto(p: &rn_core::func::Proto) -> bool {
         return false;
     };
     tp.retf_into()
+}
+
+/// Section 77.15: [`TrProto::retf_demote`] of `p` (a loop-free prototype `maybe_lazy_proto` flags); false without a dispatch table.
+pub fn retf_demote_proto(p: &rn_core::func::Proto) -> bool {
+    let Some(pr) = proto_ref(p) else {
+        return false;
+    };
+    // SAFETY: as in `retf_into_loop_proto`
+    let Some(tp) = (unsafe { (*(pr.0 as *const JitProto)).tr.as_deref() }) else {
+        return false;
+    };
+    tp.retf_demote()
 }
 
 /// R2: has a native self-call of `pr` been recorded?
