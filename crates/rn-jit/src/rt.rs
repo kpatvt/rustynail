@@ -2477,9 +2477,9 @@ fn rearm_after_exit(st: &mut State, code: u32, ret_ci: usize, entry: (usize, usi
 #[cfg(feature = "trace")]
 pub(crate) fn arm_tick_enter_only(st: &mut State, root: Option<Ci>) {
     jit_hooks::arm_tick_next(st);
-    let mut keys = [0usize; ARM_PROTOS];
-    let mut any = root.is_none();
-    if let Some(root) = root {
+    // (section 84.1: the common case, an arm without restriction, writes no key array)
+    let protos = root.and_then(|root| {
+        let mut keys = [0usize; ARM_PROTOS];
         let mut c = st.ci();
         for k in &mut keys {
             if let Some(cl) = proto_of(st, c) {
@@ -2494,14 +2494,14 @@ pub(crate) fn arm_tick_enter_only(st: &mut State, root: Option<Ci>) {
             }
         }
         // (a chain deeper than the array: no restriction)
-        any = c.as_ptr() != root.as_ptr();
-    }
+        (c.as_ptr() == root.as_ptr()).then_some(keys)
+    });
     // (`jit_hot_loop` counts the firing before it calls `hot_loop`; a firing at a call instead resets the tick and leaves a stale value, which
     // the next firing does not match)
     // SAFETY: the per-state data is live (see `set_mode`).
     let d = unsafe { &mut *data_ptr(st) };
     d.tr.arm_fired = jit_hooks::hot_fired().wrapping_add(1);
-    d.tr.arm_protos = if any { None } else { Some(keys) };
+    d.tr.arm_protos = protos;
 }
 
 /// Section 81.1: frames whose prototypes the firing of an armed tick may compile.

@@ -2590,7 +2590,7 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
             // N3b: the interpreter allocates (and steps the collector) now; the loop's next back-edge should enter compiled code again
             // (section 81.1: a trace whose root frame is inside a loop goes back to that loop: any prototype may be compiled, as before; the exit of a
             // loop-free root (a function root) restricts the compile to the frames it left)
-            let root = (!root_frame_in_loop(&st, ci)).then(|| {
+            let root = (!root_frame_in_loop(&mut st, ci)).then(|| {
                 // SAFETY: `ci` is the trace's live root frame (contract of this function).
                 unsafe { Ci::from_raw(ci) }
             });
@@ -2997,7 +2997,25 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
 
 /// Section 81.1: is the trace's root frame `root` (restored: its `savedpc` is where the interpreter continues, or the `CALL` of an inlined frame
 /// above it) inside a loop of its prototype, i.e. is there a backward branch at or after that pc whose target is at or before it?
-fn root_frame_in_loop(st: &State, root: *mut CallInfo) -> bool {
+fn root_frame_in_loop(st: &mut State, root: *mut CallInfo) -> bool {
+    // SAFETY: `root` is the live frame the trace was entered at (contract of `exit_entry`).
+    let key = unsafe { Ci::from_raw(root) }.r().savedpc as usize;
+    let slot = (key >> 2) & 3;
+    {
+        // SAFETY: the per-state data is live; read-only.
+        let (k, v) = unsafe { (*crate::rt::data_ptr(st)).tr.arm_loop_memo[slot] };
+        if k == key && key != 0 {
+            return v;
+        }
+    }
+    let v = root_frame_in_loop_scan(st, root);
+    // SAFETY: as above.
+    unsafe { (*crate::rt::data_ptr(st)).tr.arm_loop_memo[slot] = (key, v) };
+    v
+}
+
+/// See [`root_frame_in_loop`]: the scan of the root prototype's code from the frame's `savedpc` for a backward branch at or before it.
+fn root_frame_in_loop_scan(st: &State, root: *mut CallInfo) -> bool {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode as O;
     // SAFETY: `root` is the live frame the trace was entered at (contract of `exit_entry`).

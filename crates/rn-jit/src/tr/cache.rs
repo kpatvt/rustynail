@@ -3700,6 +3700,10 @@ pub struct TrState {
     pub(crate) arm_fired: u64,
     /// Section 81.1: the prototypes (code pointers) of the frames the armed exit left, which that firing may compile (`None`: any).
     pub(crate) arm_protos: Option<[usize; 8]>,
+    /// Section 84.1: memo of `exit::root_frame_in_loop` by the root frame's `savedpc` (direct-mapped; 0 = empty). The scan to the end of the
+    /// prototype ran at every allocation exit (programs/json: 180 k exits, +0.7 % instructions). A prototype freed and another compiled at the
+    /// same address can only read a stale answer, which chooses between two formation policies (no semantic effect).
+    pub(crate) arm_loop_memo: [(usize, bool); 4],
     next_no: u32,
     pub(crate) stats: TrStats,
     /// H8: per-head diagnostics (`RUSTYNAIL_JIT_VERBOSE >= 1`; empty otherwise).
@@ -3755,6 +3759,7 @@ impl TrState {
             rearm_entering: false,
             arm_fired: 0,
             arm_protos: None,
+            arm_loop_memo: [(0, false); 4],
             next_no: 1,
             stats: TrStats::default(),
             diag: Default::default(),
