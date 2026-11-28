@@ -96,18 +96,11 @@ const STAY_SKEW_PROGS: [&str; 6] = [
     "gen:8",
 ];
 
-/// Programs that need more memory than the oracle children get (deep recursion to the stack limit, and with the
-/// collector stopped the generated program 4): excluded, the identity test (collector on) covers them.
-/// (`e4_02_lazy_loop_errors` overflows the stack in a recursion inside a loop: with a stay budget (3, 17) the traces end at every
-/// depth and every stay checkpoint digests the live slots of all frames, more than 6.5 GB of checkpoints against 88 MB without a
-/// budget; docs/JIT_TRACE.md section 58.)
-const MEM_HEAVY: [&str; 5] = [
-    "tests/vm/co_09_stack_and_args",
-    "tests/vm/err_08_stack_overflow",
-    "tests/vm/err_09_error_in_error_handling",
-    "tests/vm/e4_02_lazy_loop_errors",
-    "gen:4",
-];
+/// Programs that need more memory than the oracle children get (with the collector stopped the generated program 4): excluded, the identity
+/// test (collector on) covers it. (The recursions to the stack limit, `co_09_stack_and_args`, `err_08_stack_overflow`,
+/// `err_09_error_in_error_handling` and `e4_02_lazy_loop_errors`, were here while every checkpoint digested all frames: 6.5 GB of checkpoints
+/// under a stay budget, docs/JIT_TRACE.md section 58; with [`DIGEST_FRAMES`] they peak at 150 MB / 1 GB, section 100.2.)
+const MEM_HEAVY: [&str; 1] = ["gen:4"];
 
 /// Programs that traverse tables with pointer keys (tables, functions as keys): the node of such a key sits at a place that depends on the address of the
 /// object, which is different in the oracle's two runs, so `pairs` / `next` visit the keys in another order and a live local (`k`, a string made from it)
@@ -279,6 +272,13 @@ fn main_stack_size(stack0: *const Value) -> Option<usize> {
     std::ptr::eq(m.slot_ptr(StkId(0)).cast_const(), stack0).then(|| m.stack_size())
 }
 
+/// The frames a digest covers, innermost first. A deeper frame is checked by the checkpoints taken once the frames above it have returned
+/// (and the depth itself is in every digest: the innermost frame's absolute function slot is mixed into `chain`). Without the cap a checkpoint
+/// cost O(depth): a recursion to the stack limit under a stay budget (a stay ends every few instructions, each checkpoint holding the live slots
+/// of ~10^5 frames) took the child past 7 GB in seconds (`s89_lzretf` / `s83_subtree` case "stack overflow" under budgets 3, 17 and 200;
+/// docs/JIT_TRACE.md section 100.2).
+const DIGEST_FRAMES: usize = 256;
+
 /// Digest of the machine state whose innermost frame is `ci` at `pc`, stack starting at `stack0`.
 ///
 /// # Safety
@@ -299,7 +299,10 @@ unsafe fn digest(
     let mut unanalysed = 0;
     let mut c = ci;
     let mut first = true;
-    while !c.is_null() {
+    let mut frames = 0usize;
+    // (the innermost `DIGEST_FRAMES` frames only: see the constant)
+    while !c.is_null() && frames < DIGEST_FRAMES {
+        frames += 1;
         // SAFETY: contract of this function.
         let (func, cs, savedpc, top, prev) = unsafe {
             (
