@@ -748,6 +748,17 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                             None => return bad(format!("SETMT of a bad table handle {va}")),
                         }
                     }
+                    // section 84.2: `ASIZE` grows the array part of the table (handle `a`) to `b` slots of nil
+                    if i.op == TOp::Lib && i.aux & 0xFF == lib::ASIZE {
+                        match va.checked_sub(1).and_then(|x| m.tables.get_mut(x as usize)) {
+                            Some(t) => {
+                                if (vb as usize) > t.array.len() {
+                                    t.array.resize(vb as usize, Val::NIL);
+                                }
+                            }
+                            None => return bad(format!("ASIZE of a bad table handle {va}")),
+                        }
+                    }
                     m.str_result.take().unwrap_or(0x1000)
                 }
             }

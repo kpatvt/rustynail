@@ -255,6 +255,9 @@ pub struct ExitMeta {
     /// F2a: the trace has a pre-roll (a peeled root): a persistently failing type guard is caught by the ineffective-trace
     /// rule (Q2), so a side trace may be recorded for it. Rolled roots and side traces keep the prototype's re-record rule.
     pub peeled: bool,
+    /// Section 88.9: memo of [`root_frame_in_loop`] for this trace's allocation exits, keyed by the root frame's `savedpc` (0 = empty): read from
+    /// the metadata the handler holds anyway instead of the per-state memo of section 84.1 (programs/json: 180 k allocation exits).
+    pub root_loop_memo: Cell<(usize, bool)>,
     /// S1: the trace's stack extent (`TraceIr::extent`) and spare-`CallInfo` count (`TraceIr::depth`): what its entry checks
     /// guarantee. A side trace entered with virtual frames (see [`ExitSnap::frame_side_ok`]) runs without entry checks and
     /// may not need more than its parent's.
@@ -419,7 +422,21 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
             && matches!(
                 ir.at(i.a).op,
                 TOp::Tnew | TOp::Snew | TOp::Concat | TOp::Lib
-            );
+            )
+            // (section 92.2: only the guard against 0; the outcome guards of a `LIB` helper, `NE %find, 1` "found" and the like, are branches of the
+            // program: their exits want side traces)
+            && (ir.at(i.a).op != TOp::Lib
+                || !ir.lib_site
+                || (i.b != NOREF
+                    && i.b < super::ir::REF_BIAS
+                    && matches!(ir.kval(i.b), super::ir::KVal::Int(0))))
+            // (section 78.1: the end guard `NE %gm, 1` of a `GMATCH` step is a site of its own: its side trace records the end of the iteration)
+            && !(ir.gm_end_site
+                && ir.at(i.a).op == TOp::Lib
+                && ir.at(i.a).aux & 0xFF == super::ir::lib::GMATCH
+                && i.b != NOREF
+                && i.b < super::ir::REF_BIAS
+                && matches!(ir.kval(i.b), super::ir::KVal::Int(1)));
         if !alloc_guard {
             all_alloc[s] = false;
         }
@@ -2601,7 +2618,23 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         flushed = cache::alloc_storm(&mut st, id, unsafe { budget.read() });
         if !flushed {
             // N3b: the interpreter allocates (and steps the collector) now; the loop's next back-edge should enter compiled code again
-            rn_core::jit_hooks::arm_tick_next(&mut st);
+            // (section 81.1: a trace whose root frame is inside a loop goes back to that loop: any prototype may be compiled, as before; the exit of a
+            // loop-free root (a function root) restricts the compile to the frames it left)
+            // SAFETY: `ci` is the trace's live root frame (contract of this function).
+            let key = unsafe { Ci::from_raw(ci) }.r().savedpc as usize;
+            let (mk, mv) = meta.root_loop_memo.get();
+            let in_loop = if mk == key && key != 0 {
+                mv
+            } else {
+                let v = root_frame_in_loop(&mut st, ci);
+                meta.root_loop_memo.set((key, v));
+                v
+            };
+            let root = (!in_loop).then(|| {
+                // SAFETY: `ci` is the trace's live root frame (contract of this function).
+                unsafe { Ci::from_raw(ci) }
+            });
+            crate::rt::arm_tick_enter_only(&mut st, root);
         }
     }
     if out.count > 0 && !flushed {
@@ -3000,6 +3033,51 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
             th8.add(thr::TOP).cast::<StkId>().write(StkId(top));
         }
     }
+}
+
+/// Section 81.1: is the trace's root frame `root` (restored: its `savedpc` is where the interpreter continues, or the `CALL` of an inlined frame
+/// above it) inside a loop of its prototype, i.e. is there a backward branch at or after that pc whose target is at or before it?
+fn root_frame_in_loop(st: &mut State, root: *mut CallInfo) -> bool {
+    // SAFETY: `root` is the live frame the trace was entered at (contract of `exit_entry`).
+    let key = unsafe { Ci::from_raw(root) }.r().savedpc as usize;
+    let slot = (key >> 2) & 3;
+    {
+        // SAFETY: the per-state data is live; read-only.
+        let (k, v) = unsafe { (*crate::rt::data_ptr(st)).tr.arm_loop_memo[slot] };
+        if k == key && key != 0 {
+            return v;
+        }
+    }
+    let v = root_frame_in_loop_scan(st, root);
+    // SAFETY: as above.
+    unsafe { (*crate::rt::data_ptr(st)).tr.arm_loop_memo[slot] = (key, v) };
+    v
+}
+
+/// See [`root_frame_in_loop`]: the scan of the root prototype's code from the frame's `savedpc` for a backward branch at or before it.
+fn root_frame_in_loop_scan(st: &State, root: *mut CallInfo) -> bool {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode as O;
+    // SAFETY: `root` is the live frame the trace was entered at (contract of `exit_entry`).
+    let ci = unsafe { Ci::from_raw(root) };
+    let Some(cl) = st.ci_lclosure(ci) else {
+        return false;
+    };
+    let p = cl.proto();
+    let code = p.code();
+    let pc = (ci.r().savedpc as usize).wrapping_sub(p.code_ptr() as usize) / 4;
+    if pc >= code.len() {
+        return false;
+    }
+    code.iter().enumerate().skip(pc).any(|(j, &w)| {
+        let i = Instruction(w);
+        let target = match i.opcode() {
+            Some(O::Jmp) => j as i64 + 1 + i64::from(i.sj()),
+            Some(O::Forloop | O::Tforloop) => j as i64 + 1 - i64::from(i.bx()),
+            _ => return false,
+        };
+        target <= pc as i64
+    })
 }
 
 /// Fail stop for a stale region root: the chain below `inner` ends (`previous == null`) without containing `root`. Walking on would dereference

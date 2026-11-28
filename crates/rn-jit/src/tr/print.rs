@@ -274,6 +274,24 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.inner_links, s.inner_rets, s.inner_heads, s.inner_woken
         );
     }
+    if s.eflazy_slots > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] eflazy: entry-check slots moved to their first use {}",
+            s.eflazy_slots
+        );
+    }
+    if s.efkept > 0 {
+        let _ = writeln!(o, "[trace] efkeep: entry-failure flushes kept {}", s.efkept);
+    }
+    if s.stitch_use.iter().any(|&c| c > 0) {
+        let u = &s.stitch_use;
+        let _ = writeln!(
+            o,
+            "[trace] stitch: cont roots {} side stitches {} gmatch ends {} pops {} tprep links {} outer links {}",
+            u[0], u[1], u[2], u[3], u[4], u[5]
+        );
+    }
     if s.ci_repaired > 0 {
         let _ = writeln!(
             o,
@@ -361,12 +379,20 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             let _ = writeln!(o, "[trace] budhoist: loops hoisted {h} kept by bhmin {k}");
         }
     }
-    if s.reroots > 0 || s.reroot_drops > 0 {
+    if s.reroots > 0 || s.reroot_drops > 0 || s.reroot_held > 0 {
         let _ = writeln!(
             o,
-            "[trace] reroot: roots {} drops {} given up {} kept {} reverted {}",
-            s.reroots, s.reroot_drops, s.reroot_gaveup, s.reroot_kept, s.reroot_reverts
+            "[trace] reroot: roots {} drops {} given up {} kept {} reverted {} held {}",
+            s.reroots,
+            s.reroot_drops,
+            s.reroot_gaveup,
+            s.reroot_kept,
+            s.reroot_reverts,
+            s.reroot_held
         );
+    }
+    if s.sretry_starts > 0 {
+        let _ = writeln!(o, "[trace] sretry: starts {}", s.sretry_starts);
     }
     if s.retried > 0 || s.ident_kept > 0 {
         let _ = writeln!(

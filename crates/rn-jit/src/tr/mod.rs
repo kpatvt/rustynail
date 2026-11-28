@@ -228,6 +228,9 @@ pub struct TraceOpts {
     pub bhoist: u32,
     /// N1b: `TrLimits::nidx` (set from the limits when a recording starts): the negated index of an induction-indexed array load is a second induction variable.
     pub nidx: u32,
+    /// Section 81.2 (`eflazy`): root-relative slots (below 64) whose entry type checks failed persistently at this head (`HeadData::eflazy`): `entry_checks`
+    /// leaves their `SLOAD` at its first use (a body guard, whose exit can get a side trace) instead of moving it into the entry checks.
+    pub eflazy: u64,
 }
 
 /// H1: `RUSTYNAIL_JIT_HASHINT=0` turns the integer-key hash access (`HREFV` integer form) off; read once.
@@ -270,6 +273,7 @@ impl Default for TraceOpts {
             aidx: 0,
             bhoist: 0,
             nidx: 0,
+            eflazy: 0,
         }
     }
 }
@@ -555,6 +559,21 @@ fn proto_is_leaf(p: &rn_core::func::Proto) -> bool {
     })
 }
 
+/// Section 78.2 (`fnleaf`): does the prototype read the global `error` (a `GETTABUP` of the constant key `error`)? Such short functions are
+/// checking helpers (awfy/towers' `pushDisk`): a root of their own makes their traced callers stitch where they inlined them.
+fn proto_names_error(p: &rn_core::func::Proto) -> bool {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode;
+    p.code().iter().any(|&w| {
+        let i = Instruction(w);
+        i.opcode() == Some(OpCode::Gettabup)
+            && p.k()
+                .get(i.c() as usize)
+                .and_then(|k| k.as_strref())
+                .is_some_and(|k| k.get().as_bytes() == b"error")
+    })
+}
+
 /// BUNDLE-C: does the closure reach itself through one of its upvalues (`local function f ... f() ... end`)? Such a function recurses: `fnpromo` leaves it to the
 /// recursion machinery (a function root of `tail` in awfy/list costs 25% instructions).
 /// K2: is the prototype of the frame `ci` already running in one of the `depth` nearest caller frames? (Direct recursion that does not go through an upvalue:
@@ -805,7 +824,34 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     // R2: a continuation head of `recany` records only after a native self-call of the prototype was recorded (otherwise every
     // function with calls would get continuation traces whose return guard fails when no recursion is involved)
     let cok = cfg.limits.contok >= 1 && record::cont_ok(root);
+    // section 78.1 (`stitch` bit 0): a continuation head of a prototype that never recursed records as a generic root
+    let cont_gen = cfg.limits.stitch & 1 != 0
+        && !lazy_root
+        && !cok
+        && pr.is_some_and(|pr| {
+            cache::head_is_cont(st, pr, pc)
+                && !cache::proto_recursive(st, pr)
+                // (only once the recursion probe of the function's entry head gave up: a recursive function keeps its continuation heads
+                // for the recursion machinery)
+                && (if cfg.limits.stitch & 64 != 0 {
+                    // section 78.7 (`stitch` bit 6): only a continuation that a stitching exit of an installed trace leads into
+                    cache::head_stitch_fed(st, pr, pc)
+                        && !mutants::active("stitch_fed_ignored")
+                        && cache::fed_fire(
+                            st,
+                            pr,
+                            pc,
+                            if cfg.limits.stitch & 32 != 0 { 0 } else { cache::STITCH_FED_FIRES },
+                        )
+                } else {
+                    cache::fn_probe_settled(st, pr, pc, cfg.limits.stitch & 32 != 0)
+                })
+        })
+        // (section 78.7: and the prototype is not running in a caller frame already: a method recursion `self:f()` that no probe has marked yet)
+        && !(cfg.limits.stitch & 64 != 0 && recursion_on_stack(st, ci, 8))
+        && !mutants::active("stitch_cont_refused");
     if cfg.limits.recany != 0
+        && !cont_gen
         && pr.is_some_and(|pr| {
             cache::head_is_cont(st, pr, pc) && !cache::proto_recursive(st, pr) && !cok
         })
@@ -822,14 +868,17 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     } else {
         None
     };
-    let nest_frame: Option<record::FrameHeadQuery> =
-        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 || cfg.limits.innerlink & 1 != 0 {
-            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
-                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
-            }))
-        } else {
-            None
-        };
+    let nest_frame: Option<record::FrameHeadQuery> = if cfg.limits.nest >= 2
+        || cfg.limits.sidenest != 0
+        || cfg.limits.innerlink & 1 != 0
+        || cfg.limits.stitch & 8 != 0
+    {
+        Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+            cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+        }))
+    } else {
+        None
+    };
     let rc = RecCfg {
         hrefv: hrefv_enabled(),
         shape: cfg.limits.shapeguard != 0,
@@ -881,6 +930,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         rec_only: cfg.limits.recnat != 0
             && cfg.limits.fnroot == 0
             && !promoted
+            && !cont_gen
             && (pc == 0 || cfg.limits.recany != 0),
         rec_cont: pr.is_some_and(|pr| cache::head_is_cont(st, pr, pc)),
         // E1: the unroll factor of a function-entry recording (1 everywhere else, and for prototypes the policy demoted)
@@ -962,6 +1012,37 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         side_stitch: true,
         side_stitch_min: cfg.limits.sidestitchmin,
         stitch0: cfg.limits.stitch0 != 0,
+        cont_gen,
+        tprep_link: cfg.limits.stitch & 8 != 0,
+        // section 78.2 (`fnleaf`): a promoted function root of a small prototype records its dynamic-leaf bodies at any length
+        fn_min_leaf: (promoted
+            && cfg.limits.fnleaf & 4095 != 0
+            && proto.code().len() <= (cfg.limits.fnleaf & 4095) as usize
+            && !proto_names_error(&proto)
+            // (section 78.7: and holds no method call: a callback whose cold branch calls a method (apps/events' handlers `bus:emit`, `bus:off`)
+            // is a leaf only on the path recorded)
+            && !proto.code().iter().any(|&w| {
+                rn_core::instruction::Instruction(w).opcode() == Some(rn_core::ver::active::OpCode::SelfOp)
+            })
+            && !mutants::active("fnleaf_never"))
+        .then_some(0),
+        cont_ret: cont_gen && cfg.limits.stitch & 8 != 0,
+        fmt0: cfg.limits.stitch & 16 != 0,
+        cont_head: if cfg.limits.stitch & 8 != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::cont_head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
+        } else {
+            None
+        },
+        // (section 78.1: the pop of a generic continuation root asks the caller's loop heads)
+        retf_head: if cont_gen && cfg.limits.stitch & 8 != 0 && cfg.limits.retf & 1 != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
+        } else {
+            None
+        },
         nrinline: true,
         presize: cfg.limits.presize != 0,
         pcall: true,
@@ -1000,6 +1081,9 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         } else {
             None
         },
+        mrset: cfg.limits.mrset & 1 != 0,
+        lib_site: cfg.limits.libsite != 0,
+        mrset_va: cfg.limits.mrset & 2 != 0,
         ..RecCfg::default()
     };
     match record::arm(st, ci, pc, rc) {
@@ -1028,6 +1112,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                         } else {
                             cfg.limits.bhoist
                         };
+                        o.eflazy = pr.map_or(0, |pr| cache::head_eflazy(st, pr, pc));
                         o
                     },
                     hot_exit: cfg.hot_exit,
@@ -1077,6 +1162,23 @@ pub fn driver_start_side(
         return None;
     }
     let rem = snap::land_info(&inner_low, start.pc).1;
+    // section 92.1 (`sretry`): not at a `TFORCALL` unless bit 9 (the short side of an iterator call re-enters the loop's own exit: msgpack_pure)
+    let sretry = start.sretry
+        && (cfg.limits.sretry & 512 != 0
+            || start.frames.is_empty()
+                && proto.code().get(start.pc as usize).is_none_or(|&i| {
+                    rn_core::instruction::Instruction(i).opcode()
+                        != Some(rn_core::ver::active::OpCode::Tforcall)
+                }));
+    if sretry {
+        cache::stat_sretry(st);
+    }
+    if sretry && cfg.verbose >= 2 {
+        eprintln!(
+            "[trace] sretry: side start at pc {} (exit of {:?}) without sidemin",
+            start.pc, id
+        );
+    }
     let resolve: record::ResolveFn = Rc::new(|st, p| {
         cache::proto_ref(p).or_else(|| {
             crate::rt::ensure_compiled(st, p)
@@ -1103,7 +1205,11 @@ pub fn driver_start_side(
             known: start.known.clone(),
             head_state: hs,
             // a prelude replaces a failing entry (type_entry): it pays at any length
-            min_len: if start.prelude { 0 } else { cfg.limits.sidemin },
+            min_len: if start.prelude || sretry {
+                0
+            } else {
+                cfg.limits.sidemin
+            },
             frames: start.frames.clone(),
             max_extent: start.max_extent,
             max_ci: start.max_ci,
@@ -1190,6 +1296,22 @@ pub fn driver_start_side(
         side_stitch: true,
         side_stitch_min: cfg.limits.sidestitchmin,
         stitch0: cfg.limits.stitch0 != 0,
+        side_cstitch: cfg.limits.stitch & 2 != 0,
+        gm_end: cfg.limits.stitch & 4 != 0,
+        cont_ret: cfg.limits.stitch & 8 != 0,
+        tprep_link: cfg.limits.stitch & 8 != 0,
+        outer_link: cfg.limits.outerlink != 0,
+        mrset: cfg.limits.mrset & 1 != 0,
+        lib_site: cfg.limits.libsite != 0,
+        mrset_va: cfg.limits.mrset & 2 != 0,
+        fmt0: cfg.limits.stitch & 16 != 0,
+        cont_head: if cfg.limits.stitch & 8 != 0 {
+            Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
+                cache::proto_ref(p).and_then(|pr| cache::cont_head_traced(st, pr, pc))
+            }) as record::FrameHeadQuery)
+        } else {
+            None
+        },
         nrinline: true,
         presize: cfg.limits.presize != 0,
         pcall: true,
@@ -1390,6 +1512,15 @@ fn finish_outcome(st: &mut State) {
             ),
         },
         RecOutcome::Closed(rec) => {
+            // section 92.1: a constrained re-record of a peeled root that would not peel is dropped like one that completed the avoided prefix (a rolled
+            // loop has no pre-roll: the probation of `rerootchk` never sees it, and the old peeled root was the better trace)
+            if !act.side
+                && cache::reroot_pending(st, act.id)
+                && !opt_loop::peelable(&rec.ir, crate::rt::trace_config(st).limits.hdrlib)
+            {
+                cache::abort_reroot(st, act.id);
+                return;
+            }
             // section 59 (`reroot`): remember the path (the rule compares a root's path with its side trace's); a closed root recording ends its head's constraint
             cache::reroot_closed(
                 st,
@@ -1569,14 +1700,21 @@ fn relaxstr(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
 /// the free-peel bookkeeping (`pending` / `entry_fail`) never applied to it, and a live-in whose type differs at
 /// every entry (`type_entry`: `local a = 0` that turns float) was counted as a hot type-guard exit and re-recorded
 /// forever. With the check at the entry, persistent failures are handled by the entry-failure rule of 3.3 instead.
-fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
+fn entry_checks(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
     use ir::{aux_bits, guard_aux, TOp, F_GUARD, REF_BIAS};
     let ir = &mut rec.ir;
     if ir.loop_at.is_some() {
         return Ok(()); // peeled layouts (P7) have their own entry segment
     }
-    let checked =
-        |i: &ir::Ins| i.op == TOp::Sload && i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0;
+    // (section 81.2, `eflazy`: a slot whose entry check failed persistently at this head keeps its check at its first use)
+    let lazy = |i: &ir::Ins| {
+        usize::from(i.a) < 64
+            && opts.eflazy & (1u64 << i.a) != 0
+            && !mutants::active("eflazy_ignored")
+    };
+    let checked = |i: &ir::Ins| {
+        i.op == TOp::Sload && i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0 && !lazy(i)
+    };
     // POLL and BUDGET first. A side trace entered with carried values starts with its carried loads (unchecked, position-less: they have no code); they
     // belong to the prefix too, or the checks would be moved in front of the `BUDGET` charge, and a failing check there would leave with `refund = n`
     // for a charge that was never made (the budget word grows by `n`: 5.4 `r1_live_flip [on2 budget=200]` was 168 instructions short)
@@ -1608,6 +1746,20 @@ fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
             .position(|i| i.op == TOp::Retf)
             .unwrap_or(ir.ins.len())
     };
+    // (section 88.3: the loads it leaves at their first use are marked, so that their guards are body exits, see `ir::SLOAD_LAZY`)
+    {
+        for i in p..first_retf {
+            let ins = &ir.ins[i];
+            if ins.op == TOp::Sload
+                && ins.flags & F_GUARD != 0
+                && aux_bits(ins.aux) & 1 != 0
+                && lazy(ins)
+            {
+                let bits = aux_bits(ins.aux) | ir::SLOAD_LAZY;
+                ir.ins[i].aux = guard_aux(ir::aux_snap(ins.aux), bits);
+            }
+        }
+    }
     let moved: Vec<usize> = (p..first_retf).filter(|&i| checked(&ir.ins[i])).collect();
     if moved.is_empty() {
         return Ok(());
@@ -3445,6 +3597,14 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         cache::note_nest(st, side.is_some_and(|s| s.frame_link));
     }
     cache::note_inner(st, rec.inner_link && !act.side, rec.inner_ret);
+    cache::note_stitch_use(st, rec.stitch_use);
+    // section 78.7 (`stitch` bit 6): the continuation head the final stitching exit leads into
+    if let (Some((p, pc)), true) = (rec.stitch_feeds, rec.stitched) {
+        // SAFETY: the prototype is one of the recording's frames or the caller of its root frame, alive while the trace is installed (its closure is on the stack).
+        if let Some(pr) = cache::proto_ref(unsafe { &*(p as *const rn_core::func::Proto) }) {
+            cache::mark_stitch_fed(st, pr, pc);
+        }
+    }
     // T9 (`innerlink`): the head this root's frame-linking exit enters (the return half reads it)
     if let Some(si) = side.filter(|s| s.frame_link && !act.side) {
         // SAFETY: an inlined callee of the trace, registered as a dependency (TR32) and live.
@@ -3514,6 +3674,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         counters,
         cells,
         peeled: ir.loop_at.is_some(),
+        root_loop_memo: std::cell::Cell::new((0, false)),
         // R2: a side trace that checks its own room fails through its start snapshot BEFORE the check: the room an exit of it
         // can promise to a side trace attached to that exit is the parent's (the later exits could promise more, which is not worth a
         // second number: a child that needs more checks its own room)
@@ -3560,6 +3721,29 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         });
         if ec {
             cache::set_entry_callee(st, newid, true);
+        }
+        // Section 81.2 (`eflazy`): the type checks of the entry segment (checked `SLOAD`s on an empty-map snapshot), compared with the stack of a failing
+        // entry when the head's entry failures get persistent
+        let et: Vec<(u16, ir::Ty)> = ir
+            .ins
+            .iter()
+            .enumerate()
+            .filter(|&(k, i)| {
+                i.flags & ir::F_GUARD != 0
+                    && i.op == ir::TOp::Sload
+                    && ir::aux_bits(i.aux) & 1 != 0
+                    && ir::aux_bits(i.aux) & ir::SLOAD_LAZY == 0
+                    && lp.is_none_or(|l| k < l)
+                    && usize::from(i.a) < 64
+                    && {
+                        let s = &ir.snaps[ir::aux_snap(i.aux) as usize];
+                        s.map.1 == 0 && s.nframes == 0 && s.frame == 0 && s.top == 0
+                    }
+            })
+            .map(|(_, i)| (i.a, i.t))
+            .collect();
+        if !et.is_empty() {
+            cache::set_entry_tys(st, newid, et);
         }
     }
     if attached.is_none() {

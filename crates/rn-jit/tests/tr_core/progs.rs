@@ -16407,6 +16407,49 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t4_01_late_ret.lua"),
     },
+    // docs/JIT_TRACE.md section 81: armed ticks after allocation exits, entry type checks moved to their first use
+    Prog {
+        name: "s81_01_allocarm",
+        small: true,
+        src: include_str!("../../../../tests/vm/s81_01_allocarm.lua"),
+    },
+    Prog {
+        name: "s81_02_eflazy",
+        small: true,
+        src: include_str!("../../../../tests/vm/s81_02_eflazy.lua"),
+    },
+    // docs/JIT_TRACE.md section 84.2 (`mrset`): constructors filled by open result lists
+    Prog {
+        name: "s84_02_mrset",
+        small: true,
+        src: include_str!("../../../../tests/vm/s84_02_mrset.lua"),
+    },
+    // docs/JIT_TRACE.md section 78.1 (`stitch`): continuation traces and stitching for non-recursive code
+    Prog {
+        name: "s78_05_outerlink",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_05_outerlink.lua"),
+    },
+    Prog {
+        name: "s78_03_wgloop",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_03_wgloop.lua"),
+    },
+    Prog {
+        name: "s78_04_wglua",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_04_wglua.lua"),
+    },
+    Prog {
+        name: "s78_02_fnleaf",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_02_fnleaf.lua"),
+    },
+    Prog {
+        name: "s78_01_stitch",
+        small: true,
+        src: include_str!("../../../../tests/vm/s78_01_stitch.lua"),
+    },
     // T9 (docs/JIT_TRACE.md section 47): nested-loop trace linking (`innerlink`)
     Prog {
         name: "t9_01_innerlink",

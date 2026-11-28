@@ -61,6 +61,8 @@ mod s76_progs;
 mod s77_progs;
 #[path = "tr_core/s87_progs.rs"]
 mod s87_progs;
+#[path = "tr_core/s92_progs.rs"]
+mod s92_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -92,6 +94,7 @@ use s68_progs::S68_PROGS;
 use s76_progs::S76_PROGS;
 use s77_progs::S77_PROGS;
 use s87_progs::S87_PROGS;
+use s92_progs::S92_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -230,6 +233,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S64_PROGS)
         .chain(S76_PROGS)
         .chain(S87_PROGS)
+        .chain(S92_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -575,6 +579,8 @@ struct TStats {
     /// T4: `t4: late returns L start sides S`.
     ret_late: u64,
     ret_start_sides: u64,
+    /// Section 78.1: `stitch: cont roots C side stitches S gmatch ends G pops P tprep links T`.
+    stitch_use: [u64; 6],
     /// T9: `innerlink: links L rets R linked heads H exits woken W`.
     inner_links: u64,
     inner_rets: u64,
@@ -587,6 +593,8 @@ struct TStats {
     bh_kept: u64,
     /// Section 62: `... kept K reverted V` of the same line.
     reroot_kept: u64,
+    reroot_held: u64,
+    sretry_starts: u64,
     reroot_reverts: u64,
     dstubs: u64,
     dstub_patched: u64,
@@ -840,6 +848,9 @@ impl TStats {
                 s.reroot_drops = w.get(2).and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.reroot_kept = w.get(7).and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.reroot_reverts = w.get(9).and_then(|v| v.parse().ok()).unwrap_or(0);
+                s.reroot_held = w.get(11).and_then(|v| v.parse().ok()).unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("sretry: starts ") {
+                s.sretry_starts = r.trim().parse().unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("dlink: attached ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.dlink_attached = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -848,6 +859,11 @@ impl TStats {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.ret_late = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
                 s.ret_start_sides = w.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
+            } else if let Some(r) = l.strip_prefix("stitch: cont roots ") {
+                let w: Vec<&str> = r.split_whitespace().collect();
+                for (k, at) in [0usize, 3, 6, 8, 11, 14].into_iter().enumerate() {
+                    s.stitch_use[k] = w.get(at).and_then(|v| v.parse().ok()).unwrap_or(0);
+                }
             } else if let Some(r) = l.strip_prefix("innerlink: links ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
                 s.inner_links = w.first().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -10952,6 +10968,246 @@ fn s64_wgcall_programs() {
     );
 }
 
+/// Section 78.1 (`stitch`): continuation traces after non-recursive calls, side stitches at C calls, the end of `gmatch` iterations, pops
+/// into the caller's continuation, frame links behind a `TFORPREP` and the library forms (`string.format` without `%`, `"" .. s`,
+/// `string.gmatch`), in every trace mode with exit storms, budgets, GC stress and stack moves against the interpreter, with the knob off
+/// as the control. The counters show that each piece formed with the knob on and none with it off (mutants `stitch_cont_refused`,
+/// `stitch_side_never`, `stitch_tprep_never`; the semantic mutants `gm_end_probe_skip`,
+/// `gmnew_swapped`, `fmt0_guard_skip`, `concat_empty_guard_skip` are caught by the outputs).
+#[test]
+fn s78_stitch_programs() {
+    let progs = ["s78_01_stitch"];
+    let limits = ["stitch=63", "stitch=31", "stitch=127", "stitch=0"];
+    let jobs = b1_jobs(&progs, &limits);
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().stitch, 0);
+    assert_eq!(TrLimits::parse("stitch=63").0.stitch, 63);
+    let mut seen = [0u64; 5];
+    // section 78.7 (bit 6): continuation roots only behind stitching exits: fewer than without the rule, but some (mutant `stitch_fed_ignored`)
+    let roots = |l: &str| -> u64 {
+        res.iter()
+            .filter(|(j, _)| {
+                j.limits == l
+                    && j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.stitch_use[0])
+            .sum()
+    };
+    let (fed, all) = (roots("stitch=127"), roots("stitch=63"));
+    assert!(
+        fed > 0 && fed < all,
+        "fed continuation roots {fed} against {all}"
+    );
+    for (j, o) in &res {
+        if j.limits == "stitch=0" {
+            assert_eq!(o.stats.stitch_use[..5], [0; 5], "{}: stitch=0", j.tag());
+        }
+        if j.limits == "stitch=63"
+            && j.trace == "always"
+            && j.opts.is_empty()
+            && j.budget.is_none()
+            && j.env.is_empty()
+        {
+            for k in 0..5 {
+                seen[k] += o.stats.stitch_use[k];
+            }
+        }
+    }
+    for (k, what) in [
+        "cont roots",
+        "side stitches",
+        "gmatch ends",
+        "pops",
+        "tprep links",
+    ]
+    .iter()
+    .enumerate()
+    {
+        // (5.4: `RETF` is off, C63, so neither the pops nor the frame links behind a `TFORPREP` form there)
+        if cfg!(rustynail_lua54) && k >= 3 {
+            continue;
+        }
+        assert!(seen[k] > 0, "stitch=63 forms {what}: {seen:?}");
+    }
+}
+
+/// Section 78.2 (`fnleaf`): short dynamic-leaf function roots (and, bit 12, entry heads of tail-call-only functions) in every mode against the
+/// interpreter; with the size limit on, more roots install than with the heads alone (mutant `fnleaf_never`).
+#[test]
+fn s78_fnleaf_programs() {
+    let progs = ["s78_02_fnleaf"];
+    let limits = [
+        "fnleaf=4112,fnpromow=0",
+        "fnleaf=4096,fnpromow=0",
+        "fnleaf=16,fnpromow=0",
+        "fnleaf=0",
+    ];
+    let res = compare(b1_jobs(&progs, &limits));
+    assert_eq!(TrLimits::default().fnleaf, 0);
+    let inst = |l: &str| -> u64 {
+        res.iter()
+            .filter(|(j, _)| {
+                j.limits == l
+                    && j.trace == "always"
+                    && j.opts.is_empty()
+                    && j.budget.is_none()
+                    && j.env.is_empty()
+            })
+            .map(|(_, o)| o.stats.installed)
+            .sum()
+    };
+    let (on, heads) = (
+        inst("fnleaf=4112,fnpromow=0"),
+        inst("fnleaf=4096,fnpromow=0"),
+    );
+    assert!(
+        on > heads,
+        "fnleaf roots install: {on} against {heads} with the heads alone"
+    );
+}
+
+/// Section 78.3 (`wgloop`): the per-loop start-gate weight of a loop around one C call, in every mode against the interpreter; then the gate: at
+/// a `wgate` the plain lengths never reach, the C-call loops open it with the weight and the Lua-callee loop does not (mutant `wgloop_never`).
+#[test]
+fn s78_wgloop_programs() {
+    let progs = ["s78_03_wgloop", "s78_04_wglua"];
+    let res = compare(b1_jobs(
+        &progs,
+        &["wgloop=16,wgate=30000", "wgloop=0,wgate=30000"],
+    ));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::parse("wgloop=16").0.wgloop, 16);
+    let mut gate = Vec::new();
+    for (p, l) in [
+        ("s78_03_wgloop", "wgloop=0,wgate=2400000,fnroot=0"),
+        ("s78_03_wgloop", "wgloop=1024,wgate=2400000,fnroot=0"),
+        ("s78_04_wglua", "wgloop=1024,wgate=2400000,fnroot=0"),
+    ] {
+        let mut j = Job::new(p, "on").opts("+verify");
+        j.limits = l.into();
+        gate.push(j);
+    }
+    let res = compare(gate);
+    assert_eq!(
+        res[0].1.stats.recorded,
+        0,
+        "plain lengths: {}",
+        res[0].1.stats.line()
+    );
+    assert!(
+        res[1].1.stats.recorded >= 1,
+        "the C-call loop opens the gate: {}",
+        res[1].1.stats.line()
+    );
+    assert_eq!(
+        res[2].1.stats.recorded,
+        0,
+        "a Lua callee keeps the plain weight: {}",
+        res[2].1.stats.line()
+    );
+}
+
+/// Section 78.4 (`outerlink`): side traces of an inner loop's exits pass the untraced head of the outer loop and link into the inner trace, in
+/// every mode against the interpreter, with the knob off as the control (mutant `outerlink_never`: no outer link forms).
+#[test]
+fn s78_outerlink_programs() {
+    let res = compare(b1_jobs(
+        &["s78_05_outerlink"],
+        &["outerlink=1", "outerlink=0"],
+    ));
+    let mut on = 0;
+    for (j, o) in &res {
+        if j.limits == "outerlink=0" {
+            assert_eq!(o.stats.stitch_use[5], 0, "{}", j.tag());
+        } else if j.opts.is_empty() && j.budget.is_none() && j.env.is_empty() {
+            on += o.stats.stitch_use[5];
+        }
+    }
+    assert!(on > 0, "outer links form with outerlink=1");
+}
+
+/// Section 78.8 (`efkeep`): entry-failure flushes skipped for grown families (at most `EFKEEP_TIMES` per head) do not change any output, in every
+/// mode against the interpreter.
+#[test]
+fn s78_efkeep_programs() {
+    let res = compare(b1_jobs(
+        &["s78_01_stitch", "s78_05_outerlink", "s60_queens"],
+        &["efkeep=1", "efkeep=0"],
+    ));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().efkeep, 0);
+}
+
+/// Section 81.1: a short leaf root that allocates, called before a freshly `load`ed chunk runs its loop (the tick armed by an allocation exit only
+/// enters compiled code), in every mode against the interpreter, `fnleaf` on and off.
+#[test]
+fn s81_allocarm_programs() {
+    let res = compare(b1_jobs(
+        &["s81_01_allocarm"],
+        &["fnleaf=16,fnpromow=0", "fnleaf=0"],
+    ));
+    assert!(!res.is_empty());
+}
+
+/// Section 81.2 (`eflazy`): a loop whose live-ins change type between entries, in every mode against the interpreter with the knob on and off;
+/// then the head: with the knob the slots whose entry checks failed are checked at their first use and the root keeps far more of its entries
+/// (mutant `eflazy_ignored`: the head's set is ignored, the entries stay as without the knob).
+#[test]
+fn s81_eflazy_programs() {
+    let res = compare(b1_jobs(&["s81_02_eflazy"], &["eflazy=1", "eflazy=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().eflazy, 0);
+    let mk = |l: &str| {
+        let mut j = Job::new("s81_02_eflazy", "on").env("RUSTYNAIL_JIT_VERBOSE", "1");
+        j.limits = l.into();
+        j
+    };
+    let r = run_all(vec![mk("eflazy=1"), mk("eflazy=0")]);
+    let entries = |e: &str| -> u64 {
+        e.lines()
+            .find(|l| {
+                l.starts_with("[heads]")
+                    && (l.contains(":12 pc ") || l.contains(":13 pc "))
+                    && l.contains(" loop ")
+            })
+            .and_then(|l| l.split(" entries ").nth(1))
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    };
+    assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
+    let (on, off) = (entries(&r[0].1.stderr), entries(&r[1].1.stderr));
+    assert!(
+        on > off * 2,
+        "eflazy root entries {on} against {off} without the knob: {}",
+        r[0].1.stderr
+    );
+}
+
+/// Section 84.2 (`mrset`): constructors filled by open result lists (`{ byte(s, i, e) }` with changing counts, a fixed item in front, a Lua callee's
+/// results, empty lists, tables that escape), in every mode against the interpreter with the knob on and off; then the knob really records them
+/// (the `ASIZE` helper is in an installed trace: the constructor's head gets entries). Mutant `mrset_vals_reversed`.
+#[test]
+fn s84_mrset_programs() {
+    let res = compare(b1_jobs(&["s84_02_mrset"], &["mrset=1", "mrset=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().mrset, 0);
+    let mk = |l: &str| {
+        let mut j = Job::new("s84_02_mrset", "on").env("RUSTYNAIL_JIT_VERBOSE", "1");
+        j.limits = l.into();
+        j
+    };
+    let r = run_all(vec![mk("mrset=1"), mk("mrset=0")]);
+    assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
+    let multret = |e: &str| e.contains("MultRet@") || e.contains("aborted MultRet");
+    assert!(!multret(&r[0].1.stderr), "{}", r[0].1.stderr);
+    assert!(multret(&r[1].1.stderr), "{}", r[1].1.stderr);
+}
+
 /// Section 76.2 (`sideback`): exponential back-off of side recordings at exits whose recordings failed. The program with repeatedly failing side
 /// exits runs identically with the knob at 3 (every fault), 11 (path causes only), 6 (unchangeable causes, shift 2) and 0 (control) in every mode
 /// (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves), and the back-off really waits at 3. Mutant `sideback_no_wait`.
@@ -15991,6 +16247,95 @@ fn s60_reroot_programs() {
     assert!(
         get(&format!("s60_phases {all0}")).2 > 0,
         "s60_phases: the probation check never kept a re-record"
+    );
+}
+
+/// Section 92 (docs/JIT_TRACE.md section 92): `sretry`, `libsite`, `rerootgain`. The `s92_*` programs (short tails behind branches and loop ends,
+/// rows that grow, a sieve, an error and a count hook on short tails, a float change; a tokenizer whose `match` / `find` outcomes change between
+/// phases, an error behind a find outcome) and the section-60 programs in `always` / `on2` x the knobs off / on (`sidemin=4` as in a process,
+/// `sretry=1`: one report window of wait) x plain, `+verify`, budget 17; with the knobs on also `+exitstorm=3 +verify`, budget 3, GC stress 1 / 2
+/// in both collector modes, stack moves, and with the oracle feature the instruction-count identity. Outputs match the interpreter in every job.
+/// Asserts: `sretry` starts short side recordings in `s92_short_tails` and never with the knob off; `rerootgain=110` holds the root of
+/// `s60_worse` (its side trace completes no more iterations) and still re-roots `s60_queens`.
+#[test]
+fn s92_knob_programs() {
+    let progs = [
+        "s92_short_tails",
+        "s92_lib_outcomes",
+        "s60_queens",
+        "s60_worse",
+        "s60_phases",
+    ];
+    let off = "sidemin=4,sretry=0,libsite=0";
+    let on = "sidemin=4,sretry=1,libsite=1,reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=100,rerootgain=110";
+    let mut jobs = Vec::new();
+    for p in progs {
+        for trace in ["always", "on2"] {
+            for lim in [off, on] {
+                jobs.push(Job::new(p, trace).limits_s(lim));
+                jobs.push(Job::new(p, trace).opts("+verify").limits_s(lim));
+                jobs.push(Job::new(p, trace).budget(17).limits_s(lim));
+            }
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3 +verify").limits_s(on));
+            jobs.push(Job::new(p, trace).budget(3).limits_s(on));
+            for (gc, mode) in [("1", "gen"), ("2", "gen"), ("1", "inc"), ("2", "inc")] {
+                let mut j = Job::new(p, trace)
+                    .env("RUSTYNAIL_GC_STRESS", gc)
+                    .limits_s(on);
+                if mode == "inc" {
+                    j = j.env("RUSTYNAIL_GC_MODE", "inc");
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new(p, trace)
+                    .env("RUSTYNAIL_JIT_STRESS", "stackmove")
+                    .opts("+tracemove")
+                    .limits_s(on),
+            );
+            #[cfg(feature = "t15_oracle")]
+            for b in [None, Some(3), Some(17)] {
+                let mut j = Job::new(p, trace).limits_s(on);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+    }
+    let res = compare(jobs);
+    let mut sretry = std::collections::BTreeMap::<String, u64>::new();
+    let mut held = std::collections::BTreeMap::<String, (u64, u64)>::new();
+    for (j, o) in &res {
+        if j.limits == off {
+            assert_eq!(
+                o.stats.sretry_starts,
+                0,
+                "{}: sretry with the knob off",
+                j.tag()
+            );
+            assert_eq!(
+                o.stats.reroots + o.stats.reroot_held,
+                0,
+                "{}: reroot with the knob off",
+                j.tag()
+            );
+        }
+        let plain = j.opts.is_empty() && j.env.is_empty() && j.budget.is_none() && !j.ident;
+        if plain && j.limits == on {
+            *sretry.entry(j.prog.clone()).or_default() += o.stats.sretry_starts;
+            let e = held.entry(j.prog.clone()).or_default();
+            e.0 += o.stats.reroots;
+            e.1 += o.stats.reroot_held;
+        }
+    }
+    eprintln!("s92 sretry starts: {sretry:?}; reroot (fired, held): {held:?}");
+    assert!(
+        sretry.get("s92_short_tails").copied().unwrap_or(0) > 0,
+        "s92_short_tails: sretry never started a short side recording"
+    );
+    assert!(
+        held.get("s60_queens").copied().unwrap_or_default().0 > 0,
+        "s60_queens: rerootgain held the re-root of the queens loop"
     );
 }
 

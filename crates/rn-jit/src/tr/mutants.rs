@@ -1139,6 +1139,21 @@ pub const NAMES: &[&str] = &[
     "regcall_arg2_skip",
     // docs/JIT_TRACE.md section 64 (`wgcall`): the call weight of the start gate's loop length is ignored
     "wgcall_weight_skip",
+    // docs/JIT_TRACE.md section 78.1 (`stitch`): continuation traces and stitching for non-recursive code
+    "stitch_cont_refused",
+    "stitch_side_never",
+    "stitch_tprep_never",
+    "gm_end_probe_skip",
+    "gmnew_swapped",
+    "fmt0_guard_skip",
+    "concat_empty_guard_skip",
+    // docs/JIT_TRACE.md section 78.2 (`fnleaf`): short dynamic-leaf function roots
+    "fnleaf_never",
+    // docs/JIT_TRACE.md sections 78.3 (`wgloop`), 78.4 (`outerlink`)
+    "wgloop_never",
+    "outerlink_never",
+    // docs/JIT_TRACE.md section 78.7 (`stitch` bit 6): continuation roots only behind stitching exits
+    "stitch_fed_ignored",
     // docs/JIT_TRACE.md section 76.2 (`sideback`): a failed side recording sets no back-off wait
     "sideback_no_wait",
     // docs/JIT_TRACE.md section 76.3 (`sideblf`): the first failure never blacklists the exit
@@ -1193,6 +1208,10 @@ pub const NAMES: &[&str] = &[
     "fusecov_patch_skip",
     // section 91 (`fusecov` bit 1): the native return's guards are left out of a fused body
     "fusecov_rrg_skip",
+    // docs/JIT_TRACE.md section 81.2 (`eflazy`): the head's set of slots whose entry checks failed is ignored by `entry_checks`
+    "eflazy_ignored",
+    // docs/JIT_TRACE.md section 84.2 (`mrset`): the values of an open-list `SETLIST` are stored in reverse order
+    "mrset_vals_reversed",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1309,7 +1328,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 942);
+        assert_eq!(NAMES.len(), 955);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

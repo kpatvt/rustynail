@@ -5040,6 +5040,61 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s64_wgcall_programs")],
     },
     Row {
+        name: "stitch_cont_refused",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "stitch_side_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "stitch_tprep_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "gm_end_probe_skip",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "gmnew_swapped",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "fmt0_guard_skip",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "concat_empty_guard_skip",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
+        name: "fnleaf_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_fnleaf_programs")],
+    },
+    Row {
+        name: "wgloop_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_wgloop_programs")],
+    },
+    Row {
+        name: "outerlink_never",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_outerlink_programs")],
+    },
+    Row {
+        name: "stitch_fed_ignored",
+        owner: "S78",
+        dets: &[d("tr_core", "s78_stitch_programs")],
+    },
+    Row {
         name: "sideback_no_wait",
         owner: "S76",
         dets: &[d("tr_core", "s76_sideback_programs")],
@@ -5176,7 +5231,16 @@ const TABLE: &[Row] = &[
         owner: "S91",
         dets: &[d("tr_core", "s91_fusecov_programs")],
     },
-
+    Row {
+        name: "eflazy_ignored",
+        owner: "S81",
+        dets: &[d("tr_core", "s81_eflazy_programs")],
+    },
+    Row {
+        name: "mrset_vals_reversed",
+        owner: "S84",
+        dets: &[d("tr_core", "s84_mrset_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

@@ -137,6 +137,29 @@ pub const INNERLINK_PROCESS: u32 = 0;
 pub const T5_PROCESS: u32 = 0;
 /// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
 pub const T7_PROCESS: u32 = 0;
+/// Section 78.8 (`efkeep`): entry-failure flushes one head may skip (then the flush happens as before).
+pub const EFKEEP_TIMES: u8 = 2;
+/// Section 78.5 / 78.8 (`efkeep`): the process default of [`TrLimits::efkeep`] (the struct default is 0).
+pub const EFKEEP_PROCESS: u32 = 0;
+/// Section 81.2 (`eflazy`): the process default of [`TrLimits::eflazy`] (the struct default is 0).
+pub const EFLAZY_PROCESS: u32 = 0;
+/// Section 84.2 (`mrset`): the process default of [`TrLimits::mrset`] (the struct default is 0).
+pub const MRSET_PROCESS: u32 = 1;
+/// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0).
+pub const OUTERLINK_PROCESS: u32 = 0;
+/// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
+pub const WGLOOP_PROCESS: u32 = 16;
+/// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (the struct default is 0; back on since section 81.1).
+pub const FNLEAF_PROCESS: u32 = 16;
+/// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (the struct default is 0; on since section 88.2).
+pub const STITCH_PROCESS: u32 = 95;
+/// Section 78.1 (`stitch` bit 1): fewest recorded steps of a side recording before it stitches at a C call.
+pub const STITCH_SIDE_MIN: usize = 8;
+/// Section 78.1 (`stitch` bit 0): leaf samples (`FnShort` recordings) of a prototype's function-entry head after which its continuation heads
+/// record as generic roots (when the prototype never recursed and does not reach itself through an upvalue or a method).
+pub const STITCH_SETTLE_SAMPLES: u8 = 2;
+/// Section 78.1 (`stitch` bit 0): fewest recorded steps of a generic continuation root that ends at its root `RETURN`.
+pub const STITCH_CONT_MIN: usize = 8;
 /// Section 39.1 (T1, `retfsel`): the process default of [`TrLimits::retfsel`] (also the struct default).
 pub const RETFSEL_PROCESS: u32 = 1;
 /// Section 43.1 (TR24c, `restarts`): the process default of [`TrLimits::restarts`] (also the struct default).
@@ -673,6 +696,18 @@ pub struct TrLimits {
     /// back-edges, a different phase of the counter trigger, and has two more attempts, [`second_retry_due`]; bit 1: the first identical re-record of a head, after a flush
     /// by a hot exit or entry failures, is installed instead of blacklisting the head, [`ident_keep_due`]; 0 = both blacklist; default [`SECOND_PROCESS`] (process and tests)).
     pub second: u32,
+    /// Section 88.9 (`rerootfam`): `reroot` does not fire on a root whose family has at least this many side traces (0 = no limit).
+    pub rerootfam: u32,
+    /// Section 92.1 (`sretry`): an exit whose second side attempt ended `SideShort` is not blacklisted: it waits `sretry` report windows (`hot_exit`
+    /// exits each, at most 255) and the third attempt is not held to `sidemin` (0 = off: the second `SideShort` blacklists the exit).
+    pub sretry: u32,
+    /// Section 92.2 (`libsite`): the outcome guards of a `LIB` helper (`NE %find, 1` "found", any guard against a value other than 0) are ordinary
+    /// exit sites with side traces, not allocation sites (0 = off: every `NE %lib, k` guard is an allocation site).
+    pub libsite: u32,
+    /// Section 92.3 (`rerootgain`): `reroot` fires only when the side trace's path promises `rerootgain` percent of the old root's completed
+    /// iterations: `(c - x) * 100 >= (e - p) * rerootgain`, `c` the entries of the busiest pre-roll site's side trace, `x` the exits of that side
+    /// trace, `e` the root's entries and `p` its pre-roll exits (0 = no condition).
+    pub rerootgain: u32,
     /// BUNDLE-C: a side recording that starts inside inlined frames at an exit whose previous attempt ended `SideShort` gets `sbump` more recursion unrolls
     /// ([`SideStart::ubump`]). The common case: a stitch exit at the recursion limit; a side trace starting AT the limit stitches again at its first call and is too short
     /// by construction, so the exit is blacklisted and storms in tier 1 (`regex_nfa`: two exits of 1 M each). 0 = off; default [`SBUMP_PROCESS`] (process and tests).
@@ -1264,6 +1299,45 @@ pub struct TrLimits {
     /// head waits four times as many entries (`fnpromow` + 2) before its first recording. Bit 3: only for a static leaf (no `CALL` / `TAILCALL` / `TFORCALL` in the
     /// prototype). 0 = off. Default [`T7_PROCESS`].
     pub t7: u32,
+    /// Section 78.1 (`stitch`, docs/JIT_TRACE.md section 78.1): continuation traces and stitching for non-recursive code. Bit 0 (1): a continuation
+    /// head (the instruction behind a `CALL`) of a prototype that never recursed records as a generic root (not refused `ContNotRecursive`, not
+    /// restricted to recursion); it ends at its root `RETURN` (bit 3: a native return or a pop, else the stitching exit), at C calls it cannot
+    /// record (stitch) or at a traced loop head of its frame (link). Bit 1 (2): side recordings of loop roots stitch at C calls they cannot record
+    /// (after [`STITCH_SIDE_MIN`] steps). Bit 2 (4): the end of a `gmatch` iteration is recorded in side recordings of the loop's frame (the
+    /// end-only `GMATCH_END` helper) and the recording goes on behind the loop. Bit 3 (8): a recording that reaches the `RETURN` of its root frame
+    /// where nothing else applies pops it (`RETF`) when the caller's loop around the `CALL` is traced, else ends with the stitching exit before the
+    /// `RETURN` (tier 1 returns into the caller's continuation head, whose trace runs on). Bit 4 (16): `string.format(f)` of a short constant
+    /// format without `%`, `"" .. s` and `string.gmatch(s, p)` (root frame, or an inlined frame whose `TFORPREP` links) are recorded. Bit 5 (32):
+    /// bit 0 without waiting for the entry head's recursion probe (only no native recursion and no self-reference). 0 = off.
+    /// Default [`STITCH_PROCESS`].
+    pub stitch: u32,
+    /// Section 78.2 (`fnleaf`, docs/JIT_TRACE.md section 78.2): per-function `FnShort` policy. A function-entry head that `fnpromo` promoted to a
+    /// generic function root, of a prototype of at most `fnleaf` instructions, records a body of any length when the recording entered no Lua
+    /// callee (a dynamic leaf: C built-ins and intrinsics recorded inline are allowed), instead of aborting `FnShort` below `fnmin`. 0 = off.
+    /// Default [`FNLEAF_PROCESS`].
+    pub fnleaf: u32,
+    /// Section 78.3 (`wgloop`, docs/JIT_TRACE.md section 78.3): the per-loop form of `wgcall`. A loop whose body holds exactly one call-like
+    /// instruction, a `CALL` whose callee is a C function at the moment the gate charges (read from the local register or upvalue the callee was
+    /// moved from), weighs that call as `1 + wgloop` bytecodes; every other loop is charged as before. 0 = off. Default 0 here, [`WGLOOP_PROCESS`] in a process.
+    pub wgloop: u32,
+    /// Section 78.4 (`outerlink`, docs/JIT_TRACE.md section 78.4): a side recording that reaches the head of an untraced loop of its root frame
+    /// whose body contains a loop head with an installed trace (the outer loop of a traced inner loop) records on through the outer loop's
+    /// iteration instead of aborting `SideUntraced`, and links at the inner head at any length (not `SideShort`). 0 = off. Default
+    /// 0 here, [`OUTERLINK_PROCESS`] in a process.
+    pub outerlink: u32,
+    /// Section 78.5 (`efkeep`, docs/JIT_TRACE.md section 78.5): the persistent-entry-failure rule does not flush (`Rerec`) a root whose family
+    /// has at least `efkeep` installed side traces: the failing entries keep going to tier 1 (or to the head's prelude) and the family's side
+    /// traces stay (awfy/cd re-records 7 families and discards 52 traces). 0 = off. Default [`EFKEEP_PROCESS`].
+    pub efkeep: u32,
+    /// Section 81.2 (`eflazy`, docs/JIT_TRACE.md section 81.2): when a head's entry failures get persistent, the entry type checks of the installed root
+    /// that the failing entry does not pass are remembered per head (`HeadData::eflazy`), and later root recordings of the head check those slots at
+    /// their first use instead of in the entry segment. 0 = off. Default 0 here, [`EFLAZY_PROCESS`] in a process.
+    pub eflazy: u32,
+    /// Section 84.2 (`mrset`, docs/JIT_TRACE.md section 84.2): constructors filled by an open result list (`{ byte(s, i, j) }`): `string.byte(s, i, j)`
+    /// with open results records (the count is guarded) and `SETLIST` with `B = 0` into a table the trace created grows its array part with the
+    /// `ASIZE` helper (`luaH_resizearray`, as the interpreter) and stores (bit 0; bit 1: also an open list left by `VARARG`, `{ ... }`). 0 = off.
+    /// Default 0 here, [`MRSET_PROCESS`] in a process.
+    pub mrset: u32,
 }
 
 impl Default for TrLimits {
@@ -1310,6 +1384,10 @@ impl Default for TrLimits {
             typesides: TYPESIDES_PROCESS,
             hoptop: HOPTOP_PROCESS,
             second: SECOND_PROCESS,
+            rerootfam: 0,
+            sretry: 0,
+            libsite: 0,
+            rerootgain: 0,
             sbump: SBUMP_PROCESS,
             fretry: FRETRY_PROCESS,
             ccalls: CCALLS_PROCESS,
@@ -1461,6 +1539,13 @@ impl Default for TrLimits {
             innerlink: INNERLINK_PROCESS,
             t5: T5_PROCESS,
             t7: T7_PROCESS,
+            stitch: 0,
+            fnleaf: 0,
+            wgloop: 0,
+            outerlink: 0,
+            efkeep: 0,
+            eflazy: 0,
+            mrset: 0,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1607,6 +1692,10 @@ impl TrLimits {
                 "rerootall" => l.rerootall = v.min(100),
                 "rerootchk" => l.rerootchk = v,
                 "rerootkeep" => l.rerootkeep = v.min(100),
+                "rerootfam" => l.rerootfam = v.min(1024),
+                "sretry" => l.sretry = v.min(1023),
+                "libsite" => l.libsite = v.min(1),
+                "rerootgain" => l.rerootgain = v.min(10000),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -1727,6 +1816,13 @@ impl TrLimits {
                 "innerlink" => l.innerlink = v.min(15),
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
+                "stitch" => l.stitch = v.min(127),
+                "fnleaf" => l.fnleaf = v.min(8191),
+                "wgloop" => l.wgloop = v.min(1024),
+                "outerlink" => l.outerlink = v.min(1),
+                "efkeep" => l.efkeep = v.min(1024),
+                "eflazy" => l.eflazy = v.min(1),
+                "mrset" => l.mrset = v.min(3),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
@@ -1868,6 +1964,30 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "wgcall") {
             self.limits.wgcall = WGCALL_PROCESS;
+        }
+        // section 78.7 (`stitch`, `fnleaf`): likewise
+        if !names_limit(limits_env, "stitch") {
+            self.limits.stitch = STITCH_PROCESS;
+        }
+        if !names_limit(limits_env, "fnleaf") {
+            self.limits.fnleaf = FNLEAF_PROCESS;
+        }
+        // section 78.8 (`efkeep`): likewise
+        if !names_limit(limits_env, "efkeep") {
+            self.limits.efkeep = EFKEEP_PROCESS;
+        }
+        if !names_limit(limits_env, "eflazy") {
+            self.limits.eflazy = EFLAZY_PROCESS;
+        }
+        // section 78 (`wgloop`, `outerlink`): on in a process; the struct default 0 keeps the tests' formation as it was
+        if !names_limit(limits_env, "wgloop") {
+            self.limits.wgloop = WGLOOP_PROCESS;
+        }
+        if !names_limit(limits_env, "outerlink") {
+            self.limits.outerlink = OUTERLINK_PROCESS;
+        }
+        if !names_limit(limits_env, "mrset") {
+            self.limits.mrset = MRSET_PROCESS;
         }
     }
 
@@ -2029,6 +2149,9 @@ pub struct HeadData {
     pub reroot_done: Cell<bool>,
     /// Section 62: while the head's `reroot` re-record is on probation, the flushed root's pre-roll exits in per mille of its entries, plus 1 (0 = none).
     pub reroot_old: Cell<u32>,
+    /// Section 92.3: drops left of rolled (unpeelable) root recordings of a head flushed by `reroot` once its path constraint is gone (the
+    /// unconstrained re-record must peel too; [`REROOT_TRIES`] when the rule fires, 0 when a root recording of the head closed peelable).
+    pub reroot_rolled: Cell<u8>,
     /// Section 59: the path prefix a root recording of this head must not complete (pc, prototype, depth per step) and the drops left; cleared when a root
     /// recording of the head closes or the drops run out.
     pub reroot_avoid: RefCell<Option<(std::rc::Rc<Vec<(u32, usize, u8)>>, u8)>>,
@@ -2036,9 +2159,19 @@ pub struct HeadData {
     pub ncallee: Cell<bool>,
     /// BUNDLE-L B (`bhoist`): the head is recorded without hoisted bounds guards (set when a root with hoisted guards was flushed as ineffective; never reset).
     pub nohoist: Cell<bool>,
+    /// Section 81.2 (`eflazy`): root-relative slots (below 64) whose entry type check failed when the head's entry failures got persistent (set at the
+    /// entry-failure flush; never reset): later root recordings check them at their first use.
+    pub eflazy: Cell<u64>,
     /// T9 (`innerlink`): a root trace that ends with a frame-linking exit into this head was installed (set at install; never reset: a hint for the
     /// return half, `innerlink` bit 1).
     pub linked_in: Cell<bool>,
+    /// Section 78.7 (`stitch` bit 6): an installed trace ends with a stitching exit that leads into this continuation head (a stitch at the `CALL`
+    /// in front of it, or the stitching exit before a callee's root `RETURN` whose caller was suspended here).
+    pub stitch_fed: Cell<bool>,
+    /// Section 78.8 (`efkeep`): entry-failure flushes this head skipped.
+    pub efkeeps: Cell<u8>,
+    /// Section 78.7 (`stitch` bit 6): hot firings of this fed continuation head refused while it waits (`STITCH_FED_FIRES`).
+    pub fed_fires: Cell<u8>,
     /// R1 (`rearm`): rearm entries still allowed before a short stay refunds nothing ([`REARM_BUDGET`] consecutive short ones end them for a while).
     pub rearm_budget: Cell<u8>,
     /// R1: refused rearm attempts since the budget ran out.
@@ -2176,13 +2309,18 @@ impl HeadData {
             second: Cell::new(false),
             inner_n: Cell::new(0),
             linked_in: Cell::new(false),
+            stitch_fed: Cell::new(false),
+            efkeeps: Cell::new(0),
+            fed_fires: Cell::new(0),
             ident_kept: Cell::new(false),
             dom_done: Cell::new(false),
             reroot_done: Cell::new(false),
             reroot_old: Cell::new(0),
+            reroot_rolled: Cell::new(0),
             reroot_avoid: RefCell::new(None),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
+            eflazy: Cell::new(0),
             rearm_budget: Cell::new(REARM_BUDGET),
             rearm_wait: Cell::new(0),
             rearm_last: Cell::new(0),
@@ -3414,6 +3552,10 @@ pub struct TrStats {
     pub reroot_kept: u64,
     /// See `reroot_kept`.
     pub reroot_reverts: u64,
+    /// Section 92.3 (`rerootgain`): roots the `reroot` rule would have flushed whose side trace promised too few completed iterations.
+    pub reroot_held: u64,
+    /// Section 92.1 (`sretry`): side recordings started without `sidemin` after an exit's second `SideShort`.
+    pub sretry_starts: u64,
     /// P3: chain re-orders (child subtrees flushed by [`chain_check`]).
     pub chain_flushes: u64,
     /// Section 39.2 (T3, `heatside`): side traces granted beyond `maxside` to exits that kept coming back (counts against `heatbudget`).
@@ -3546,6 +3688,12 @@ pub struct TrStats {
     pub inner_links: u64,
     /// See `inner_links`.
     pub inner_rets: u64,
+    /// Section 78.5 (`efkeep`): entry-failure flushes the rule skipped.
+    pub efkept: u64,
+    /// Section 81.2 (`eflazy`): slots added to heads' `eflazy` sets.
+    pub eflazy_slots: u64,
+    /// Section 78.1 (`stitch`): installed traces by what they used (the bits of `Recorded::stitch_use`).
+    pub stitch_use: [u64; 6],
 }
 
 /// F2a: a side recording or trace hangs off exit `exit` (a snapshot index) of trace `parent` (7.8).
@@ -3665,6 +3813,8 @@ struct Trace {
     dbl: Vec<bool>,
     /// P3 (`ncallee`): the entry segment of this root holds a callee identity guard (`EQREF` on an empty-map snapshot).
     entry_callee: bool,
+    /// Section 81.2 (`eflazy`): the type checks of the root's entry segment, `(slot, type)` (empty for side traces and roots without any).
+    entry_tys: Vec<(u16, super::ir::Ty)>,
     /// BUNDLE-L B: the trace holds hoisted bounds guards ([`TraceIr::hoisted`]).
     hoisted: bool,
     /// Section 79.7 (`dynmiss`): the loops this trace unrolled by `dynunroll` ([`TraceIr::dyn_sites`]).
@@ -3742,6 +3892,65 @@ fn tsc() -> u64 {
 /// 60-instruction body, and iteration counts alone made the delay of the first recording vary from 1x to 100x in time).
 /// S2 (`TrLimits::wgcall`): every call-like instruction of the body (`CALL`, `TAILCALL`, `TFORCALL`, `CONCAT`, `SELF`) weighs `1 + wcall`
 /// bytecodes (`wcall` 0 = the plain length). The fallback of a loop without a backward edge to `head` stays 8.
+/// Section 78.3 (`wgloop`): `w` when the loop at `head` of the running frame `ci` (closure `cl`) holds exactly one call-like instruction, a
+/// `CALL` whose callee is now a C function (moved from a local register or loaded from an upvalue of the closure in the body), else 0.
+pub(crate) fn loop_c_call_weight(
+    st: &State,
+    ci: Ci,
+    cl: &rn_core::value::Gc<rn_core::func::LClosure>,
+    head: usize,
+    w: u32,
+) -> u32 {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode as O;
+    if w == 0 || mutants::active("wgloop_never") {
+        return 0;
+    }
+    let p = cl.proto();
+    let code = p.code();
+    let mut call = None;
+    let mut end = None;
+    for (j, &x) in code.iter().enumerate().skip(head) {
+        let i = Instruction(x);
+        match i.opcode() {
+            Some(O::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => {
+                end = Some(j);
+                break;
+            }
+            Some(O::Forloop | O::Tforloop) if j as i64 + 1 - i64::from(i.bx()) == head as i64 => {
+                end = Some(j);
+                break;
+            }
+            Some(O::Call) if call.is_none() => call = Some(j),
+            Some(O::Call | O::Tailcall | O::Tforcall | O::Concat | O::SelfOp) => return 0,
+            _ => {}
+        }
+    }
+    let (Some(c), Some(_)) = (call, end) else {
+        return 0;
+    };
+    let a = Instruction(code[c]).a();
+    // the callee load: the nearest instruction of the body before the `CALL` that writes register `A`
+    let Some(ld) = (head..c)
+        .rev()
+        .map(|j| Instruction(code[j]))
+        .find(|i| i.a() == a)
+    else {
+        return 0;
+    };
+    let base = ci.r().func.0 + 1;
+    let v = match ld.opcode() {
+        Some(O::Move) => st.get(rn_core::state::StkId(base + ld.b() as usize)),
+        Some(O::Getupval) if (ld.b() as usize) < cl.nupvalues() => cl.upval(ld.b() as usize).get(),
+        _ => return 0,
+    };
+    if v.tag() == rn_core::value::LUA_VLCF || v.as_cclosure().is_some() {
+        w
+    } else {
+        0
+    }
+}
+
 pub(crate) fn loop_len_w(code: &[u32], head: usize, wcall: u32) -> u64 {
     use rn_core::instruction::Instruction;
     use rn_core::ver::active::OpCode as O;
@@ -3799,6 +4008,15 @@ pub struct TrState {
     pub(crate) warm_edges: u64,
     /// R1: the entry that `hot_loop` just granted to a rearm tick is not a stay for the entry monitor (consumed by `enter`).
     pub(crate) rearm_entering: bool,
+    /// Section 81.1: the value `jit_hooks::hot_fired()` has when the tick armed by an allocation exit (N3b `arm_tick_next`) fires at the next
+    /// back-edge (0 = none armed). That firing only enters compiled code: it does not compile the prototype it lands in.
+    pub(crate) arm_fired: u64,
+    /// Section 81.1: the prototypes (code pointers) of the frames the armed exit left, which that firing may compile (`None`: any).
+    pub(crate) arm_protos: Option<[usize; 8]>,
+    /// Section 84.1: memo of `exit::root_frame_in_loop` by the root frame's `savedpc` (direct-mapped; 0 = empty). The scan to the end of the
+    /// prototype ran at every allocation exit (programs/json: 180 k exits, +0.7 % instructions). A prototype freed and another compiled at the
+    /// same address can only read a stale answer, which chooses between two formation policies (no semantic effect).
+    pub(crate) arm_loop_memo: [(usize, bool); 4],
     next_no: u32,
     pub(crate) stats: TrStats,
     /// H8: per-head diagnostics (`RUSTYNAIL_JIT_VERBOSE >= 1`; empty otherwise).
@@ -3857,6 +4075,9 @@ impl TrState {
             warm_n: 0,
             warm_edges: 0,
             rearm_entering: false,
+            arm_fired: 0,
+            arm_protos: None,
+            arm_loop_memo: [(0, false); 4],
             next_no: 1,
             stats: TrStats::default(),
             diag: Default::default(),
@@ -4300,6 +4521,7 @@ fn side_failed(
     let blfirst = d.tr.cfg.limits.blfirst;
     let sideback = d.tr.cfg.limits.sideback;
     let sideblf = d.tr.cfg.limits.sideblf;
+    let sretry = d.tr.cfg.limits.sretry;
     let Some(Slot {
         body: Body::Trace(t),
         ..
@@ -4321,6 +4543,11 @@ fn side_failed(
             && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
+    // section 92.1 (`sretry`): the second `SideShort` of an exit waits `sretry` windows for a third attempt without `sidemin`
+    let sretry_wait = repeat && sretry_due(sretry & 255, reason, u32::from(t.fails[k]));
+    if sretry_wait {
+        repeat = false;
+    }
     if reason == "SideUntraced"
         && t.fails[k] < MAX_SIDE_FAILS
         && !mutants::active("side_untraced_retry")
@@ -4333,11 +4560,32 @@ fn side_failed(
     } else {
         // section 76.2 (`sideback`): a failed recording that leaves a retry waits `2^(s * fails) - 1` more windows first
         if fault && k < t.bwait.len() {
-            t.bwait[k] = sideback_wait(sideback, u32::from(t.fails[k]), unchangeable, reason);
+            t.bwait[k] = if sretry_wait {
+                u8::try_from(sretry & 255).unwrap_or(u8::MAX)
+            } else {
+                sideback_wait(sideback, u32::from(t.fails[k]), unchangeable, reason)
+            };
         }
         // the inline stub reports an exit when its counter passes `hot_exit - 1`: count `hot_exit` more
         t.exits[k].set(0);
     }
+}
+
+/// Section 92.1 (`sretry`): count a side recording started without `sidemin`.
+pub fn stat_sretry(st: &mut State) {
+    d_of(st).tr.stats.sretry_starts += 1;
+}
+
+/// Section 92.1 (`sretry`): does the `fails`th failed side attempt of an exit, ended `reason`, wait for a third attempt without `sidemin` instead of
+/// blacklisting the exit?
+pub fn sretry_due(sretry: u32, reason: &str, fails: u32) -> bool {
+    sretry != 0 && reason == "SideShort" && fails == 2
+}
+
+/// Section 92.1 (`sretry`): is the side attempt at an exit whose previous attempts (`fails` of them, the last ended `last`) waited by [`sretry_due`]
+/// exempt from `sidemin`?
+pub fn sretry_free(sretry: u32, last: Option<&'static str>, fails: u32) -> bool {
+    sretry != 0 && last == Some("SideShort") && fails >= 2
 }
 
 /// Section 76.2 (`sideback`): the report windows a side attempt waits after its exit's `fails`th failed recording (`unchangeable`: the cause is a
@@ -5545,6 +5793,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         bwait: vec![0; nex],
         dbl: Vec::new(),
         entry_callee: false,
+        entry_tys: Vec::new(),
         hoisted: false,
         dyn_sites: Vec::new(),
         chain_done: vec![0; nex],
@@ -6315,6 +6564,8 @@ pub struct SideStart {
     pub ubump: u32,
     /// K3 (`fretry`): the side trace may be shorter than `framemin` (the previous attempt at this exit ended `SideShort`).
     pub fretry: bool,
+    /// Section 92.1 (`sretry`): the side trace may be shorter than `sidemin` (the exit's second attempt ended `SideShort`, [`sretry_free`]).
+    pub sretry: bool,
     /// N3a: record without `RETF` (an earlier recording from this exit that used it failed).
     pub no_retf: bool,
     /// T9 (`innerlink` bit 1): the family root's head is the target of a root trace's frame-linking exit ([`HeadData::linked_in`]).
@@ -6496,7 +6747,33 @@ pub fn exit_hot_policy(
             )
         });
     }
+    // section 78.1 (`stitch` bit 0): a family rooted at a continuation head of a non-recursive prototype is a straight-line trace of a polymorphic
+    // call path (handlers, receivers): a type-guard exit there is another path, not an unstable loop: no `Rerec` flush (it would end in a blacklisted
+    // head), the exit stays an ordinary one
+    // (asked only for a type-guard exit that cannot get a side trace: the rest of the exits do not pay for the lookup)
+    let cont_family = d.tr.cfg.limits.stitch & 1 != 0
+        && out.site == ExitSite::TypeGuard
+        && !sides
+        && match d.tr.slot(family) {
+            Some(Slot {
+                body: Body::Trace(f),
+                ..
+            }) => tr_of(d, f.root).is_some_and(|tp| {
+                let h = tp.head(f.head);
+                tp.is_cont_head(h.pc)
+                    && !tp.recursive.get()
+                    // (section 78.7: with bit 6 only the families of fed continuation heads, never a self-referential prototype)
+                    && (d.tr.cfg.limits.stitch & 64 == 0 || (h.stitch_fed.get() && !tp.selfref.get()))
+            }),
+            _ => false,
+        };
     match out.site {
+        ExitSite::TypeGuard if cont_family && !sides => {
+            if out.count == hot {
+                d.tr.stats.exit_type_hot += 1;
+            }
+            return HotAction::None;
+        }
         ExitSite::TypeGuard => {
             let protected = (t.side.is_none() && meta.peeled)
                 || (d.tr.cfg.limits.typesides != 0 && !mutants::active("typesides_ignored"));
@@ -7145,6 +7422,7 @@ fn side_attempt(
         Vec::new()
     };
     let fretry;
+    let sretry;
     let ubump = {
         let d = d_of(st);
         let (last, fails) = match d.tr.slot(id) {
@@ -7159,6 +7437,9 @@ fn side_attempt(
         };
         let retry = matches!(last, Some("SideShort" | "Recursion"));
         fretry = fretry_due(d.tr.cfg.limits.fretry, last, !frames.is_empty());
+        // (bit 8 of `sretry`: also exits inside inlined frames, which `fretry` covers otherwise)
+        sretry = (d.tr.cfg.limits.sretry & 256 != 0 || frames.is_empty())
+            && sretry_free(d.tr.cfg.limits.sretry & 255, last, fails);
         let base = if d.tr.cfg.limits.sbump != 0
             && retry
             && !frames.is_empty()
@@ -7209,6 +7490,7 @@ fn side_attempt(
             max_ci: pdepth,
             ubump,
             fretry,
+            sretry,
             no_retf,
             inner_ret,
             carry,
@@ -7257,6 +7539,53 @@ pub fn head_linked_in(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
             .is_some_and(|i| tp.head(i).linked_in.get())
     })
     .unwrap_or(false)
+}
+
+/// Section 78.7 (`stitch` bit 6): marks the continuation head at `pc` of `pr` as fed by a stitching exit.
+pub fn mark_stitch_fed(st: &mut State, pr: ProtoRef, pc: u32) {
+    let _ = with_tr(st, pr, |tp| {
+        if let Some(i) = tp.head_index(pc) {
+            if tp.is_cont_head(pc) {
+                tp.head(i).stitch_fed.set(true);
+            }
+        }
+    });
+}
+
+/// Section 78.7 (`stitch` bit 6): hot firings a fed continuation head waits before its first recording (it must stay hot behind the stitch).
+pub const STITCH_FED_FIRES: u8 = 6;
+
+/// Section 78.7: counts a hot firing of the fed continuation head at `pc`; true once it has fired [`STITCH_FED_FIRES`] times.
+pub fn fed_fire(st: &mut State, pr: ProtoRef, pc: u32, need: u8) -> bool {
+    with_tr(st, pr, |tp| {
+        tp.head_index(pc).is_some_and(|i| {
+            let h = tp.head(i);
+            let n = h.fed_fires.get().saturating_add(1);
+            h.fed_fires.set(n);
+            n > need
+        })
+    })
+    .unwrap_or(false)
+}
+
+/// Section 78.7 (`stitch` bit 6): is the continuation head at `pc` of `pr` fed by a stitching exit?
+pub fn head_stitch_fed(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+    with_tr(st, pr, |tp| {
+        !tp.recursive.get()
+            && !tp.selfref.get()
+            && tp
+                .head_index(pc)
+                .is_some_and(|i| tp.head(i).stitch_fed.get())
+    })
+    .unwrap_or(false)
+}
+
+/// Section 78.1 (`stitch`): counts an installed trace by the bits of `Recorded::stitch_use`.
+pub fn note_stitch_use(st: &mut State, used: u8) {
+    let d = d_of(st);
+    for (k, c) in d.tr.stats.stitch_use.iter_mut().enumerate() {
+        *c += u64::from(used >> k & 1);
+    }
 }
 
 /// T9 (`innerlink`): counts an installed trace of bit 0 (`link`) / bit 1 (`ret`).
@@ -7984,6 +8313,19 @@ pub fn head_is_fn(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
 /// F2a: is the head at `pc` of `pr` a loop head whose root trace is installed (`Some(true)`), a head without one
 /// (`Some(false)`), or not a head (`None`)? The side recorder's question when it reaches a pc of the root frame.
 /// (The function-entry head of P-E2 is not a loop head: `None`.)
+/// Section 78.1 (`stitch` bit 3): the state of the continuation head at `pc` of a prototype that never recursed (installed trace or not);
+/// `None` for any other pc.
+pub fn cont_head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
+    with_tr(st, pr, |tp| {
+        if !tp.is_cont_head(pc) || tp.recursive.get() {
+            return None;
+        }
+        tp.head_index(pc)
+            .map(|i| tp.head(i).state.get() == HeadState::Traced)
+    })
+    .flatten()
+}
+
 pub fn head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
     with_tr(st, pr, |tp| {
         if tp.is_fn_head(pc) || tp.is_cont_head(pc) {
@@ -7997,7 +8339,8 @@ pub fn head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
 
 /// The entry-failure counters of head `pc` reached the threshold (`jit_tr_entry_fail`): queue the flush and
 /// re-record. Returns whether a flush was queued.
-pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+pub fn entry_fail_hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
+    eflazy_learn(st, ci, pr, pc);
     let d = d_of(st);
     let Some(tp) = tr_of(d, pr.0) else {
         return false;
@@ -8018,6 +8361,35 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
                 })
             ) =>
         {
+            // section 78.5 (`efkeep`): a family that has grown side traces is kept (the entries that fail go on to tier 1)
+            let keep = d.tr.cfg.limits.efkeep;
+            // (section 78.8: at most `EFKEEP_TIMES` times per head: a root whose entries keep failing has stale entry assumptions (stream_closures:
+            // kept 18458 times, +20 %), its re-record is worth the flush then)
+            let kept = tp.head(i).efkeeps.get();
+            if keep != 0
+                && matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.nside >= keep)
+                && kept < EFKEEP_TIMES
+            {
+                vlog(d, || {
+                    let (ok, fail) = (tp.head(i).entry_ok.get(), tp.head(i).entry_fail.get());
+                    let (ns, ex) = match d.tr.slot(id) {
+                        Some(Slot {
+                            body: Body::Trace(t),
+                            ..
+                        }) => (
+                            t.nside,
+                            t.exits.iter().map(|c| u64::from(c.get())).sum::<u64>(),
+                        ),
+                        _ => (0, 0),
+                    };
+                    format!("efkeep: head pc {pc} kept (entries ok {ok} fail {fail}, side traces {ns}, root exits {ex})")
+                });
+                tp.head(i).efkeeps.set(kept + 1);
+                tp.head(i).entry_fail.set(0);
+                tp.head(i).entry_ok.set(0);
+                d.tr.stats.efkept += 1;
+                return false;
+            }
             // P3 (`ncallee`): a persistent entry failure of a root whose entry segment holds a callee identity guard: the callee changes between entries (a call
             // through a table of functions). The re-record keeps the callee guards in the body, where a mismatch is an ordinary exit with a side trace.
             let ec =
@@ -8035,6 +8407,61 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
         }
         _ => false,
     }
+}
+
+/// Section 81.2 (`eflazy`): the entry failures of head `pc` got persistent (`entry_fail_hot`): the frame `ci` is a failing entry at the head (the state
+/// before the iteration). Every entry type check of the installed root whose slot holds a value of another type now is added to the head's
+/// `eflazy` set: the re-record checks that slot at its first use, where a mismatch is a body exit with a side trace of its own instead of an entry
+/// failure (roguelike_turns: `best` is nil at the loop's first iteration and a number after it, `away` true or false; which of them the re-record
+/// saw at its start decided whether its entries failed, and three re-records in a row could blacklist the head).
+fn eflazy_learn(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) {
+    if d_of(st).tr.cfg.limits.eflazy == 0 {
+        return;
+    }
+    let Some(i) =
+        tr_of(d_of(st), pr.0).and_then(|tp| tp.head_index(pc).filter(|&i| tp.entry_fail_hot(i)))
+    else {
+        return;
+    };
+    let mask = entry_type_misses(st, ci, pr, i);
+    if mask == 0 {
+        return;
+    }
+    let d = d_of(st);
+    if let Some(tp) = tr_of(d, pr.0) {
+        let h = tp.head(i);
+        if h.eflazy.get() | mask != h.eflazy.get() {
+            h.eflazy.set(h.eflazy.get() | mask);
+            d.tr.stats.eflazy_slots += u64::from(mask.count_ones());
+        }
+    }
+    vlog(d_of(st), || {
+        format!("eflazy: head pc {pc}: entry checks of slots {mask:#x} failed: checked at their first use from now on")
+    });
+}
+
+/// Section 81.2: the entry type checks of the root installed at head `i` of `pr` that the frame `ci` (an entry at the head) does not pass, as a slot mask.
+fn entry_type_misses(st: &mut State, ci: Ci, pr: ProtoRef, i: usize) -> u64 {
+    let d = d_of(st);
+    let Some(tp) = tr_of(d, pr.0) else {
+        return 0;
+    };
+    let tys = match tp.head(i).trace.get().and_then(|id| d.tr.slot(id)) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) if !t.entry_tys.is_empty() => t.entry_tys.clone(),
+        _ => return 0,
+    };
+    let base = ci.r().func.0 + 1;
+    let mut mask = 0u64;
+    for (slot, ty) in tys {
+        let v = st.get(rn_core::state::StkId(base + usize::from(slot)));
+        if super::record::ty_of_value(&v) != Some(ty) {
+            mask |= 1u64 << slot;
+        }
+    }
+    mask
 }
 
 /// Pre-roll exits of trace `id` per entry at which it counts as ineffective: `exits * 10 >= entries * 9`.
@@ -8284,11 +8711,63 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             }
         }
         let all_ok = p_all * 100 >= e * u64::from(d.tr.cfg.limits.rerootall);
-        if let Some((k, c, sid)) = best.filter(|b| all_ok && b.1 * 100 >= e * u64::from(rr)) {
+        // section 88.9 (`rerootfam`): a root whose family has grown at least that many side traces is not re-rooted (the flush throws the family away)
+        let fam = d.tr.cfg.limits.rerootfam;
+        let nside = match d.tr.slot(id) {
+            Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) => t.nside,
+            _ => 0,
+        };
+        let fam_ok = fam == 0 || nside < fam;
+        // section 92.3 (`rerootgain`): the re-record follows the side trace's path; the entries of the side trace that leave it before its end
+        // (its exits) are pre-roll exits of the re-record too: predict the completed iterations of both roots from counters
+        let gain = d.tr.cfg.limits.rerootgain;
+        let gain_ok = |c: u64, sid: TrId| -> bool {
+            if gain == 0 {
+                return true;
+            }
+            let x: u64 = match d.tr.slot(sid) {
+                Some(Slot {
+                    body: Body::Trace(t),
+                    ..
+                }) => t.exits.iter().map(|c| u64::from(exit_count(c.get()))).sum(),
+                _ => return false,
+            };
+            let new_done = c.saturating_sub(x);
+            let old_done = e.saturating_sub(p_all);
+            let ok = new_done * 100 >= old_done * u64::from(gain);
+            vlog(d, || {
+                format!(
+                    "rerootgain: root slot {} side slot {} entries {c} exits {x}: completes {new_done} against {old_done} of {e}: {}",
+                    id.slot,
+                    sid.slot,
+                    if ok { "fire" } else { "keep" }
+                )
+            });
+            ok
+        };
+        let held = std::cell::Cell::new(false);
+        let best = best.filter(|b| {
+            fam_ok && all_ok && b.1 * 100 >= e * u64::from(rr) && {
+                let ok = gain_ok(b.1, b.2);
+                if !ok {
+                    h.reroot_done.set(true);
+                    held.set(true);
+                }
+                ok
+            }
+        });
+        if held.get() {
+            d.tr.stats.reroot_held += 1;
+        }
+        if let Some((k, c, sid)) = best {
             h.reroot_done.set(true);
             if let Some(av) = reroot_avoid_path(&d.tr.rr_paths, id, sid, meta, k) {
                 let n = av.len();
                 *h.reroot_avoid.borrow_mut() = Some((av, REROOT_TRIES));
+                h.reroot_rolled.set(REROOT_TRIES);
                 h.reroot_old.set(
                     u32::try_from(p_all * 1000 / e.max(1))
                         .unwrap_or(u32::MAX - 1)
@@ -8465,7 +8944,7 @@ pub fn entry_fail_hot_id(st: &mut State, ci: Ci, id: TrId) -> bool {
     else {
         return false;
     };
-    entry_fail_hot(st, pr, pc)
+    entry_fail_hot(st, ci, pr, pc)
 }
 
 // ---- free_code / state hooks ------------------------------------------------------------------------------
@@ -8804,6 +9283,28 @@ pub fn set_entry_callee(st: &mut State, id: TrId, v: bool) {
     }
 }
 
+/// Section 81.2 (`eflazy`): the type checks of the entry segment of root `id`.
+pub fn set_entry_tys(st: &mut State, id: TrId, v: Vec<(u16, super::ir::Ty)>) {
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d_of(st).tr.slot_mut(id)
+    {
+        t.entry_tys = v;
+    }
+}
+
+/// Section 81.2 (`eflazy`): the slots of head `pc` of `pr` whose entry checks root recordings leave at their first use (0 with the knob off).
+pub fn head_eflazy(st: &mut State, pr: ProtoRef, pc: u32) -> u64 {
+    let d = d_of(st);
+    if d.tr.cfg.limits.eflazy == 0 {
+        return 0;
+    }
+    tr_of(d, pr.0)
+        .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).eflazy.get()))
+        .unwrap_or(0)
+}
+
 /// BUNDLE-L B: the trace `id` holds hoisted bounds guards.
 pub fn set_hoisted(st: &mut State, id: TrId, v: bool) {
     if let Some(Slot {
@@ -8933,6 +9434,27 @@ pub fn head_reroot_avoid(
     a.as_ref().map(|x| x.0.clone())
 }
 
+/// Section 92.1: is the recording `id` a root recording of a head that carries a `reroot` path constraint?
+pub fn reroot_pending(st: &mut State, id: TrId) -> bool {
+    let d = d_of(st);
+    if d.tr.cfg.limits.reroot == 0 {
+        return false;
+    }
+    let Some(Slot {
+        body: Body::Rec(r), ..
+    }) = d.tr.slot(id)
+    else {
+        return false;
+    };
+    let (root, head) = (r.root, r.head);
+    root != 0
+        && tr_of(d, root).is_some_and(|tp| {
+            tp.heads
+                .get(head)
+                .is_some_and(|h| h.reroot_avoid.borrow().is_some() || h.reroot_rolled.get() > 0)
+        })
+}
+
 /// Section 59: the recording `id` closed (`side`: a side recording) with this path: kept for the `reroot` rule; a root recording ends its head's constraint.
 pub fn reroot_closed(
     st: &mut State,
@@ -8966,6 +9488,7 @@ pub fn reroot_closed(
         let (root, head) = (r.root, r.head);
         if let Some(tp) = tr_of(d, root).filter(|_| root != 0) {
             tp.heads[head].reroot_avoid.borrow_mut().take();
+            tp.heads[head].reroot_rolled.set(0);
         }
     }
 }
@@ -8982,8 +9505,13 @@ pub fn abort_reroot(st: &mut State, id: TrId) {
         let (root, head) = (r.root, r.head);
         if let Some(tp) = tr_of(d, root).filter(|_| root != 0) {
             let mut a = tp.heads[head].reroot_avoid.borrow_mut();
+            if a.is_none() {
+                // (section 92.3: a rolled unconstrained re-record)
+                let r = &tp.heads[head].reroot_rolled;
+                r.set(r.get().saturating_sub(1));
+            }
             let left = a.as_ref().map_or(0, |x| x.1.saturating_sub(1));
-            if left == 0 {
+            if left == 0 && a.is_some() {
                 *a = None;
                 d.tr.stats.reroot_gaveup += 1;
             } else if let Some(x) = a.as_mut() {
@@ -9428,10 +9956,11 @@ fn hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
         tp.rearm(i);
         return false;
     }
-    let wcall = d.tr.cfg.limits.wgcall;
-    let len = st
-        .ci_lclosure(ci)
-        .map_or(8, |cl| loop_len_w(cl.proto().code(), pc as usize, wcall));
+    let (wcall, wloop) = (d.tr.cfg.limits.wgcall, d.tr.cfg.limits.wgloop);
+    let len = st.ci_lclosure(ci).map_or(8, |cl| {
+        let w = wcall + loop_c_call_weight(st, ci, &cl, pc as usize, wloop);
+        loop_len_w(cl.proto().code(), pc as usize, w)
+    });
     let d = d_of(st);
     if !d.tr.warm_elapsed(len) {
         // P-G: the state has run loops for too short a time for a trace to pay off yet. BUNDLE-1: with the work gate the head fires
@@ -9497,7 +10026,7 @@ pub unsafe extern "C" fn jit_tr_entry_fail(
         let d = d_of(&mut st);
         d.tr.in_handler += 1; // a trace's failure path is running: defer the flush to the next safe point
         if !ci_spare_repair(&mut st, pr, a) {
-            entry_fail_hot(&mut st, pr, a);
+            entry_fail_hot(&mut st, ci, pr, a);
         }
         let d = d_of(&mut st);
         d.tr.in_handler -= 1;
@@ -9784,6 +10313,8 @@ pub(crate) struct DispatchCfg {
     pub rec_any: bool,
     /// BUNDLE-J (`centry`): the prototype was first hot when called from C: it gets the function-entry head although it has no `CALL`, as a generic function root.
     pub c_entered: bool,
+    /// Section 78.2 (`fnleaf`): a loop-free function whose only calls are tail calls (`return setmetatable{...}`) gets the entry head too.
+    pub fn_tail: bool,
 }
 
 fn mem(base: crate::ir::V, off: i32) -> M {
@@ -9823,6 +10354,21 @@ pub(crate) fn emit_dispatch(
         && !env.follower[0]
         && (env.ops.iter().any(|o| matches!(o, Some(OpCode::Call)))
             || (c.c_entered && !mutants::active("centry_no_head"))
+            || (c.fn_tail
+                && env.ops.iter().any(|o| matches!(o, Some(OpCode::Tailcall)))
+                // (section 78.7: every tail callee is a global or an upvalue (`return setmetatable{...}`), never a method or field of an argument
+                // (`return self.task:run(m)`: a polymorphic dispatcher, awfy/richards +29 %))
+                && (0..env.ins.len())
+                    .filter(|&pc| matches!(env.ops[pc], Some(OpCode::Tailcall)))
+                    .all(|pc| {
+                        let a = env.ins[pc].a();
+                        (1..=12usize)
+                            .filter(|k| *k <= pc)
+                            .find(|k| env.ins[pc - k].a() == a && env.ops[pc - k].is_some())
+                            .is_some_and(|k| {
+                                matches!(env.ops[pc - k], Some(OpCode::Gettabup | OpCode::Getupval))
+                            })
+                    }))
             || mutants::active("fn_head_calls_ignored"))
         && (!env.ops.iter().any(|o| matches!(o, Some(OpCode::Tbc)))
             || mutants::active("fn_head_tbc_ignored"));
@@ -10300,6 +10846,7 @@ pub fn lower_probe(st: &mut State, trace: bool) -> Option<Probe> {
             fn_loops: false,
             rec_any: false,
             c_entered: false,
+            fn_tail: false,
         },
         None,
     );
@@ -10355,6 +10902,25 @@ pub fn fn_cent(st: &mut State, pr: ProtoRef) -> bool {
 }
 
 /// BUNDLE-C: is the function-entry head of `pr` promoted to a generic function root (`fnpromo`)?
+/// Section 78.1 (`stitch` bit 0): has the recursion probe of the prototype's function-entry head given up (the head is blacklisted, was
+/// promoted to a generic function root or recorded [`STITCH_SETTLE_SAMPLES`] leaf samples) without the prototype ever recursing natively or
+/// being marked self-referential?
+/// `any` (`stitch` bit 5): no probe evidence needed, only the absence of recursion and self-reference.
+pub fn fn_probe_settled(st: &mut State, pr: ProtoRef, pc: u32, any: bool) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| {
+        !tp.recursive.get()
+            && !tp.selfref.get()
+            && (tp.fn_promoted()
+                || (any && pc != 0)
+                || tp.head_index(0).is_some_and(|i| {
+                    tp.is_fn_head(0)
+                        && (tp.head(i).state.get() == HeadState::Black
+                            || tp.head(i).kl.get() >= STITCH_SETTLE_SAMPLES)
+                }))
+    })
+}
+
 pub fn fn_promoted(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
     tr_of(d, pr.0).is_some_and(|tp| tp.fn_promoted())

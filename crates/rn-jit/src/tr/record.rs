@@ -469,6 +469,34 @@ pub struct RecCfg {
     pub side_stitch_min: u32,
     /// BUNDLE-F (`stitch0`): see [`TrLimits::stitch0`].
     pub stitch0: bool,
+    /// Section 78.1 (`stitch` bit 0): this root recording starts at a continuation head of a prototype that never recursed (a generic root:
+    /// it ends at its root `RETURN` with a pop or the stitching exit).
+    pub cont_gen: bool,
+    /// Section 78.1 (`stitch` bit 1): a side recording of a loop root stitches at a C call it cannot record (after [`super::cache::STITCH_SIDE_MIN`] steps).
+    pub side_cstitch: bool,
+    /// Section 78.1 (`stitch` bit 2): the end of a `gmatch` iteration is recorded in side recordings of the loop's frame (`GMATCH_END`).
+    pub gm_end: bool,
+    /// Section 92.2 (`libsite`): copied into [`TraceIr::lib_site`] at the close (the exit-site classes read it).
+    pub lib_site: bool,
+    /// Section 78.1 (`stitch` bit 3): the root `RETURN` of a generic continuation root or of a side recording pops into the caller when its loop
+    /// around the `CALL` is traced (`RETF`), else ends with the stitching exit before the `RETURN`.
+    pub cont_ret: bool,
+    /// Section 78.1 (`stitch` bit 4): `string.format` of a constant short format without `%` is recorded (the result is the format).
+    pub fmt0: bool,
+    /// Section 78.1 (`stitch` bit 3): the state of a continuation head of a non-recursive prototype (`cache::cont_head_traced`); a pop links into it.
+    pub cont_head: Option<FrameHeadQuery>,
+    /// Section 78.1 (`stitch` bit 3): a generic `for` of an inlined frame whose loop head has a root trace: the `TFORPREP` (and the first
+    /// iterator call) is recorded and the next step, the head, ends with the frame-linking exit (as `innerlink` does for `FORPREP`).
+    pub tprep_link: bool,
+    /// Section 78.2 (`fnleaf`): the minimum length of a function-entry recording that entered no Lua callee (`None`: `fn_min` applies to every
+    /// recording).
+    pub fn_min_leaf: Option<u32>,
+    /// Section 78.4 (`outerlink`): side recordings pass the untraced head of an outer loop of a traced inner loop (see [`super::cache::TrLimits::outerlink`]).
+    pub outer_link: bool,
+    /// Section 84.2 (`mrset`): open-result `string.byte` and `SETLIST B=0` with the `ASIZE` growth (see [`super::cache::TrLimits::mrset`]).
+    pub mrset: bool,
+    /// Section 84.2 (`mrset` bit 1): also open lists left by `VARARG` (`{ ... }`).
+    pub mrset_va: bool,
     /// A1: lower the `NEWREF` of a short-string key into a table allocated by the same trace to stores at record-time-known nodes
     /// (see `Rec::nr_plan`).
     pub nrinline: bool,
@@ -720,6 +748,18 @@ impl Default for RecCfg {
             side_stitch: false,
             side_stitch_min: 0,
             stitch0: false,
+            cont_gen: false,
+            side_cstitch: false,
+            gm_end: false,
+            lib_site: false,
+            cont_ret: false,
+            fmt0: false,
+            cont_head: None,
+            tprep_link: false,
+            fn_min_leaf: None,
+            outer_link: false,
+            mrset: false,
+            mrset_va: false,
             nrinline: false,
             presize: false,
             pcall: false,
@@ -767,6 +807,11 @@ pub struct Recorded {
     pub inner_link: bool,
     /// T9: the recording took a `RETF` the return half allows (bit 1).
     pub inner_ret: bool,
+    /// Section 78.1 (`stitch`): what the recording used: bit 0 a generic continuation root, bit 1 a stitch at a C call of a side recording,
+    /// bit 2 the end of a `gmatch` iteration, bit 3 a pop of `stitch` bit 3, bit 4 a frame link behind a `TFORPREP`.
+    pub stitch_use: u8,
+    /// Section 78.7: the continuation head (prototype, pc) the recording's final stitching exit leads into, if any.
+    pub stitch_feeds: Option<(usize, u32)>,
 }
 
 /// The result of a recording.
@@ -1476,6 +1521,8 @@ struct Rec {
     /// BUNDLE-M C1 (lockstep off): for each `NEWREF` / `TSET` in IR order, the table the recorder knew at record time (`None`: a table
     /// of this trace made by a `TNEW` of the same step, see [`Rec::light_new`]).
     ls_tabs: std::collections::VecDeque<Option<TableRef>>,
+    /// Section 84.2: the tables of the `ASIZE` helpers emitted since the last light step (the element budget of their model, as `ls_tabs`).
+    ls_asize: std::collections::VecDeque<TableRef>,
     /// BUNDLE-M C1 (lockstep off): model handle of every `TNEW` ref adopted so far.
     ls_tnew: HashMap<Ref, u64>,
     /// A1: IR position of the latest `TSET` (its position in the hash part is data dependent): tables allocated before it are
@@ -1528,6 +1575,26 @@ struct Rec {
     prep_link: Option<(usize, u32)>,
     /// T9 (`inner_ret`): the return half allows the pop at the root `RETURN` this step executes (computed in `on_step`; false at every other step).
     inner_ret_ok: bool,
+    /// Section 78.1 (`stitch` bit 3): at a `RETURN` of the root frame (before any pop), the caller's loop around its `CALL` is traced.
+    cont_ret_ok: bool,
+    /// Section 78.1: the caller of the returning root frame is not lazy-aware (see `on_step`).
+    cont_pop_lazy_ok: bool,
+    /// Section 78.1: the instruction being recorded is a `TFORPREP` of an inlined frame whose loop head links (`tprep_link`).
+    tprep_ok: bool,
+    /// Section 88.2: `prep_link` was set by a `TFORPREP` (`tprep_ok`), not by a numeric `FORPREP` (T9).
+    prep_tfor: bool,
+    /// Section 78.1: [`Recorded::stitch_use`] so far.
+    stitch_use: u8,
+    /// Section 78.2: a step of the recording ran in an inlined Lua frame.
+    entered_lua: bool,
+    /// Section 78.7: see [`Recorded::stitch_feeds`].
+    stitch_feeds: Option<(usize, u32)>,
+    /// Section 78.4: the recording passed the head of an outer loop (`outer_link`): it links at the inner head at any length.
+    outer_pass: bool,
+    /// Section 78.1: the instruction being recorded is a `CALL` followed by such a `TFORPREP` (`string.gmatch` may be recorded in the frame).
+    tprep_ahead: bool,
+    /// Section 84.3: `string.gmatch` on trace in the root frame (not a function root, or one whose loop behind the call has a root trace).
+    gm_root_ok: bool,
     /// T9: a `RETF` of this recording was taken where the return half allows it.
     inner_ret_used: bool,
     /// T9: the recording ended with the frame link behind a recorded data-dependent `FORPREP`.
@@ -1830,6 +1897,7 @@ impl Rec {
             p1_pend: None,
             p1_memo: None,
             ls_tabs: Default::default(),
+            ls_asize: Default::default(),
             ls_tnew: HashMap::default(),
             last_tset: 0,
             hs_guarded: Vec::new(),
@@ -1858,6 +1926,16 @@ impl Rec {
             prep_link_ok: false,
             prep_link: None,
             inner_ret_ok: false,
+            cont_ret_ok: false,
+            cont_pop_lazy_ok: false,
+            tprep_ok: false,
+            prep_tfor: false,
+            tprep_ahead: false,
+            gm_root_ok: false,
+            stitch_use: 0,
+            entered_lua: false,
+            stitch_feeds: None,
+            outer_pass: false,
             inner_ret_used: false,
             inner_linked: false,
             retf_below: Default::default(),
@@ -1997,6 +2075,10 @@ impl Rec {
 
     /// Discards the recorded iteration (an in-place re-record, TR24c).
     fn reset(&mut self) {
+        self.stitch_use = 0;
+        self.entered_lua = false;
+        self.stitch_feeds = None;
+        self.outer_pass = false;
         self.b = Builder::for_recording(self.cfg.fold, self.cfg.cse);
         self.sm = SlotMap::new(self.nslots);
         self.frames.truncate(1);
@@ -2066,6 +2148,7 @@ impl Rec {
         self.p1_pend = None;
         self.p1_memo = None;
         self.ls_tabs.clear();
+        self.ls_asize.clear();
         self.ls_tnew.clear();
         self.last_tset = 0;
         self.shape_dirty.clear();
@@ -2094,6 +2177,7 @@ impl Rec {
         self.midfolded = false;
         self.prep_link_ok = false;
         self.prep_link = None;
+        self.prep_tfor = false;
     }
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
@@ -2189,7 +2273,15 @@ impl Rec {
                 .cfg
                 .retf_head
                 .clone()
-                .and_then(|q| q(st, &p, idx as u32)),
+                .and_then(|q| q(st, &p, idx as u32))
+                .or_else(|| self.cont_head_at(st, &p, idx)),
+            // section 78.1 (`stitch` bit 3): a generic continuation root after its pop asks the caller's loop heads the same way
+            None if depth == 0 && !self.path.is_empty() && !self.segs.is_empty() => self
+                .cfg
+                .retf_head
+                .clone()
+                .and_then(|q| q(st, &p, idx as u32))
+                .or_else(|| self.cont_head_at(st, &p, idx)),
             _ => None,
         };
         // F2b: a nest root ends (links) when it reaches a loop head of the root frame, other than its own, that has a
@@ -2200,6 +2292,7 @@ impl Rec {
                 if self.cfg.side.is_none()
                     && depth == 0
                     && !self.path.is_empty()
+                    && self.segs.is_empty()
                     && idx as u32 != self.head
                     && !cont_unroll =>
             {
@@ -2234,7 +2327,23 @@ impl Rec {
         };
         // T9 (`inner_link`): the step behind a recorded data-dependent `FORPREP` of an inlined frame is its loop head: it links (or, the head lost its
         // trace meanwhile, aborts as the prep used to)
-        let prep_hit = self.prep_link.take() == Some((depth, idx as u32));
+        let mut prep_hit = self.prep_link.take() == Some((depth, idx as u32));
+        // section 88.2: a side recording that reaches the head behind a linking `TFORPREP` while still short does not abort `SideShort`: unlike a
+        // numeric `FORPREP` (T9) the generic loop can be recorded through, so it goes on under the ordinary frame-head rule (msgpack_pure: the
+        // side trace of `map`'s loop into `packers.table`'s `pairs` loop was lost, +0.61 %). Not when the loop's frame is a recursion of a frame
+        // below it (lua_parser's `fold` walking its children: the side traces that record through the recursive frame cost 7 %)
+        if prep_hit
+            && std::mem::take(&mut self.prep_tfor)
+            && self.cfg.side.is_some()
+            && self.frame_link_short()
+            && depth < self.frames.len()
+            && !self.frames[..depth]
+                .iter()
+                .any(|f| f.proto == self.frames[depth].proto)
+        {
+            prep_hit = false;
+            self.stitch_use &= !16;
+        }
         let frame_head = if prep_hit {
             let traced = self
                 .cfg
@@ -2282,6 +2391,40 @@ impl Rec {
                 .nest_frame
                 .clone()
                 .is_some_and(|q| q(st, &p, idx as u32 + 1) == Some(true));
+        // section 78.1 (`stitch` bit 3): a generic `for` of an inlined frame whose loop head has a root trace (frame conditions as for `prep_link_ok`)
+        let tprep_at = |k: usize| -> bool {
+            self.cfg.tprep_link
+                && depth > 0
+                && Instruction(code[k]).opcode() == Some(OpCode::Tforprep)
+                && self.frames[depth].mm.is_none()
+                && !self.frames[depth].tail
+                && self.frames[depth].pc_shift == 0
+                && self.frames[depth].tfor.is_none()
+                && !p.is_vararg()
+                && !mutants::active("stitch_tprep_never")
+        };
+        let tq = |st: &mut State, k: usize| -> bool {
+            self.cfg
+                .nest_frame
+                .clone()
+                .is_some_and(|q| q(st, &p, k as u32) == Some(true))
+                && super::cache::proto_ref(&p).is_some_and(|pr| {
+                    !super::cache::proto_lazy(st, pr) && !super::cache::proto_lazy_cand(st, pr)
+                })
+        };
+        self.tprep_ok = tprep_at(idx) && tq(st, idx + 1);
+        self.tprep_ahead = idx + 2 < code.len()
+            && Instruction(code[idx]).opcode() == Some(OpCode::Call)
+            && tprep_at(idx + 1)
+            && tq(st, idx + 2);
+        // section 84.3: in the root frame of a function root, `gmatch` on trace only when its loop has a root trace to link to (else the root
+        // records into the loop body: csv_ini_yaml's recursive `yaml_scalar` then inlined its self-call and woke the recursion machinery, +0.43 %)
+        self.gm_root_ok = depth == 0
+            && (!self.cfg.fn_root
+                || idx + 2 < code.len()
+                    && Instruction(code[idx]).opcode() == Some(OpCode::Call)
+                    && Instruction(code[idx + 1]).opcode() == Some(OpCode::Tforprep)
+                    && tq(st, idx + 2));
         // F8: a table the recording holds a handle to was freed by a collector step since the last step
         if st.heap().watch_hit() {
             return Err(AbortReason::DepFreed);
@@ -2332,6 +2475,32 @@ impl Rec {
             )
             && !mutants::active("innerret_never")
             && self.caller_loop_traced(st, ci);
+        // section 78.1 (`stitch` bit 3): the same question for a generic continuation root and for any side recording
+        self.cont_ret_ok = self.cfg.cont_ret
+            && (self.cfg.side.is_some() || self.cfg.cont_gen)
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && (self.caller_loop_traced(st, ci) || self.caller_cont_traced(st, ci))
+            // section 84.3: not out of a recursion (the pops of recursive code replaced its recursion machinery: sudoku_solver +2.1 %)
+            && !Self::ret_in_recursion(st, ci);
+        // (the caller's prototype is known not to be lazy-aware: its table exists and it is neither lazy nor a candidate, so I9's static
+        // "may be lazy-aware" does not have to hold for this pop)
+        self.cont_pop_lazy_ok = self.cont_ret_ok
+            && ci
+                .previous()
+                .and_then(|c| st.ci_lclosure(c))
+                .and_then(|c| super::cache::proto_ref(&c.proto()))
+                .is_some_and(|pr| {
+                    !super::cache::proto_lazy(st, pr) && !super::cache::proto_lazy_cand(st, pr)
+                });
+        // section 78.4: asked before the step borrows the state
+        let outer_ok = reached_head == Some(false)
+            && self.cfg.outer_link
+            && self.outer_of_traced(st, code, idx);
         let vm = Vm {
             base: ci.r().func.0 + 1,
             root_base: self.root_func + 1,
@@ -2346,6 +2515,7 @@ impl Rec {
         self.cur_depth = depth;
         self.next_depth = depth;
         self.cur_len = code.len();
+        self.entered_lua |= depth > 0;
         let t_ls = super::phase::now();
         let r_ls = self.lockstep(&vm);
         super::phase::add(super::phase::LOCKSTEP, t_ls);
@@ -2390,11 +2560,23 @@ impl Rec {
                 {
                     retf_stop = true
                 }
+                // section 78.4 (`outerlink`): the untraced head of an outer loop around a traced inner loop: record on to the inner head
+                Some(false)
+                    if self.cfg.outer_link
+                        && self.segs.is_empty()
+                        && !self.outer_pass
+                        && !mutants::active("outerlink_never")
+                        && outer_ok =>
+                {
+                    self.outer_pass = true;
+                    self.stitch_use |= 32;
+                }
                 Some(false) => return Err(AbortReason::SideUntraced),
                 Some(true) => {
                     let n: u32 = self.cost.iter().sum();
-                    // (T9: a side trace that popped into a linking caller and reaches its loop head closes the nest at any length)
-                    let min = if self.inner_ret_used {
+                    // (T9: a side trace that popped into a linking caller and reaches its loop head closes the nest at any length; section 78.4: so
+                    // does one that passed the outer loop's head)
+                    let min = if self.inner_ret_used || self.outer_pass {
                         0
                     } else {
                         self.cfg.side.as_ref().map_or(0, |s| s.min_len)
@@ -2411,6 +2593,17 @@ impl Rec {
                 return Err(AbortReason::CFunc);
             }
             return self.close_frame_link(at, &p);
+        } else if !self.segs.is_empty() && depth == 0 {
+            // section 78.1: a generic continuation root after its pop links at a traced loop head of the caller, and ends with the stitching exit
+            // at an untraced one
+            match reached_head {
+                Some(true) => {
+                    self.link = Some(at);
+                    return Ok(Flow::Closed(Box::new(self.close())));
+                }
+                Some(_) => retf_stop = true,
+                None => {}
+            }
         } else if nest_head == Some(true) && !mutants::active("nest_link_never") {
             self.link = Some(at);
             return Ok(Flow::Closed(Box::new(self.close())));
@@ -2448,7 +2641,12 @@ impl Rec {
                 return Ok(Flow::Closed(Box::new(self.close())));
             }
         }
-        if depth == 0 && at < self.head && self.cfg.side.is_none() && !cont_unroll {
+        if depth == 0
+            && at < self.head
+            && self.cfg.side.is_none()
+            && !cont_unroll
+            && self.segs.is_empty()
+        {
             return Err(AbortReason::LeaveLoop);
         }
         if self.path.len() >= MAX_PATH
@@ -3008,6 +3206,7 @@ impl Rec {
             }
         }
         ir.loop_at = None;
+        ir.lib_site = self.cfg.lib_site;
         let rc_end = self.rec_call.is_some();
         ir.rec_call = self.rec_call.take();
         ir.rec_ret = self.rec_ret.map(|x| x.0);
@@ -3059,6 +3258,8 @@ impl Rec {
             stitched: self.stitched,
             inner_link: self.inner_linked,
             inner_ret: self.inner_ret_used,
+            stitch_use: self.stitch_use | u8::from(self.cfg.cont_gen && self.cfg.side.is_none()),
+            stitch_feeds: self.stitch_feeds.take(),
         }
     }
 
@@ -3428,6 +3629,19 @@ impl Rec {
                 TOp::Tlen => {
                     self.post_val.take();
                 }
+                // section 84.2: the table `ASIZE` grew is one this trace created (the element budget, as `TSET`)
+                TOp::Lib if ins.aux & 0xFF == lib::ASIZE => {
+                    let known = self.ls_asize.pop_front();
+                    let h = match known {
+                        Some(t) => self.reg.get(&(t.as_ptr() as usize)).copied(),
+                        None => self.ls_tnew.get(&ins.a).copied(),
+                    };
+                    if let Some(h) = h {
+                        if let Some(&t) = self.tabs.get(h as usize - 1) {
+                            self.resync_table(h, t)?;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -3668,6 +3882,15 @@ impl Rec {
             }
             TOp::Strto => {
                 self.model.strto_result = self.pending_strto.take();
+            }
+            TOp::Lib if ins.aux & 0xFF == lib::ASIZE => {
+                // section 84.2: the array part was reallocated: the model of the table is rebuilt from the VM (as after `TSET`)
+                self.model.str_result = self.post_strs.pop_front();
+                let h = self.val_bits(ins.a);
+                let Some(&t) = self.tabs.get((h as usize).wrapping_sub(1)) else {
+                    return self.diverge(|| format!("ASIZE on unknown table handle {h}"));
+                };
+                self.resync_table(h, t)?;
             }
             TOp::Snew | TOp::Concat | TOp::Lib => {
                 self.model.str_result = self.post_strs.pop_front();
@@ -4050,6 +4273,9 @@ impl Rec {
                         } else if let Some(f) = v.as_float() {
                             // BUNDLE-H: `math.random()`: the helper's result is the 53-bit integer of the float plus one
                             ((f * 9007199254740992.0) as u64).wrapping_add(1)
+                        } else if let Some(c) = v.as_cclosure() {
+                            // (section 78.1: `GMATCH_NEW` returns the iterator closure)
+                            c.as_ptr() as u64
                         } else {
                             // (a collector step right behind the instruction cleared the dead slice above the result: any address)
                             v.as_strref().map_or(1, |s| s.as_ptr() as u64)
@@ -6103,11 +6329,29 @@ impl Rec {
             i.c() as usize,
             rn_core::instruction::MAXARG_C as usize + 1,
         );
-        if n == 0 {
+        let open = n == 0;
+        // (section 84.2: an open list of `VARARG` only with `mrset` bit 1: memo_cache's `{ ... }` key of a recursive memoised function, +2.4 %)
+        let from_va = open
+            && idx > 0
+            && Instruction(*vm.code.get(idx - 1).ok_or(AbortReason::Diverge)?).opcode()
+                == Some(OpCode::Vararg);
+        if open && (!self.cfg.mrset || from_va && !self.cfg.mrset_va) {
             // `{f()}`, `{...}`: up to the `top` a producer left. The constructor's array part is sized for the fixed items
             // only, so the stores would be insertions (`Insert`) whatever the count: not recorded (F4 decision).
             return Err(AbortReason::MultRet);
         }
+        let n = if open {
+            // section 84.2 (`mrset`): the count is the `top` the producer left (`top_in`, a recorded constant: the producer guarded it)
+            let a_rel = self.frames[self.cur_depth].base_off + i.a() as usize;
+            let top = self.top_in.ok_or(AbortReason::MultRet)?;
+            let c = top.checked_sub(a_rel + 1).ok_or(AbortReason::Diverge)?;
+            if vm.st.top().0 != vm.base + i.a() as usize + 1 + c {
+                return Err(AbortReason::Diverge);
+            }
+            c
+        } else {
+            n
+        };
         let mut next = idx + 1;
         if i.k() != 0 {
             last += Instruction(*vm.code.get(idx + 1).ok_or(AbortReason::Diverge)?).ax() as usize
@@ -6121,12 +6365,36 @@ impl Rec {
             return Err(AbortReason::Diverge);
         }
         last += n;
-        if last > tbl.array_size() as usize || last > MAX_NEW_ASIZE * 4 {
+        if n == 0 {
+            return Ok(next); // (an open list of no values: the interpreter neither resizes nor stores)
+        }
+        let grow = last > tbl.array_size() as usize;
+        if last > MAX_NEW_ASIZE * 4 || grow && !open {
             return Err(AbortReason::Insert); // the interpreter resizes the array
         }
+        if self.elems.saturating_add(last) > self.cfg.max_model_elems {
+            return Err(AbortReason::Charge);
+        }
         let mut vals = Vec::with_capacity(n);
+        let a_rel = self.frames[self.cur_depth].base_off + a;
         for j in 1..=n {
-            vals.push(self.rd(vm, a + j)?);
+            // (an open list may extend beyond the frame's registers: the producer's results are live up to `top`)
+            vals.push(if open {
+                self.rd_slot(vm, a_rel + j)?
+            } else {
+                self.rd(vm, a + j)?
+            });
+        }
+        if grow {
+            // section 84.2: `luaH_resizearray(t, last)` of the interpreter's `SETLIST` (raw: no metamethod is involved); the guard `NE %lib, 0`
+            // exits before any store when the allocation fails
+            let kl = self.kint(last as i64);
+            self.lib_op(lib::ASIZE, Ty::Int, t, kl, None, usize::MAX)?;
+            self.ls_asize.push_back(tbl);
+        }
+        // MUTANT `mrset_vals_reversed`: the open list is stored in reverse order
+        if open && mutants::active("mrset_vals_reversed") {
+            vals.reverse();
         }
         // one guard for all the stores: nothing is stored unless every index is in the array part
         let asize = self.fload(t, Field::Asize, Ty::U32)?;
@@ -6913,7 +7181,8 @@ impl Rec {
 
     /// R2: the recording is a continuation root of the root frame (depth 0) that may cross the back edge of a `for` loop of that frame.
     fn cont_unroll(&self) -> bool {
-        self.cfg.rec_cont && self.cfg.rec_any && self.cfg.side.is_none()
+        // (section 78.1: a generic continuation root links at the traced loop heads of its frame instead)
+        self.cfg.rec_cont && self.cfg.rec_any && self.cfg.side.is_none() && !self.cfg.cont_gen
     }
 
     /// May the callee loop at head `t` of the current frame be unrolled (false: its site is blocked, see [`la_block`])? Notes the site for the
@@ -7696,6 +7965,27 @@ impl Rec {
                 {
                     self.lib_fmt(vm, idx, a, nargs, wanted, addr)
                 }
+                // (only in the root frame: its loop follows in the same frame and links; inside an inlined frame the loop would be unrolled)
+                None if self.cfg.fmt0
+                    && addr == rn_std::lib_string::jit_gmatch_new_addr()
+                    && (self.gm_root_ok || self.tprep_ahead)
+                    && nargs == 2
+                    && matches!(ty_of_value(&vm.slot(a + 1)), Some(Ty::ShrStr | Ty::LngStr))
+                    && matches!(ty_of_value(&vm.slot(a + 2)), Some(Ty::ShrStr | Ty::LngStr)) =>
+                {
+                    self.lib_gmatch_new(vm, idx, a, nargs, wanted, addr)
+                }
+                None if self.cfg.fmt0
+                    && addr == jit_hooks::strformat_addr()
+                    && nargs == 1
+                    && ty_of_value(&vm.slot(a + 1)) == Some(Ty::ShrStr)
+                    && vm
+                        .slot(a + 1)
+                        .as_strref()
+                        .is_some_and(|s| !s.get().as_bytes().contains(&b'%')) =>
+                {
+                    self.lib_fmt0(vm, idx, a, nargs, wanted, addr)
+                }
                 None if self.cfg.f2mt && addr == rn_std::lib_base::jit_getmt_addr() => {
                     self.getmt_call(vm, idx, a, nargs, wanted, addr)
                 }
@@ -7752,9 +8042,13 @@ impl Rec {
                 AbortReason::FnShort
             });
         }
-        // (a function-entry recording stitches by its own minimum: it has no loop to pay for the extra exit)
+        // (a function-entry recording stitches by its own minimum: it has no loop to pay for the extra exit; section 78.1: so does a generic
+        // continuation root)
+        // (section 78.7: a short leaf root is worth its entry only when it reaches its `RETURN`; one that would stitch at a C call keeps `fn_min`)
         let min = if self.cfg.fn_root {
             self.cfg.fn_min
+        } else if self.cfg.cont_gen && self.cfg.side.is_none() {
+            super::cache::STITCH_CONT_MIN as u32
         } else {
             self.cfg.stitch_min
         };
@@ -7763,10 +8057,21 @@ impl Rec {
         }
         // M1: a side recording of a loop root stitches at a recursive call (the exit before the `CALL` has no link target,
         // as a function root's side trace; the interpreter / tier 1 runs the call and re-enters the root trace at its head)
-        let side_stitch = self.cfg.side_stitch
+        let side_stitch = (self.cfg.side_stitch
             && matches!(why, AbortReason::Recursion | AbortReason::Depth)
             && self.path.len() >= self.cfg.side_stitch_min as usize
-            && !mutants::active("side_stitch_never");
+            && !mutants::active("side_stitch_never"))
+            // section 78.1 (`stitch` bit 1): also at a C call of a side recording of a loop root
+            || (self.cfg.side_cstitch
+                && why == AbortReason::CFunc
+                && self.path.len() >= super::cache::STITCH_SIDE_MIN
+                && !mutants::active("stitch_side_never"));
+        if side_stitch && self.cfg.side.is_some() && why == AbortReason::CFunc {
+            self.stitch_use |= 2;
+        }
+        if why == AbortReason::CFunc {
+            self.stitch_feeds = Some((self.frames[self.cur_depth].proto, self.cur_pc + 1));
+        }
         if (self.cfg.side.is_some() && !self.cfg.fn_root && !side_stitch)
             || (self.cfg.stitch_min == 0 && !self.cfg.fn_root && !self.cfg.side.is_some())
             || (self.cfg.side.is_none() && self.path.len() < min as usize)
@@ -7777,6 +8082,43 @@ impl Rec {
         self.end_exit()
     }
 
+    /// Section 78.4 (`outerlink`): is the loop whose head is `head` (root frame) an outer loop of a loop head with an installed trace (a head
+    /// inside its body, asked through the side recording's head query)?
+    fn outer_of_traced(&self, st: &mut State, code: &[u32], head: usize) -> bool {
+        let Some(q) = self.cfg.side.as_ref().map(|s| s.head_state.clone()) else {
+            return false;
+        };
+        let mut end = None;
+        for (j, &x) in code.iter().enumerate().skip(head) {
+            let i = Instruction(x);
+            match i.opcode() {
+                Some(OpCode::Jmp) if j as i64 + 1 + i64::from(i.sj()) == head as i64 => {
+                    end = Some(j);
+                    break;
+                }
+                Some(OpCode::Forloop | OpCode::Tforloop)
+                    if j as i64 + 1 - i64::from(i.bx()) == head as i64 =>
+                {
+                    end = Some(j);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            return false;
+        };
+        (head + 1..end).any(|h| q(st, h as u32) == Some(true))
+    }
+
+    /// Section 78.2 (`fnleaf`): the minimum length of this function-entry recording: `fn_min_leaf` when it entered no Lua callee.
+    fn fn_min_eff(&self) -> u32 {
+        match self.cfg.fn_min_leaf {
+            Some(m) if !self.entered_lua => m,
+            _ => self.cfg.fn_min,
+        }
+    }
+
     /// P-E2: the root frame of a function-entry recording reaches its `RETURN` / `TAILCALL`: the recording ends with an
     /// always-taken exit before the instruction (tier 1 executes it), provided it recorded enough (`fn_min`).
     fn fn_end(&mut self) -> R<usize> {
@@ -7784,7 +8126,7 @@ impl Rec {
             // P-M3: the root frame returned before a self-call (a leaf invocation): no recursion on this path
             return Err(AbortReason::FnShort);
         }
-        if self.cfg.side.is_none() && self.path.len() < self.cfg.fn_min as usize {
+        if self.cfg.side.is_none() && self.path.len() < self.fn_min_eff() as usize {
             return Err(AbortReason::FnShort);
         }
         if self.cfg.side.is_some() && self.path.len() <= 1 && !mutants::active("fn_side_at_return")
@@ -8446,7 +8788,18 @@ impl Rec {
         let (a, b) = (i.a() as usize, i.b() as usize);
         if self.cur_depth == 0 {
             if self.cfg.fn_root {
+                // (section 78.7: a tail call of a Lua function is a dispatcher, not a leaf: the short-body exemption of `fnleaf` does not apply)
+                if vm.slot(a).as_lclosure().is_some() {
+                    self.entered_lua = true;
+                }
                 return self.fn_end();
+            }
+            if self.cfg.cont_gen && self.cfg.side.is_none() && self.segs.is_empty() {
+                // section 78.1: a generic continuation root ends before a tail call of its root frame, as before its `RETURN`
+                if self.path.len() < super::cache::STITCH_CONT_MIN {
+                    return Err(AbortReason::FnShort);
+                }
+                return self.end_exit();
             }
             return Err(AbortReason::TailCall);
         }
@@ -8593,15 +8946,19 @@ impl Rec {
             // N2c (BUNDLE-N, `retf` bit 0): a side recording that reaches the `RETURN` of its root frame pops it for real and goes on in the
             // caller; anything that makes the pop unsound or unprofitable keeps the old behaviour (`None`)
             if self.cfg.retf & 1 != 0
-                && self.cfg.side.is_some()
+                && (self.cfg.side.is_some() || (self.cfg.cont_gen && self.cont_ret_ok))
                 && (!self.cfg.fn_root
                     || self.cfg.retf & 4 != 0
                     || self.retf_sel_ok
                     || self.inner_ret_ok
+                    || self.cont_ret_ok
                     || (self.cfg.retf & 16 != 0 && self.retf_into_self(vm)))
             {
                 if let Some(r) = self.retf(vm, i, op)? {
-                    self.inner_ret_used |= self.inner_ret_ok;
+                    self.inner_ret_used |= self.inner_ret_ok || self.cont_ret_ok;
+                    if self.cont_ret_ok {
+                        self.stitch_use |= 8;
+                    }
                     return Ok(r);
                 }
             }
@@ -8609,8 +8966,41 @@ impl Rec {
                 // N3a: a second root `RETURN` the recording cannot pop (`retfmax`, a vararg / C caller, ...): it ends with the stitching exit before it
                 return self.end_exit();
             }
+            // section 78.7: the caller's continuation head the stitching exit before this `RETURN` leads into
+            self.stitch_feeds = {
+                let c = vm
+                    .st
+                    .ci()
+                    .previous()
+                    .filter(|c| c.r().callstatus & CIST_C == 0);
+                c.and_then(|c| {
+                    let cl = vm.st.ci_lclosure(c)?;
+                    let cp = cl.proto();
+                    let after =
+                        (c.r().savedpc as usize).wrapping_sub(cp.code().as_ptr() as usize) / 4;
+                    (after > 0 && after < cp.code().len())
+                        .then_some((&*cp as *const Proto as usize, after as u32))
+                })
+            };
             if self.cfg.fn_root {
                 return self.fn_end();
+            }
+            if self.cfg.cont_gen && self.cfg.side.is_none() {
+                // section 78.1 (`stitch` bit 0): a generic continuation root ends before its root `RETURN` (tier 1 returns into the caller)
+                if self.path.len() < super::cache::STITCH_CONT_MIN {
+                    return Err(AbortReason::FnShort);
+                }
+                return self.end_exit();
+            }
+            if self.cfg.cont_ret && self.cfg.side.is_some() && self.path.len() > 1 {
+                // section 78.1 (`stitch` bit 3): a side recording ends with the stitching exit before the root `RETURN` it cannot pop (tier 1 returns
+                // into the caller's continuation head)
+                let n: u32 = self.cost.iter().sum();
+                let min = self.cfg.side.as_ref().map_or(0, |s| s.min_len);
+                if n < min {
+                    return Err(AbortReason::SideShort);
+                }
+                return self.end_exit();
             }
             return Err(AbortReason::LeaveFrame);
         }
@@ -8671,6 +9061,76 @@ impl Rec {
             return false;
         }
         super::cache::enclosing_loop_head(ccode, call_pc).and_then(|h| q(st, &cp, h)) == Some(true)
+    }
+
+    /// Section 78.1 (`stitch` bit 3): does the continuation head of the caller of frame `ci` (the instruction behind its `CALL`) have an installed
+    /// trace (asked through `retf_head`)? A pop there links straight into it.
+    /// Section 84.3 (`stitch` bit 3): is the frame `ci` part of a recursion: its prototype is marked recursive (`cache::proto_recursive`) or runs
+    /// in one of the 8 nearest caller frames too (a mutual or method recursion no probe has marked)?
+    fn ret_in_recursion(st: &mut State, ci: Ci) -> bool {
+        let Some(cl) = st.ci_lclosure(ci) else {
+            return false;
+        };
+        let p = cl.proto();
+        if super::cache::proto_ref(&p).is_some_and(|pr| super::cache::proto_recursive(st, pr)) {
+            return true;
+        }
+        let me = &*p as *const Proto;
+        let mut cur = ci.previous();
+        for _ in 0..8 {
+            let Some(c) = cur else {
+                return false;
+            };
+            if st
+                .ci_lclosure(c)
+                .is_some_and(|o| std::ptr::eq(&*o.proto(), me))
+            {
+                return true;
+            }
+            cur = c.previous();
+        }
+        false
+    }
+
+    fn caller_cont_traced(&self, st: &mut State, ci: Ci) -> bool {
+        let Some(q) = self.cfg.cont_head.clone() else {
+            return false;
+        };
+        let Some(c_ci) = ci.previous() else {
+            return false;
+        };
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return false;
+        }
+        let Some(ccl) = st.ci_lclosure(c_ci) else {
+            return false;
+        };
+        let cp = ccl.proto();
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let Some(after) = sp.wrapping_sub(ccode.as_ptr() as usize).checked_div(4) else {
+            return false;
+        };
+        if after == 0 || after >= ccode.len() {
+            return false;
+        }
+        q(st, &cp, after as u32) == Some(true)
+    }
+
+    /// Section 78.1 (`stitch` bit 3): at the first step behind a pop (the instruction behind the caller's `CALL`), the state of a continuation head
+    /// there (`cont_head`); `None` anywhere else.
+    fn cont_head_at(&self, st: &mut State, p: &Proto, idx: usize) -> Option<bool> {
+        if self.segs.is_empty() || self.seg_steps.last().copied() != Some(self.path.len() as u32) {
+            return None;
+        }
+        // (section 81.5: only an installed trace there counts. An untraced continuation head is not a loop head: answering `Some(false)` ended the
+        // recording behind every pop as if it had reached an untraced loop head (`SideUntraced`), where before it recorded on in the caller;
+        // dijkstra_routes: the side traces of bfs' `ipairs` loop popped into `bfs`'s caller and stopped, 9.8 -> 22.3 M exits, +10.6 % instructions)
+        self.cfg
+            .cont_head
+            .clone()
+            .and_then(|q| q(st, p, idx as u32))
+            .filter(|&t| t)
     }
 
     /// Section 77.7 (`retf` bit 4): the root frame of a function-entry family's side recording returns into a frame of its own prototype (a
@@ -8864,7 +9324,7 @@ impl Rec {
         let cp = ccl.proto();
         // BUNDLE-K L1: never pop into a caller that may be lazy-aware (loop-free, non-vararg): its frames can be lazy, and the continuation after the pop
         // would run in a trace that is not part of its region (`lazyci` is on by default)
-        if !self.pop_into_ok(&cp) {
+        if !self.pop_into_ok(&cp) && !self.cont_pop_lazy_ok {
             return NO;
         }
         let ccode = cp.code();
@@ -10021,6 +10481,43 @@ impl Rec {
         if self.cfg.mm && n == 2 && (vm.slot(a).is_table() || vm.slot(a + 1).is_table()) {
             return self.mm_concat(vm, idx, a);
         }
+        if self.cfg.fmt0 && n == 2 {
+            // section 78.1 (`stitch` bit 4): `"" .. s` / `s .. ""` of a string `s` is `s` itself (`luaV_concat`'s empty-operand shortcuts)
+            let (x, y) = (vm.slot(a), vm.slot(a + 1));
+            let empty = |v: &Value| v.as_strref().is_some_and(|s| s.get().is_empty());
+            let is_str = |v: &Value| matches!(ty_of_value(v), Some(Ty::ShrStr | Ty::LngStr));
+            let pick = if empty(&x) && is_str(&y) {
+                Some((a, a + 1))
+            } else if empty(&y) && is_str(&x) {
+                Some((a + 1, a))
+            } else {
+                None
+            };
+            if let Some((e, o)) = pick {
+                let (er, et) = self.rd(vm, e)?;
+                let (or, ot) = self.rd(vm, o)?;
+                if et != Ty::ShrStr || !matches!(ot, Ty::ShrStr | Ty::LngStr) {
+                    return Err(self.nyi());
+                }
+                let er_k = TraceIr::is_const(er)
+                    || (TraceIr::is_ins(er) && self.b.ir.at(er).op == TOp::Kptr);
+                if !er_k && !mutants::active("concat_empty_guard_skip") {
+                    let ev = vm.slot(e);
+                    let k = self
+                        .b
+                        .ir
+                        .konst(KVal::Ptr(payload_bits(&ev, Ty::ShrStr), PtrKind::Raw));
+                    self.guard(TOp::Eqref, Ty::I64, er, k, 0)?;
+                }
+                self.def(a, or);
+                // (the interpreter's `check_gc` behind the instruction, as for every `CONCAT`)
+                let a_root = self.frames[self.cur_depth].base_off + a;
+                for slot in a_root + 1..self.sm.len() {
+                    self.stale.insert(slot);
+                }
+                return Ok(idx + 1);
+            }
+        }
         let mut ops = [(NOREF, Ty::Nil); 3];
         let mut tl = 0usize;
         for (j, op) in ops.iter_mut().enumerate().take(n) {
@@ -10325,6 +10822,12 @@ impl Rec {
             true
         }) {
             rn_std::lib_string::GmStep::Yield(_) => {}
+            rn_std::lib_string::GmStep::End
+                if self.cfg.gm_end && self.cfg.side.is_some() && self.cur_depth == 0 =>
+            {
+                self.stitch_use |= 4;
+                return self.tforcall_gmatch_end(vm, idx, i, fslot, cslot);
+            }
             rn_std::lib_string::GmStep::End => return Err(AbortReason::LeaveLoop),
             rn_std::lib_string::GmStep::Other => return Err(self.nyi()),
         }
@@ -10349,6 +10852,9 @@ impl Rec {
             let one = self.kint(1);
             self.guard(TOp::Ne, Ty::I64, r, one, 0)?;
         }
+        if self.cfg.gm_end {
+            self.b.ir.gm_end_site = true;
+        }
         // effects (after the guard of the helper): the copies, the native's push, the moved results
         self.def_abs(func_rel + 2, ct.0);
         self.def_abs(func_rel + 1, st.0);
@@ -10358,6 +10864,53 @@ impl Rec {
             self.def(a + 2, r);
         }
         self.target(idx, idx as isize + 2 - ni.bx() as isize)
+    }
+
+    /// Section 78.1 (`stitch` bit 2): the last step of a `gmatch` iteration in a side recording of the loop's frame (the exit of the loop trace at
+    /// its end lands on this `TFORCALL`): the `GMATCH_END` helper checks at run time that no match is left and advances the position as the C
+    /// function does (else it answers 0 with nothing changed and the guard exits); the variables are nil and `TFORLOOP` falls through.
+    fn tforcall_gmatch_end(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        i: Instruction,
+        fslot: usize,
+        cslot: usize,
+    ) -> R<usize> {
+        let a = i.a() as usize;
+        let nvars = i.c() as usize;
+        let d = self.cur_depth;
+        let func_rel = self.frames[d].base_off + fslot;
+        let top_rel = func_rel + 3;
+        self.need_ext(top_rel + 2 + 1)?;
+        let (cr, cty) = self.rd(vm, a)?;
+        if cty != Ty::Ccl {
+            return Err(AbortReason::Diverge);
+        }
+        let st = self.rd(vm, a + 1)?;
+        let ct = self.rd(vm, cslot)?;
+        if !mutants::active("gm_end_probe_skip") {
+            self.lib_op(lib::GMATCH_END, Ty::Int, cr, cr, None, usize::MAX)?;
+        }
+        if !mutants::active("native_room_skip") {
+            self.room = self.room.max((top_rel + LUA_MINSTACK) as u32);
+        }
+        if !mutants::active("native_ci_skip") {
+            self.max_ci = self.max_ci.max((self.ci_depth(d) + 1) as u8);
+        }
+        let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
+        self.def_abs(func_rel + 2, ct.0);
+        self.def_abs(func_rel + 1, st.0);
+        self.def_abs(func_rel, cr);
+        for j in 0..nvars {
+            self.def_abs(func_rel + j, nil);
+        }
+        // (the C function pushes nothing at the end (no result to adjust from): its frame from `top_rel` up is dead stack the interpreter leaves as
+        // it was; the lockstep does not compare it)
+        for slot in top_rel..self.sm.len() {
+            self.stale.insert(slot);
+        }
+        Ok(idx + 2)
     }
 
     /// The `TFORLOOP` the interpreter runs without a fetch right after a Lua iterator called by `TFORCALL` returned (`do_tforcall!`):
@@ -10492,6 +11045,12 @@ impl Rec {
             return Err(self.nyi()); // a to-be-closed value
         }
         let r = self.tforcall(vm, call, ci, true)?;
+        if self.tprep_ok && r == idx + 1 {
+            // section 78.1: the next step is the loop head: it links
+            self.prep_link = Some((self.cur_depth, idx as u32 + 1));
+            self.prep_tfor = true;
+            self.stitch_use |= 16;
+        }
         // 5.5: `R[A+2]` now holds the closing value (`R[A+3]` was overwritten by the call). 5.4 swaps nothing. (The mutant leaves the
         // swap out on 5.5 and adds it on 5.4.)
         if cfg!(rustynail_lua54) == mutants::active("tforprep_no_swap") {
@@ -10820,6 +11379,7 @@ impl Rec {
         }
         if prep_link {
             self.prep_link = Some((self.cur_depth, idx as u32 + 1));
+            self.prep_tfor = false;
         }
         Ok(idx + 1)
     }
@@ -11331,6 +11891,52 @@ impl Rec {
         self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
     }
 
+    /// Section 78.1 (`stitch` bit 4): `string.gmatch(s, p)` of two strings: the `GMATCH_NEW` helper allocates the iterator closure (the guard behind
+    /// it exits when the allocation failed: the interpreter's call raises the error).
+    fn lib_gmatch_new(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
+        let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
+        let (sr, st) = self.rd(vm, a + 1)?;
+        let (pr, pt) = self.rd(vm, a + 2)?;
+        if !matches!(st, Ty::ShrStr | Ty::LngStr) || !matches!(pt, Ty::ShrStr | Ty::LngStr) {
+            return Err(self.nyi());
+        }
+        self.storm_check()?;
+        self.first_store.get_or_insert(self.b.ir.ins.len());
+        let hint = self.lib_hint(vm, a, nargs, wanted);
+        let r = self.lib_op(lib::GMATCH_NEW, Ty::Ccl, sr, pr, None, hint)?;
+        self.lib_tail(idx, func_rel, top_rel, &[r], true, wanted)
+    }
+
+    /// Section 78.1 (`stitch` bit 4): `string.format(f)` of a short string `f` without `%`: the result is `f` itself (the buffer copy of a short
+    /// string interns to the same object). The register is guarded to hold the recorded string (a proto constant needs no guard).
+    fn lib_fmt0(
+        &mut self,
+        vm: &Vm<'_>,
+        idx: usize,
+        a: usize,
+        nargs: usize,
+        wanted: i32,
+        addr: usize,
+    ) -> R<usize> {
+        let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
+        let (f, ft) = self.rd(vm, a + 1)?;
+        if ft != Ty::ShrStr {
+            return Err(self.nyi());
+        }
+        if !mutants::active("fmt0_guard_skip") {
+            self.reg_key(vm, a + 1, f)?;
+        }
+        self.lib_tail(idx, func_rel, top_rel, &[f], true, wanted)
+    }
+
     /// F1: `string.len(s)` / `s:len()` of a string: its length, a load of the header (`TLEN` of a string).
     fn lib_str_len(
         &mut self,
@@ -11758,7 +12364,14 @@ impl Rec {
         };
         let l = sref.get().len() as i64;
         let n = vj.wrapping_sub(vi).wrapping_add(1);
-        if vi < 1 || vj < vi || vj > l || !(1..=MAX_BYTE_RANGE).contains(&n) || wanted < n as i32 {
+        // (section 84.2, `mrset`: an open result list takes all `n`; the count guard below makes it the count at run time)
+        let open = wanted < 0 && self.cfg.mrset;
+        if vi < 1
+            || vj < vi
+            || vj > l
+            || !(1..=MAX_BYTE_RANGE).contains(&n)
+            || (wanted < n as i32 && !open)
+        {
             return Err(self.nyi());
         }
         let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;
@@ -13447,7 +14060,12 @@ impl Rec {
             .as_lclosure()
             .ok_or(AbortReason::MetaTable)?;
         if tbl.flags() & rn_core::table::BITDUMMY == 0 {
-            return Err(AbortReason::TableHash);
+            // (section 81.6: a miss of THIS key; another key of the same access can be a raw hit (a key of the hash part, which the recording
+            // handles): a property of the data, not of the code, so not the unchangeable `TableHash` that blacklists at the second occurrence.
+            // msgpack_pure's `unpackers[byte]` (the tagged bytes in the table, `__index` for the rest) recorded at a tagged byte or not by luck,
+            // and two misses in a row blacklisted `unpack_array`'s loop whenever another knob moved the moment of its recordings)
+            // (no mutant: only formation changes)
+            return Err(AbortReason::IntMiss);
         }
         let h = self.handle(tbl);
         let _ = h;

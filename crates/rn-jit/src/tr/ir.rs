@@ -548,8 +548,19 @@ pub mod lib {
     /// the span answered is that of the result (the capture, or the whole match when there is none); the recorder follows it with `SUB(s, start, end)`, which makes the
     /// result string. 0 = "did nothing" (several captures, a position capture, a pattern error, a string of 2^31 bytes or more).
     pub const FINDM: u32 = 27;
+    /// Section 78.1 (`stitch` bit 2): the end of a `gmatch` iteration (`TFORCALL` of `gmatch_aux` when no match is left): `a` = the iterator
+    /// closure. The helper answers 1 and advances the position upvalue as the C function's final step does when no match is left; when a match
+    /// is left (or the closure is another one) it answers 0 and changes nothing (the guard exits and the interpreter runs the step).
+    pub const GMATCH_END: u32 = 28;
+    /// Section 78.1 (`stitch` bit 4): `string.gmatch(s, p)` of two strings: `a` = `s`, `b` = `p` (flag bits 0 / 3: long). The helper allocates the
+    /// iterator closure the C function returns (upvalues `s`, `p`, 0, -1) and returns it (a C closure); 0 when the allocation fails.
+    pub const GMATCH_NEW: u32 = 29;
+    /// Section 84.2 (`mrset`): `luaH_resizearray(t, n)` of `SETLIST` with an open count (`{ f() }`): `a` = a table, `b` = the new array size
+    /// (an integer, larger than the current one); result 1, 0 when the allocation fails (nothing changed: the guard exits and the interpreter runs
+    /// the `SETLIST`, which raises the memory error). Moves the array part: not header-safe.
+    pub const ASIZE: u32 = 30;
     /// Number of kinds (below [`FMT_BASE`]).
-    pub const COUNT: u32 = 28;
+    pub const COUNT: u32 = 31;
     /// The names `TYPENAME` produces, by index.
     pub const TYPENAMES: [&str; 10] = [
         "nil", "boolean", "number", "string", "table", "function", "thread", "userdata", "integer",
@@ -756,6 +767,10 @@ pub const SNAP_CARRY: u8 = 64;
 /// (`TraceIr::carry_in`), the stack slot may be stale. The load is an unchecked, position-less definition at the start of the trace: it emits no code
 /// where it stands (the entry sequence loads it from the stack, or moves it from the parent's location).
 pub const SLOAD_CARRIED: u32 = 2;
+/// [`TOp::Sload`] op bits (section 88.3, `eflazy`): a checked load that `entry_checks` left at its first use because its entry check failed persistently at
+/// the head. Its guard is a body exit even when its snapshot is the empty map at the head (a first use before any store): an entry check there would fail
+/// the entries as before, and the head would be re-recorded until it is blacklisted (serpent_ser's `pairs` loop at line 66 pc 172).
+pub const SLOAD_LAZY: u32 = 4;
 /// Any of the sunk-table entry kinds.
 pub const SNAP_SUNK_ANY: u8 = SNAP_SUNK | SNAP_SFKEY | SNAP_SFVAL | SNAP_SALIAS | SNAP_SMT;
 /// `slot` values at or above this are not stack slots (the field entries of a sunk table).
@@ -861,6 +876,12 @@ pub struct TraceIr {
     /// Section 63 (`bhmin`): the trip estimate of the loop instance the root recording ran, taken at the last integer `FORLOOP` of the root frame:
     /// iterations left + 1 + for an upward loop `(index - 1) / step` (the iterations done if the loop started at 1); 0 when none / in a side trace.
     pub rec_trip: u64,
+    /// Section 78.1 (`stitch` bit 2): the end guard behind a `GMATCH` helper (`NE %gm, 1`) is an ordinary site, not an allocation site, so the loop's
+    /// end gets a side trace (which records the end with `GMATCH_END`).
+    pub gm_end_site: bool,
+    /// Section 92.2 (`libsite`): only the guard `NE %lib, 0` behind a `LIB` helper is an allocation site; its outcome guards (`NE %find, 1`) are
+    /// ordinary sites (their exits get side traces).
+    pub lib_site: bool,
     /// E5 (`midfold`): a method `SELF` of the family's key on register 0 was folded to the running closure: the trace relies on the region
     /// invariant of section 35.4.
     pub midfold: bool,
@@ -995,6 +1016,7 @@ impl TraceIr {
         self.midfold = false;
         self.dyn_sites.clear();
         self.rec_trip = 0;
+        self.lib_site = false;
     }
 
     /// Is `r` an instruction ref?
