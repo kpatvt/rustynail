@@ -4758,6 +4758,9 @@ fn s86_tailf_programs() {
             "t1g=7,retf=1975,retfmax=3,lazyci=0,innerlink=48",
             "t1g=7,retf=1975,retfmax=3,lazyci=0,sinkseg=1",
             "t1g=7,retf=4023,retfmax=3,lazydec=1,innerlink=48,sinkseg=1",
+            // section 86.5 (`retf` bit 12): function-entry families do not pop into untraced caller loops
+            "t1g=7,retf=6071,retfmax=3,lazydec=1,sinkseg=1",
+            "t1g=7,retf=5047,retfmax=3",
         ] {
             for opts in ["", "+verify", "+exitstorm=3 +verify"] {
                 jobs.push(Job::new("s86_tailf", trace).opts(opts).limits_s(limits));

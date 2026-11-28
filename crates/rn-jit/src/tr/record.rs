@@ -1505,6 +1505,8 @@ struct Rec {
     reroot: Option<usize>,
     /// Section 86.1: the closure the root frame runs after the `TAILCALL` the step recorded as a `TAILF` (the step re-targets the VM-side root).
     retail: Option<usize>,
+    /// Section 86.5 (`retf` bit 12): at a root `RETURN` of a function-entry family's side recording, the caller's loop around the call is untraced.
+    retf_untraced_loop: bool,
     /// N2c: the prototype of the entry root (the current root's, `proto`, changes at a `RETF`).
     entry_proto: usize,
     /// N2c: entry-relative extent, `room` and spare-`CallInfo` count of the segments before the current one.
@@ -1821,6 +1823,7 @@ impl Rec {
             seg_steps: Vec::new(),
             reroot: None,
             retail: None,
+            retf_untraced_loop: false,
             entry_proto: proto,
             ext_entry: 0,
             room_entry: 0,
@@ -2294,6 +2297,17 @@ impl Rec {
                 Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
             )
             && self.retf_sel_check(st, ci);
+        // section 86.5 (`retf` bit 12): the caller's innermost loop around its `CALL` exists and has no installed root trace
+        self.retf_untraced_loop = self.cfg.retf & 4096 != 0
+            && self.cfg.fn_root
+            && self.cfg.side.is_some()
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && self.caller_loop_state(st, ci) == Some(false);
         // section 77.7 (`retf` bit 6): the caller's loop around the call is traced
         self.retf_self_traced = self.cfg.retf & 64 != 0
             && self.cfg.fn_root
@@ -8454,7 +8468,10 @@ impl Rec {
             if self.cfg.retf & 1 != 0
                 && self.cfg.side.is_some()
                 && (!self.cfg.fn_root
-                    || self.cfg.retf & 4 != 0
+                    // (section 86.5, bit 12: function-entry families do not pop into an untraced loop of the caller: the side trace would cover the
+                    // loop's body after the call and stand in for the loop's own root trace)
+                    || (self.cfg.retf & 4 != 0
+                        && !self.retf_untraced_loop)
                     || self.retf_sel_ok
                     || self.inner_ret_ok
                     || (self.cfg.retf & 16 != 0 && self.retf_into_self(vm)))
@@ -8577,6 +8594,25 @@ impl Rec {
         }
         // (bit 6: and that loop's head has a root trace now)
         self.cfg.retf & 64 == 0 || self.retf_self_traced
+    }
+
+    /// Section 86.5: the state of the head of the innermost loop of the caller of frame `ci` around its `CALL` (asked through `retf_head`):
+    /// `None` when the call is in no loop (or the caller is not a Lua frame suspended at a call).
+    fn caller_loop_state(&self, st: &mut State, ci: Ci) -> Option<bool> {
+        let q = self.cfg.retf_head.clone()?;
+        let c_ci = ci.previous()?;
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return None;
+        }
+        let ccl = st.ci_lclosure(c_ci)?;
+        let cp = ccl.proto();
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let call_pc = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1)?;
+        if call_pc >= ccode.len() {
+            return None;
+        }
+        super::cache::enclosing_loop_head(ccode, call_pc).and_then(|h| q(st, &cp, h))
     }
 
     /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?

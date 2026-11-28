@@ -815,7 +815,8 @@ pub struct TrLimits {
     /// loop-free maybe-lazy caller is popped into when it never recursed (`TrProto::retf_demote`), off by default. Section 82.2: bit 8 (256) into a
     /// caller suspended at a flat `TFORCALL`. Section 86.1: bit 10 (1024, TAILF) after a pop the caller's `TAILCALL` of a Lua closure is recorded
     /// as the frame replacement. Section 86.2: bit 11 (2048) a side recording of a never recursive lazy-aware family is an eager trace that may
-    /// pop (the family is pinned). Default
+    /// pop (the family is pinned). Section 86.5: bit 12 (4096) with bit 2, a function-entry family's side recording does not pop (first pop) into a
+    /// caller whose innermost loop around the call exists and has no installed root trace. Default
     /// [`RETF_PROCESS`] = 179 (0 = off, byte-identical IR and machine code).
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
@@ -1501,7 +1502,7 @@ impl TrLimits {
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
                 "libcall" => l.libcall = v.min(4095),
-                "retf" => l.retf = v.min(4095),
+                "retf" => l.retf = v.min(8191),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
