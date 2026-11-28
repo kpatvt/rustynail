@@ -9676,7 +9676,9 @@ by 1.4 % between two `asmfuse=0` runs (not deterministic).
   (`asmfuse_pin_skip`: the registers of a snapshot shared by several guards not pinned) was written and dropped: no program of the suite
   takes an exit of an earlier guard of such a snapshot after an eviction would have moved one of its values (the pin skips do happen: 84 on cd
   under `asmfuse=2`); the invariant is checked instead by the debug assertion at every guard of an open snapshot.
-- gate-light on dd7afe2 and on 9c75995: every step PASS (mutant group `asmfuse_`).
+- gate-light (`GATE_CPUS=5-7`, `GATE_LOAD_MAX=0`) on dd7afe2: every step PASS (mutant group `asmfuse_`); on 9c75995: every step PASS except
+  `tests-5.5-trace` / `tests-5.4-trace` on `tr_core::h2_newkey_programs` (its `GC_STRESS=2` + `GC_VERIFY=1` child at the 120 s leash under load,
+  as in 85.4), which passes alone (13.8 s on 5.5, 14.1 s on 5.4).
 
 ### 87.4 State and the remaining stages (for the next builder)
 
