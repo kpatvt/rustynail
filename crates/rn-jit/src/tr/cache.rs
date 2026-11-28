@@ -137,8 +137,16 @@ pub const EFKEEP_PROCESS: u32 = 0;
 pub const EFLAZY_PROCESS: u32 = 0;
 /// Section 84.2 (`mrset`): the process default of [`TrLimits::mrset`] (the struct default is 0).
 pub const MRSET_PROCESS: u32 = 1;
-/// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0).
-pub const OUTERLINK_PROCESS: u32 = 0;
+/// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0; on since section 94.1).
+pub const OUTERLINK_PROCESS: u32 = 1;
+/// Section 92.1 (`sretry`): the process default of [`TrLimits::sretry`] (the struct default is 0; on since section 94.1).
+pub const SRETRY_PROCESS: u32 = 64;
+/// Section 59 (`reroot`): the process default of [`TrLimits::reroot`] (the struct default is 0; on since section 94.1).
+pub const REROOT_PROCESS_ON: u32 = 50;
+/// Section 88.9 (`rerootkeep`): the process default of [`TrLimits::rerootkeep`] (the struct default is [`REROOTKEEP_PROCESS`] = 75; 100 since section 94.1).
+pub const REROOTKEEP_PROCESS_ON: u32 = 100;
+/// Section 92.3 (`rerootgain`): the process default of [`TrLimits::rerootgain`] (the struct default is 0; on since section 94.1).
+pub const REROOTGAIN_PROCESS: u32 = 110;
 /// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
 pub const WGLOOP_PROCESS: u32 = 16;
 /// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (the struct default is 0; back on since section 81.1).
@@ -1804,6 +1812,19 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "mrset") {
             self.limits.mrset = MRSET_PROCESS;
+        }
+        // section 94.1 (`sretry`, `reroot`, `rerootkeep`, `rerootgain`): on in a process, struct defaults 0
+        if !names_limit(limits_env, "sretry") {
+            self.limits.sretry = SRETRY_PROCESS;
+        }
+        if !names_limit(limits_env, "reroot") {
+            self.limits.reroot = REROOT_PROCESS_ON;
+        }
+        if !names_limit(limits_env, "rerootkeep") {
+            self.limits.rerootkeep = REROOTKEEP_PROCESS_ON;
+        }
+        if !names_limit(limits_env, "rerootgain") {
+            self.limits.rerootgain = REROOTGAIN_PROCESS;
         }
     }
 
