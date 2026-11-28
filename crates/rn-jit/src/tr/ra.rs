@@ -627,6 +627,10 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
         TOp::Eq | TOp::Ne if TraceIr::is_ins(a) && fused[idx(a)] && ir.at(a).op == TOp::Fload => {
             [ir.at(a).a, b, NOREF]
         }
+        TOp::Band if fused[i] => [NOREF; 3],
+        TOp::Eq | TOp::Ne if TraceIr::is_ins(a) && fused[idx(a)] && ir.at(a).op == TOp::Band => {
+            [ir.at(ir.at(a).a).a, b, NOREF]
+        }
         TOp::Tset => [a, b, ins.aux as Ref],
         TOp::Concat => [a, b, if ins.aux != 0 { ins.aux as Ref } else { NOREF }],
         TOp::Lib => [
@@ -686,7 +690,7 @@ fn defines(op: TOp, fused: bool) -> bool {
         | TOp::Loop => false,
         TOp::Aref | TOp::Uref | TOp::Hrefk => !fused,
         // N1a: a fused index sum; section 93.1: a fused field load
-        TOp::Add | TOp::Fload => !fused,
+        TOp::Add | TOp::Fload | TOp::Band => !fused,
         _ => true,
     }
 }
@@ -762,19 +766,33 @@ pub fn fcfuse_field(f: Ref) -> bool {
 }
 
 /// Section 93.1 (`peep` bit 0): marks in `fused` the `FLOAD`s of a byte / 32-bit field (base an instruction) whose only user is the `a` operand of an
-/// `EQ` / `NE` guard against a constant that fits the field's width unsigned (`0..=255` for a byte, `0..2^31` for 32 bits): no snapshot, `PHI`,
-/// `end_uses` entry or other operand names them. The compare then reads the field from memory: the loaded value zero-extended equals the constant
-/// iff the field's bits equal the constant's low bits (the constant's other bits are zero).
+/// `EQ` / `NE` guard against a constant that fits the field's width unsigned (`0..=255` for a byte, `0..2^31` for 32 bits), and the pairs
+/// `FLOAD flags; BAND #c` (`c` in `1..=255`) whose `BAND` is only used by an `EQ` / `NE` against 0 (`test byte [t + flags], c`): no snapshot,
+/// `PHI`, `end_uses` entry or other operand names them. The compare then reads the field from memory: the loaded value zero-extended equals the
+/// constant iff the field's bits equal the constant's low bits (the constant's other bits are zero); `flags & c` is zero iff no bit of `c` is set
+/// in the byte.
 fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
     let n = ir.ins.len();
+    let flags = super::ir::Field::Flags as Ref;
+    let fl = |r: Ref| TraceIr::is_ins(r) && idx(r) < n;
     let mut cand: Vec<bool> = ir
         .ins
         .iter()
-        .map(|i| i.op == TOp::Fload && TraceIr::is_ins(i.a) && fcfuse_field(i.b))
+        .map(|i| {
+            (i.op == TOp::Fload && TraceIr::is_ins(i.a) && fcfuse_field(i.b))
+                || (i.op == TOp::Band
+                    && fl(i.a)
+                    && ir.at(i.a).op == TOp::Fload
+                    && ir.at(i.a).b == flags
+                    && TraceIr::is_ins(ir.at(i.a).a)
+                    && !TraceIr::is_ins(i.b)
+                    && ir.as_int(i.b).is_some_and(|c| (1..=255).contains(&c)))
+        })
         .collect();
     let mut users = vec![0u32; n];
+    let mut band_user = vec![false; n];
     let kill = |cand: &mut Vec<bool>, r: Ref| {
-        if TraceIr::is_ins(r) && idx(r) < n {
+        if fl(r) {
             cand[idx(r)] = false;
         }
     };
@@ -786,18 +804,29 @@ fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
         }
         let (ra, rb) = ins.op.ref_operands();
         if ra {
-            let ok = matches!(ins.op, TOp::Eq | TOp::Ne)
-                && TraceIr::is_ins(ins.a)
-                && idx(ins.a) < n
+            let ok = fl(ins.a)
                 && cand[idx(ins.a)]
-                && !TraceIr::is_ins(ins.b)
-                && ins.b != NOREF
-                && ir.as_int(ins.b).is_some_and(|c| {
-                    let w1 = ir.at(ins.a).b != super::ir::Field::Asize as Ref;
-                    c >= 0 && c <= if w1 { 255 } else { i64::from(i32::MAX) }
-                });
+                && match (ins.op, ir.at(ins.a).op) {
+                    // the BAND of a flags FLOAD (its own candidacy was decided above)
+                    (TOp::Band, TOp::Fload) => !TraceIr::is_ins(ins.b),
+                    (TOp::Eq | TOp::Ne, TOp::Band) => {
+                        !TraceIr::is_ins(ins.b) && ins.b != NOREF && ir.as_int(ins.b) == Some(0)
+                    }
+                    (TOp::Eq | TOp::Ne, TOp::Fload) => {
+                        !TraceIr::is_ins(ins.b)
+                            && ins.b != NOREF
+                            && ir.as_int(ins.b).is_some_and(|c| {
+                                let w1 = ir.at(ins.a).b != super::ir::Field::Asize as Ref;
+                                c >= 0 && c <= if w1 { 255 } else { i64::from(i32::MAX) }
+                            })
+                    }
+                    _ => false,
+                };
             if ok {
                 users[idx(ins.a)] += 1;
+                if ins.op == TOp::Band {
+                    band_user[idx(ins.a)] = true;
+                }
             } else {
                 kill(&mut cand, ins.a);
             }
@@ -815,8 +844,19 @@ fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
     for &r in end_uses {
         kill(&mut cand, r);
     }
+    // a BAND is fused only together with its FLOAD, and an FLOAD whose user is a BAND only with that BAND
     for k in 0..n {
-        if cand[k] && users[k] == 1 {
+        let i = &ir.ins[k];
+        if i.op == TOp::Band && cand[k] && users[k] == 1 {
+            let f = idx(i.a);
+            if cand[f] && users[f] == 1 {
+                fused[k] = true;
+                fused[f] = true;
+            }
+        }
+    }
+    for k in 0..n {
+        if ir.ins[k].op == TOp::Fload && cand[k] && users[k] == 1 && !band_user[k] {
             fused[k] = true;
         }
     }

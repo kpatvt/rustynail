@@ -234,7 +234,8 @@ pub struct AsmEnv {
     /// H3-F (`hk64`): `HREFK` compares the key address with one 64-bit compare (`cmp [m], r`) instead of two 32-bit halves.
     pub hk_key64: bool,
     /// Section 93.1 (`peep`): bit 1 `TBAR` colour tests with `test byte [m], imm`; bit 2 the `TBAR` slow path out of line; bit 3 `HMISS` without the
-    /// key-tag compare (bit 0, the fused field compares, is the allocator's `fcfuse`).
+    /// key-tag compare; bit 4 no loop-head pad in a trace that ends in a native push through the dispatch cell (bit 0, the fused field
+    /// compares, is the allocator's `fcfuse`).
     pub peep: u32,
     /// B4-3: an `HREFK` followed by the `HLOAD` of its node checks the key tag and the value tag with one 16-bit compare (`hkfuse`).
     pub hk_fuse: bool,
@@ -3570,7 +3571,14 @@ pub fn assemble_dl(
     if rolled && env.side.is_none() {
         // Section 79.12 (`retpad`): a trace that ends in a native return never jumps back to its head: no loop-head placement (the padding is a
         // `jmp` over the nops that every entry executes)
-        if !(env.ret_nopad && ir.rec_ret.is_some() && ir.rec_call.is_none()) {
+        // Section 93.1 (`peep` bit 4): nor does one that ends in a native push through the dispatch cell (`rec_link_cell`: the callee's
+        // function-entry head, never this trace's own loop label)
+        let push_out = env.peep & 16 != 0
+            && ir.rec_call.is_some()
+            && ir.rec_ret.is_none()
+            && env.rec_link_cell != 0
+            && ir.loop_at.is_none();
+        if !(env.ret_nopad && ir.rec_ret.is_some() && ir.rec_call.is_none()) && !push_out {
             cx.head_pad();
         }
         cx.bind(loop_l);
@@ -6186,6 +6194,8 @@ impl Cx<'_> {
             }
             // N1a: a fused index sum is read by its accesses, nothing to emit
             TOp::Add if self.al.fused[i] => {}
+            // Section 93.1: a flags mask fused into its compare
+            TOp::Band if self.al.fused[i] => {}
             TOp::Add | TOp::Sub | TOp::Mul | TOp::Band | TOp::Bor | TOp::Bxor => self.ibin(i)?,
             TOp::Neg | TOp::Bnot => {
                 let d = self.g(dst);
@@ -6936,6 +6946,24 @@ impl Cx<'_> {
             if !holds {
                 self.push(Op::Jmp(x));
             }
+            return Ok(());
+        }
+        // Section 93.1 (`peep` bit 0): a fused `BAND` of the flags: `test byte [t + flags], c` (`ops[0]` is the table)
+        if TraceIr::is_ins(ins.a)
+            && self.al.fused[usize::from(ins.a - REF_BIAS)]
+            && self.ir.at(ins.a).op == TOp::Band
+        {
+            let Some(c) = self.ir.as_int(self.ir.at(ins.a).b) else {
+                return incons("fused BAND with a non-constant mask");
+            };
+            let t = self.reg(ops[0], 7);
+            // (the guard asserts `(flags & c) <cc> 0`: leave on the negation)
+            self.push(Op::TstM {
+                cc: neg_cc(cc),
+                m: rm(t, table::FLAGS as i32),
+                imm: c as u8,
+                to: x,
+            });
             return Ok(());
         }
         // Section 93.1 (`peep` bit 0): a fused `FLOAD` operand: compare the field in memory (`ops[0]` is the table)

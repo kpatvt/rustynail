@@ -4940,7 +4940,9 @@ fn s89_lzretf_programs() {
 fn s93_peep_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for limits in ["peep=15", "peep=0", "peep=1", "peep=2", "peep=6", "peep=8"] {
+        for limits in [
+            "peep=31", "peep=0", "peep=1", "peep=2", "peep=6", "peep=8", "peep=16",
+        ] {
             for (opts, budget) in [
                 ("", 0),
                 ("+verify", 0),
@@ -4961,8 +4963,8 @@ fn s93_peep_programs() {
             );
         }
         for p in ["s79_mfside", "s89_lzretf", "s83_subtree", "s75_mfkeys"] {
-            jobs.push(Job::new(p, trace).opts("+verify").limits_s("peep=15"));
-            jobs.push(Job::new(p, trace).opts("+exitstorm=3").limits_s("peep=15"));
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s("peep=31"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3").limits_s("peep=31"));
         }
     }
     compare(jobs);

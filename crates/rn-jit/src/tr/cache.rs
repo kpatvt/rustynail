@@ -222,7 +222,7 @@ pub const LZRETFMAX_PROCESS: u32 = 64;
 /// Section 89 (`lzretf`): the process default of [`TrLimits::lzretf`] (also the struct default).
 pub const LZRETF_PROCESS: u32 = 61;
 /// Section 93.1 (`peep`): the process default of [`TrLimits::peep`] (also the struct default).
-pub const PEEP_PROCESS: u32 = 15;
+pub const PEEP_PROCESS: u32 = 31;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1062,7 +1062,8 @@ pub struct TrLimits {
     /// Section 93.1 (`peep`, docs/JIT_TRACE.md section 93.1): shorter machine code for common IR shapes, same semantics. Bit 0: a byte / 32-bit `FLOAD`
     /// whose only user is an integer compare with a constant is fused into it (`cmp [t + field], imm`); bit 1: `TBAR` tests the colour bits with
     /// `test byte [m], imm`; bit 2: the `TBAR` slow path is out of line; bit 3: `HMISS` compares the key address without the key tag (a node holding
-    /// another value with the same bits fails the guard: an exit, never a wrong answer). Default [`PEEP_PROCESS`].
+    /// another value with the same bits fails the guard: an exit, never a wrong answer); bit 4: no loop-head pad in a trace that ends in a native push
+    /// through the dispatch cell (it never jumps to its own head). Default [`PEEP_PROCESS`].
     pub peep: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
@@ -1654,7 +1655,7 @@ impl TrLimits {
                 "sidesub" => l.sidesub = v.min(1),
                 "lzretfmax" => l.lzretfmax = v.min(1023),
                 "lzretf" => l.lzretf = v.min(63),
-                "peep" => l.peep = v.min(15),
+                "peep" => l.peep = v.min(31),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
