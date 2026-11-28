@@ -9482,3 +9482,112 @@ crossed the 120 s leash. Fix: the registry check is a `HashSet` lookup built onc
 `instruction_count_identity` on three CPUs passes with no child above 30 s. `ident_check` now reports the child's `<no result: ...>` line, so a
 timeout is visible as one. The remaining cost of that child is the interpreter (41 %) and `hot_loop` -> `loop_len_w` (26 %: the loop length is
 recomputed on every sampled tick); this was not changed.
+
+## 82. Per-iterator trace families (`pfam`) and the stream_closures return chain (2026-11-27, base b87b8cc + c707218)
+
+### 82.1 `pfam`: several root traces per generic-`for` head, keyed by the iterator (`TrLimits::pfam`, default 24 = `PFAM_PROCESS`)
+
+**Problem** (77.14, 77.17): one generic-`for` head (iter_pipeline's `Iter:reduce`, stream_closures' `fold`) serves many pipelines whose iterator
+closures differ. The head is re-recorded for each, two `Ineffective` flushes blacklist it (Q3) and the hottest loop runs in tier 1. With
+`t1g` bit 2 on (77.14) iter_pipeline ran 6904 M instructions against 782 M.
+
+**Design** (`cache.rs`: `FamInfo`, `TrProto::new_fam`, `fam_member`, `fam_switch_on`, `fam_key`, `fam_target`, `jit_tr_fam`, `emit_dispatch`).
+`emit_dispatch` marks every loop head that is the target of a `TFORLOOP` right behind its `TFORCALL` (`A` of the `TFORCALL`: the iterator is
+`R[A]`, which the loop body cannot assign) and gives it `K` member heads (`pfam` bits 0-3), full `HeadData`s appended behind the real heads (same
+pc, not in the pc index; own state, counters, penalties, Q3 memory, root trace). The main head never records once its family is on:
+- **On demand.** A family head starts as a plain head. When its counter fires and the running iterator's key differs from the key of its last
+  plain recording, the family is switched on (`fam_switch_on`, stat `fam_on`); bit 5 switches it on from the start (tests).
+- **Key** (`fam_key`): a Lua closure's prototype; with bit 4 mixed with the prototypes (or C function addresses) of the closure's upvalue
+  closures, one level (`map(f, src)`: `f` and `src`); a C function's address; 1 for anything else. Never 0 (free slot).
+- **Dispatch stub `F_H`** (the main head's `target()` while on, emitted in the tier-1 dispatch region next to `C_H`): a one-entry cache compares
+  the iterator's payload word with the last miss and jumps through the cell the miss chose; a miss calls `jit_tr_fam` (no allocation, no Lua
+  code), which keys `R[A]` and picks: the member's dispatch cell (its root's guarded entry when `Traced`, the main head's `C_H` when `Warm` /
+  `Recording`, the label when `Black`), else the main head's `C_H` while a slot is free, else the label (every slot taken: that iterator runs in
+  tier 1, stat `full`). The cache stores a pointer to a cell, so member state changes are followed without invalidation; it is cleared when a
+  slot gets a key. A stale or colliding cache entry is harmless: every member is entered through its root's guarded entry, which checks the
+  iterator (callee guards) and everything else the key does not.
+- **Recording**: `hot` of a main head whose family is on keys `R[A]`, takes the member (`fam_member`: a free slot, else the slot of a member that
+  never failed and holds no trace: its prototype was collected or it was flushed as a dependency) and records for it (`begin_recording_at`).
+  A member's penalties, blacklist and Q3 memory are its own: a polymorphic head never blacklists the whole head.
+- **Member context** (`active_member`, `TrProto::head_index_in`): while the active recording belongs to a member, the pc-keyed head questions
+  (`head_entry`, `head_traced`, `head_nohoist` / `ncallee`, `reroot_avoid`, `mark_linked_in`, the root pipeline's head pointer, side-trace link
+  cells, `e2` / `e3` entries) answer for the member, so a member's side traces link to the member, not through `F_H`. For anything else a family
+  main head is `Traced` when a member is (`head_traced`) and is linked through its dispatch cell (`F_H`).
+- `jit_tr_entry_fail` gets the head index + 1 as its second argument (`AsmEnv::head_ix`): members share the main head's pc. The emulator's head
+  counters go through the `HeadData` pointer. Members have the main head's `C_H` and label, no stack-move stub, no J4 stub; families are off with
+  `+tracemove`. `RUSTYNAIL_JIT_VERBOSE=1` prints `[trace] pfam:` (families on, dispatch misses, member recordings, refusals) and `[pfam]` member rows.
+
+**Tests.** `tests/vm/s82_pfam.lua` (vm corpus, compared with the reference): one `reduce` head over seven pipelines in five phases (several share
+the `map` prototype over different upvalue closures; nested `reduce`), C functions (`ipairs`, `next`, `pairs`) and a Lua closure through one
+head, a callable table, fresh closures every round with collections (reused addresses), the iterator replaced mid-loop by `debug.setlocal` of
+the hidden `(for state)` variable, a yield and an error inside the iterator. `tr_core::s82_pfam_programs`: `pfam` 24 / 56 / 34 (two members:
+slots recycled and refused) / 36 (no upvalue keys: colliding keys), `t1g` 7 / 3, `always` / `on2` / `on`, `+verify`, `+exitstorm=3 +verify`,
+budget 17, GC stress 2, and s77_polyhead / s77_tflat with families. Mutants (both caught): `pfam_member_cell_stub` (a member's fallback is `F_H`:
+a dispatch loop), `pfam_guard_free_entry` (the dispatch enters a member through its guard-free second entry). The performance-only rules (member
+context, entry-failure index, upvalue keys, on-demand switch) have no mutant: their mutants are equivalent in output.
+
+**Measurement note.** Under the shared machine's load (25-45) the parallel whole-set runs (`CPUS=2,3,4`, and also one CPU) moved programs by up
+to 23 % between runs of the same binary and setting (richards, lua_parser, bounce): a policy reads the time-stamp counter. Serial runs on one
+CPU (cwd = the program's directory, absolute path, padded environment) repeat to 0.01 %; every mover of the whole-set runs was re-measured that
+way (two runs each, minimum). The path matters as well: stream_closures run as `bench/corpus2/heldout/stream_closures.lua` from the worktree takes
+2588 M with families, 3218 M as an absolute path from its directory (the convention of `bench_session.py`, used below).
+
+**Measured** (release `rn-cli`, instructions, serial, CPU 3-4; `t1g=3` = the old default):
+
+| program | `t1g=3` | `t1g=7` | `t1g=7,pfam=24` | `t1g=3,pfam=24` |
+|---|---|---|---|---|
+| corpus2/dev/iter_pipeline | 782.1 M | 6904 M | 789.9 M (+1.0 %) | 782.3 M |
+| corpus2/heldout/stream_closures | 3465.2 M | | 3218.3 M (**-7.1 %**) | |
+| stream_closures, relative path | 3394.0 M | 3345.6 M | 2587.6 M (**-23.8 %**) | 3320.9 M |
+| text_adventure / lua_lexer | 7358.7 / 2739.4 M | | +0.22 % / +0.02 % | |
+| awfy json / towers | 416.3 / 162.0 M | | 0 / 0 | |
+
+Cycles (interleaved, minimum of 11 / 7, CPU 4, load 34): iter_pipeline 275.1 -> 277.1 M (+0.7 %), stream_closures 1276 -> 1170 M (**-8.3 %**).
+Whole set (223 programs, instructions): every program the parallel runs moved by more than 0.3 % was re-measured serially (richards, cd,
+bounce, inspect_lua, oop_override, lua_parser, serpent_ser, game_loop, knucleotide, json_rxi, testrunner_luaunit, string_key_dyn, raytrace,
+programs/json, lua_interp, expr_compiler, towers, msgpack_pure, tonumber_base, awfy/json, m_ult, real_dis_ppc, havlak, forth_vm, log_analyzer,
+tostring_tbl, prototype_objects, apps/events, deltablue, vending_fsm): all within +-0.1 %; astar_jumper +1.3 % (its known run-to-run spread,
+4.24-4.34 G); iter_pipeline +1.0 %; text_adventure +0.22 %; stream_closures -7.1 %. Outputs identical on all 223.
+
+**Defaults.** `pfam=24` and `t1g` bit 2 on (`T1G_PROCESS` 7). iter_pipeline stays 1.0 % above its `t1g=3` count (7.8 M: seven `InnerLoop`
+re-recordings of the member of the `ct` pipeline, whose `filter` loops; a "blacklist a member at its second `InnerLoop`" rule was tried and saved
+nothing, those aborts do not raise `k`; removed), against +779 % before; its cycles are within the noise.
+
+### 82.2 The stream_closures return chain: where it stands
+
+With 82.1 the fold loop of every pipeline has its own root. The remaining profile (`t1g=7,pfam=24`, perf): sunk-table materialisation and
+allocation 18-19 % of the samples (`materialise` 5.8 %, `jit_tr_alloc` 5.8 %, `setnodevector` 3.8 %, `resize` 3.3 %; 292 k tables materialised
+at exits), the collector 6 %. The chain that would make the `readings` records dead before they escape: filter's `while` loop trace (the member
+roots of `fold` abort `InnerLoop` at `filter`'s loop, L37:9, 13-18 times) returns the matching record (`RETF` into `map`), `map` does
+`return f(v)` (a `TAILCALL` in the popped-into frame), `f` reads `r.value` and returns (`RETF` into `fold`, suspended at its `TFORCALL`), the
+fold body runs and links into the fold member at its head (`F_H`).
+
+**(b) `retf` bit 8 (value 256): built, default off.** `Rec::retf` also pops into a caller suspended at a `TFORCALL` whose Lua iterator tier 1
+pushed as a flat frame (`t1g` bit 2): the frame starts at the call copy (`R[A+3]`, 5.4 `R[A+4]`), wants `C` results (`tfor_flat` stores
+`C + 1`), and the caller goes on at the `TFORLOOP` (its resume label exists while bit 2 is on). Measured (stream_closures, absolute path):
+`t1g=7,pfam=24` 3218.26 M; `retf=435` (179 + bit 8) 3218.26 M; `retf=947` (+ bit 9) 3218.26 M; `retf=951` (+ bit 2) 3203.8 M (-0.45 %);
+`retf=951,lazyci=0` 3180.3 M (-1.2 %, 22 pops compiled). No mutant (the natural ones, a wrong frame slot or result count, are refused by the
+frame-identity and wanted-count checks: equivalent).
+
+**(a) `RETF` through the caller's `TAILCALL`: not built; measured as the next blocker.** With `retf=951,lazyci=0` the side aborts move to
+`LeaveFrame@L30:6:Tailcall` (map's `return f(v)`): 48 of the 56 `LeaveFrame` side aborts, on the function-entry families of `readings` (L165:
+22), `filter` (L37: 10), `map` (L30: 12) and the loops of L95 / L82. `Rec::tailcall` at depth 0 ends the recording (`fn_end`) or aborts. What it
+needs (design, not built): a `TAILF` step at depth 0 after a pop, the mirror of `Rec::retf`: the callee is guarded (closure identity); the frame
+keeps its `CallInfo` and base (`luaD_pretailcall` moves the function and the arguments down to `ci->func`), so the segment's shift and pops are
+unchanged and only the slot map moves down by `A + 1` (the arguments become slots `0..`, the rest of the caller is dead); a native step stores
+the callee into `ci->func`, sets `ci->top` (stack room check, else exit), `CIST_TAIL` and the callee's code for the landings; a new `Seg` with the
+callee's prototype; the lockstep model, the emulator and `+verify` must know the step; tracebacks and `debug.getinfo` see the replaced frame with
+`CIST_TAIL` at any exit after it (exits land in the callee's tier-1 code). A source experiment bounds nothing useful: `return f(v)` rewritten as
+`local r = f(v); return r` (no tail call) runs 3432 M (`t1g=7,pfam=24`, relative path) / 3373 M (`retf=951,lazyci=0`), worse than the tail-call
+original: without the whole chain the extra frame only adds work.
+
+**(c) link entries that keep sunk allocations virtual: not built.** Once (a) completes the chain, the record of the per-kind pipelines is dead
+after `r.value`, before the link into the fold member (nothing to carry); (c) matters for pipelines whose loop keeps the record live (`collect`,
+`max_by`, `window`). Not attempted before (a).
+
+**lua_lexer and `retf` bit 2** (item 2 of 77.17): not reached in this round.
+
+**Next steps, in order:** (1) `TAILF` (a) as designed above, knob-gated as `retf` bit 10, with a tests/vm program (tail calls after pops; errors
+and tracebacks inside the tail-called function, `debug.getinfo` levels, hooks, deep tail recursion) and mutants on the moved slots and the
+`ci->func` store; (2) measure `retf=951+1024` with and without `lazyci=0`, then bit 9's per-site rule for `lazyci`; (3) the fold member's
+`InnerLoop` aborts at `filter`'s loop (record `filter`'s retry path as a side trace instead of aborting the member root); (4) (c).
