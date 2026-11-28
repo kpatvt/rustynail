@@ -971,6 +971,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         oframe: cfg.limits.oframe != 0,
         dynunroll: cfg.limits.dynunroll,
         recinl: cfg.limits.recinl,
+        chainloop: cfg.limits.chainloop,
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
@@ -1227,6 +1228,7 @@ pub fn driver_start_side(
         oframe: cfg.limits.oframe != 0,
         dynunroll: cfg.limits.dynunroll,
         recinl: cfg.limits.recinl,
+        chainloop: cfg.limits.chainloop,
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
@@ -2797,6 +2799,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         ret_remat: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retremat } != 0,
         // SAFETY: as above.
         ret_nopad: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retpad } != 0,
+        // SAFETY: as above. (Section 83.1: only at a continuation head, where native returns land.)
+        lz_inner: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.lzinner } != 0
+            && head_pc_is_cont(&rootp, pc)
+            && !emurun
+            && !emuverify,
+        // SAFETY: as above.
+        pre_dl: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.predl } != 0,
         // SAFETY: as above.
         rec_fuse_saved: rec_late
             && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,
@@ -4045,4 +4054,13 @@ pub(crate) fn c2cmp_mut() -> (bool, bool) {
         mutants::active("c2cmp_swap"),
         mutants::active("c2cmp_exit_skip"),
     )
+}
+
+/// Section 83.1 (`lzinner`): `pc` is a continuation head (the instruction before it is a `CALL`, so native returns land there).
+fn head_pc_is_cont(p: &rn_core::func::Proto, pc: u32) -> bool {
+    pc > 0
+        && p.code().get(pc as usize - 1).is_some_and(|&w| {
+            rn_core::instruction::Instruction(w).opcode_raw()
+                == rn_core::ver::active::OpCode::Call as u8
+        })
 }

@@ -294,6 +294,11 @@ pub struct AsmEnv {
     pub ret_remat: bool,
     /// Section 79.12 (`retpad`): no loop-head padding in a trace that ends in a native return.
     pub ret_nopad: bool,
+    /// Section 83.1 (`lzinner`): a root of a lazy-aware family at a continuation head gets the inner entry even when it ends in neither a native push
+    /// nor a native return (a loop trace).
+    pub lz_inner: bool,
+    /// Section 83.1 (`predl`): pre-roll exits that are not type-guard sites may take E6's direct link (in the traces `lz_inner` applies to).
+    pub pre_dl: bool,
     /// Section 75.15 (`retfuse` bit 1): the fused native return also when the late guards saved live registers (the success path needs none of them).
     pub rec_fuse_saved: bool,
     /// BUNDLE-K L1: `callstatus` (`C` operand) shared by every `CALL` of the root prototype: a lazy frame is then completed by an in-line loop; `None`: by the helper.
@@ -459,6 +464,8 @@ impl Default for AsmEnv {
             push_tags: false,
             ret_remat: false,
             ret_nopad: false,
+            lz_inner: false,
+            pre_dl: false,
             rec_fuse_saved: false,
             lazy_cs: None,
             lazy_nparams: 0,
@@ -3448,10 +3455,12 @@ pub fn assemble_dl(
         l
     });
     let rec_fail = cx.label();
-    let inner = (rolled
-        && env.side.is_none()
+    // Section 83.1 (`lzinner`): also a root of a lazy-aware family at a continuation head that ends in neither (a loop trace, peeled or not): the
+    // native returns into its head take the inner entry and the region goes on (exits complete the chain from wherever it stands)
+    let inner = (env.side.is_none()
         && env.head != 0
-        && (ir.rec_call.is_some() || ir.rec_ret.is_some()))
+        && ((rolled && (ir.rec_call.is_some() || ir.rec_ret.is_some()))
+            || (env.lz_inner && env.lazy && ir.rec_call.is_none() && ir.rec_ret.is_none())))
     .then(|| cx.label());
     if let Some(inner) = inner {
         let past = cx.label();
@@ -3481,6 +3490,17 @@ pub fn assemble_dl(
         } else {
             cx.room_stack_check(rec_fail);
             cx.room_ci_check_rec(rec_fail);
+        }
+        if ir.rec_call.is_none() && ir.rec_ret.is_none() && mutants::active("lzinner_root_store") {
+            // (MUTANT, section 83.1: the inner entry of an `lzinner` trace starts a region: the frames below stay lazy when it exits)
+            cx.push(Op::Lea(
+                1,
+                M {
+                    base: Base::Ci,
+                    off: 0,
+                },
+            ));
+            cx.st(W::B8, Cx::lroot_m(), Src::V(1));
         }
         cx.bind(past);
     }
@@ -3863,7 +3883,7 @@ pub fn assemble_dl(
     });
     cx.stubs_and_tail(
         entry_fail,
-        (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(rec_fail),
+        (ir.rec_call.is_some() || ir.rec_ret.is_some() || inner.is_some()).then_some(rec_fail),
     )?;
     // P2 bundle 1 (`xregs`): `V10` is `r14`, the constants pointer of tier 1. A trace that allocated it leaves through a `JmpR` (every exit stub,
     // link and tail) with `r14` clobbered: reload it from `ci.kcache` (`r13` is the frame the code jumps into at every `JmpR`: the root
@@ -10232,7 +10252,14 @@ impl Cx<'_> {
                     && self.env.exit_cells != 0
                     && self.env.counters != 0
                     && matches!(plan, StubPlan::Inline { frame_cell, .. } if frame_cell == !es.frames.is_empty())
-                    && !self.pre_snaps.get(snap as usize).copied().unwrap_or(false)
+                    && (!self.pre_snaps.get(snap as usize).copied().unwrap_or(false)
+                        || (self.env.pre_dl
+                            && self.env.lazy
+                            && self.env.lz_inner
+                            && !matches!(
+                                self.sites.get(snap as usize),
+                                Some(super::cache::ExitSite::TypeGuard)
+                            )))
                     && !self
                         .chain_snaps
                         .get(snap as usize)

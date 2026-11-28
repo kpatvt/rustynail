@@ -167,7 +167,7 @@ pub const RETFUSE_PROCESS: u32 = 3;
 /// Section 75.7 (`dynunroll`): the process default of [`TrLimits::dynunroll`] (also the struct default).
 pub const DYNUNROLL_PROCESS: u32 = 0;
 /// Section 75.9 (`recinl`): the process default of [`TrLimits::recinl`] (also the struct default).
-pub const RECINL_PROCESS: u32 = 2;
+pub const RECINL_PROCESS: u32 = 3;
 /// Section 75.10 (`sidepush`): the process default of [`TrLimits::sidepush`] (also the struct default).
 pub const SIDEPUSH_PROCESS: u32 = 1;
 /// Section 75.12 (`mfkeys`): the process default of [`TrLimits::mfkeys`] (also the struct default).
@@ -210,6 +210,12 @@ pub const MFCONST_PROCESS: u32 = 1;
 pub const SELFST_PROCESS: u32 = 1;
 /// Section 79.12 (`retpad`): the process default of [`TrLimits::retpad`] (also the struct default).
 pub const RETPAD_PROCESS: u32 = 1;
+/// Section 83.1 (`lzinner`): the process default of [`TrLimits::lzinner`] (also the struct default).
+pub const LZINNER_PROCESS: u32 = 1;
+/// Section 83.1 (`predl`): the process default of [`TrLimits::predl`] (also the struct default).
+pub const PREDL_PROCESS: u32 = 1;
+/// Section 83.2 (`chainloop`): the process default of [`TrLimits::chainloop`] (also the struct default).
+pub const CHAINLOOP_PROCESS: u32 = 16;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -914,7 +920,7 @@ pub struct TrLimits {
     /// Section 75.9 (`recinl`, docs/JIT_TRACE.md section 75.9): a continuation or loop recording of a lazy-aware family inlines root-frame self-calls
     /// as frames of an unroll chain (E1's lazy frames) up to `recinl & 7` frames deep; the self-call at the end of the chain is the native push that
     /// materialises the chain. Only for a prototype with a counted loop whose self-call is found through a table (method recursion); bit 3 drops that
-    /// rule (measurement only). 0 / 1 = off; default 2 ([`RECINL_PROCESS`]).
+    /// rule (measurement only). 0 / 1 = off; default 3 ([`RECINL_PROCESS`], section 83.2: with `chainloop` the chain frames return and call again).
     pub recinl: u32,
     /// Section 75.10 (`sidepush`, docs/JIT_TRACE.md section 75.10): a side recording that starts inside inlined self-call frames of the root
     /// prototype (chain frames, virtual in the trace) may end with the native push of a self-call: the push materialises those frames as lazy frames
@@ -1017,6 +1023,19 @@ pub struct TrLimits {
     /// Section 79.12 (`retpad`, docs/JIT_TRACE.md section 79.12): a trace that ends in a native return gets no loop-head padding (it never jumps
     /// back to its head; the padding's `jmp` ran at every entry). 0 = off, 1 = on (default [`RETPAD_PROCESS`]).
     pub retpad: u32,
+    /// Section 83.1 (`lzinner`, docs/JIT_TRACE.md section 83.1): a root trace of a lazy-aware family at a continuation head that does not end in a
+    /// native push or return (a loop trace, peeled or not, or a trace that ends in an exit) gets the inner entry of the native-recursion roots, so a
+    /// native return into its head continues the region instead of completing the chain and re-entering through the region check. 0 = off, 1 = on
+    /// (default [`LZINNER_PROCESS`]).
+    pub lzinner: u32,
+    /// Section 83.1 (`predl`, docs/JIT_TRACE.md section 83.1): the pre-roll exits of a lazy-aware trace (not type-guard sites) may take E6's direct
+    /// link to their side trace (policy: their exits no longer count towards the ineffective-trace rule once a side trace is attached, which
+    /// `ineffcover` already ignores for such sites). 0 = off, 1 = on (default [`PREDL_PROCESS`]).
+    pub predl: u32,
+    /// Section 83.2 (`chainloop`, docs/JIT_TRACE.md section 83.2): the trip-count bound of a counted loop with run-time bounds inside an inlined
+    /// chain frame (`recinl` / `sidepush`), unrolled as `dynunroll` unrolls (every guard kept), whatever `dynunroll` says, also in a recursive frame.
+    /// 0 = off (default [`CHAINLOOP_PROCESS`]).
+    pub chainloop: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1333,6 +1352,9 @@ impl Default for TrLimits {
             mfconst: MFCONST_PROCESS,
             selfst: SELFST_PROCESS,
             retpad: RETPAD_PROCESS,
+            lzinner: LZINNER_PROCESS,
+            predl: PREDL_PROCESS,
+            chainloop: CHAINLOOP_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1592,6 +1614,9 @@ impl TrLimits {
                 "mfconst" => l.mfconst = v.min(1),
                 "selfst" => l.selfst = v.min(1),
                 "retpad" => l.retpad = v.min(1),
+                "lzinner" => l.lzinner = v.min(1),
+                "predl" => l.predl = v.min(1),
+                "chainloop" => l.chainloop = v.min(63),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

@@ -9480,3 +9480,65 @@ loads) are what LuaJIT avoids by recording the subtree per depth (75.6 (A)); not
 (root-ness is dynamic: a caller that becomes the root continues at the inner entry), the `POLL` of push-entered traces (the CP3 retest's
 soundness note: a native push skips `luaD_precall`'s hook test), entry slot-guard elision (21.3.2), `sloadhome` (77.6, still off: its open
 correctness failure), the adaptive `dynunroll` default (79.7: the bar is missed).
+
+## 83. Subtree-per-depth recording (2026-11-27, base 53e481b = c707218 + section 79)
+
+Goal: record a recursive function's call subtree down to a depth / size budget inside one trace, as LuaJIT does (its permute trace inlines
+the whole subtree of one recursion level, every other level is a side trace), so that most calls in the tree pay no frame protocol; the leaves
+at the cut depth keep the native push / return protocol. Measurement method as section 79: instructions per call =
+(instructions at N = 1000 - instructions at N = 100) / (900 * calls per iteration); cycles min of 11 interleaved runs, CPU 9, `RUSTYNAIL_SEED=0`;
+whole set: the 223 programs, instructions, one run each, the columns in one binary with **limit strings of equal length** (a scratch
+driver; an environment of another length moves the layout-sensitive programs, section 79).$
+
+### 83.1 Stage M1: what stopped the subtree shape that already existed (`lzinner`, `predl`; both default 1)
+
+`recinl=3` with `dynunroll=16` already records permute's subtree: the continuation trace at pc 22 inlines the callee as a chain frame, whose
+first self-call is inlined again (the depth-2 frame is a leaf at the recorded level and returns), then the depth-1 frame's loop (unrolled),
+whose self-calls are inlined the same way, so the continuation comes back to pc 22 in the root frame and **closes a loop**: the LuaJIT shape
+(one loop trace per level, `swap` / `count` / the method chain CSE'd across the inlined calls). It measured 161 M instructions against 97 M
+(+65 %), for two reasons found with a temporary counter:
+
+* **No inner entry for loop traces.** The inner entry (P-M3) existed only for rolled roots that end in a native push or return. A native return
+  into the head of a *loop* trace found its `rec` cell 0, completed the lazy chain (leave block) and entered through the plain cell: an outer
+  entry with E5's region check (`jit_tr_midfold_check` + `extra_found_in` + `raw_equal`: 37 % of all instructions), 1676 outer entries per
+  iteration. Now (`lzinner`, `AsmEnv::lz_inner`) a root of a lazy-aware family at a continuation head (the instruction before the head is a
+  `CALL`) that ends in neither a native push nor a native return gets the same inner entry (room checks only; the stack and `CallInfo` checks of
+  its inlined frames, `rec_fail` completing the chain on failure), whether it is rolled or peeled. Why it is exact: the inner entry is only
+  reached through a `rec` cell, by a native return of a frame pushed in the current region into this frame, which is in the region (its own
+  push or the region root); the region's invariants (E2 / E5) hold for every frame in the region, so the check is not needed; `lazy_root` is not
+  stored (the region goes on; every exit completes the chain from the frame it stands in down to `lazy_root`, wherever that is: the exit paths
+  never assumed that a loop trace runs in the region root, they complete the chain generically); the budget register is live (the native return
+  keeps it, as for the rolled inner entries). Mutant `lzinner_root_store` (the inner entry stores the region root as an outer entry does: the
+  lazy frames below stay incomplete after an exit), caught by `tr_core::s83_subtree_programs`.
+* **Pre-roll exits through the handler.** The level-specific guards of the peeled trace (the next level's `n ~= 0`, the loop count) are pre-roll
+  exits, which E6 never linked directly (they are counted for the ineffective-trace rule); each one left the region and re-entered the side
+  trace through its cell. Now (`predl`) a pre-roll exit of such a trace (the traces `lzinner` applies to) that is not a type-guard site may take
+  E6's direct link. Policy only: with `ineffcover` (default) an attached non-type-guard site does not count towards the rule anyway. (A first
+  form for every lazy trace moved `prototype_objects` +3.8 %: formation changed; restricted to the `lzinner` traces it does not.)
+
+### 83.2 `chainloop` (default 16) and `recinl` 3 (was 2)
+
+`dynunroll` is off by default (79.7) and its recursion rule forbids exactly this unroll. `chainloop` gives the counted loop of an inlined
+**chain frame** (`RecFrame::unr`: a `recinl` / `sidepush` level of the root prototype) its own trip-count bound, without the recursion rule;
+everything else is `dynunroll`'s mechanism (the count computed and guarded at run time, every `FORLOOP` guarded). Policy only. With it
+`RECINL_PROCESS` = 3: the chain frames of continuation and loop recordings return and call again, so a recording holds the subtree of the
+recorded level.
+
+| permute | 53e481b settings (`lzinner=0,predl=0,chainloop=0,recinl=2`) | M1 defaults |
+|---|---:|---:|
+| instructions per call (N = 1000) | 104.46 | **91.00** (-12.9 %) |
+| default size, instructions | 97.37 M | **89.27 M** (-8.3 %) |
+| N = 1000, cycles (min of 5) | 158.9 M | **148.2 M** (-6.7 %) |
+| default size, cycles (min of 11) | 20.16 M | 20.12 M (0: the bigger traces' compile cost) |
+
+Each knob off against the defaults: `lzinner=0` 172.0 per call, `predl=0` 394.4 (the loop trace's exits go through the handler and leave the
+region), `chainloop=0` 111.2 (the inlined level aborts `InnerLoop`; formation falls back to shorter traces), `recinl=4` / `5` = 3 (the recorded
+level is reached first). Whole set (223 programs, M1 defaults against `lzinner=0,predl=0,chainloop=00,recinl=2`, equal-length strings): permute
+-8.30 %, lru_cache -0.65 %, astar_jumper -1.9 % (noise program), testrunner_luaunit +0.32 % (noise program); nothing else beyond 0.3 %; geomean
+-0.035 %.
+
+Tests: `tests/vm/s83_subtree.lua` (vm_corpus, and `tr_core::s83_subtree_programs`: the defaults, each knob off, `recinl` 2 / 4, the trace modes,
+`+verify`, exit storms, budgets 3 / 17, GC stress 2, plus `s75_recinl` / `s75_oframe` / `s79_push` / `s79_mfside` with the defaults): permute at
+sizes 1-6 in mixed order, errors raised at a leaf of the subtree caught at the top / an inner level / by `xpcall` with `debug.traceback`,
+`debug.getinfo` at the leaves (depth and current lines of the levels below), yields at the leaves, a count hook installed from inside, stack
+overflow of a recursion with loops, allocation / full collections / finalizers at the leaves, varying trip counts with early returns.

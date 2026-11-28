@@ -208,6 +208,8 @@ pub struct RecCfg {
     pub dynunroll: u32,
     /// Section 75.9 (`recinl`): unroll-chain depth of continuation / loop recordings (0 / 1: off).
     pub recinl: u32,
+    /// Section 83.2 (`chainloop`): trip-count bound of a counted loop with run-time bounds in a chain frame (0: none).
+    pub chainloop: u32,
     /// Section 75.10 (`sidepush`): native pushes from side recordings that start inside chain frames.
     pub sidepush: bool,
     /// Section 75.13 (`mfdeep`): E5's fold in chain frames called with the root closure on the root receiver.
@@ -585,6 +587,7 @@ impl Default for RecCfg {
             oframe: super::cache::OFRAME_PROCESS != 0,
             dynunroll: super::cache::DYNUNROLL_PROCESS,
             recinl: super::cache::RECINL_PROCESS,
+            chainloop: super::cache::CHAINLOOP_PROCESS,
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
@@ -10416,9 +10419,17 @@ impl Rec {
             // (knob bit 6: not in a frame whose prototype is already on the frame stack: a recursive callee's loop is unrolled into one copy per
             // recursion level and trip count, section 75.8)
             let fp = self.frames[self.cur_depth].proto;
-            let rec_frame = self.dynunroll_norec()
+            // Section 83.2 (`chainloop`): the loop of an inlined chain frame (the recursion level of a subtree recording) has its own bound and no
+            // recursion rule (policy only: the unrolled copy keeps every guard)
+            let chain = self.cfg.chainloop != 0 && self.frames[self.cur_depth].unr;
+            let rec_frame = !chain
+                && self.dynunroll_norec()
                 && self.frames[..self.cur_depth].iter().any(|f| f.proto == fp);
-            let bound = u64::from(self.cfg.dynunroll & 63);
+            let bound = if chain {
+                u64::from((self.cfg.dynunroll & 63).max(self.cfg.chainloop))
+            } else {
+                u64::from(self.cfg.dynunroll & 63)
+            };
             let trips = dyn_trips(vi, vl, vs);
             if bound == 0 || rec_frame || trips > bound {
                 return Err(AbortReason::InnerLoop);

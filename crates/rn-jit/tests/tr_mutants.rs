@@ -5064,6 +5064,11 @@ const TABLE: &[Row] = &[
         owner: "S76",
         dets: &[d("tr_core", "s76_t1exit_programs")],
     },
+    Row {
+        name: "lzinner_root_store",
+        owner: "S83",
+        dets: &[d("tr_core", "s83_subtree_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

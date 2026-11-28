@@ -1149,6 +1149,8 @@ pub const NAMES: &[&str] = &[
     "htramp_swap_args",
     // section 76.10 (`t1exit` bit 2): the rolled `__index` chain answers nil when it runs out of levels
     "chain_end_nil",
+    // section 83.1 (`lzinner`): the inner entry of a loop trace of a lazy-aware family stores the region root (as an outer entry does)
+    "lzinner_root_store",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1242,7 +1244,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 920);
+        assert_eq!(NAMES.len(), 921);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

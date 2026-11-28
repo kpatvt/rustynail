@@ -1509,9 +1509,11 @@ fn twins_gc_stress() {
 #[test]
 fn twins_stackmove() {
     let mut jobs = Vec::new();
-    // (`pm3_rec`, `r2_rec_deep` and `bf_rec_deep` recurse to the stack limit: quadratic when the stack moves at every helper call; `pm3_rec2` and `r2_rec` cover it)
+    // (`pm3_rec`, `r2_rec_deep` and `bf_rec_deep` recurse to the stack limit: quadratic when the stack moves at every helper call; `pm3_rec2` and `r2_rec` cover it;
+    // `s83_subtree` has a stack-overflow case too)
     for p in selected(false).into_iter().filter(|p| {
         p.name != "pm3_rec"
+            && p.name != "s83_subtree"
             && p.name != "r2_rec_deep"
             && p.name != "bf_rec_deep"
             && p.name != "bk_obs2"
@@ -4724,6 +4726,50 @@ fn s79_selfst_programs() {
                 .opts("+verify")
                 .limits_s("selfst=1"),
         );
+    }
+    compare(jobs);
+}
+
+/// Section 83 (subtree recording): `recinl` chains whose frames return and call again with their loops unrolled (`chainloop`), loop traces of
+/// lazy-aware families entered by native returns (`lzinner`), pre-roll exits linked directly (`predl`): permute at varying sizes, errors and
+/// tracebacks from the leaves, `getinfo` at the leaves, yields, a count hook installed from inside, stack overflow, collections and finalizers,
+/// varying trip counts; the defaults, each knob off, `recinl` 2 / 4, in the trace modes with `+verify`, exit storms, budgets 3 / 17 and GC
+/// stress 2; plus the recursion programs of sections 75 / 79 with the defaults. Mutant `lzinner_root_store`.
+#[test]
+fn s83_subtree_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "recinl=3",
+            "lzinner=0,predl=0,chainloop=0",
+            "lzinner=1,predl=0",
+            "chainloop=0",
+            "recinl=2",
+            "recinl=4,chainloop=4",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("", 3),
+            ] {
+                let mut j = Job::new("s83_subtree", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new("s83_subtree", trace)
+                    .limits_s(limits)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+        for p in ["s75_recinl", "s75_oframe", "s79_push", "s79_mfside"] {
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s("recinl=3"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3").limits_s("recinl=3"));
+        }
     }
     compare(jobs);
 }
