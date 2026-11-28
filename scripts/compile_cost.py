@@ -43,10 +43,12 @@ def run(bin_, prog, cpu, events, extra_env, spin=False):
         while time.time() - t < 0.3:
             pass
     cmd = ["taskset", "-c", str(cpu), "perf", "stat", "-x,", "-e", events, bin_, os.path.join(ROOT, "bench", prog + ".lua")]
-    p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=600,
+    p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600,
                        cwd=os.path.join(ROOT, "bench", os.path.dirname(prog)), env=env)
     err = p.stderr.decode(errors="replace")
     res = {}
+    xp = os.path.join(ROOT, "bench", prog + ".expected")
+    res["out"] = "none" if not os.path.exists(xp) else ("ok" if open(xp, "rb").read() == p.stdout else "MISMATCH")
     for line in err.splitlines():
         f = line.split(",")
         if len(f) >= 3 and f[2].startswith(("instructions", "cycles")):
@@ -148,6 +150,8 @@ def whole(bins, opt):
         for b, n in bins:
             r = run(b, prog, cpu, "instructions:u", {})
             vals.append(r.get("instructions", 0) if r["rc"] == 0 else 0)
+            if r["out"] == "MISMATCH":
+                print(f"{prog}: {n}: OUTPUT MISMATCH", flush=True)
         if vals[0] == 0 or 0 in vals:
             print(f"{prog}: failed {vals}", flush=True)
             continue

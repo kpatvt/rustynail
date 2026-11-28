@@ -2068,6 +2068,41 @@ fn ccheck_alloc_text(a: &ra::Allocation) -> String {
     format!("{c:?}")
 }
 
+/// Section 80.1 (`gexit`): the address of the state's shared exit routine (`resume`: with the resume path of the deferred stubs), assembled and
+/// placed at its first use; `None` when it cannot be placed (the trace then embeds its copy).
+fn global_exit(st: &mut State, resume: bool) -> Option<u64> {
+    let dp = crate::rt::data_ptr(st);
+    // SAFETY: the per-state data is live (see `rt::data_ptr`).
+    let have = unsafe { (*dp).tr.gexit[usize::from(resume)] };
+    if have != 0 {
+        return Some(have);
+    }
+    let mut p = Program::default();
+    let l = exit::append_shared_exit(
+        &mut p,
+        &exit::SharedExitEnv {
+            handler: exit::jit_tr_exit as *const () as usize as u64,
+            stack_off: thr::stack_ptr_offset(st) as i32,
+            // (MUTANT `gexit_no_resume`: the routine of a state with deferred stubs lacks their resume path)
+            resume: resume && !mutants::active("gexit_no_resume"),
+        },
+    );
+    let em = crate::x86::with_htramp(false, || x86::emit(&p)).ok()?;
+    let off = em.label_off.get(l as usize).copied().flatten()?;
+    let placed = crate::rt::place_code(st, dp, &em.code, 16).ok()?;
+    let addr = (placed.block.addr() + off) as u64;
+    // SAFETY: as above.
+    unsafe {
+        let _ = (*dp)
+            .arena
+            .register_symbol(&placed.block, "TRACE-SHARED-EXIT");
+        (*dp).tr.gexit[usize::from(resume)] = addr;
+    }
+    // (the block is never freed: it lives until the arena is dropped with the state)
+    std::mem::forget(placed);
+    Some(addr)
+}
+
 fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> {
     let opts = &act.opts;
     // Section 49 (`cspeed` lever `REC`): the pipeline owns the recording (it copied it before; nothing reads it after a compile)
@@ -2648,11 +2683,25 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // (the emulator cannot run the pinned-register switch of a native frame push)
         return Err(abort_err("emu-unsupported", "native self-call"));
     }
+    // Section 80.1 (`gexit`): the state's shared exit routine (not under the emulator modes)
+    // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+    let shared_global = if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.gexit } != 0
+        && !emurun
+        && !emuverify
+    {
+        global_exit(st, defer_on).unwrap_or(0)
+    } else {
+        0
+    };
     let env = asm::AsmEnv {
         trace_id: act.id.slot,
         counters: counters as u64,
         hot_exit: act.hot_exit,
         shared_exit: 0,
+        shared_global,
+        // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
+        compact_exits: shared_global != 0
+            && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.gexit } & 2 != 0,
         exit_handler: exit::jit_tr_exit as *const () as usize as u64,
         stack_off: thr::stack_ptr_offset(st) as i32,
         pcl_h: pcl,

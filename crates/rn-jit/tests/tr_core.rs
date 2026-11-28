@@ -10641,6 +10641,18 @@ fn s76_hdrcse_programs() {
     assert_eq!(TrLimits::default().hdrcse, 2);
 }
 
+/// Section 80.1 (`gexit`): the shared exit routine is one per state (a trampoline in each trace) instead of a copy embedded in every trace. Programs
+/// with generic, deferred, poll and handler exits and side traces (`s76_t1_exits` prints a GC-dependent count under GC stress), with compact generic stubs (3, the default), plain ones (1) and the embedded
+/// routine (0) in every mode (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves). Mutants `gexit_no_resume`,
+/// `gexit_exitno_imm`.
+#[test]
+fn s80_gexit_programs() {
+    let progs = ["s76_side_fail", "s64_call_loops", "s64_call_observers"];
+    let res = compare(b1_jobs(&progs, &["gexit=3", "gexit=1", "gexit=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().gexit, 3);
+}
+
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at
 /// the compile-only level, and off (control).
 /// Mutants `tailhook_ignored`, `tailhook_from_jit_enter`.

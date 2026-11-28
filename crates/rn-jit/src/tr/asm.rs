@@ -121,6 +121,11 @@ pub struct AsmEnv {
     pub hot_exit: u32,
     /// Address of a shared exit routine (a per-arena copy), or `0`: the program embeds its own.
     pub shared_exit: u64,
+    /// Section 80.1 (`gexit`): the address of the state's shared exit routine; non-zero (and `shared_exit == 0`): the trace's shared label is a
+    /// trampoline into it instead of an embedded copy.
+    pub shared_global: u64,
+    /// Section 80.1 (`gexit` bit 1): generic stubs are `mov V7, exitno; jmp shared` and the trampoline stores the numbers (needs `shared_global`).
+    pub compact_exits: bool,
     /// `jit_tr_exit` (for the embedded shared routine).
     pub exit_handler: u64,
     /// Offset of the stack data pointer inside the `Thread` (`ReloadFrame` of the shared routine).
@@ -381,6 +386,8 @@ impl Default for AsmEnv {
             counters: 0,
             hot_exit: 16,
             shared_exit: 0,
+            shared_global: 0,
+            compact_exits: false,
             exit_handler: 0,
             stack_off: 0,
             pcl_h: 0,
@@ -10220,7 +10227,38 @@ impl Cx<'_> {
             self.push(Op::SetK(4));
             self.push(Op::JmpR(6));
         }
-        if let (Some(l), 0) = (shared, self.env.shared_exit) {
+        if let (Some(l), 0, g) = (shared, self.env.shared_exit, self.env.shared_global) {
+            if g != 0 {
+                // Section 80.1 (`gexit`): a trampoline into the state's routine (`V7` is dead at every exit; `r14` is saved there: not a jump out
+                // of compiled code)
+                self.bind(l);
+                let plain = if self.env.compact_exits {
+                    // bit 1: the compact generic stubs left their exit number in `V7`; the trace number is stored here once (the generic twins of
+                    // the deferred stubs store both themselves and enter at `plain`)
+                    let src = if mutants::active("gexit_exitno_imm") {
+                        // MUTANT: the trampoline stores a constant exit number instead of the stub's
+                        Src::Imm(0)
+                    } else {
+                        Src::V(7)
+                    };
+                    self.st(W::B4, area_m(exit::GENERIC_STUB_STORES[1].0), src);
+                    self.st(
+                        W::B4,
+                        area_m(exit::GENERIC_STUB_STORES[0].0),
+                        Src::Imm(self.env.trace_id as i32),
+                    );
+                    let plain = self.label();
+                    self.bind(plain);
+                    plain
+                } else {
+                    l
+                };
+                self.push(Op::Mov(7, g));
+                self.push(KEEP_R14);
+                self.push(Op::JmpR(7));
+                self.shared_l = Some(plain);
+                return;
+            }
             // the embedded copy of the shared routine (every stub ends in a jump: nothing falls into it)
             let at = self.p.ops.len();
             exit::append_shared_exit(
@@ -10440,6 +10478,13 @@ impl Cx<'_> {
             self.push(ops[2]);
             self.push(KEEP_R14);
             self.push(ops[3]);
+            return;
+        }
+        if self.env.compact_exits && self.env.shared_exit == 0 && self.env.shared_global != 0 {
+            // Section 80.1 (`gexit` bit 1): `mov eax, exitno; jmp shared` (10 bytes instead of 27): the trampoline stores the exit and trace numbers
+            self.push(Op::Mov(7, u64::from(exitno)));
+            let l = *shared.get_or_insert_with(|| self.p.label());
+            self.push(Op::Jmp(l));
             return;
         }
         let ops = exit::generic_stub_ops(self.env.trace_id, exitno, self.env.shared_exit);

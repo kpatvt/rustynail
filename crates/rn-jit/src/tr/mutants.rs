@@ -1141,6 +1141,10 @@ pub const NAMES: &[&str] = &[
     "htramp_swap_args",
     // section 76.10 (`t1exit` bit 2): the rolled `__index` chain answers nil when it runs out of levels
     "chain_end_nil",
+    // section 80.1 (`gexit`): the state's shared exit routine is built without the resume path of the deferred stubs
+    "gexit_no_resume",
+    // section 80.1 (`gexit` bit 1): the trampoline stores a constant exit number instead of the compact stub's
+    "gexit_exitno_imm",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1234,7 +1238,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 916);
+        assert_eq!(NAMES.len(), 918);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
