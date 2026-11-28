@@ -16180,7 +16180,8 @@ fn n1_programs_enter_traces() {
 /// GC stress 1 / 2 in both collector modes, stack moves; with the oracle feature the instruction-count identity. Asserts that the rule fired in the
 /// queens program (`rerootall=0`: at the test thresholds its pre-roll exits stay below 80 %) and in no job with `reroot=0`. Detector of `reroot_never`.
 /// Section 62: the probation check reverts the re-record of `s60_worse` and keeps those of `s60_phases` (detectors of `rerootchk_keep_always`,
-/// `rerootchk_revert_always`); `rerootchk=0` never checks.
+/// `rerootchk_revert_always`); `rerootchk=0` never checks. Section 98.2: every job with the rule on runs `rerootfn=1` (section 94.2 shipped
+/// `rerootfn=0`; the re-roots of these programs are not on loop roots, so the rule never fired).
 #[test]
 fn s60_reroot_programs() {
     let progs = [
@@ -16193,8 +16194,8 @@ fn s60_reroot_programs() {
     ];
     let lims = [
         "reroot=0",
-        "reroot=1,domn=64,rerootall=80,rerootchk=1024,rerootkeep=75",
-        "reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=75",
+        "reroot=1,domn=64,rerootall=80,rerootchk=1024,rerootkeep=75,rerootfn=1",
+        "reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=75,rerootfn=1",
     ];
     let mut jobs = Vec::new();
     for p in progs {
@@ -16238,10 +16239,12 @@ fn s60_reroot_programs() {
     // section 62: the probation check off (the re-record is always kept)
     for trace in ["always", "on2"] {
         jobs.push(
-            Job::new("s60_worse", trace).limits_s("reroot=1,domn=64,rerootall=0,rerootchk=0"),
+            Job::new("s60_worse", trace)
+                .limits_s("reroot=1,domn=64,rerootall=0,rerootchk=0,rerootfn=1"),
         );
         jobs.push(
-            Job::new("s60_queens", trace).limits_s("reroot=1,domn=64,rerootall=0,rerootchk=0"),
+            Job::new("s60_queens", trace)
+                .limits_s("reroot=1,domn=64,rerootall=0,rerootchk=0,rerootfn=1"),
         );
     }
     let res = compare(jobs);
@@ -16269,7 +16272,7 @@ fn s60_reroot_programs() {
     }
     eprintln!("s60 reroot (roots, drops, kept, reverted): {fired:?}");
     let get = |k: &str| fired.get(k).copied().unwrap_or_default();
-    let all0 = "reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=75";
+    let all0 = "reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=75,rerootfn=1";
     assert!(
         get(&format!("s60_queens {all0}")).0 > 0,
         "s60_queens: the reroot rule never fired"
