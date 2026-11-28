@@ -9749,3 +9749,48 @@ moved to 4095; fixed in c378174) and the stale mutant map (regenerated). Final: 
 from the changed files: all caught, 2030 s; vm_corpus, jit-diff 1-50, clippy, core suites PASS); the only failure was `t9_innerlink_knob` (the
 `innerlink` clamp moved to 63; fixed in b60cb56), after which the 5.5 and 5.4 trace suites, fmt and the mutant map were re-run on b60cb56: PASS.
 Not run: the heavy gate.
+
+### 86.7 The "time-window" dependence is the collector's pacing, not time (round 2)
+
+**Cause, reproduced on demand.** The 2617 M / 3187.5 M split of 86.6 (stream_closures, `retf=951,retfmax=3,lazyci=0`) follows the **path of the
+`rnlua` binary**, not the clock: every 2617 M run used `target/release/rnlua`, every 3187 M run a copy in the scratch directory. With one binary
+copied to `rnlua.x` and `rnlua.xxxxxxxx`: 2611.5 M / 3192.2 M, each exactly repeatable at any load. The binary path is `arg[-1]`, a string in the
+Lua heap; an extra command-line argument of 1-42 bytes (`stream_closures.lua 100 x...`) moves the run to 3170-3183 M as well. The bytes change the
+collector's debt, so collection steps and the **allocation exits** of traces (a `TNEW` / string helper refuses when a step is due; the trace exits
+and tier 1 allocates and steps the collector) happen at other points of the program. Tier 1 then runs the code between the exit and the next
+re-entry, and that code feeds the formation counters (function-entry call counts, loop ticks): the first divergence of the two runs
+(`RUSTYNAIL_JIT_VERBOSE=2`, addresses normalised) is the recording `35 start proto:37 pc 0` (filter's function-entry head) starting on another call
+of `filter`, one that returns on its first record (`FnShort`) in one run and loops (an installed loop trace) in the other; everything after
+differs. No policy of rn-jit / rn-core reads a clock for formation: the only clock reads are the compile-phase timers (`phase.rs`, statistics
+only, `VERBOSE`), the profiler (`rt::prof`, `RUSTYNAIL_JIT_PROFILE`), the `SIGPROF` sampler (`RUSTYNAIL_JIT_SAMPLE`), the `warm` gate (inactive:
+the process uses the count gate `wgate`), `luaL_makeseed` (pinned by `RUSTYNAIL_SEED`) and `math.random` / `table.sort` pivot seeds (not used by
+these programs). Load, CPU contention (a spinning process on the measured CPU) and ASLR do not move the counts.
+
+**Scope** (223 programs, default configuration, instructions, serial, the same binary at two path lengths): 4 programs move by more than 0.3 %:
+corpus2/dev/ecs_world +8.86 %, awfy/havlak +0.77 %, apps/lru_cache +0.42 %, scheme_interp -0.87 %; outputs identical. stream_closures moves by
+0.2 % in the default configuration, by 22 % under `retf=951,retfmax=3,lazyci=0`. The 82.1 note that the path of the *script* changes
+stream_closures' count (relative 2588 M against absolute 3218 M) is the same effect (`arg[0]`), and parallel whole-set runs that moved programs
+by up to 23 % are consistent with it wherever the runs differed in paths or arguments.
+
+**Couplings tried.** (1) `arm_tick_next` after an allocation exit resets the sampling tick's formation countdown, so the phase of every later
+formation sample depended on where the debt crossed. Built `tickkeep` (knob, bit 0, off): the tick is armed as a kept tick
+(`jit_hooks::arm_tick_keep`, `TICK_KEEP`): it fires at the next back-edge for re-entry only (`rt::keep_loop`: enter when the head has an installed
+trace; no formation credit, no start-gate clock) and the countdown continues from its saved value. It removes that coupling but not the
+divergence: stream_closures `retf=951,retfmax=3,lazyci=0,tickkeep=1` 2546.9 M / 3184.7 M at the two path lengths, ecs_world 4052.9 / 3725.6 M (default
+3728.0 / 4058.4 M). Disabling the arming altogether (diagnostic build) narrows stream_closures to 2806 / 2880 M, not to one value. (2) The
+remaining coupling is structural: an allocation exit hands a piece of the iteration to tier 1, whose call and loop counting is the formation
+input. A deterministic fix needs either the collector step inside the trace (no exit: the step must see the sunk tables and the register-held
+values, which only a snapshot restore provides today) or formation counting that ignores the tier-1 code run between an allocation exit and the
+re-entry (a flag the tier-1 call / loop counters test, in their inline paths). Neither was built in this round.
+
+**Measurement consequence.** Compare configurations with the same binary path and arguments (the padded-environment runner of 86.6 does);
+programs that move with the path (ecs_world, stream_closures under the chain configurations) need two path lengths before a change is called a
+win or a loss. **Which formation is better** (the 2611 M one on stream_closures) is not a policy that can be made the default: it is one draw of
+which `filter` call the function-entry recording lands on.
+
+**Not done in round 2 (the 86.6 queue):** sinkseg replay at the `pred` exits, `retfmax` 3 for function-entry chains, `innerlink` bit 4, per-site
+rules for the `retf=5047` losers.
+
+**Gates** (f8fb19c, `gate-light.sh --base c3fca83`, load 70-88): all steps PASS except the stale mutant map (regenerated with this commit) and 5.5
+`tr_core::h2_newkey_programs`, whose only failure was a 120 s child timeout of the GC-stress-2 + `RUSTYNAIL_GC_VERIFY` job (as in 82.2); rerun
+alone it passes (15.6 s).
