@@ -1355,6 +1355,23 @@ fn bn_retf_process_default() {
     }
 }
 
+/// Section 86.2: `lazydec` is 1 in a process (`apply_process_limits`), 0 in the struct default the tests use; an explicit value wins.
+#[test]
+fn s86_lazydec_process_default() {
+    use rn_jit::tr::cache::{TrConfig, LAZYDEC_PROCESS};
+    assert_eq!(LAZYDEC_PROCESS, 1);
+    for (env, want) in [(None, 1), (Some("lazydec=0"), 0), (Some("lazydec=7"), 1)] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        assert_eq!(
+            c.limits.lazydec,
+            if env.is_some() { want } else { 0 },
+            "parse {env:?}"
+        );
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.lazydec, want, "process {env:?}");
+    }
+}
+
 /// N3a: the room a side trace attached to a segment-k exit may count on is the parent's entry-relative extent shifted by the segment's slots and its spare `CallInfo`
 /// nodes plus the popped frames' (mutants `retf_extent_unshifted`, `retf_maxci_unshifted`).
 #[test]

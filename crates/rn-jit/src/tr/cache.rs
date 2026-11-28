@@ -125,8 +125,8 @@ pub const DEEPPROBE_PROCESS: u32 = 12;
 pub const T4_PROCESS: u32 = 3;
 /// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the process default of [`TrLimits::innerlink`] (also the struct default).
 pub const INNERLINK_PROCESS: u32 = 0;
-/// Section 86.2 (`lazydec`): the process default of [`TrLimits::lazydec`] (also the struct default).
-pub const LAZYDEC_PROCESS: u32 = 0;
+/// Section 86.2 (`lazydec`): the process default of [`TrLimits::lazydec`] (the struct default is 0).
+pub const LAZYDEC_PROCESS: u32 = 1;
 /// T5 (`t5`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t5`] (also the struct default).
 pub const T5_PROCESS: u32 = 0;
 /// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
@@ -1140,7 +1140,8 @@ pub struct TrLimits {
     pub innerlink: u32,
     /// Section 86.2 (`lazydec`): bit 0: a loop-free prototype that is lazy-aware by the static rule (BUNDLE-K L1) is decided like an E4 candidate
     /// at the compile of its first root trace: it stays lazy-aware only when that trace is its function-entry trace ending in a native self-call;
-    /// otherwise (and when nothing of it is folded by the region invariants) it becomes eager for good. 0 = off. Default [`LAZYDEC_PROCESS`].
+    /// otherwise (and when nothing of it is folded by the region invariants) it becomes eager for good. 0 = off. Default 0 here, [`LAZYDEC_PROCESS`] (1)
+    /// in a process.
     pub lazydec: u32,
     /// T5 (`t5`, docs/JIT_TRACE.md section 48): `GETTABLE` / `SETTABLE` with an object key (a table, function, userdata or thread) on trace as an
     /// `HREFV` of the object form (pointer hash, chain walk). Bit 0: reads (a present key: typed `HLOAD`; an absent key: the `HREF_ABS` proof);
@@ -1327,7 +1328,7 @@ impl Default for TrLimits {
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
-            lazydec: LAZYDEC_PROCESS,
+            lazydec: 0,
             t5: T5_PROCESS,
             t7: T7_PROCESS,
         };
@@ -1718,6 +1719,10 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "wgcall") {
             self.limits.wgcall = WGCALL_PROCESS;
+        }
+        // section 86.2: `lazydec` is on in a process (the struct default, used by the tests, stays 0)
+        if !names_limit(limits_env, "lazydec") {
+            self.limits.lazydec = LAZYDEC_PROCESS;
         }
     }
 

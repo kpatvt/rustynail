@@ -9593,3 +9593,153 @@ and tracebacks inside the tail-called function, `debug.getinfo` levels, hooks, d
 `InnerLoop` aborts at `filter`'s loop (record `filter`'s retry path as a side trace instead of aborting the member root); (4) (c).
 
 **Gates** (82.1 + bit 8, commit e56f0e3, `GATE_CPUS=2-4`, load 35-53): `gate-light.sh pfam_` all steps PASS (5.5 trace suite, vm_corpus, jit-diff 1-50, both `pfam_*` mutants caught) except 5.4 `tr_core::h2_newkey_programs`, whose only failures were two 120 s child timeouts of the GC-stress-2 + `RUSTYNAIL_GC_VERIFY` jobs; rerun alone it passes (17.6 s). Not run: the heavy gate.
+
+## 86. The stream_closures return chain: TAILF, eager popping sides, `lazydec`, backward-edge links (2026-11-27, base 2df261d)
+
+Starting state: section 82 (pfam on, `t1g` bit 2 on, `retf` bit 8 built and off). Assignment: the stream_closures return chain (82.2) to a built
+and measured result, in five steps. Measurement convention as in 82.1 (release `rn-cli`, instructions `perf stat -e instructions:u`, serial on one
+pinned CPU (3), cwd = the program's directory, absolute path, `RUSTYNAIL_SEED=0`).
+
+### 86.1 TAILF (`retf` bit 10, value 1024): the caller's `TAILCALL` after a pop as a frame replacement
+
+**What it does.** After a `RETF` the root frame of a side recording is a real frame (the caller the pop returned into). `Rec::tailcall` at depth 0
+with bit 10, a side recording and at least one segment calls `Rec::tailf`: a Lua closure callee, `C == 0` (no vararg frame), `k == 0` (nothing
+to close), neither the root nor the callee vararg, no protected-call body or unroll frame. It goes through `Rec::call_lua` with `tail` at depth
+0, which emits the callee guard (prototype identity, as for an inlined tail call) and then `TAILF` instead of a function-slot definition:
+
+- `TOp::Tailf` (ir.rs, appended; `a` = the callee closure, `b` = its `KPTR` proto constant, `aux` = its `maxstacksize`; no result, not a guard,
+  never CSE'd or moved; only traces with segments contain it). The assembler (`Asm::tailf`) stores the closure into the function slot
+  (`rbx - 16`, tag and payload, `store_slot(FUNC_SLOT)`), sets `ci.top = ci.func + 1 + maxstacksize`, `ci.savedpc` / `ci.kcache` to the callee's
+  code and constants, ORs `CIST_TAIL` into `ci.callstatus` and reloads `r14`. `ra::op_clobbers`: `V10`. The base and the `CallInfo` stay
+  (`luaD_pretailcall` moves the function and the arguments down to `ci->func`), so the segment's shift and pop count are unchanged.
+- The slot map moves exactly like the interpreter's stack: the arguments (read before anything is written) become slots `0..nargs`, missing
+  parameters are nil, every other slot keeps its value (the interpreter does not touch them either). TR6c room: as for a tail call
+  (`top_rel + maxstacksize`), part of the entry-relative extent.
+- `Rec::tailf_rebase`: a new `Seg` (callee prototype and code, the predecessor's shift and pops; `seg_steps` from the next step), the root fields
+  (`proto`, `nslots`, `frames[0]` updated by `call_lua`'s tail path), `func_ref` = the guarded callee ref (its upvalue loads), the model's
+  function handle at the `TAILF` (`retf_funcs`, evaluated in IR order by `eval_one`), and `rec_retail`: the VM-side recording context's root
+  closure becomes the callee (rn-core `jit_hooks::rec_retail`, else the next step fails validation with `Frame`).
+- Pop counts: `retfmax` now counts pops (`Seg::pops` of the last segment), not segments; the entry-relative `CallInfo` depth uses the pops.
+- Not applicable after a pop: the recording ends with the stitching exit before the `TAILCALL` (it used to end there for function-entry
+  families, `fn_end`, and to abort `TailCall` for the others).
+
+Exact semantics: exits after the `TAILF` land in the callee's tier-1 code with the replaced frame (function slot, `top`, `savedpc`, `kcache`,
+`CIST_TAIL`): tracebacks show `(...tail calls...)`, `debug.getinfo(1).istailcall` is true, error levels skip the replaced frame (level 2 is the
+caller of the replaced function), hooks see the frame as a tail call (traces never run with a hook installed: the recorder aborts `Hook`, a hook
+installed by Lua code is seen at the next exit). No C-stack accounting is involved (a Lua-to-Lua tail call changes `nCcalls` nowhere).
+
+**Tests.** `tests/vm/s86_tailf.lua` (vm corpus, compared with the reference): the stream_closures shape (records filtered, mapped to a field
+by a tail call, folded) in rounds, tail-called functions with fewer / more parameters than arguments and with several results, upvalues of
+the caller and of the callee (changed between rounds), a callee with a much larger frame, errors with levels 1 and 2 and a table error inside
+the tail-called function, a traceback and `istailcall` from it, call / return / tail-call hooks installed and removed mid-loop, deep tail
+recursion behind the pop, a callee that changes identity mid-stream, a callable table / C functions as `f`, allocation and collections inside
+the callee, and a larger callee frame holding a fresh table across collections after exits. `tr_core::s86_tailf_programs`: `retf` 1975 (with
+`retfmax=3,lazyci=0`, and alone), `t1g` 3, 951 (bit 10 off), the trace modes `always` / `on2` / `on`, `+verify`, `+exitstorm=3 +verify`, budgets 3
+and 17, GC stress 2; TAILF traces were checked to be compiled in these runs (13-15 traces with `TAILF` per mode in `RUSTYNAIL_JIT_DUMP`).
+Mutants (all caught by `s86_tailf_programs`): `tailf_args_unshifted`, `tailf_seg_proto_stale`, `tailf_func_ref_stale`, `tailf_func_store_skip`,
+`tailf_kcache_skip`, `tailf_cist_tail_skip`. `tailf_top_skip` (`ci.top` left at the caller's) was caught by no program (also not by the
+larger-frame cases) and was dropped (not claimed). 5.4: inert like `RETF` (in the 5.4 skip list).
+
+**Measured** (stream_closures, instructions, serial, CPU 3; see 86.6 for the measurement caveat): `retf=951` 3203.7 M, `retf=1975` (bit 10)
+3158.4 M; with `retfmax=3,lazyci=0` 2617 M (bit 10 off) / 3126 M (on) in one window, 3187.5 M / 3029.8 M (`+sinkseg=1`) in a later one. TAILF
+traces are compiled (16 in stream_closures, e.g. readings -> `RETF` filter -> `RETF` map -> `TAILF` `r.value` -> `RETF` fold), but they do not
+move the program by themselves: the chain needs `retfmax >= 3` (the default 1 stops it at the second pop) and its records are materialised at
+the frameful exits in front of it (86.4). Default off.
+
+### 86.2 The lazy-frame rule for the chain: eager popping sides (`retf` bit 11, value 2048) and `lazydec`
+
+Where the pops are refused (`retf=951`, diagnostic counts): with bit 9 on, `pop_into_ok` (I9) refuses no pop of stream_closures (two pops into
+`filter` / `chunk` frames whose prototype has no tier-1 code yet). The lazy rule acts elsewhere: a side recording of a lazy-aware family gets
+`retf = 0` (`lazy_root` in `driver_start_side`), and `readings`, `map` (loop-free, all `CALL`s alike) are lazy-aware by the static rule.
+
+- **Bit 11** (`cache::retf_side_demote`): a side recording of a family that is lazy-aware by the static rule (`LAZY_STATIC`) and never recursed
+  (`TrProto::recursive` false: no native self-call compiled, so no frame of it was ever lazy) is recorded and assembled as an eager trace that may
+  pop; the family is pinned (`retf_pin`: `retf_pinned` refuses a later native self-call of it, so no lazy frame ever exists below such a side).
+  The side's recording makes no native push / continuation (`rec_native`, `rec_conts` off) and folds nothing by the region invariants (`idfold`,
+  `midfold` off: after a pop the root frame is not the region's); the family rules (`idfold` upvalue-store ban, `midfold` store rules) still
+  run with the family's mode; `AsmEnv::lazy` and the region entries are off for the eager side (`Active::eager_side`). A mutant on the
+  recursion test was caught by no program (a recursive family's lazy frames have no `CallInfo` the `RETF` guards would accept: the guard
+  exits) and was dropped. stream_closures: 5 side recordings take the rule (all of `readings`), no measurable change.
+- **`lazydec`** (new knob, bit 0; `cache::lazy_static_decide`): a prototype that is lazy-aware by the static rule is decided like an E4 candidate at
+  the compile of its first root trace: it stays lazy-aware only when that trace is its function-entry trace ending in a native self-call; otherwise,
+  when nothing of it is folded (`ir.idfold` / `ir.midfold`), no trace of it is installed and it never recursed, it becomes eager for good (heads'
+  cells recomputed, `set_rec`; stat `[trace] lazydec: decided eager N`). This is the per-site form of `lazyci=0` for families that never recurse:
+  `lazydec=1` alone gives stream_closures 3189.9 M (`lazyci=0` alone 3193.8 M; default 3214.2 M in the same window), json 398.9 M (-4.3 %), the
+  recursion programs unchanged (rec_loop, richards, deltablue within 0.1 %).
+
+### 86.3 The fold members' `InnerLoop` aborts at `filter`'s loop: backward-edge links (`innerlink` bits 4 and 5)
+
+Cause: `filter`'s `while true` loop starts the function, so its head is the function-entry head (pc 0), which `head_traced` does not answer for
+(`None` for function-entry heads); the fold member root that inlines `map` -> `filter` reaches the backward `JMP` to pc 0 in an inlined frame
+(`target`: no `loopany` budget for it) and aborts `InnerLoop` (L37:9, 13-18 per run). Built: bit 4 (16): `on_step` computes the target of the
+backward edge the instruction may take (`back_edge_target`: a negative `JMP`, or a comparison / test followed by one) in an inlined frame (no
+metamethod / protected / flat-`TFORCALL` frame, not vararg, prototype not lazy-aware or a lazy candidate) and asks `cache::head_traced_any`
+(loop heads, and the function-entry head's root trace); `target` then takes the edge and the next step at the head links with the
+frame-linking exit (`close_frame_link`; the head lost its trace meanwhile: `InnerLoop` as before). Roots and side recordings. Bit 5 (32): at
+a frame-linking exit, tables in registers of the linked frame that are dead temporaries at the head (`prune_cached` liveness) are stored nil.
+Result: the `InnerLoop` aborts are gone, but every fold iteration now leaves the member through the frame link (frames materialised) and
+the records the `filter` loop trace keeps sunk are materialised at its frameful `pred` exits: stream_closures +12 % (`innerlink=16`: 3604 M;
+with `retf=1975,retfmax=3,lazyci=0`: 3405 M, `+sinkseg=1` 3332 M). Default off.
+
+### 86.4 (c): sinking in segmented side traces (`sinkseg`)
+
+Profile of the chain configurations (exit dump + trace dump, per exit whose snapshot has a sunk table): the dominant materialisations are at the
+`pred` exits of the `filter` loop trace (164 k + 56 k), frameful exits whose attached side trace pops (`RETF` / `TAILF`). Such a side trace never
+kept its replay (section 52): the sink pass returned early for every trace with segments ("the dead-slot analysis is per root frame"). For a side
+trace the end is decided in the last segment's coordinates only (its writeback and its link: `EndKind::Link` / `Exit` / `Nothing`; the loop
+case's `loaded` slots are not used), and every snapshot names slots of its own segment, so the analysis holds: `sinkseg=1` (new knob) lets the
+pass run on side traces with segments (roots never have any). stream_closures with the chain (`retf=1975,retfmax=3,lazyci=0`): 3126 -> 3030 M;
+alone or without the chain: no change. Default off.
+
+### 86.5 The lua_lexer discriminator for `retf` bit 2 (`retf` bit 12, value 4096)
+
+The first pops bit 2 adds over the selector (diagnostic, `retf=951,retfmax=3`): lua_lexer 12 of 15 into the main chunk's loop at L0, which has no
+installed root trace (`Some(false)`), 3 into a loop-free caller; deltablue mostly into untraced caller loops; stream_closures into loop-free
+callers (`map`); json / cd mixed. Rule (bit 12, with bit 2): a function-entry family's side recording does not make its first pop into a caller
+whose innermost loop around the call exists and has no installed root trace (`caller_loop_state == Some(false)`, computed at the root `RETURN`
+in `on_step`); later pops of a chain are not affected. Measured (same window, instructions): lua_lexer 3350.8 -> 2735.2 M (default 2739.8 M: the
++22 % of bit 2 gone), json 404.5 -> 404.0 M, cd 575.7 -> 599.0 M (cd loses most of bit 2's -5.7 %: its pops go into untraced loops too),
+deltablue 299.1 -> 298.3 M (default 293.9 M), stream_closures 3214.7 -> 3214.8 M. No mutant (a performance rule: equivalent in output). Default off.
+
+### 86.6 Measurements, defaults, what is left
+
+**Measurement caveat.** Serial runs on one pinned CPU repeat exactly within a time window, but the same binary and setting moved between windows:
+stream_closures `retf=951,retfmax=3,lazyci=0` ran 2617.0 M (four runs, load 25-35, 21:00-21:45) and 3187.5 M (six runs, load 8-9, 21:50-22:00);
+CPU contention on the measured CPU does not reproduce it (a spinning process on CPU 3: still 3187.5 M), ASLR is on and the string seed pinned,
+the warm gate is the count gate (`wgate`). The cause was not found; the comparisons below are therefore interleaved per program (every
+configuration of a program back to back, one window), with a constant, padded environment (`env -i`, fixed `PATH` / `HOME`, a padding variable
+that keeps the environment size constant across configurations), and every whole-set mover re-measured.
+
+**Key programs** (one window, interleaved, instructions M; `D` = default of 4c67167 = `lazydec=0`):
+
+| program | D | `lazydec=1` | `retf=951,retfmax=3` | `retf=5047,retfmax=3` | `retf=5047,retfmax=3,lazydec=1` | `retf=1975,retfmax=3,lazyci=0,sinkseg=1` |
+|---|---|---|---|---|---|---|
+| stream_closures | 3214.3 | 3189.9 | 3214.7 | 3214.8 | 3190.2 | 3029.8 |
+| awfy/json | 417.0 | 398.9 | 404.5 | 404.0 | 386.4 | 387.6 |
+| awfy/towers | 161.8 | 161.8 | 161.8 | 161.8 | 161.8 | 163.0 |
+| awfy/cd | 610.3 | 610.2 | 575.7 | 599.0 | 599.0 | 573.6 |
+| text_adventure | 7365.1 | 7364.5 | 7381.6 | 7391.7 | 7384.1 | 7384.0 |
+| lua_lexer | 2739.8 | 2739.8 | 3350.8 | 2735.2 | 2735.1 | 3350.8 |
+| iter_pipeline | 789.7 | 789.6 | 799.3 | 799.3 | 799.0 | 799.3 |
+| awfy/deltablue | 293.9 | 293.6 | 299.1 | 298.3 | 305.4 | 306.0 |
+
+**Whole set** (223 programs, instructions, serial on CPU 3, the three configurations interleaved per program; outputs identical everywhere):
+- `lazydec=1` against the default: geomean -0.006 %; movers beyond 0.3 %: awfy/json -4.34 %, prototype_objects -1.03 %, stream_closures -0.76 %,
+  real_dis_x86 -0.34 %, testrunner_luaunit +0.31 % (re-measured twice: +0.31 % / 0.00 %), astar_jumper +5.53 % (re-measured six times each:
+  default 4174-4483 M, `lazydec=1` 4238-4424 M, its known run-to-run spread; medians 4304 / 4264 M).
+- `retf=5047,retfmax=3,lazydec=1` (bits 2 + 12, three pops): geomean +0.061 %: field_method -9.6 %, lua_parser -9.6 %, field_global -7.9 %,
+  json -7.3 %, real_dis_ppc -4.9 %, inline_leaf -4.5 %, parser_combinator -3.6 %, penlight_mix -2.5 %, cd -1.9 % against real/lua_interp
+  +39.6 %, sha2_base64 +8.9 %, nbody +6.9 % / +5.0 %, roguelike_turns +4.6 %, deltablue +3.9 %, havlak +2.9 %, list +2.8 %, sudoku_solver +1.8 %,
+  iter_pipeline +1.2 %: not shippable without per-site rules for those losers (not attempted).
+
+**Defaults.** `lazydec` 1 in a process (`LAZYDEC_PROCESS`, applied in `apply_process_limits`; the struct default the tests use stays 0;
+`tr_policy::s86_lazydec_process_default`). Everything else of this section is off: `retf` bits 10 (TAILF), 11 (eager sides), 12 (the bit-2
+discriminator), `innerlink` bits 4 / 5, `sinkseg`. `RETF_PROCESS` stays 179, `retfmax` 1.
+
+**What the chain still needs (next steps, in order).** (1) The materialisations at the frameful `pred` exits of the `filter` loop trace: a
+side trace that pops must keep the replayed record virtual (with `sinkseg` the analysis runs, but `resink` keeps a replay only for frameless or
+virtual-frame exits whose side trace sinks every replayed table again: measure which condition rejects the `pred` exits' replays). (2)
+`retfmax` 3 for function-entry chains only (the chain needs three pops; the other `retfmax=3` effects are the losers above). (3) With (1),
+re-measure `innerlink` bit 4: its links remove the `InnerLoop` aborts but every link materialises frames, which only pays when the loop trace's
+exits stop materialising records. (4) The time-window dependence of formation (86.6 caveat) should be found before more chain tuning: it
+moves stream_closures by 18 %.
