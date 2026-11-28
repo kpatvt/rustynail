@@ -11464,9 +11464,18 @@ no test run. With the identity exact again they are detected as before.
 and enters a trace at every level, and `+tracemove` copied the whole stack (up to 1M slots) at every entry. `jit_tr_move` now moves a stack
 above 32K slots once every `cap / 32K` entries (a bounded amortized copy per entry); small stacks still move at every entry. 3 s.
 
-### 98.4 Not fixed: `jit_t5_01_object_keys` in `tr_identity_pre`
+### 98.2 `s60_reroot_programs` after 94.2
 
-`tr_identity_pre::fetch_plus_insns_identity` also shows `tests/vm/jit_t5_01_object_keys [always]` +2 (tier 1 alone, trace pinned off; also in
-the gate logs of 2026-11-25, so older than integ10, and inside the known entry of that test). Reduced: `for i = 1, n do set[nil] = i end` under
-`pcall` counts one instruction too many per raised error (block `LOADNIL; SETTABLE; FORLOOP` prepaid, the error at `SETTABLE` does not give
-back the `FORLOOP`), while `t[k] = 1` with `k = nil` in a straight-line function is exact.
+Section 94.2 shipped `rerootfn=0` (the re-root rule on loop roots only); the re-roots of `s60_queens` / `s60_worse` / `s60_phases` are not on loop
+roots, so the test's "the reroot rule never fired" assertion failed (gate-light, `tests-5.5-trace`). Every job of the test with the rule on now
+sets `rerootfn=1`, the reach it was written for.
+
+### 98.4 Tier 1: an error raised by a table helper mid-block
+
+`tr_identity_pre::fetch_plus_insns_identity` showed `tests/vm/jit_t5_01_object_keys [always]` +2 (tier 1 alone, trace pinned off; also in the
+gate logs of 2026-11-25, so older than integ10, and hidden by the known entry of that test). Reduced: `for i = 1, n do set[nil] = i end` under
+`pcall` counted one instruction too many per raised error: the block `LOADNIL; SETTABLE; FORLOOP` is pre-paid, the slow-path helper raises at
+`SETTABLE`, and the shared error exit (`l_exit(1)`) kept the `FORLOOP`'s charge (`t[k] = 1` in a straight-line function was exact: its
+`RETURN` starts a block). `Cold::Fail` now gives back `rem(pc) - 1` before the error exit. Program `s98_err_refund` (nil / NaN keys, indexing a
+non-table, raising `__index` / `__newindex`, in loops and straight-line code) in `s98_lzretf_alt_refund_identity` (tier 1 alone and with traces,
+budgets none / 3 / 17 / 200); mutant `t1_err_refund_skip` (registry 958).
