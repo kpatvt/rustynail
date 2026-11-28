@@ -9705,3 +9705,37 @@ The four remaining levers, in order of size:
    prefix.
 
 S3c (forwarding at record time) and S3d (the recorder's per-step cost) were not started.
+
+### 87.5 Round 2: `asmfuse=1` by default (commit 13d92c2), and the hand-off
+
+`ASMFUSE_PROCESS` = 1 (and the struct default): the whole-set gate of 87.2 holds (no program above +0.1 % instructions, geomean -0.03 %).
+gate-light (`GATE_CPUS=5-7`, `GATE_LOAD_MAX=0`) on 13d92c2 with the mutant group `asmfuse_` plus every allocator mutant whose site is in
+`ra.rs` (`callspill_no_reload`, `cspeed_ra_last_free`, `cspeed_ra_unfuse_skip`, `cycle_stale_xmm`, `exit_rename_ignored`, `m1_free_highest`,
+`spill_no_reload`): 11 of 11 caught (the old allocator keeps its detectors: roots and the refused side traces still use it, and `tr_ra` tests
+it directly); every step PASS except `tests-5.4-trace` on `h2_newkey_programs` (the 120 s leash of its GC-stress child under load, 85.4; it
+passed alone on 9c75995 in 14.1 s, and the 5.5 suite passed with the new default).
+
+Whole-run compile share (instructions, CPU 6, same binary path for both configurations through `exec` wrappers that only set
+`RUSTYNAIL_JIT_TRACE_LIMITS=asmfuse=0|1`; compile = recorder + pipelines + tier 1 + deferred stubs):
+
+| program | compile M (0 -> 1) | share (0 -> 1) |
+|---|---|---|
+| raytrace | 66.55 -> 65.86 | 24.4 % -> 24.2 % |
+| cd | 166.21 -> 164.76 | 27.7 % -> 27.6 % |
+| json | 43.20 -> 42.78 | 10.4 % -> 10.3 % |
+| towers | 17.01 -> 16.99 | 10.4 % (=) |
+| fmt_s | 1.58 (=) | 6.3 % (=) |
+| richards | 34.75 -> 34.65 | 22.4 % -> 22.3 % |
+
+Cycles (min of 15 interleaved, CPU 7, same binary path): raytrace +0.49 %, cd -0.29 %, json -2.36 %, classic_vector -2.20 % (instructions
+-0.25 %, -0.24 %, -0.11 %, +0.08 %). The cycle moves of json / classic_vector are larger than their instruction moves: trace formation and
+code placement noise, not a compile effect (the compile is under 0.1 M instructions apart).
+
+What the share table says: the fused pass covers the cheap part of the compile. The pipelines are 27.85 M of raytrace's 66.55 M of
+compile and 45 M of cd's 166 M (the rest is the recorder, tier 1 and the deferred stubs), and the fused side pipelines are a fraction of
+those. The round-2 stages (87.4 items 1-4: lean byte emitters, exit maps built in the pass and shared, roots and native-recursion
+coverage, a cheaper pass, then S3c / S3d) were not started in this session (context): the design notes of 87.4 stand, with the coordinator's
+order: (1) lean emitters writing bytes for the hot classes, micro-ops generated lazily only for the emulator modes / deferred stubs / link
+entries; (2) `ExitSnap`s built inside the pass, entry lists interned, register state recorded per distinct snapshot; (3) roots (fuse the
+peeled copy and the loop body in one backward pass, the PHI locations as end locations, the snapshot maps shared), native-recursion side
+traces, lazy regions, `TNEXT`, preludes; (4) the pass's own cost, then S3c and S3d.
