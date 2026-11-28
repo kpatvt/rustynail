@@ -1161,6 +1161,8 @@ pub const NAMES: &[&str] = &[
     "asmfuse_two_addr",
     // section 87 (`asmfuse`): the call site of a helper call saves no general register
     "asmfuse_call_live",
+    // section 91 (`fusecov`): an evicted pinned value's open exit maps keep its register
+    "fusecov_patch_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1254,7 +1256,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 926);
+        assert_eq!(NAMES.len(), 927);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

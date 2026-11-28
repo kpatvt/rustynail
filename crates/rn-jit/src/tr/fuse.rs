@@ -17,12 +17,22 @@ use crate::tr::TraceOpts;
 /// The spill slots a fused trace may use: its extension slots start here (the pass does not know its slot count before the instructions that
 /// use the extension slots are emitted).
 pub const FUSE_EXT: u16 = 24;
+/// Section 91 (`fusecov` bit 0): the extension slots of a fused trace start here (high in the exit area, so that the pass does not run out of spill
+/// slots on large traces: every spill slot is a disp32 access either way).
+pub const FUSE_EXT_COV: u16 = asm_ext_base();
+
+const fn asm_ext_base() -> u16 {
+    super::ITER_SLOT - 16
+}
 
 const NOREG: u8 = 255;
 const NONE: u32 = u32::MAX;
 const NOSLOT: u16 = u16::MAX;
 /// [`ra`]'s general register pool as a mask (`V7` never, `V10` never in a fused trace).
 const GPR_POOL_MASK: u16 = 0x37F;
+
+/// Section 91 (`fusecov` bit 0): side traces with body room checks (R2).
+pub const COV_ROOM: u32 = 1;
 
 fn idx(r: Ref) -> usize {
     usize::from(r - REF_BIAS)
@@ -101,10 +111,11 @@ pub struct FuseBody {
     end_locs: Vec<Loc>,
     used: [u32; 2],
     calls: Vec<CallSite>,
+    ext: u16,
 }
 
 /// Section 87 (`RUSTYNAIL_JIT_OPSTAT=1`): why a trace is not eligible (the first reason).
-fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts) -> String {
+fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts, cov: u32) -> String {
     let checks: [(&str, bool); 12] = [
         ("root", env.side.is_none()),
         ("loop", ir.loop_at.is_some()),
@@ -118,7 +129,7 @@ fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts) -> Stri
         ("segs", !ir.segs.is_empty()),
         ("native", ir.rec_call.is_some() || ir.rec_ret.is_some()),
         ("prelude", env.prelude),
-        ("room", env.side_room),
+        ("room", env.side_room && cov & COV_ROOM == 0),
         ("lazy", env.lazy || env.head != 0),
         (
             "budget",
@@ -142,7 +153,7 @@ fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts) -> Stri
 }
 
 /// The eligibility scan (cheap: no allocation).
-fn eligible(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts) -> bool {
+fn eligible(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts, cov: u32) -> bool {
     env.side.is_some()
         && ir.loop_at.is_none()
         && ir.carry.is_empty()
@@ -153,7 +164,7 @@ fn eligible(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts) -> boo
         && ir.rec_call.is_none()
         && ir.rec_ret.is_none()
         && !env.prelude
-        && !env.side_room
+        && (!env.side_room || cov & COV_ROOM != 0)
         && !env.lazy
         && env.head == 0
         && env.budget_reg == Some(ra::BUDGET_GPR)
@@ -176,18 +187,19 @@ pub fn body(
     env: &AsmEnv,
     opts: &TraceOpts,
     lim: u32,
+    cov: u32,
 ) -> Option<FuseBody> {
     if lim == 0 {
         return None;
     }
-    if !eligible(ir, env, opts, ropts) {
+    if !eligible(ir, env, opts, ropts, cov) {
         if super::super::opstat_on() {
-            eprintln!("[fuse] refused: {}", refusal(ir, env, opts, ropts));
+            eprintln!("[fuse] refused: {}", refusal(ir, env, opts, ropts, cov));
         }
         bump(1, 1);
         return None;
     }
-    match run(ir, writeback, end, end_hints, ropts, env, lim) {
+    match run(ir, writeback, end, end_hints, ropts, env, lim, cov) {
         Ok(b) => {
             bump(0, 1);
             bump(3, ir.ins.len() as u64);
@@ -238,6 +250,10 @@ struct Fa<'a> {
     snap_last: Vec<u32>,
     /// `(snapshot, value)` pins of the open snapshots.
     open: Vec<(u32, u32)>,
+    /// `fusecov` bit 0: a pinned value may be evicted (its open exit maps patched to its spill slot).
+    patch_pins: bool,
+    /// The first extension slot ([`FUSE_EXT`] or [`FUSE_EXT_COV`]).
+    ext: u16,
 }
 
 type R<T> = Result<T, &'static str>;
@@ -299,7 +315,7 @@ impl Fa<'_> {
         if self.slot[v] != NOSLOT {
             return Ok(self.slot[v]);
         }
-        if self.next_slot >= FUSE_EXT {
+        if self.next_slot >= self.ext {
             return Err("spill slots");
         }
         self.slot[v] = self.next_slot;
@@ -323,7 +339,15 @@ impl Fa<'_> {
     }
 
     /// Evicts the value with the lowest defining ref (weak snapshot-only values first) of the class; its reload follows the current instruction.
-    fn try_evict(&mut self, x: bool, excl: u16, out: &mut [InsAlloc]) -> R<u8> {
+    /// When every candidate is pinned by an open snapshot (`fusecov` bit 0), the lowest pinned value is evicted and the open exit maps that name its
+    /// register are patched to its spill slot (stored at its definition, so it holds the value at every guard of those snapshots).
+    fn try_evict(
+        &mut self,
+        x: bool,
+        excl: u16,
+        out: &mut [InsAlloc],
+        snaps: &mut [Vec<Loc>],
+    ) -> R<u8> {
         let (avail, cur) = if x {
             (self.avail_x, self.cur_x)
         } else {
@@ -331,6 +355,7 @@ impl Fa<'_> {
         };
         let mut cand = avail & !excl & !cur;
         let mut best: Option<(i64, u8)> = None;
+        let mut best_pinned: Option<(i64, u8)> = None;
         while cand != 0 {
             let r = cand.trailing_zeros() as u8;
             cand &= cand - 1;
@@ -339,20 +364,54 @@ impl Fa<'_> {
                 continue;
             }
             let v = h as usize;
-            if self.pins[v] > 0 {
-                bump(5, 1);
-                continue;
-            }
             let mut sc = v as i64;
             if self.weak_only[v] {
                 sc -= 1_000_000;
+            }
+            if self.pins[v] > 0 {
+                bump(5, 1);
+                if best_pinned.is_none_or(|(b, _)| sc < b) {
+                    best_pinned = Some((sc, r));
+                }
+                continue;
             }
             if best.is_none_or(|(b, _)| sc < b) {
                 best = Some((sc, r));
             }
         }
-        let Some((_, r)) = best else {
-            return Err("no victim");
+        let r = match (best, best_pinned) {
+            (Some((_, r)), _) => r,
+            (None, Some((_, r))) if self.patch_pins => {
+                let v = self.holder(x, r) as usize;
+                let slot = self.ensure_slot(v)?;
+                let reg = Self::rloc(x, r);
+                let vr = (v + usize::from(REF_BIAS)) as Ref;
+                let mut k = 0;
+                while k < self.open.len() {
+                    let (s, pv) = self.open[k];
+                    if pv as usize != v {
+                        k += 1;
+                        continue;
+                    }
+                    // (MUTANT `fusecov_patch_skip`: the open exit maps keep the evicted register)
+                    if !mutants::active("fusecov_patch_skip") {
+                        for (e, l) in self
+                            .ir
+                            .snap_entries(s)
+                            .iter()
+                            .zip(snaps[s as usize].iter_mut())
+                        {
+                            if e.r == vr && *l == reg {
+                                *l = Loc::Spill(slot);
+                            }
+                        }
+                    }
+                    self.open.swap_remove(k);
+                }
+                self.pins[v] = 0;
+                r
+            }
+            _ => return Err("no victim"),
         };
         let v = self.holder(x, r) as usize;
         let slot = self.ensure_slot(v)?;
@@ -407,12 +466,13 @@ impl Fa<'_> {
         hint: u8,
         must: bool,
         out: &mut [InsAlloc],
+        snaps: &mut [Vec<Loc>],
     ) -> R<Option<u8>> {
         if let Some(r) = self.pick_free(x, excl, hint) {
             return Ok(Some(r));
         }
         if must {
-            return self.try_evict(x, excl, out).map(Some);
+            return self.try_evict(x, excl, out, snaps).map(Some);
         }
         Ok(None)
     }
@@ -447,7 +507,7 @@ impl Fa<'_> {
             Loc::X(n) if x => n,
             _ => self.hint[v],
         };
-        Ok(match self.alloc_temp(x, 0, h, false, out)? {
+        Ok(match self.alloc_temp(x, 0, h, false, out, &mut [])? {
             Some(reg) => {
                 self.take_reg(v, reg);
                 Self::rloc(x, reg)
@@ -476,7 +536,8 @@ impl Fa<'_> {
                 self.free_reg(i);
                 r
             } else {
-                self.alloc_temp(x, 0, NOREG, true, out)?.ok_or("pressure")?
+                self.alloc_temp(x, 0, NOREG, true, out, snap_locs)?
+                    .ok_or("pressure")?
             };
             dst_loc = Self::rloc(x, r);
             if x {
@@ -538,7 +599,7 @@ impl Fa<'_> {
                 _ => {}
             }
             let reg = self
-                .alloc_temp(x, excl, hint, true, out)?
+                .alloc_temp(x, excl, hint, true, out, snap_locs)?
                 .ok_or("pressure")?;
             self.take_reg(v, reg);
             self.weak_only[v] = false;
@@ -592,7 +653,7 @@ impl Fa<'_> {
                             } else {
                                 dmask_g | self.cur_g
                             };
-                            match self.alloc_temp(x, excl, self.hint[v], false, out)? {
+                            match self.alloc_temp(x, excl, self.hint[v], false, out, snap_locs)? {
                                 Some(r) => {
                                     self.take_reg(v, r);
                                     self.weak_only[v] = true;
@@ -655,6 +716,7 @@ fn run(
     ropts: &RaOpts,
     env: &AsmEnv,
     lim: u32,
+    cov: u32,
 ) -> R<FuseBody> {
     let n = ir.ins.len();
     let ns = ir.snaps.len();
@@ -699,6 +761,11 @@ fn run(
         avail_g = m;
         avail_x &= 0x00F0;
     }
+    let ext = if cov & COV_ROOM != 0 {
+        FUSE_EXT_COV
+    } else {
+        FUSE_EXT
+    };
     let mut fa = Fa {
         ir,
         fused: &fused,
@@ -728,10 +795,12 @@ fn run(
         snap_first,
         snap_last,
         open: Vec::new(),
+        patch_pins: cov & COV_ROOM != 0,
+        ext,
     };
     let al0 = Allocation {
         fused: fused.clone(),
-        nspill: FUSE_EXT,
+        nspill: ext,
         ..Allocation::default()
     };
     let mut cx = Cx::new(ir, &al0, &[], env);
@@ -788,6 +857,7 @@ fn run(
                     cx.ktag = std::mem::take(&mut ktags[k].1);
                 }
             }
+            cx.side_room_block(j).map_err(|_| "room checks")?;
             cx.pre(j);
             cx.ins(j, loop_l).map_err(|_| "emitter")?;
             cx.post(j);
@@ -836,6 +906,7 @@ fn run(
         end_locs,
         used,
         calls,
+        ext,
     })
 }
 
@@ -847,7 +918,7 @@ impl FuseBody {
             fused: std::mem::take(&mut self.fused),
             snap_locs: std::mem::take(&mut self.snap_locs),
             end_locs: std::mem::take(&mut self.end_locs),
-            nspill: FUSE_EXT,
+            nspill: self.ext,
             backedge_after: 0,
             used: std::cell::OnceCell::from(self.used),
             calls: std::mem::take(&mut self.calls),

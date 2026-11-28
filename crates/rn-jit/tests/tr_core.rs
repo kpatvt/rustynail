@@ -10683,6 +10683,24 @@ fn s87_asmfuse_programs() {
     assert_eq!(TrLimits::default().asmfuse, 1);
 }
 
+/// Section 91 (`fusecov`): the trace kinds the fused pass covers beyond plain side traces (bit 0: side traces with body room checks, evictions of
+/// pinned values) run identically in every mode, with all registers and with three general / four double registers (`asmfuse=2`), and with
+/// `fusecov=0` (control). Mutant `fusecov_patch_skip`.
+#[test]
+fn s91_fusecov_programs() {
+    let progs = ["r2_side_room", "s87_fuse_arith", "s76_side_fail"];
+    let res = compare(b1_jobs(
+        &progs,
+        &[
+            "siderooms=1,asmfuse=2,fusecov=15",
+            "siderooms=1,fusecov=15",
+            "siderooms=1,fusecov=0",
+        ],
+    ));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().fusecov, 1);
+}
+
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at
 /// the compile-only level, and off (control).
 /// Mutants `tailhook_ignored`, `tailhook_from_jit_enter`.

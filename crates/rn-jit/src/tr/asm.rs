@@ -3581,26 +3581,7 @@ pub fn assemble_dl(
             }
             continue;
         }
-        if env.side_room && ir.ins[i].op == TOp::Budget && !mutants::active("side_room_check_skip")
-        {
-            // R2: the room checks of a frameful side trace that needs more than its parent guarantees: in front of the first budget
-            // charge, behind the loads of the frames' function slots (the start snapshot restores them), failing through that snapshot
-            // (V0 and V1 may hold the loaded function slots the snapshot restores: they are saved around the checks)
-            let x = cx.guard_label(i)?;
-            let (m0, m1) = (spill_m(cx.ext_slot(2)), spill_m(cx.ext_slot(3)));
-            cx.st(W::B8, m0, Src::V(0));
-            cx.st(W::B8, m1, Src::V(1));
-            let (fail, done) = (cx.label(), cx.label());
-            cx.room_checks(fail);
-            cx.ld(0, W::B8, m0);
-            cx.ld(1, W::B8, m1);
-            cx.push(Op::Jmp(done));
-            cx.bind(fail);
-            cx.ld(0, W::B8, m0);
-            cx.ld(1, W::B8, m1);
-            cx.push(Op::Jmp(x));
-            cx.bind(done);
-        }
+        cx.side_room_block(i)?;
         if let (Some(rr), TOp::Budget, false) = (ir.rec_ret, ir.ins[i].op, env.rec_late) {
             // (the guards depend on the frame only, which nothing in the trace changes: they sit in front of the first charge
             // and fail to the state at the start of the trace, where every register is free)
@@ -5063,6 +5044,33 @@ impl<'a> Cx<'a> {
     }
 
     /// TR6a / TR6b: stack room and spare `CallInfo` nodes of the running frame (failures jump to `fail`; `V0`, `V1`).
+    /// R2: the room checks of a frameful side trace that needs more than its parent guarantees: in front of the first budget charge, behind the
+    /// loads of the frames' function slots (the start snapshot restores them), failing through that snapshot (V0 and V1 may hold the loaded function
+    /// slots the snapshot restores: they are saved around the checks). Nothing unless `env.side_room` and `i` is a `BUDGET`.
+    fn side_room_block(&mut self, i: usize) -> Result<(), AsmError> {
+        if !self.env.side_room
+            || self.ir.ins[i].op != TOp::Budget
+            || mutants::active("side_room_check_skip")
+        {
+            return Ok(());
+        }
+        let x = self.guard_label(i)?;
+        let (m0, m1) = (spill_m(self.ext_slot(2)), spill_m(self.ext_slot(3)));
+        self.st(W::B8, m0, Src::V(0));
+        self.st(W::B8, m1, Src::V(1));
+        let (fail, done) = (self.label(), self.label());
+        self.room_checks(fail);
+        self.ld(0, W::B8, m0);
+        self.ld(1, W::B8, m1);
+        self.push(Op::Jmp(done));
+        self.bind(fail);
+        self.ld(0, W::B8, m0);
+        self.ld(1, W::B8, m1);
+        self.push(Op::Jmp(x));
+        self.bind(done);
+        Ok(())
+    }
+
     fn room_checks(&mut self, fail: L) {
         self.room_stack_check(fail);
         self.room_ci_check(fail);

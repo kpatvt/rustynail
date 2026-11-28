@@ -2803,6 +2803,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     let t_ra = phase::now();
     // SAFETY: the per-state data is live (see `rt::data_ptr`); read-only.
     let fuse_lim = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.asmfuse };
+    // SAFETY: as above.
+    let fuse_cov = unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.fusecov };
     let mut fused = asm::fuse::body(
         ir,
         &rec.writeback,
@@ -2812,6 +2814,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         &env,
         opts,
         fuse_lim,
+        fuse_cov,
     );
     if opstat_on() {
         eprintln!(
