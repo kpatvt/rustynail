@@ -255,6 +255,9 @@ pub struct ExitMeta {
     /// F2a: the trace has a pre-roll (a peeled root): a persistently failing type guard is caught by the ineffective-trace
     /// rule (Q2), so a side trace may be recorded for it. Rolled roots and side traces keep the prototype's re-record rule.
     pub peeled: bool,
+    /// Section 88.9: memo of [`root_frame_in_loop`] for this trace's allocation exits, keyed by the root frame's `savedpc` (0 = empty): read from
+    /// the metadata the handler holds anyway instead of the per-state memo of section 84.1 (programs/json: 180 k allocation exits).
+    pub root_loop_memo: Cell<(usize, bool)>,
     /// S1: the trace's stack extent (`TraceIr::extent`) and spare-`CallInfo` count (`TraceIr::depth`): what its entry checks
     /// guarantee. A side trace entered with virtual frames (see [`ExitSnap::frame_side_ok`]) runs without entry checks and
     /// may not need more than its parent's.
@@ -2590,7 +2593,17 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
             // N3b: the interpreter allocates (and steps the collector) now; the loop's next back-edge should enter compiled code again
             // (section 81.1: a trace whose root frame is inside a loop goes back to that loop: any prototype may be compiled, as before; the exit of a
             // loop-free root (a function root) restricts the compile to the frames it left)
-            let root = (!root_frame_in_loop(&mut st, ci)).then(|| {
+            // SAFETY: `ci` is the trace's live root frame (contract of this function).
+            let key = unsafe { Ci::from_raw(ci) }.r().savedpc as usize;
+            let (mk, mv) = meta.root_loop_memo.get();
+            let in_loop = if mk == key && key != 0 {
+                mv
+            } else {
+                let v = root_frame_in_loop(&mut st, ci);
+                meta.root_loop_memo.set((key, v));
+                v
+            };
+            let root = (!in_loop).then(|| {
                 // SAFETY: `ci` is the trace's live root frame (contract of this function).
                 unsafe { Ci::from_raw(ci) }
             });

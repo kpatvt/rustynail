@@ -3271,6 +3271,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         counters,
         cells,
         peeled: ir.loop_at.is_some(),
+        root_loop_memo: std::cell::Cell::new((0, false)),
         // R2: a side trace that checks its own room fails through its start snapshot BEFORE the check: the room an exit of it
         // can promise to a side trace attached to that exit is the parent's (the later exits could promise more, which is not worth a
         // second number: a child that needs more checks its own room)

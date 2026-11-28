@@ -3329,6 +3329,7 @@ mod e2e {
             counters,
             cells: std::ptr::null(),
             peeled: ir.loop_at.is_some(),
+            root_loop_memo: std::cell::Cell::new((0, false)),
             extent: ir.extent,
             depth: ir.depth,
             frame_cells: false,
