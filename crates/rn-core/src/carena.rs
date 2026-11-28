@@ -258,13 +258,13 @@ pub struct CArena;
 // place only when it is the newest one of the chunk, and a chunk is reused only after its live count, which counts every block handed out from
 // it, dropped to zero.
 unsafe impl GlobalAlloc for CArena {
+    // (section 100.3: only the mode / range tests are inlined at the allocation sites; the arena paths are out of line. Inlined whole, the
+    // allocator grew `rnlua` by 780 KB (every `Vec` growth site of the program carried a bump allocator) and changed the inlining of the
+    // compiler and the interpreter around it: `load_small` +3 % instructions and +10 % cycles against the global allocator alone.)
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if active() {
-            let p = bump(layout);
-            if !p.is_null() {
-                return p;
-            }
+            return arena_alloc(layout);
         }
         // SAFETY: forwarded with the caller's layout.
         unsafe { System.alloc(layout) }
@@ -273,12 +273,8 @@ unsafe impl GlobalAlloc for CArena {
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         if active() {
-            let p = bump(layout);
-            if !p.is_null() {
-                // SAFETY: a fresh block of `layout.size()` bytes (a recycled chunk holds old bytes).
-                unsafe { std::ptr::write_bytes(p, 0, layout.size()) };
-                return p;
-            }
+            // SAFETY: forwarded with the caller's layout.
+            return unsafe { arena_alloc_zeroed(layout) };
         }
         // SAFETY: forwarded with the caller's layout (section 76.8: `calloc`, which skips zeroing fresh pages; the default method of the trait
         // would `malloc` and clear every byte).
@@ -287,15 +283,9 @@ unsafe impl GlobalAlloc for CArena {
 
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let p = ptr as usize;
-        if in_range(p) {
-            if LAST.with(|l| l.get()) == p {
-                // the newest block of this thread's current chunk: give its bytes back to the bump pointer
-                TOP.with(|t| t.set(p));
-                LAST.with(|l| l.set(0));
-            }
-            // SAFETY: a block of the range: its chunk's count includes it.
-            unsafe { unref(p & !(CHUNK - 1)) };
+        if in_range(ptr as usize) {
+            // SAFETY: a block of the range.
+            unsafe { arena_dealloc(ptr as usize) };
             return;
         }
         // SAFETY: not an arena block: it came from `System` with this layout.
@@ -304,32 +294,84 @@ unsafe impl GlobalAlloc for CArena {
 
     #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let p = ptr as usize;
-        if in_range(p) {
-            // in place: the newest block of this thread's current chunk, if the new size fits the chunk
-            let c = CUR.with(|c| c.get());
-            if (LAST.with(|l| l.get()) == p || (mutant(2) && c == p & !(CHUNK - 1) && c != 0))
-                && p + new_size <= c + CHUNK
-                && new_size <= MAX_BLOCK
-            {
-                TOP.with(|t| t.set(p + new_size.max(1)));
-                LAST.with(|l| l.set(p));
-                return ptr;
-            }
-            // SAFETY: a valid layout (the caller guarantees `new_size` rounded to this alignment does not overflow).
-            let nl = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
-            // SAFETY: as `alloc`.
-            let q = unsafe { self.alloc(nl) };
-            if !q.is_null() {
-                // SAFETY: both blocks are live and disjoint, each at least `min(old, new)` bytes.
-                unsafe { std::ptr::copy_nonoverlapping(ptr, q, layout.size().min(new_size)) };
-                // SAFETY: the old block, freed once.
-                unsafe { self.dealloc(ptr, layout) };
-            }
-            return q;
+        if in_range(ptr as usize) {
+            // SAFETY: a block of the range, the caller's layout.
+            return unsafe { arena_realloc(ptr, layout, new_size) };
         }
         // (a system block growing inside a compile stays a system block: no copy into the arena)
         // SAFETY: a system block with this layout.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
+}
+
+/// [`CArena::alloc`] with the arena active.
+#[inline(never)]
+fn arena_alloc(layout: Layout) -> *mut u8 {
+    let p = bump(layout);
+    if !p.is_null() {
+        return p;
+    }
+    // SAFETY: forwarded with the caller's layout.
+    unsafe { System.alloc(layout) }
+}
+
+/// [`CArena::alloc_zeroed`] with the arena active.
+///
+/// # Safety
+/// As [`GlobalAlloc::alloc_zeroed`].
+#[inline(never)]
+unsafe fn arena_alloc_zeroed(layout: Layout) -> *mut u8 {
+    let p = bump(layout);
+    if !p.is_null() {
+        // SAFETY: a fresh block of `layout.size()` bytes (a recycled chunk holds old bytes).
+        unsafe { std::ptr::write_bytes(p, 0, layout.size()) };
+        return p;
+    }
+    // SAFETY: forwarded with the caller's layout.
+    unsafe { System.alloc_zeroed(layout) }
+}
+
+/// [`CArena::dealloc`] of a block of the range.
+///
+/// # Safety
+/// `p` is a live block of the range, freed once.
+#[inline(never)]
+unsafe fn arena_dealloc(p: usize) {
+    if LAST.with(|l| l.get()) == p {
+        // the newest block of this thread's current chunk: give its bytes back to the bump pointer
+        TOP.with(|t| t.set(p));
+        LAST.with(|l| l.set(0));
+    }
+    // SAFETY: a block of the range: its chunk's count includes it.
+    unsafe { unref(p & !(CHUNK - 1)) };
+}
+
+/// [`CArena::realloc`] of a block of the range.
+///
+/// # Safety
+/// As [`GlobalAlloc::realloc`], `ptr` a block of the range.
+#[inline(never)]
+unsafe fn arena_realloc(ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+    let p = ptr as usize;
+    // in place: the newest block of this thread's current chunk, if the new size fits the chunk
+    let c = CUR.with(|c| c.get());
+    if (LAST.with(|l| l.get()) == p || (mutant(2) && c == p & !(CHUNK - 1) && c != 0))
+        && p + new_size <= c + CHUNK
+        && new_size <= MAX_BLOCK
+    {
+        TOP.with(|t| t.set(p + new_size.max(1)));
+        LAST.with(|l| l.set(p));
+        return ptr;
+    }
+    // SAFETY: a valid layout (the caller guarantees `new_size` rounded to this alignment does not overflow).
+    let nl = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
+    // SAFETY: as `alloc`.
+    let q = unsafe { CArena.alloc(nl) };
+    if !q.is_null() {
+        // SAFETY: both blocks are live and disjoint, each at least `min(old, new)` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(ptr, q, layout.size().min(new_size)) };
+        // SAFETY: the old block, freed once.
+        unsafe { CArena.dealloc(ptr, layout) };
+    }
+    q
 }
