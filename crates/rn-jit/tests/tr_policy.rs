@@ -1332,7 +1332,7 @@ fn s77_polyhead_rule() {
 }
 
 /// BUNDLE-N: `retf` is 179 by default (side RETF recording + inline re-push stub; function-entry families, bit 2, stay off; section 77.7: bits 4, 5, 7,
-/// self-recursion pops into a numeric / `while` loop of the caller); an explicit value wins and is clamped to 255 (`retfmax` to 8).
+/// self-recursion pops into a numeric / `while` loop of the caller); an explicit value wins and is clamped to 4095 (bits 0-11, section 86) (`retfmax` to 8).
 #[test]
 fn bn_retf_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, RETFMAX_PROCESS, RETF_PROCESS};
@@ -1341,7 +1341,7 @@ fn bn_retf_process_default() {
     for (env, want, wmax) in [
         (None, RETF_PROCESS, RETFMAX_PROCESS),
         (Some("retf=1"), 1, RETFMAX_PROCESS),
-        (Some("retf=9999,retfmax=2"), 1023, 2),
+        (Some("retf=9999,retfmax=2"), 4095, 2),
         (Some("retfmax=99"), RETF_PROCESS, 8),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
