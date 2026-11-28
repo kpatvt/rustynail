@@ -5112,6 +5112,11 @@ const TABLE: &[Row] = &[
             d("tr_asm", "e2e_tbar_in_an_incremental_gc_cycle"),
         ],
     },
+    Row {
+        name: "smallkeys_last_skip",
+        owner: "S93",
+        dets: &[d("tr_core", "s93_smallkeys_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

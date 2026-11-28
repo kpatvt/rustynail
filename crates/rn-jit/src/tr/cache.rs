@@ -223,6 +223,8 @@ pub const LZRETFMAX_PROCESS: u32 = 64;
 pub const LZRETF_PROCESS: u32 = 61;
 /// Section 93.1 (`peep`): the process default of [`TrLimits::peep`] (also the struct default).
 pub const PEEP_PROCESS: u32 = 31;
+/// Section 93.2 (`smallkeys`): the process default of [`TrLimits::smallkeys`] (also the struct default).
+pub const SMALLKEYS_PROCESS: u32 = 2;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1065,6 +1067,10 @@ pub struct TrLimits {
     /// another value with the same bits fails the guard: an exit, never a wrong answer); bit 4: no loop-head pad in a trace that ends in a native push
     /// through the dispatch cell (it never jumps to its own head). Default [`PEEP_PROCESS`].
     pub peep: u32,
+    /// Section 93.2 (`smallkeys`, docs/JIT_TRACE.md section 93.2): the absent-key proof of a short-string key in a table whose node vector has at
+    /// most `2^(smallkeys - 1)` nodes, all holding live short-string keys, is the key of every node (`HREFK` guards, shared by every miss and every
+    /// field access of that table in the trace) instead of the `HMISS` chain of each key. 0 = off; default [`SMALLKEYS_PROCESS`].
+    pub smallkeys: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1389,6 +1395,7 @@ impl Default for TrLimits {
             lzretfmax: LZRETFMAX_PROCESS,
             lzretf: LZRETF_PROCESS,
             peep: PEEP_PROCESS,
+            smallkeys: SMALLKEYS_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1656,6 +1663,7 @@ impl TrLimits {
                 "lzretfmax" => l.lzretfmax = v.min(1023),
                 "lzretf" => l.lzretf = v.min(63),
                 "peep" => l.peep = v.min(31),
+                "smallkeys" => l.smallkeys = v.min(3),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

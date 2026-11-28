@@ -770,7 +770,7 @@ pub fn fcfuse_field(f: Ref) -> bool {
 /// `FLOAD flags; BAND #c` (`c` in `1..=255`) whose `BAND` is only used by an `EQ` / `NE` against 0 (`test byte [t + flags], c`): no snapshot,
 /// `PHI`, `end_uses` entry or other operand names them. The compare then reads the field from memory: the loaded value zero-extended equals the
 /// constant iff the field's bits equal the constant's low bits (the constant's other bits are zero); `flags & c` is zero iff no bit of `c` is set
-/// in the byte.
+/// in the byte. The user must be the instruction right behind the load (the fused read happens at the user).
 fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
     let n = ir.ins.len();
     let flags = super::ir::Field::Flags as Ref;
@@ -796,7 +796,7 @@ fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
             cand[idx(r)] = false;
         }
     };
-    for ins in ir.ins.iter() {
+    for (u, ins) in ir.ins.iter().enumerate() {
         if ins.op == TOp::Phi {
             kill(&mut cand, ins.a);
             kill(&mut cand, ins.b);
@@ -804,7 +804,10 @@ fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
         }
         let (ra, rb) = ins.op.ref_operands();
         if ra {
+            // (the user is the very next instruction: the fused read happens at the user, so nothing may run between the load and its use; a
+            // CSE'd or hoisted load far from its compare stays a load)
             let ok = fl(ins.a)
+                && idx(ins.a) + 1 == u
                 && cand[idx(ins.a)]
                 && match (ins.op, ir.at(ins.a).op) {
                     // the BAND of a flags FLOAD (its own candidacy was decided above)
@@ -847,7 +850,7 @@ fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
     // a BAND is fused only together with its FLOAD, and an FLOAD whose user is a BAND only with that BAND
     for k in 0..n {
         let i = &ir.ins[k];
-        if i.op == TOp::Band && cand[k] && users[k] == 1 {
+        if i.op == TOp::Band && cand[k] && users[k] == 1 && std::env::var("XNOBAND").is_err() {
             let f = idx(i.a);
             if cand[f] && users[f] == 1 {
                 fused[k] = true;

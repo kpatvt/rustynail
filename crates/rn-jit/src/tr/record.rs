@@ -367,6 +367,8 @@ pub struct RecCfg {
     /// E5: the family's method invariant is in force: every native push passes its frame's own register 0 (unchanged) and is guarded by
     /// identity with the running closure; pushes from inlined frames are not made.
     pub midfold_ident: bool,
+    /// Section 93.2 (`smallkeys`): the largest `lsizenode + 1` whose absent-key proofs are the keys of every node (0: off).
+    pub smallkeys: u8,
     /// J2-2: most IR instructions of this recording (0 = the general limit): a deep recording's bound.
     pub max_ins: usize,
     /// P-E2: record `table.pack(...)` of a fixed argument count (see `Rec::pack_call`).
@@ -668,6 +670,7 @@ impl Default for RecCfg {
             idfold_ident: false,
             midfold: None,
             mfkeys: None,
+            smallkeys: 0,
             midfold_ident: false,
             max_ins: 0,
             pack: false,
@@ -5692,6 +5695,9 @@ impl Rec {
             self.guard(TOp::Eq, Ty::I64, ls, kl, 0)?;
         }
         let node = self.fload(t, Field::Node, Ty::P64)?;
+        if self.small_keys_cover(h, tbl, node, key.1)? {
+            return Ok(());
+        }
         for _ in 0..=MAX_MISS_CHAIN {
             self.fill_node(h, ix);
             let d = tbl.node_next(ix);
@@ -5705,6 +5711,38 @@ impl Rec {
             ix = (ix as i64 + i64::from(d)) as usize;
         }
         Err(AbortReason::TableHash)
+    }
+
+    /// Section 93.2 (`smallkeys`): the absent-key proof of `key` in a small node vector whose every node holds a live short string (none of them
+    /// `key`): an `HREFK` of each node with the key it holds (the size is guarded by the caller). A node vector of `2^lsizenode` nodes whose every
+    /// node holds a known key holds no other key, whatever the chain links are; the guards are the same instructions as the field accesses of those
+    /// keys (CSE shares them between all the misses and accesses of the table in the trace). A key at an address that was freed and reused is
+    /// another live string, never `key` (a live constant). `false`: not applicable (the `HMISS` chain follows).
+    fn small_keys_cover(&mut self, h: u64, tbl: TableRef, node: Ref, key: StrRef) -> R<bool> {
+        let ls = tbl.lsizenode();
+        if self.cfg.smallkeys == 0 || ls >= self.cfg.smallkeys {
+            return Ok(false);
+        }
+        let n = 1usize << ls;
+        let sstr = ctb(LUA_VSHRSTR);
+        let mut keys = Vec::with_capacity(n);
+        for j in 0..n {
+            let (tt, bits) = tbl.node_key(j);
+            if tt != sstr || bits == key.as_ptr() as u64 {
+                return Ok(false);
+            }
+            keys.push(bits);
+        }
+        for (j, bits) in keys.into_iter().enumerate() {
+            // MUTANT `smallkeys_last_skip`: the last node's key is not checked (a key inserted there is taken for absent)
+            if j + 1 == n && n > 1 && mutants::active("smallkeys_last_skip") {
+                continue;
+            }
+            self.fill_node(h, j);
+            let k = self.b.ir.konst(KVal::Ptr(bits, PtrKind::Raw));
+            self.guard(TOp::Hrefk, Ty::P64, node, k, j as u32)?;
+        }
+        Ok(true)
     }
 
     /// `t[key] = val` for an existing short-string key whose value is not nil: `HSTORE` (which exits at run time if the

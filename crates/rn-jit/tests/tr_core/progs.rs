@@ -12,6 +12,18 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
+        name: "s93_peep",
+        small: true,
+        // section 93.1 (`peep`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s93_peep.lua"),
+    },
+    Prog {
+        name: "s93_smallkeys",
+        small: true,
+        // section 93.2 (`smallkeys`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s93_smallkeys.lua"),
+    },
+    Prog {
         name: "s89_lzretf",
         small: true,
         // section 89.1 (`lzretf`, the lazy RETF): the vm-corpus program, also compared with the reference there

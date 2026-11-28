@@ -901,6 +901,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             None
         },
         midfold_ident: mf_ident.is_some(),
+        smallkeys: cfg.limits.smallkeys as u8,
         fn_min: if pr.is_some_and(|pr| cache::fn_cent(st, pr))
             && !mutants::active("centry_fnmin_kept")
         {
@@ -1215,6 +1216,7 @@ pub fn driver_start_side(
             None
         },
         midfold_ident: mf_ident.is_some(),
+        smallkeys: cfg.limits.smallkeys as u8,
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)
         } else {

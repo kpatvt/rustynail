@@ -1167,6 +1167,8 @@ pub const NAMES: &[&str] = &[
     "lzretf_alt_refund_off",
     // section 93.1 (`peep` bit 1): the `TBAR` test form does not test the value's colour
     "peep_tbar_white_skip",
+    // section 93.2 (`smallkeys`): the last node of a small node vector is not checked
+    "smallkeys_last_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1283,7 +1285,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 929);
+        assert_eq!(NAMES.len(), 930);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
