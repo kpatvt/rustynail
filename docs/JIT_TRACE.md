@@ -9973,3 +9973,146 @@ memo_cache +0.47 % (unchanged by bit 5; `lzretfmax=8` gives -0.70 % there but co
 Not done of the coordinator's list (context): towers per-transition costs (merge b87b8cc and measure, mfconst-style pinning of towers' method
 chains, POLL/BUDGET per inlined region), deeper subtrees beyond `MAX_INL`, memo_cache's +0.47 %, the `RETURN1` alt tails. 89.3 / 89.4 hold the
 analysis for those.
+## 93. towers against LuaJIT, round 5: the profile, shorter machine code (`peep`), small-receiver absent-key proofs (`smallkeys`) (2026-11-28, base 15a0539 + b87b8cc)
+
+Base: the merge of 15a0539 (sections 79 / 83 / 89) and b87b8cc (77.x rounds 3-5: `sloadhome=3`, `flink`, `uvk`), conflicts resolved keeping
+both sides (`pop_into_ok`: the lazy-RETF rule of 89.1 first, then 77.15's demote rule; registry 928). Method: instructions per move / call =
+(instructions at N = 1000 - at N = 100) / (900 * moves or calls per iteration), `RUSTYNAIL_SEED=0`, serial on CPU 8, one binary per comparison
+with limit strings padded to one environment length. Whole set: the 223 programs, one run per setting, outputs (stdout + stderr, addresses
+normalised) compared between the settings.
+
+### 93.0 The towers profile at steady state (merge binary)
+
+towers 352.2 instructions per move (LuaJIT 244), 10.8 *taken* branches per move (`ex_ret_brn_tkn`), traces 95.7 % of the instructions.
+Branch-stack sampling (`perf record -b`, the edges between traces scaled to the taken-branch count) gives about 2.3 trace transitions per move:
+the function-entry trace (24: `self:moveDisks` lookup, self-push loop) 0.5 / move, its `disks == 1` exit stub into the leaf side trace (25:
+`moveTopDisk` / `popDiskFrom` / `pushDisk` inlined, native return), the continuation trace at pc 18 (28) 0.49 / move, its side traces for the
+empty-pile type exits inside `pushDisk` / `popDiskFrom` (46-49, 60-65) and two tiny side traces (67 / 68) that end in tier 1 (0.06 / move).
+Per trace (instruction shares x 352): 28 = 56 / move (114 per run, 83 IR), 48 = 33, 64 = 30, 65 = 28, 47 = 24, 24 = 23, 49 = 22, 25 = 22,
+60 = 20, the rest < 10 each. So the transitions are few: the cost is inside the traces, and what the listings show there:
+
+* **Method lookups**: about 34 machine instructions per `self:m()` lookup that is not CSE'd (receiver `HMISS` per chain node: next test, key
+  tag test, `movabs` + compare; metatable load and test; the metatable's and the class's node-vector size tests as `movzbl` + `cmp`; `__index`
+  and key `HREFK` + `HLOAD`; the prototype compare), 4-5 per move. LuaJIT's lookups are not cheaper (its absent-key proof is an inline hash
+  walk); it does fewer of them because its trace inlines three frames per iteration and CSEs the lookups of one receiver across them.
+* **Barriers**: three `TBAR`s in the continuation trace, each two `movzbl; and; cmp; je` colour tests and a 25-instruction inline slow path.
+* **Flags tests** (`FLOAD flags; BAND #c; NE #0`) as four instructions.
+* The loop-head pad of traces that end in a native push through the dispatch cell (they never jump to their own head): a `jmp` over nops per
+  entry.
+* Entry costs: `POLL` 3 (`movabs; cmpb; jne`; `pollr15=1` would make it 2: towers -1.1 instructions per move, not changed here), `BUDGET` 2,
+  `SLOAD` type tests and spill stores of the entry loads.
+
+### 93.1 `peep`: shorter machine code for common IR shapes (`TrLimits::peep`, default 31 = `PEEP_PROCESS`)
+
+Same semantics, fewer instructions; each bit separately:
+
+* bit 0 (1), `ra::RaOpts::fcfuse`: a byte / 32-bit `FLOAD` (node-vector size, flags, array size) whose only user is the next instruction, an
+  `EQ` / `NE` guard against a constant that fits the field unsigned, is fused into it: `cmp byte [t + field], imm; jcc` (the allocator gives the
+  load no register, its base stays live to the compare: `operand_refs` hands the compare `[base, const]`). The pair `FLOAD flags; BAND #c`
+  (1 <= c <= 255) whose `BAND` is only used by `EQ` / `NE #0` becomes `test byte [t + flags], c; jcc` (new micro-op `Op::TstM`, x86 `F6 /0`,
+  emulator). Only the adjacent user: the fused read happens at the user, so nothing may run in between (a CSE'd or hoisted load stays a load).
+* bit 1 (2): `TBAR`'s two colour tests as `test byte [obj + marked], mask; jcc` (2 instructions instead of 3 each).
+* bit 2 (4): the `TBAR` slow path out of line (`tbar_cold`, emitted with the other cold stubs; the fast path falls through).
+* bit 3 (8): `HMISS` with the 64-bit key compare tests the key address without the key tag: a node whose key has the same bits under another
+  tag fails the guard (an exit, never a wrong answer); a short string's bits are its address, which no other live key can have.
+* bit 4 (16): no loop-head pad in a trace that ends in a native push through the dispatch cell (`rec_link_cell`), which never jumps to its own
+  loop label.
+
+| setting | towers / move | towers default size | permute / call | permute default size |
+|---|---:|---:|---:|---:|
+| `peep=0` | 352.2 | 161.72 M | 46.17 | 62.40 M |
+| bit 0 | 343.0 | 158.40 M | 45.18 | 61.64 M |
+| bit 1 / bits 1+2 | 346.3 | 159.53 M | 46.17 | 62.40 M |
+| bit 3 | 341.5 | 157.76 M | 45.69 | 61.99 M |
+| bits 0-3 (15) | 326.4 | 152.27 M | 44.70 | 61.23 M |
+| bits 0-4 (31) + flags fusion | **324.0** | 151.37 M | 44.70 | 61.23 M |
+
+Whole set, `peep=15` against `peep=0` (before the flags fusion and bit 4): geomean **-0.464 %**, no program rises by more than 0.3 %, all
+outputs identical; movers: oop_override -6.4 %, towers -5.8 %, lib/getmt -5.6 %, richards -5.5 %, list -5.0 %, lib/fmt_s -5.0 %, bounce -4.3 %,
+class_middleclass -4.2 %, event_promise -3.9 %, queens -3.8 %, metamethods -3.6 %, classic_vector -2.9 %, string_key_const -2.8 %, game_loop
+-2.6 %, oop_mixins -2.1 %, permute -1.9 %, deltablue -1.8 %, dijkstra_routes -1.7 %, and 20 more between -0.6 and -1.5 %. Trace code of towers
+85564 -> 83108 B, permute 50419 -> 50075 B.
+
+Tests: `tests/vm/s93_peep.lua` (vm_corpus, and `tr_core::s93_peep_programs`: every bit alone, all, none, the trace modes with `+verify`, exit
+storms, budgets 17 / 3, GC stress 2; plus the method-recursion programs): barriers of fresh tables / strings / closures into old tables under
+both collector modes, a hash field and an upvalue-held table, node vectors and array parts that change size under a reading loop, method keys
+and keys of other types added to receivers. Mutant `peep_tbar_white_skip` (the test form does not test the value's colour; owned by
+`s93_peep_programs` and `tr_asm::e2e_tbar_in_an_incremental_gc_cycle`). The fused compare has no mutant of its own: its failure modes (a wrong
+offset / condition) only make a size guard pass for a node vector of another size, whose `HREFK` key compares then exit (no wrong answer an
+output comparison can see); dropped as undetectable, not claimed.
+
+**Found by the gate: a latent stale-slot crash (not fixed).** `tr_core::twins_options`, job `s83_subtree [always +verify -fwd +randra=6]`,
+aborted in a debug build (misaligned pointer in `TableRef::flags`): a side recording that starts inside inlined frames builds its lockstep
+model from every root-relative slot up to the extent (`Rec::begin`), and a register of the innermost frame that the parent's exit snapshot does
+not name (slot 15: frame base 11, head pc 4) holds a pointer to a collected table; the model reads its metatable. It is not caused by `peep`:
+`peep=0` crashes the same way with `+randra=9` (an allocation lottery; `RUSTYNAIL_GC_VERIFY=1` does not flag the slot, so the pointer was
+written after the collection that freed the table, or the slot was never covered). Treating unnamed slots of inner frames as nil in the model
+was tried and is wrong (another recording reads slot 11, unnamed, as a live table argument). The job is left out of `twins_options` with a
+comment and kept as the ignored reproduction `tr_core::s93_latent_stale_slot` (`peep=0`, `+verify -fwd +randra=9`). Next step: find the writer
+of the stale word (a snapshot entry restored from a register that held a value no root kept alive across a collection is the first suspect).
+
+### 93.2 `smallkeys`: absent-key proofs of small receivers by the keys of every node (`TrLimits::smallkeys`, default 6 = `SMALLKEYS_PROCESS`)
+
+`self:m()` on an instance proves `m` absent from the instance with one `HMISS` per node of `m`'s chain, for every method key, in every trace.
+A node vector of `2^lsizenode` nodes whose every node holds a known live short-string key holds no other key, whatever its chain links are. So
+for a table with at most `2^(smallkeys & 3 - 1)` nodes, all holding live short strings (`Rec::small_keys_cover`, called by `hash_absent` after
+the node-vector size guard): one `HREFK` per node with the key it holds; those are the very guards of the instance's field accesses (`piles`,
+`movesDone`), so CSE shares them between every miss and every field access of the table in the trace. A key at an address that was freed and
+reused is another live string, never the looked-up key (a live constant). Not for a table the recording inserted into (`shape_dirty`).
+
+Policy (per site): cover when the node keys not yet checked by an `HREFK` of this node vector in the recording cost no more guards than this
+key's chain plus the earlier misses of the table, or (value + 4) for a `SELF` lookup whatever the cost. The cost rule alone (`smallkeys=2`)
+keeps towers at 315.6 (its first lookup in a trace has a one-node chain); covering unconditionally (an earlier build) made awfy/list +1.7 %,
+bounce / queens +1.9 %, classic_vector +1.4 %, cd +1.1 % (receivers with one miss and no field access: two guards for one); the `SELF` rule
+gets towers' full gain without those.
+
+| setting | towers / move | towers default size | permute / call | permute default size |
+|---|---:|---:|---:|---:|
+| `smallkeys=0` (with `peep=31`) | 324.0 | 151.39 M | 44.69 | 61.23 M |
+| `smallkeys=2` (cost rule) | 315.6 | 148.24 M | 44.11 | 60.81 M |
+| **`smallkeys=6`** | **308.9** | 145.79 M | **43.92** | 60.62 M |
+
+Selected programs (`smallkeys=6` against 0): oop_override -3.9 %, towers -3.7 %, astar_jumper -1.4 % (noise program), permute -1.0 %,
+deltablue -0.4 %, real_dis_arm -0.2 %; list / bounce / queens / cd / classic_vector / raytrace / prototype_objects within 0.12 %;
+testrunner_luaunit +0.30 % (noise program). Towers trace code 83108 -> 81581 B. Whole set: 93.3.
+
+Tests: `tests/vm/s93_smallkeys.lua` (vm_corpus, and `tr_core::s93_smallkeys_programs`: `smallkeys` 6 / 2 / 7 / 3 / 1 / 0, the trace modes with
+`+verify`, exit storms, budgets 17 / 3, GC stress 2, plus the recursion programs): the method key inserted into the node of a deleted field
+(16 field-name pairs, so that the key's main position meets the deleted node), receivers that grow, one-node receivers, a key of another type
+in a node, fields set to nil and back, the class method replaced, many receivers with different layouts. Mutant `smallkeys_last_skip` (the
+last node's key is not checked).
+
+### 93.3 Numbers of the round, and what is left
+
+One binary (accd166 release), every 93.x knob off (`peep=0,smallkeys=0`) against the defaults (`peep=31,smallkeys=6`):
+
+| | off | defaults | LuaJIT 2.1 |
+|---|---:|---:|---:|
+| towers instructions / move (steady state) | 352.2 | **308.9** (-12.3 %) | 244 |
+| towers default size, instructions | 161.72 M | 145.79 M (-9.85 %) | |
+| towers default size, cycles (min of 7, CPU 8, load 34-42) | 41.89 M (merge binary) | 41.00 M (-2.1 %) | 23.84 M |
+| permute instructions / call | 46.17 | **43.92** (-4.9 %) | 48 |
+| permute default size, instructions | 62.40 M | 60.62 M (-2.8 %) | |
+| permute default size, cycles (same runs) | 17.29 M | 17.26 M | 14.29 M |
+
+Whole set (223 programs, serial, CPU 8): geomean **-0.519 %**, all outputs identical; the only rise beyond 0.3 % is astar_jumper +0.36 %
+(noise program). Movers: oop_override -10.0 %, towers -9.9 %, richards -6.3 %, lib/getmt -5.6 %, list -5.0 %, lib/fmt_s -5.0 %, bounce -4.3 %,
+class_middleclass -4.3 %, metamethods -3.9 %, event_promise -3.9 %, queens -3.8 %, classic_vector -3.7 %, permute -2.8 %, string_key_const
+-2.8 %, game_loop -2.6 %, deltablue -2.3 %, oop_mixins -2.1 %, json -1.2 %, binary_trees -0.8 %, fib -0.5 %, memo_cache -0.35 % (its
++0.47 % of 89.1 against the pre-`lzretf` base is now +0.08 %), and 40 more between -0.3 and -1.7 %. On CPU 8 (a 5.1 GHz core) towers'
+cycles are 1.72x LuaJIT's at the default size (section 89.3 read "about equal" on CPU 11 under another load; the cycle gap follows the
+instruction gap).
+
+Not built this round (the coordinator's queue, in rank order, with what the profile says):
+
+1. towers (1.27x LuaJIT now): (a) the method lookups that remain are one chain per key per trace (the `__index` / class `HREFK` + prototype
+   compare, about 14 instructions after `peep` / `smallkeys`); E5's region facts do not apply (towers' family is loop-free, eager frames: no
+   checked region entries), so pinning needs another invariant source (a per-class "method epoch" or facts carried across links, section 28
+   (b)); (c) `POLL` / `BUDGET` per inlined region: 5 instructions per trace entry, about 12 per move at 2.3 transitions; `pollr15=1` is -1.1 per
+   move; (d) the up-recursion form: the self-push loop of the function-entry trace (24) re-runs its `SLOAD` type tests and the whole
+   `moveDisks` lookup every iteration although the pushed values have known types and the receiver is the same (about 40 of its 85 instructions
+   per iteration); a back-edge into the trace behind its `SLOAD` run with the pushed values in the `SLOAD` registers (R1's carry-entry machinery,
+   `exit::lead_run`, which now excludes `rec_call` traces) is the way in; (e) code size: the `TBAR` slow paths are out of line now; next are the
+   per-guard exit stubs of the method chains.
+2. Deeper subtrees (`MAX_INL`), 3. memo_cache +0.47 % (per-site `lzretfmax`), 4. the `RETURN1` alt tails: not started (89.4 has the analysis).
+5. The latent stale-slot crash of 93.1.
