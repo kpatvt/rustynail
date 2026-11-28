@@ -4733,7 +4733,7 @@ fn s79_selfst_programs() {
 /// Section 83 (subtree recording): `recinl` chains whose frames return and call again with their loops unrolled (`chainloop`), loop traces of
 /// lazy-aware families entered by native returns (`lzinner`), pre-roll exits linked directly (`predl`): permute at varying sizes, errors and
 /// tracebacks from the leaves, `getinfo` at the leaves, yields, a count hook installed from inside, stack overflow, collections and finalizers,
-/// varying trip counts; the defaults, each knob off, `recinl` 2 / 4, in the trace modes with `+verify`, exit storms, budgets 3 / 17 and GC
+/// varying trip counts; the defaults, each knob off, `recinl` 2 / 4 / 5, `sidesub` 0 / 1 (section 83.3), in the trace modes with `+verify`, exit storms, budgets 3 / 17 and GC
 /// stress 2; plus the recursion programs of sections 75 / 79 with the defaults. Mutant `lzinner_root_store`.
 #[test]
 fn s83_subtree_programs() {
@@ -4746,6 +4746,9 @@ fn s83_subtree_programs() {
             "chainloop=0",
             "recinl=2",
             "recinl=4,chainloop=4",
+            "sidesub=0",
+            "recinl=4,sidesub=1",
+            "recinl=5,sidesub=1,dynunroll=16",
         ] {
             for (opts, budget) in [
                 ("", 0),
@@ -4769,6 +4772,11 @@ fn s83_subtree_programs() {
         for p in ["s75_recinl", "s75_oframe", "s79_push", "s79_mfside"] {
             jobs.push(Job::new(p, trace).opts("+verify").limits_s("recinl=3"));
             jobs.push(Job::new(p, trace).opts("+exitstorm=3").limits_s("recinl=3"));
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+verify")
+                    .limits_s("recinl=4,sidesub=1"),
+            );
         }
     }
     compare(jobs);

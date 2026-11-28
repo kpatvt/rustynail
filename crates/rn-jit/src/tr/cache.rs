@@ -167,7 +167,7 @@ pub const RETFUSE_PROCESS: u32 = 3;
 /// Section 75.7 (`dynunroll`): the process default of [`TrLimits::dynunroll`] (also the struct default).
 pub const DYNUNROLL_PROCESS: u32 = 0;
 /// Section 75.9 (`recinl`): the process default of [`TrLimits::recinl`] (also the struct default).
-pub const RECINL_PROCESS: u32 = 3;
+pub const RECINL_PROCESS: u32 = 4;
 /// Section 75.10 (`sidepush`): the process default of [`TrLimits::sidepush`] (also the struct default).
 pub const SIDEPUSH_PROCESS: u32 = 1;
 /// Section 75.12 (`mfkeys`): the process default of [`TrLimits::mfkeys`] (also the struct default).
@@ -216,6 +216,8 @@ pub const LZINNER_PROCESS: u32 = 1;
 pub const PREDL_PROCESS: u32 = 1;
 /// Section 83.2 (`chainloop`): the process default of [`TrLimits::chainloop`] (also the struct default).
 pub const CHAINLOOP_PROCESS: u32 = 16;
+/// Section 83.3 (`sidesub`): the process default of [`TrLimits::sidesub`] (also the struct default).
+pub const SIDESUB_PROCESS: u32 = 1;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -920,7 +922,7 @@ pub struct TrLimits {
     /// Section 75.9 (`recinl`, docs/JIT_TRACE.md section 75.9): a continuation or loop recording of a lazy-aware family inlines root-frame self-calls
     /// as frames of an unroll chain (E1's lazy frames) up to `recinl & 7` frames deep; the self-call at the end of the chain is the native push that
     /// materialises the chain. Only for a prototype with a counted loop whose self-call is found through a table (method recursion); bit 3 drops that
-    /// rule (measurement only). 0 / 1 = off; default 3 ([`RECINL_PROCESS`], section 83.2: with `chainloop` the chain frames return and call again).
+    /// rule (measurement only). 0 / 1 = off; default 4 ([`RECINL_PROCESS`], sections 83.2 / 83.3: with `chainloop` the chain frames return and call again).
     pub recinl: u32,
     /// Section 75.10 (`sidepush`, docs/JIT_TRACE.md section 75.10): a side recording that starts inside inlined self-call frames of the root
     /// prototype (chain frames, virtual in the trace) may end with the native push of a self-call: the push materialises those frames as lazy frames
@@ -1036,6 +1038,11 @@ pub struct TrLimits {
     /// chain frame (`recinl` / `sidepush`), unrolled as `dynunroll` unrolls (every guard kept), whatever `dynunroll` says, also in a recursive frame.
     /// 0 = off (default [`CHAINLOOP_PROCESS`]).
     pub chainloop: u32,
+    /// Section 83.3 (`sidesub`, docs/JIT_TRACE.md section 83.3): a side recording that starts inside chain frames (`sidepush`) extends the chain
+    /// like a continuation recording (`recinl`): its self-calls are inlined as further chain frames up to `recinl & 7` - 1 frames below the
+    /// seeded ones (at most `MAX_INL` + 1 deep), which may return and call again, so a side trace holds the subtree of its own level. 0 = off,
+    /// 1 = on (default [`SIDESUB_PROCESS`]).
+    pub sidesub: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1355,6 +1362,7 @@ impl Default for TrLimits {
             lzinner: LZINNER_PROCESS,
             predl: PREDL_PROCESS,
             chainloop: CHAINLOOP_PROCESS,
+            sidesub: SIDESUB_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1617,6 +1625,7 @@ impl TrLimits {
                 "lzinner" => l.lzinner = v.min(1),
                 "predl" => l.predl = v.min(1),
                 "chainloop" => l.chainloop = v.min(63),
+                "sidesub" => l.sidesub = v.min(1),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

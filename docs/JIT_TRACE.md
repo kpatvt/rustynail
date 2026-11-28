@@ -9521,7 +9521,7 @@ whose self-calls are inlined the same way, so the continuation comes back to pc 
 `dynunroll` is off by default (79.7) and its recursion rule forbids exactly this unroll. `chainloop` gives the counted loop of an inlined
 **chain frame** (`RecFrame::unr`: a `recinl` / `sidepush` level of the root prototype) its own trip-count bound, without the recursion rule;
 everything else is `dynunroll`'s mechanism (the count computed and guarded at run time, every `FORLOOP` guarded). Policy only. With it
-`RECINL_PROCESS` = 3: the chain frames of continuation and loop recordings return and call again, so a recording holds the subtree of the
+`RECINL_PROCESS` = 3 (4 since 83.3): the chain frames of continuation and loop recordings return and call again, so a recording holds the subtree of the
 recorded level.
 
 | permute | 53e481b settings (`lzinner=0,predl=0,chainloop=0,recinl=2`) | M1 defaults |
@@ -9542,3 +9542,33 @@ Tests: `tests/vm/s83_subtree.lua` (vm_corpus, and `tr_core::s83_subtree_programs
 sizes 1-6 in mixed order, errors raised at a leaf of the subtree caught at the top / an inner level / by `xpcall` with `debug.traceback`,
 `debug.getinfo` at the leaves (depth and current lines of the levels below), yields at the leaves, a count hook installed from inside, stack
 overflow of a recursion with loops, allocation / full collections / finalizers at the leaves, varying trip counts with early returns.
+
+### 83.3 Stage M2: `sidesub`, side traces that hold the subtree of their own level (default 1; `recinl` 4)
+
+After M1 every level other than the recorded one left through a guard of an inlined level (the next level's `n ~= 0`, a loop count) into a
+side trace that pushed at its first self-call (`sidepush`): per level-2 frame of permute about five native pushes and returns remained, and
+the hot traces were the push-only side traces. Now (`Rec::call_lua`) a side recording that starts inside chain frames (`side_push`) extends
+the chain as a continuation recording does: its self-calls are inlined as further chain frames down to `recinl & 7` - 1 frames below the
+seeded ones (`klim`, at most `MAX_INL` + 1 = 4 deep: the chain push of `end_rec_call` materialises at most `MAX_INL` frames), they may
+return and call again (`ret_from`: chain frames return in side recordings too; side recordings carry `fn_root` when the prototype has a
+function head, which used to forbid it), their loops unroll by `chainloop`, and the self-call at `klim` is the chain push as before. So the
+side trace of a level-specific exit records the subtree of the level it was entered at, LuaJIT's per-level side traces. Nothing new is
+assumed: the seeded frames are the virtual frames of S1 (every guard of the recording stays, a returning seeded frame is an ordinary inlined
+return into a frame the exit restored), the push is E1's chain push with its identity / room / `CallInfo` checks. Policy only (no mutant: the
+mechanisms are `recinl`'s, `sidepush`'s and `chainloop`'s, whose mutants `h9_inl_*` / `lzinner_root_store` keep their detectors; a seeded frame
+that returns is an inlined return, checked by every program of the matrix under `+verify`).
+
+| permute | M1 (`sidesub=0,recinl=3`) | `sidesub=1,recinl=3` | **`sidesub=1,recinl=4` (defaults)** | LuaJIT 2.1 |
+|---|---:|---:|---:|---:|
+| instructions per call (N = 1000) | 91.00 | 62.62 | **51.20** | 48 |
+| default size, instructions | 89.27 M | 74.80 M | **71.18 M** | 58 M (best run) |
+| N = 1000, cycles (min of 5) | 149.9 M | 106.0 M | **88.6 M** | 90.0 M (best run) |
+| default size, cycles (min of 11) | 20.52 M | 19.37 M | **19.49 M** | 14.5 M (best run) |
+
+Steady state is now 8.9 cycles per call (LuaJIT 9.9); at the default size the compile cost of the per-level traces (12 side traces) is what
+is left against LuaJIT's best run. Whole set (223 programs, against `sidesub=0,recinl=3` in one binary): `sidesub=1,recinl=3` permute -16.24 %,
+astar_jumper -1.0 %, testrunner_luaunit -0.3 % (noise programs), geomean -0.084 %; `sidesub=1,recinl=4` permute -20.21 %, astar_jumper -3.4 %,
+nothing else beyond 0.3 %, geomean -0.116 %. (`recinl=5` = 4: the root chain push would hold 4 frames, above `MAX_INL`.)
+
+Tests: `tr_core::s83_subtree_programs` also runs `sidesub=0`, `recinl=4,sidesub=1`, `recinl=5,sidesub=1,dynunroll=16` and the section 75 / 79
+recursion programs with `recinl=4,sidesub=1` under `+verify`.

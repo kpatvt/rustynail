@@ -210,6 +210,8 @@ pub struct RecCfg {
     pub recinl: u32,
     /// Section 83.2 (`chainloop`): trip-count bound of a counted loop with run-time bounds in a chain frame (0: none).
     pub chainloop: u32,
+    /// Section 83.3 (`sidesub`): side recordings inside chain frames extend the chain.
+    pub sidesub: bool,
     /// Section 75.10 (`sidepush`): native pushes from side recordings that start inside chain frames.
     pub sidepush: bool,
     /// Section 75.13 (`mfdeep`): E5's fold in chain frames called with the root closure on the root receiver.
@@ -588,6 +590,7 @@ impl Default for RecCfg {
             dynunroll: super::cache::DYNUNROLL_PROCESS,
             recinl: super::cache::RECINL_PROCESS,
             chainloop: super::cache::CHAINLOOP_PROCESS,
+            sidesub: super::cache::SIDESUB_PROCESS != 0,
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
@@ -8082,6 +8085,16 @@ impl Rec {
         // Section 75.9 (`recinl`): the unroll chain in a continuation or loop recording (E1 builds it only in function-entry recordings)
         // (only a prototype with a counted loop: the self-calls sit in a loop body, the shape LuaJIT's subtree traces win on; recursion without loops
         // keeps E1 / the plain push, section 75.9)
+        // Section 83.3 (`sidesub`): a side recording inside chain frames extends the chain below its seeded frames (`klim`: the depth below which a
+        // self-call is inlined; the chain push of `end_rec_call` holds at most `MAX_INL` frames)
+        let side_sub = side_push && self.cfg.sidesub;
+        let rk = (self.cfg.recinl & 7) as usize;
+        let klim = if side_sub {
+            let sbase = self.cfg.side.as_ref().map_or(0, |sd| sd.frames.len());
+            (sbase + rk.saturating_sub(1)).min(super::ir::MAX_INL + 1)
+        } else {
+            rk
+        };
         let unr2 = !unr
             && push_ok
             && self.cfg.recinl > 1
@@ -8091,11 +8104,11 @@ impl Rec {
                     .iter()
                     .any(|&w| Instruction(w).opcode_raw() == OpCode::Forprep as u8)
                     && !self.callee_from_upvalue(a)))
-            && !self.cfg.fn_root
-            && self.cfg.side.is_none()
+            && (!self.cfg.fn_root || side_sub)
+            && (self.cfg.side.is_none() || side_sub)
             && uses == d + 1
             && self.frames[1..=d].iter().all(|f| f.unr)
-            && d < (self.cfg.recinl & 7) as usize
+            && d < klim
             && d < (if self.cfg.max_depth == 0 {
                 MAX_DEPTH
             } else {
@@ -8103,11 +8116,11 @@ impl Rec {
             });
         let unr = unr || unr2;
         let k = if unr2 {
-            (self.cfg.recinl & 7) as usize
+            klim
         } else {
             self.cfg.rec_unroll as usize
         };
-        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= k) || side_push) {
+        if push_ok && ((d == 0 && !unr) || (unr && d + 1 >= k) || (side_push && !unr2)) {
             return self.end_rec_call(vm, idx, a, nargs, wanted, &p, cl);
         }
         if uses > 0 {
@@ -8874,7 +8887,9 @@ impl Rec {
         let d = self.cur_depth;
         if d > 0
             && self.frames[d].unr
-            && !(self.cfg.sidepush && !self.cfg.fn_root && self.frames[d].proto_loops())
+            && !(self.cfg.sidepush
+                && (!self.cfg.fn_root || (self.cfg.sidesub && self.cfg.side.is_some()))
+                && self.frames[d].proto_loops())
         {
             // (section 75.10, `sidepush`: outside function-entry recordings a chain frame may return: it is then an ordinary inlined frame that
             // is gone before any push)
