@@ -1169,6 +1169,8 @@ pub const NAMES: &[&str] = &[
     "peep_tbar_white_skip",
     // section 93.2 (`smallkeys`): the last node of a small node vector is not checked
     "smallkeys_last_skip",
+    // section 97.1: the `+verify` segment oracle's store comes before the parent exit map's stores in a `dlink` entry (it clobbers a parent spill slot)
+    "dlink_oracle_first",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1285,7 +1287,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 930);
+        assert_eq!(NAMES.len(), 931);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

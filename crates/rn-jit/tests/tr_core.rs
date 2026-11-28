@@ -1424,12 +1424,6 @@ fn twins_options() {
             {
                 j = j.limits_s("recnat=0,recany=0");
             }
-            // Section 93.1: `s83_subtree` under `+verify -fwd +randra=6` meets the latent stale-slot crash of `s93_latent_stale_slot` (a side
-            // recording's lockstep model reads a stale table pointer in a register of an inlined frame); it is an allocation lottery (the same crash
-            // with `peep=0` at `+randra=9`), kept as that ignored reproduction until it is root-caused
-            if v == "+verify -fwd +randra=6" && p.name == "s83_subtree" {
-                continue;
-            }
             jobs.push(j);
         }
         jobs.push(Job::new(p.name, "on2").opts("+exitstorm=3 +randra=9"));
@@ -5023,16 +5017,19 @@ fn s93_smallkeys_programs() {
     compare(jobs);
 }
 
-/// Section 93.1: the latent crash found by the 93.1 gate (pre-existing: `peep=0` reproduces it): a side recording that starts inside
-/// inlined frames builds its lockstep model from every root-relative slot up to the extent, and one of them (a register of the innermost frame
-/// that the parent's exit snapshot does not name) holds a pointer to a collected table; the model reads its metatable (misaligned pointer in a
-/// debug build). Not root-caused (docs/JIT_TRACE.md section 93.1): run with `--ignored`.
+/// Sections 93.1 / 97.1: the stale-slot crash found by the 93.1 gate. Root cause (97.1): under `+verify` the segment oracle of a side trace with
+/// `RETF` segments stored the frame's `CallInfo` address into a spill slot past the side trace's own allocation at the top of its `dlink` entry,
+/// before that entry's stores of the parent's exit map, which read the parent's spill slots: when the parent kept a table there, the stack slot got
+/// the `CallInfo` address with a table tag; a later side recording inside inlined frames modelled that slot (misaligned pointer in a debug build).
+/// `+verify` only (release code has no oracle). The two configurations that met it; mutant `dlink_oracle_first`.
 #[test]
-#[ignore]
 fn s93_latent_stale_slot() {
-    let jobs = vec![Job::new("s83_subtree", "always")
-        .opts("+verify -fwd +randra=9")
-        .limits_s("peep=0")];
+    let jobs = vec![
+        Job::new("s83_subtree", "always")
+            .opts("+verify -fwd +randra=9")
+            .limits_s("peep=0"),
+        Job::new("s83_subtree", "always").opts("+verify -fwd +randra=6"),
+    ];
     compare(jobs);
 }
 

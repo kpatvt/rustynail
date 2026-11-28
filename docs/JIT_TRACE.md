@@ -10041,7 +10041,7 @@ and keys of other types added to receivers. Mutant `peep_tbar_white_skip` (the t
 offset / condition) only make a size guard pass for a node vector of another size, whose `HREFK` key compares then exit (no wrong answer an
 output comparison can see); dropped as undetectable, not claimed.
 
-**Found by the gate: a latent stale-slot crash (not fixed).** `tr_core::twins_options`, job `s83_subtree [always +verify -fwd +randra=6]`,
+**Found by the gate: a latent stale-slot crash (root-caused and fixed in 97.1: a `+verify`-only clobber).** `tr_core::twins_options`, job `s83_subtree [always +verify -fwd +randra=6]`,
 aborted in a debug build (misaligned pointer in `TableRef::flags`): a side recording that starts inside inlined frames builds its lockstep
 model from every root-relative slot up to the extent (`Rec::begin`), and a register of the innermost frame that the parent's exit snapshot does
 not name (slot 15: frame base 11, head pc 4) holds a pointer to a collected table; the model reads its metatable. It is not caused by `peep`:
@@ -10115,4 +10115,29 @@ Not built this round (the coordinator's queue, in rank order, with what the prof
    `exit::lead_run`, which now excludes `rec_call` traces) is the way in; (e) code size: the `TBAR` slow paths are out of line now; next are the
    per-guard exit stubs of the method chains.
 2. Deeper subtrees (`MAX_INL`), 3. memo_cache +0.47 % (per-site `lzretfmax`), 4. the `RETURN1` alt tails: not started (89.4 has the analysis).
-5. The latent stale-slot crash of 93.1.
+5. The latent stale-slot crash of 93.1 (fixed: 97.1).
+
+## 97. The stale-slot crash of 93.1 root-caused; towers round 6 (2026-11-28, base 7e948ae)
+
+### 97.1 The stale-slot crash: the `+verify` segment oracle clobbered a parent spill slot in a `dlink` entry (fixed)
+
+Verdict: a `+verify`-only bug in compiled code (not the lockstep model, and not reachable without `+verify`). The slot that the side recording
+of 93.1 modelled (root slot 15, abs 45, below the restored frame's `top`) did not hold a collected table: it held the address of a `CallInfo`
+(allocated by `extend_ci`, never freed) under a table tag. How it was found (debug build, `setarch -R` for stable addresses): a scan of the
+stack for collectable values that are not listed objects at every exit handler entry, every interpreter step and every `jit_call` showed the
+word appearing between two exits, i.e. written by machine code; a hardware write watchpoint on the slot's payload (`perf record -e
+mem:<addr>:w:u -c 1`, allowed at `perf_event_paranoid` 2) gave the writing instruction: inside a side trace's `dlink` entry (E6, 36.3),
+`lea rax, [r13]; mov [r15 + spill 16], rax` (`Cx::seg_oracle_entry`: under `+verify` a trace with `RETF` segments stores `r13` into the spill
+slot `ext_slot(ORACLE_SLOT_K)` = its own spill count + 9, for the handler's segment check) followed by the parent exit map's stores, one of
+which read the PARENT's spill slot 16 for a table slot. The link entry runs with the parent's registers and spill slots holding the exit map;
+the oracle word index is the side trace's, unrelated to the parent's allocation. In the 93.1 job the clobbered slot was dead (outputs
+identical), and the later side recording that modelled it crashed; a GC traversing that frame would have marked the `CallInfo` as a table.
+
+Fix: the oracle store comes after the exit-map stores in the `dlink` entry; the carry link entry (section 50) has no oracle store (a carry
+entry exists only for traces without segments: `debug_assert`). Release code is unchanged (no oracle). The earlier hypotheses are ruled out:
+snapshot liveness / pruning (`snapprune`, `sloadhome`, `pushtag`, `chainlive` off: the word still appears), the lockstep model (it read
+what the stack held), stale values in general (a value written while live is either marked, below `top`, or cleared, above `top`, by the
+atomic phase, so an unnamed slot holds a valid object or nil: the model may read it, as the other recording that reads slot 11 shows).
+
+Tests: `tr_core::s93_latent_stale_slot` un-ignored (both configurations that met it: `peep=0 +randra=9`, defaults `+randra=6`), the
+`twins_options` job restored. Mutant `dlink_oracle_first` (registry 931; detected by `s93_latent_stale_slot`).
