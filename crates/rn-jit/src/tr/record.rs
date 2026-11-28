@@ -239,6 +239,8 @@ pub struct RecCfg {
     pub rootproto: bool,
     /// Section 101.1 (`tailf0`): TAILF before any pop (a side recording's root `TAILCALL` of a Lua closure).
     pub tailf0: bool,
+    /// Section 101.1 (`tailf0` bit 1): ... only of a callee loaded by `GETUPVAL` / `GETTABUP` (not a method or table dispatch).
+    pub tailf0_static: bool,
     /// Section 79.4 (`mfside`): E5's fold in any frame of the root prototype under a guard that its register 0 is the root's.
     pub mfside: bool,
     /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants (bit 0); bit 1: not in the root frame of the
@@ -659,6 +661,7 @@ impl Default for RecCfg {
             chainlive: super::cache::CHAINLIVE_PROCESS != 0,
             rootproto: super::cache::ROOTPROTO_PROCESS != 0,
             tailf0: false,
+            tailf0_static: false,
             mfside: super::cache::MFSIDE_PROCESS != 0,
             // (section 77.3: the driver sets it from `TrLimits::uvk`; recorder unit tests replay against handle models that cannot evaluate an
             // identity guard on a closure address, and tr_core covers the knob)
@@ -822,6 +825,8 @@ pub struct Recorded {
     /// Section 78.1 (`stitch`): what the recording used: bit 0 a generic continuation root, bit 1 a stitch at a C call of a side recording,
     /// bit 2 the end of a `gmatch` iteration, bit 3 a pop of `stitch` bit 3, bit 4 a frame link behind a `TFORPREP`.
     pub stitch_use: u8,
+    /// Section 101.1 (`tailf0`): the recording's TAILF before any pop was its first step (the side trace starts at the `TAILCALL`).
+    pub tailf0_first: bool,
     /// Section 78.7: the continuation head (prototype, pc) the recording's final stitching exit leads into, if any.
     pub stitch_feeds: Option<(usize, u32)>,
 }
@@ -1635,6 +1640,8 @@ struct Rec {
     retf_dry: bool,
     /// Section 101.1: the snapshot the next [`Rec::retf`] guards with (taken before the native of a root tail call, see [`Rec::root_tailnat`]).
     retf_snap: Option<u32>,
+    /// Section 101.1: [`Recorded::tailf0_first`] so far.
+    tailf0_first: bool,
     /// Section 89.1 (`lzretfmax`): the IR length at the lazy `RETF` (0: none yet).
     lzretf_at: usize,
     /// Section 89.5: the IR budget of the current lazy pop (`lzretfmax`, or a quarter of it outside a loop with `lzretf` bit 5).
@@ -1974,6 +1981,7 @@ impl Rec {
             lzretf_now: false,
             retf_dry: false,
             retf_snap: None,
+            tailf0_first: false,
             lzretf_at: 0,
             lzretf_budget: 0,
             retail: None,
@@ -3360,6 +3368,7 @@ impl Rec {
             inner_link: self.inner_linked,
             inner_ret: self.inner_ret_used,
             stitch_use: self.stitch_use | u8::from(self.cfg.cont_gen && self.cfg.side.is_none()),
+            tailf0_first: self.tailf0_first,
             stitch_feeds: self.stitch_feeds.take(),
         }
     }
@@ -8925,16 +8934,21 @@ impl Rec {
             }
             // section 101.1 (`tailf0`): the same frame replacement before any pop: the root frame is the real frame the side trace was entered in
             // (its `CallInfo`, function slot and base); the entry segment is opened first, the callee's segment follows
+            // (an eager trace of a family that may pop: `TAILF` is assembled only there, as after a `RETF`)
             if self.cfg.tailf0
                 && self.segs.is_empty()
                 && self.cfg.side.is_some()
+                && self.cfg.retf & 1 != 0
                 && !cfg!(rustynail_lua54)
                 && self.tailf_applicable(vm, i)
+                && (!self.cfg.tailf0_static || tail_callee_static(vm.code, idx))
                 && !mutants::active("tailf0_never")
             {
                 self.push_entry_seg(vm);
+                let first = self.path.len() <= 1;
                 if let Some(r) = self.tailf(vm, idx, i)? {
                     self.stitch_use |= 64;
+                    self.tailf0_first = first;
                     return Ok(r);
                 }
                 return Err(AbortReason::Diverge);
@@ -14836,4 +14850,16 @@ fn maybe_lazy_proto(p: &Proto, any_c: bool, loops: bool) -> bool {
                 _ => false,
             }
         })
+}
+
+/// Section 101.1 (`tailf0` bit 1): is the callee of the `TAILCALL` at `pc` loaded by `GETUPVAL` / `GETTABUP` (an upvalue or a global, the
+/// nearest of the 16 instructions before it that has the call register as its `A`)? A method (`SELF`) or a table dispatch is not: richards'
+/// `return self.task:run(m)` and lua_interp's handler tables, whose replacements re-record per receiver.
+fn tail_callee_static(code: &[u32], pc: usize) -> bool {
+    let a = Instruction(code[pc]).a();
+    (pc.saturating_sub(16)..pc)
+        .rev()
+        .map(|j| Instruction(code[j]))
+        .find(|i| i.a() == a)
+        .is_some_and(|i| matches!(i.opcode(), Some(OpCode::Getupval | OpCode::Gettabup)))
 }

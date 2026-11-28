@@ -124,3 +124,22 @@ local ok, err = pcall(function()
   return setmetatable(o, {})
 end)
 print("protected", ok, (tostring(err):gsub("^.-:%d+: ", "")))
+
+-- a function root entered from C (`gsub`) whose final exit is its `TAILCALL`: the side trace starting there replaces the frame and stitches at
+-- a C call inside the callee without popping (refused with `tailf0` bit 2)
+local clock = os.clock
+local function slow(x)
+  local a = x * 3 + 1
+  local b = a % 7 + x // 2
+  local c = (a + b) * 2 - x
+  local d = c + a - b
+  local t = clock()
+  return d + (t >= 0 and 1 or 0)
+end
+local function cb(ch)
+  local v = string.byte(ch)
+  return slow(v)
+end
+local text = string.rep("abcdefghij", 300)
+local out = string.gsub(text, ".", cb)
+print("gsub", #out, out:sub(1, 20))

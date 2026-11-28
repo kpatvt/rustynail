@@ -242,8 +242,8 @@ pub const CHAINLIVE_PROCESS: u32 = 1;
 pub const PUSHTAG_PROCESS: u32 = 1;
 /// Section 79.3 (`rootproto`): the process default of [`TrLimits::rootproto`] (also the struct default).
 pub const ROOTPROTO_PROCESS: u32 = 1;
-/// Section 101.1 (`tailf0`): the process default of [`TrLimits::tailf0`] (the struct default is 0).
-pub const TAILF0_PROCESS: u32 = 0;
+/// Section 101.1 (`tailf0`): the process default of [`TrLimits::tailf0`] (the struct default is 0): bits 0-2, section 101.4.
+pub const TAILF0_PROCESS: u32 = 7;
 /// Section 79.4 (`mfside`): the process default of [`TrLimits::mfside`] (also the struct default).
 pub const MFSIDE_PROCESS: u32 = 1;
 /// Section 79.5 (`siteord`): the process default of [`TrLimits::siteord`] (also the struct default).
@@ -1092,7 +1092,9 @@ pub struct TrLimits {
     pub rootproto: u32,
     /// Section 101.1 (`tailf0`, docs/JIT_TRACE.md section 101.1): bit 0: a side recording's `TAILCALL` of a Lua closure in its root frame is
     /// recorded as the frame replacement of TAILF (section 86.1) also before any pop (the root frame is the frame the side trace was entered in),
-    /// instead of aborting `TailCall` / `LeaveFrame` or ending before it. 0 = off (default [`TAILF0_PROCESS`]).
+    /// instead of aborting `TailCall` / `LeaveFrame` or ending before it. Bit 1 (with bit 0): only when the callee is loaded by `GETUPVAL` /
+    /// `GETTABUP`. Bit 2: a side recording that starts at the `TAILCALL`, does not pop and stitches at a C call is refused (`LeaveFrame`). 0 = off (default
+    /// [`TAILF0_PROCESS`]).
     pub tailf0: u32,
     /// Section 79.4 (`mfside`, docs/JIT_TRACE.md section 79.4): E5's fold of the family key also in a frame of the root prototype that `mfdeep` does
     /// not cover (a side trace's seeded chain frames, an inlined frame called with another closure ref), under a guard that the frame's register 0
@@ -1825,7 +1827,7 @@ impl TrLimits {
                 "chainlive" => l.chainlive = v.min(1),
                 "pushtag" => l.pushtag = v.min(1),
                 "rootproto" => l.rootproto = v.min(1),
-                "tailf0" => l.tailf0 = v.min(1),
+                "tailf0" => l.tailf0 = v.min(7),
                 "mfside" => l.mfside = v.min(1),
                 "siteord" => l.siteord = v.min(1),
                 "retremat" => l.retremat = v.min(1),

@@ -4770,6 +4770,8 @@ fn s101_tailf0_programs() {
     for trace in ["always", "on2", "on"] {
         for limits in [
             "tailf0=1",
+            "tailf0=3",
+            "tailf0=7",
             "tailf0=1,innerlink=15",
             "tailf0=1,retf=1203",
             "tailf0=0",
@@ -4798,6 +4800,7 @@ fn s101_tailf0_programs() {
     assert!(!res.is_empty());
     assert_eq!(TrLimits::default().tailf0, 0);
     assert_eq!(TrLimits::parse("tailf0=1").0.tailf0, 1);
+    assert_eq!(TrLimits::parse("tailf0=3").0.tailf0, 3);
     let plain = |j: &Job| j.opts.is_empty() && j.budget.is_none() && j.env.is_empty();
     let (mut tf, mut tn) = (0u64, 0u64);
     for (j, o) in &res {

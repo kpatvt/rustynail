@@ -11957,16 +11957,27 @@ root frame of a side trace before any pop is just as real (the frame the trace w
 
 Measured on raytrace (interleaved, as above): `tailf0=1` R = 12 325.6 / 1149.8 (-1.4 % / -4.8 %), R = 2 268.1 M instructions (-0.4 %);
 `innerlink=15,tailf0=1` 322.6 / 1120.2 (-2.3 % / -7.2 %), R = 2 90.4 / 263.2 (cycles +3 %); with `dynunroll=8` it is worse than `dynunroll=8`
-alone (323.6 / 1130.2 against 308.2 / 1062.4: the sides that pop into `render` take the place of `render`'s own unrolled root). **Default
-OFF**: built, sound, tested; no setting with it beats `dynunroll` on its target.
+alone (323.6 / 1130.2 against 308.2 / 1062.4: the sides that pop into `render` take the place of `render`'s own unrolled root). Widened to the
+other programs of the list it found its real target, **stream_closures** (section 101.4), and two losers, narrowed per site:
+
+* bit 1 (2): only a callee loaded by `GETUPVAL` / `GETTABUP` (`tail_callee_static`; not `SELF` / table dispatch). richards `tailf0=1`: +2.7 %
+  cycles, +3.6 % instructions (`return self.task:run(m)`); with bit 1: 0.
+* `Rec::tailcall` takes TAILF before a pop only where `cfg.retf & 1` (an eager family that may pop: lazy-aware roots get `retf = 0`). Without it
+  lua_interp: +37 % cycles, 450 `Compile(asm-inconsistent)` side aborts ("TAILF outside a segmented eager trace", `Asm::tailf`), re-recorded
+  without end. With it: 0.
+* bit 2 (4): a side recording that starts at the `TAILCALL` (a function root's final exit), does not pop and stitches at a C call inside the
+  callee is refused (`LeaveFrame`, as before the knob; `Recorded::tailf0_first`, checked in the driver before the pipeline). real_dis_mips
+  `tailf0=3`: +4.9 % cycles, +3.9 % instructions (one such trace, 15 more side stitches); with bit 2: 0. Without the C-call condition bit 2 also
+  removed stream_closures' gain (its TAILF sides start at the `TAILCALL` too, but end at once).
 
 Tests: `tests/vm/s101_tailf0.lua` (vm corpus; the sky-path shape from two call sites, type changes after the TAILF, arity mismatches, errors
 with levels, traceback and `istailcall` inside the tail-called function, `__gc` / `__metatable` metatables), `tr_core::s101_tailf0_programs`
 (`tailf0` 1 / 0, with `innerlink=15`, with `retf=1203`; modes `always` / `on2` / `on`, `+verify`, exit storms, budgets 3 / 17, GC stress 2;
-asserts TAILF and native-tail pops with the knob and none without). Mutants (registry 966 -> 969): `tailf0_never`, `tailf0_code_by_pops`,
-`tailnat0_never`, all caught by `s101_tailf0_programs`. Not claimed (no detector found, dropped): the root-return questions skipped in the TAILF
-segment (function-entry families: the shapes tried did not form a TAILF), and the pop guarding with the post-native snapshot (equivalent in the
-tested shapes: the recorded `setmetatable` takes its snapshot before the pop does).
+asserts TAILF and native-tail pops with the knob and none without; `tailf0` 1 / 3 / 7). Mutants (registry 966 -> 969): `tailf0_never`,
+`tailf0_code_by_pops`, `tailnat0_never`, all caught by `s101_tailf0_programs`. Not claimed (no detector found, dropped): the root-return questions
+skipped in the TAILF segment (function-entry families: the shapes tried did not form a TAILF), the pop guarding with the post-native snapshot
+(equivalent in the tested shapes: the recorded `setmetatable` takes its snapshot before the pop does), and the bit-2 refusal (policy; the gsub
+shape added to the test did not form a TAILF).
 
 ### 101.2 Coroutine resume into tier 1 (`cot1`): built, measured, dropped
 
@@ -11983,3 +11994,48 @@ n = 200: 40.5 Mcyc against LuaJIT's 37.4 (1.08x); n = 400 (the benchmark): 430 a
 trace is 17 IR per iteration (two array loads, one bounds check, `FMUL` / `FADD`, `POLL`, `BUDGET`, two counters). The cycle gap at n = 400 is
 the 16-byte `TValue`: the 400 x 400 matrix `b` read by columns is 2.56 MB against LuaJIT's 1.28 MB of 8-byte doubles. Not a trace-compiler
 lever (an unboxed float array part in `rn-core::table` would be).
+
+### 101.4 `tailf0=7` shipped as the process default (`TAILF0_PROCESS = 7`; struct default 0)
+
+Whole set (223 programs, instructions, one run each, serial on CPU 10, `tailf0=0` against `=7` in one binary, limit strings of equal length,
+outputs with addresses normalised identical on all 223): geomean **-0.081 %**; stream_closures **-11.99 %**, raytrace -2.49 %, scheme_interp
+-1.90 %, expr_compiler -0.71 %, astar_jumper -0.46 %, testrunner_luaunit -0.36 %, json_rxi +0.70 % (-0.02 % in the cycle run below: noise).
+Cycles of every mover (interleaved, min of 9 / 15, CPU 8): stream_closures -8.2 %, scheme_interp +0.2 %, expr_compiler -0.7 %, json_rxi -1.2 %,
+astar_jumper +0.8 %, raytrace +1.6 % (min of 15; its instructions -2.5 %: the extra side recordings cost at R = 2, at R = 12 it is -1.4 %),
+richards +0.7 %, lua_interp +0.5 %, real_dis_mips +0.1 %. No program above +2 % cycles; instructions down on the whole.
+
+Targets of this round (interleaved min of 15, CPU 8, cycles M / instructions M; "-" = the base defaults, the branch's other knobs off; LuaJIT
+cannot run programs/coroutines and real/lua_interp, which need 5.4 features):
+
+| program | defaults (base) | `tailf0=1` | `dynunroll=72,dynmiss=3` | `innerlink=3` | LuaJIT |
+|---|---|---|---|---|---|
+| apps/raytrace | 87.20 / 266.30 | 86.49 / 259.63 | 86.41 / 252.10 | 84.11 / 259.52 | 40.74 / 166.06 |
+| lib/getmt | 16.76 / 83.29 | 16.62 / 83.30 | 16.51 / 83.31 | 16.55 / 83.30 | 9.02 / 40.02 |
+| lib/fmt_s | 5.32 / 17.39 | 5.13 / 17.40 | 5.32 / 17.41 | 5.07 / 17.40 | 3.38 / 10.27 |
+| stream_closures | 758.06 / 3148.80 | **694.24 / 2771.41** | 762.80 / 3148.76 | 755.68 / 3148.80 | 413.66 / 1399.77 |
+| awfy/cd | 218.97 / 559.56 | 219.28 / 559.55 | 218.68 / 559.60 | 218.63 / 559.65 | 108.50 / 309.54 |
+| lib/co_yield | 181.59 / 1031.50 | 181.07 / 1031.51 | 181.54 / 1031.52 | 182.79 / 1031.51 | 102.52 / 595.77 |
+| awfy/towers | 38.49 / 145.05 | 37.83 / 145.06 | 38.38 / 145.07 | 38.39 / 145.07 | 23.73 / 100.19 |
+| programs/coroutines | 1342.56 / 8047.40 | 1353.77 / 8047.41 | 1351.64 / 8047.42 | 1345.09 / 8047.41 | - |
+| programs/matmul | 421.07 / 1621.89 | 421.91 / 1621.93 | 420.94 / 1621.94 | 421.78 / 1621.93 | 269.59 / 1123.04 |
+| real/lua_interp | 98.75 / 542.67 | 137.62 / 657.14 (before the `retf` condition; after: 99.30 / 542.68) | 100.05 / 542.69 | 100.16 / 542.69 | - |
+| awfy/json | 127.90 / 402.16 | 127.74 / 402.18 | 128.21 / 402.19 | 127.90 / 399.27 | 74.45 / 210.64 |
+| awfy/richards | 52.40 / 144.33 | 53.80 / 149.49 (bit 1 off; `=7`: 51.81 / 144.36) | 52.75 / 144.35 | 51.78 / 144.35 | 35.35 / 120.62 |
+
+`dynunroll=72,dynmiss=3` (section 79.7's best setting) against the cycle bar (min of 9, CPU 10): nbody -43.8 %, coro_scheduler -17.2 %,
+parser_combinator -9.7 %, bigint_rsa -8.5 %, events +0.2 %, havlak +0.2 %, bignum_arith +0.3 %, but **sha2_base64 +3.8 %** and **msgpack_pure
++3.1 %** (instructions +2.8 % / +3.4 %): still above the bar; the per-site rule for those two (79.7: the unrolled `string.byte` loop at depth 2,
+the side recording whose body calls `packers[type(v)]`) is not built. Default stays OFF.
+
+### 101.5 State and what is next
+
+* raytrace at the benchmark size is formation-bound (101.0): the first round is 61 of the 87 Mcyc; compile is 68 M instructions (`rec_step`
+  4170 instructions per recorded bytecode). The steady state needs the hit loop's integer / float type exits gone (an exact subtype widening:
+  the subtypes vary per object *and* reach sunk tables, so a load-site widening is not exact; open) and `render` covered (`dynunroll`).
+* lib/co_yield and programs/coroutines: the resume / yield runtime (`coro_direct`, interpreter body); entering tier 1 at every resume is
+  worse (101.2). A cheaper entry (no `enter` bookkeeping, a direct tier-1 continuation from `fused_body`) or a trace through `yield` is next.
+* matmul: the 16-byte value layout (101.3).
+* getmt: 31 machine instructions per iteration against about 15: `POLL` + `BUDGET` (4), the `__metatable` absence check on the loaded
+  metatable before the identity compare with the loop-invariant `mt` (8; with the identity guard first the check is on an invariant and could
+  be hoisted), the metatable loaded twice (`p64` and `tab`), two dead table PHIs kept for the head snapshot (tables are not pruned: GC
+  timing). Not built.
