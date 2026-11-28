@@ -653,6 +653,8 @@ pub struct TrLimits {
     /// back-edges, a different phase of the counter trigger, and has two more attempts, [`second_retry_due`]; bit 1: the first identical re-record of a head, after a flush
     /// by a hot exit or entry failures, is installed instead of blacklisting the head, [`ident_keep_due`]; 0 = both blacklist; default [`SECOND_PROCESS`] (process and tests)).
     pub second: u32,
+    /// Section 88.9 (`rerootfam`): `reroot` does not fire on a root whose family has at least this many side traces (0 = no limit).
+    pub rerootfam: u32,
     /// BUNDLE-C: a side recording that starts inside inlined frames at an exit whose previous attempt ended `SideShort` gets `sbump` more recursion unrolls
     /// ([`SideStart::ubump`]). The common case: a stitch exit at the recursion limit; a side trace starting AT the limit stitches again at its first call and is too short
     /// by construction, so the exit is blacklisted and storms in tier 1 (`regex_nfa`: two exits of 1 M each). 0 = off; default [`SBUMP_PROCESS`] (process and tests).
@@ -1233,6 +1235,7 @@ impl Default for TrLimits {
             typesides: TYPESIDES_PROCESS,
             hoptop: HOPTOP_PROCESS,
             second: SECOND_PROCESS,
+            rerootfam: 0,
             sbump: SBUMP_PROCESS,
             fretry: FRETRY_PROCESS,
             ccalls: CCALLS_PROCESS,
@@ -1514,6 +1517,7 @@ impl TrLimits {
                 "rerootall" => l.rerootall = v.min(100),
                 "rerootchk" => l.rerootchk = v,
                 "rerootkeep" => l.rerootkeep = v.min(100),
+                "rerootfam" => l.rerootfam = v.min(1024),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -8257,7 +8261,19 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             }
         }
         let all_ok = p_all * 100 >= e * u64::from(d.tr.cfg.limits.rerootall);
-        if let Some((k, c, sid)) = best.filter(|b| all_ok && b.1 * 100 >= e * u64::from(rr)) {
+        // section 88.9 (`rerootfam`): a root whose family has grown at least that many side traces is not re-rooted (the flush throws the family away)
+        let fam = d.tr.cfg.limits.rerootfam;
+        let nside = match d.tr.slot(id) {
+            Some(Slot {
+                body: Body::Trace(t),
+                ..
+            }) => t.nside,
+            _ => 0,
+        };
+        let fam_ok = fam == 0 || nside < fam;
+        if let Some((k, c, sid)) =
+            best.filter(|b| fam_ok && all_ok && b.1 * 100 >= e * u64::from(rr))
+        {
             h.reroot_done.set(true);
             if let Some(av) = reroot_avoid_path(&d.tr.rr_paths, id, sid, meta, k) {
                 let n = av.len();

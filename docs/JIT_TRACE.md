@@ -9678,3 +9678,24 @@ programs, instructions, one run each (machine load 38-60 during this run from ot
 3. cd: 88.5's unlinked exits (the pc 17 `LTI` pair first), the raw-copy materialisation template.
 4. raytrace: `fnleaf` bit 12 discriminator, links for loops inside callees.
 5. programs/json: per-exit memo of `root_frame_in_loop` in the exit metadata (88.1, <= 0.15 %).
+
+### 88.9 Second round: programs/json memo per trace, `rerootfam` (2026-11-28, base bfb981a)
+
+* **programs/json (88.1):** the memo of `root_frame_in_loop` moved into the exit metadata (`ExitMeta::root_loop_memo`, keyed by the root frame's
+  `savedpc`, read from the metadata the handler holds anyway): 6768.5 -> 6765.2 M (-0.05 %); the rest of the 0.157 % is the arm itself
+  (`arm_tick_enter_only`'s store of `hot_fired`, the firing's check).
+* **`outerlink` + `reroot` (88.4):** why cd loses under `reroot=50`: the root it re-roots has grown **64** side traces (class_middleclass's 9,
+  queens' 14), and the re-record, which `rerootchk` then reverts (919 / 1000 pre-roll exits against 920), throws the family away twice. Built:
+  `rerootfam=N` (`reroot` does not fire on a root whose family has N or more side traces; default 0 = no limit; formation only, no mutant) and
+  measured `rerootkeep=100` (keep a re-record that is not worse instead of reverting it). 223 programs (load ~37, instructions):
+  `outerlink=1,reroot=50,rerootkeep=100,rerootfam=32` geomean **-0.43 %** (queens -24 %, fmt_s -13 %, class_middleclass's rise gone), but new rises
+  from `reroot` itself: **diff_levenshtein +17.7 %**, oop_mixins +1.3 %, real_dis_arm +1.1 %, ecs_world +0.9 %, cd +0.76 % (another root of cd
+  fires below 32 side traces), real_dis_x86 +0.7 %. `reroot` alone with these settings: geomean -0.02 %, the same rises. Not shipped; `outerlink`
+  stays OFF.
+
+### 88.10 State for the next builder (context limit reached)
+
+Not started from the coordinator's second list: the `LeaveLoop` / first-back-edge recording fix for roguelike (88.3), the integer-key hash path
+for serpent_ser (`TableHash`), the 3-path re-measure of lua_parser under `eflazy`, cd's unlinked exits and raw-copy template, raytrace. Next step for
+`reroot`: attribute diff_levenshtein +17.7 % (`RUSTYNAIL_JIT_VERBOSE=2`, grep `reroot:` / `rerootchk:`), then decide `rerootfam` / `rerootkeep`
+from the whole set.
