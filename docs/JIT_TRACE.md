@@ -10041,7 +10041,7 @@ and keys of other types added to receivers. Mutant `peep_tbar_white_skip` (the t
 offset / condition) only make a size guard pass for a node vector of another size, whose `HREFK` key compares then exit (no wrong answer an
 output comparison can see); dropped as undetectable, not claimed.
 
-**Found by the gate: a latent stale-slot crash (not fixed).** `tr_core::twins_options`, job `s83_subtree [always +verify -fwd +randra=6]`,
+**Found by the gate: a latent stale-slot crash (root-caused and fixed in 97.1: a `+verify`-only clobber).** `tr_core::twins_options`, job `s83_subtree [always +verify -fwd +randra=6]`,
 aborted in a debug build (misaligned pointer in `TableRef::flags`): a side recording that starts inside inlined frames builds its lockstep
 model from every root-relative slot up to the extent (`Rec::begin`), and a register of the innermost frame that the parent's exit snapshot does
 not name (slot 15: frame base 11, head pc 4) holds a pointer to a collected table; the model reads its metatable. It is not caused by `peep`:
@@ -11377,3 +11377,60 @@ gmatch_words +0.88 %, expr_compiler +0.60 %; down containers_lru_heap -42.9 %, a
   GETUPVAL rule of 78.7 is in): the discriminator (callee-prototype stability over the first calls) is still the open item; callee-loop links
   not built.
 * programs/json's tick-arm residual (0.157 %, 88.1 / 88.9): not changed.
+5. The latent stale-slot crash of 93.1 (fixed: 97.1).
+
+## 97. The stale-slot crash of 93.1 root-caused; towers round 6 (2026-11-28, base 7e948ae)
+
+### 97.1 The stale-slot crash: the `+verify` segment oracle clobbered a parent spill slot in a `dlink` entry (fixed)
+
+Verdict: a `+verify`-only bug in compiled code (not the lockstep model, and not reachable without `+verify`). The slot that the side recording
+of 93.1 modelled (root slot 15, abs 45, below the restored frame's `top`) did not hold a collected table: it held the address of a `CallInfo`
+(allocated by `extend_ci`, never freed) under a table tag. How it was found (debug build, `setarch -R` for stable addresses): a scan of the
+stack for collectable values that are not listed objects at every exit handler entry, every interpreter step and every `jit_call` showed the
+word appearing between two exits, i.e. written by machine code; a hardware write watchpoint on the slot's payload (`perf record -e
+mem:<addr>:w:u -c 1`, allowed at `perf_event_paranoid` 2) gave the writing instruction: inside a side trace's `dlink` entry (E6, 36.3),
+`lea rax, [r13]; mov [r15 + spill 16], rax` (`Cx::seg_oracle_entry`: under `+verify` a trace with `RETF` segments stores `r13` into the spill
+slot `ext_slot(ORACLE_SLOT_K)` = its own spill count + 9, for the handler's segment check) followed by the parent exit map's stores, one of
+which read the PARENT's spill slot 16 for a table slot. The link entry runs with the parent's registers and spill slots holding the exit map;
+the oracle word index is the side trace's, unrelated to the parent's allocation. In the 93.1 job the clobbered slot was dead (outputs
+identical), and the later side recording that modelled it crashed; a GC traversing that frame would have marked the `CallInfo` as a table.
+
+Fix: the oracle store comes after the exit-map stores in the `dlink` entry; the carry link entry (section 50) has no oracle store (a carry
+entry exists only for traces without segments: `debug_assert`). Release code is unchanged (no oracle). The earlier hypotheses are ruled out:
+snapshot liveness / pruning (`snapprune`, `sloadhome`, `pushtag`, `chainlive` off: the word still appears), the lockstep model (it read
+what the stack held), stale values in general (a value written while live is either marked, below `top`, or cleared, above `top`, by the
+atomic phase, so an unnamed slot holds a valid object or nil: the model may read it, as the other recording that reads slot 11 shows).
+
+Tests: `tr_core::s93_latent_stale_slot` un-ignored (both configurations that met it: `peep=0 +randra=9`, defaults `+randra=6`), the
+`twins_options` job restored. Mutant `dlink_oracle_first` (registry 931; detected by `s93_latent_stale_slot`).
+
+### 97.2 `pollr15` on everywhere (process default 1, was 2)
+
+The r15-addressed trace poll (`cmp byte [r15 + disp], 0; jne`, P2-3b) was kept out of native self-recursion traces (value 2) because it cost
+`programs/fib` 7-9 % cycles at every loop-head offset (docs/JIT_PARKED.md C44). Re-measured on the 97.1 binary (CPU 8, min of 7, interleaved):
+fib 3359.2 -> 3308.7 M instructions (-1.5 %), cycles 528.3 -> 527.3 M (-0.2 %); towers 308.9 -> 307.85 instructions per move, cycles at the
+default size equal (40.33 M). Whole set (223 programs, one run per setting, serial, CPU 8): instructions geomean -0.047 %, no program up by
+more than 0.3 % in instructions, outputs identical; the single-run cycle rises above 2 % are all programs whose instruction count did not
+move (noise); astar_jumper's instruction count varies run to run (noise program; min-of-5 cycles +0.5 %). C44 is closed by this
+measurement. Test: `tr_policy::p2_loopdiet_process_defaults` (default 1); the `tr_core` loop-diet controls run `pollr15=0` and the shipped value.
+
+### 97.3 State and the queue left (for the next builder)
+
+Committed in this round: 97.1 (the stale-slot crash, a `+verify`-only clobber, fixed; mutant `dlink_oracle_first`, registry 931) and 97.2
+(`pollr15=1`). towers 308.9 -> 307.85 instructions per move (LuaJIT 244), permute unchanged (43.9 per call). Not built, in rank order:
+
+1. towers (d), the self-push loop of the function-entry trace (about 40 of its 85 instructions per iteration, 0.5 iterations per move): a
+   guard-free inner entry behind the `SLOAD` type checks for the native self-push (A2's `lead_run` excludes `rec_call` traces; the pushed values'
+   types are known at the push) plus the `moveDisks` lookup carried across the push (the receiver is the pushed `self`: a fact, not a reload).
+   The CP3 note of section 75 applies to the push's `POLL` (a native push skips `luaD_precall`'s hook test): keep the poll, drop the guards.
+2. towers (a), method chains: a per-metatable version stamp bumped by every store into a table that is some metatable or `__index` target
+   (exact semantics needs the bump in the interpreter's, the C API's and the traces' store paths, `rawset` included) or facts carried across
+   links (section 28 (b)).
+3. towers (c), entry `POLL` / `BUDGET`: dropping the poll of push- or return-entered traces is unsound as built (section 75, CP3 retest: the
+   push skips the call hook test, `rec_link_cell` may point at a counting stub); sound only with the continuation depending on the entry trace
+   (flush together) or a poll in the counting stub.
+4. Deeper subtrees (`MAX_INL`), memo_cache per-site `lzretfmax`, the `RETURN1` other-site native return: as in 89.4, not started.
+
+Debugging aids that found 97.1 (worth keeping in mind): `perf record -e mem:<addr>:w:u -c 1` works at `perf_event_paranoid` 2 and gives the
+instruction after the write (the machine code of a trace is in `TR_CORE_DUMPDIR`'s `trace-<slot + 1>.bin`, deferred stubs are placed later);
+`setarch -R` makes the heap and stack addresses of a `tr_core` child repeatable for one environment (the environment's length shifts the stack).
