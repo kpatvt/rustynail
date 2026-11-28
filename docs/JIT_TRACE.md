@@ -9794,3 +9794,39 @@ rules for the `retf=5047` losers.
 **Gates** (f8fb19c, `gate-light.sh --base c3fca83`, load 70-88): all steps PASS except the stale mutant map (regenerated with this commit) and 5.5
 `tr_core::h2_newkey_programs`, whose only failure was a 120 s child timeout of the GC-stress-2 + `RUSTYNAIL_GC_VERIFY` job (as in 82.2); rerun
 alone it passes (15.6 s).
+
+### 86.8 Round 3: option (a), the quiet window after allocation exits: built, measured, reverted
+
+**Built (scratch, not committed; patch kept outside the tree).** Knob `quietgc`: an allocation exit leaves for the interpreter at the exit's pc
+(prepaid rest of the tier-1 block refunded, as for a side start) and opens a per-state *quiet window* (`jit_hooks::set_quiet`): while it is
+open, `rt::hot_call` answers `Skip` (callees stay in the interpreter, so no tier-1 call / function-entry / loop counter is fed and no compiled
+callee is entered), and the sampling tick is armed as a kept tick whose countdown continues unchanged (`jit_tick_take_rearm` restores it without
+the usual minus one for a kept tick). The next back-edge closes the window (`rt::keep_loop`, entry when its head has a trace); any exit closes a
+window left open.
+
+**Measured** (same binary at two `arg[-1]` lengths, instructions):
+
+| program, configuration | path 1 | path 30 |
+|---|---|---|
+| stream_closures, default | 3196.1 | 3200.4 |
+| stream_closures, `quietgc=1` | 5482.6 | 4816.5 |
+| stream_closures, `retf=951,retfmax=3,lazyci=0,quietgc=1` | 4183.1 | 4082.2 |
+| ecs_world, default | 3728.1 | 4058.8 |
+| ecs_world, `quietgc=1` | 3728.1 | 4060.3 |
+
+Not deterministic, and much slower: the windows themselves sit where the collector's debt crosses, the code run in them (now all interpreted,
+callees included) differs with the position, the first back-edge inside a callee's loop closes the window early, and the interpreter runs the
+rest of each iteration that tier 1 used to run (+50-70 % on stream_closures). Reverted. With `tickkeep` (86.7) and this, the result is: the
+coupling is not in the counters fed after the exit alone but in the allocation exits as such.
+
+**What would decouple formation from the collector (not built; design for the next round).** Move the collector step out of the allocation
+helpers to a deterministic point of the iteration: the allocator does not refuse (and the trace does not exit) when a step is due; instead it
+raises a "step due" bit in the word the loop-head `POLL` already tests (the interrupt word), and the `POLL` exit at the next loop head (an empty
+snapshot: the whole state is in the stack, tier 1 dispatches straight back into the trace) runs the step. Then the only collector-dependent
+event is *which iteration* pays the step, nothing of the iteration runs outside compiled code, and no formation counter sees it. Pieces: the
+class-A helpers (`TNEW`, `NEWREF`, `SNEW`, `CONCAT`, `LIB`) keep their refusal only for a failed host allocation; the heap's debt crossing sets the
+bit while a trace runs (`thread` flag or the hook word); `POLL` exits through its empty snapshot; traces without a loop head (side traces that
+link, function-entry traces) end within a bounded number of instructions and step at their end; the byte accounting (`TVIRT`, sunk tables) is
+unchanged. Determinism test planned with it: a GC-debt offset test knob (shift the debt at state creation by N bytes) and two `arg[-1]`
+lengths, requiring identical trace lists (`RUSTYNAIL_JIT_VERBOSE=2`, addresses normalised) and instruction counts on stream_closures (chain
+configuration) and ecs_world.
