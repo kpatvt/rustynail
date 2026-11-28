@@ -9687,3 +9687,20 @@ policy bits keep towers out). The remaining per-move cost is inside the traces: 
 `__index` / `HREFK` chain per method lookup in every trace, and the per-transition entry costs (`POLL`, `BUDGET`, type guards). The handle that
 ranks first for towers is per-transition cost, not a recording shape: facts across transitions (the receiver's metatable shape known at a link,
 section 28 (b)) or `sloadhome` (77.6, off).
+
+### 89.4 State and next steps (for the next builder)
+
+Committed: 8208f7b (lzretf, default 29). The final binary re-measured after the gate fixes: permute 71.23 -> 62.24 M, fib 3791.6 -> 3375.9 M,
+towers / queens / json unchanged, binary_trees +0.59 %, memo_cache +0.47 %. Not built this round, ranked:
+
+1. **binary_trees +0.59 % / memo_cache +0.47 %** (under the bar): not narrowed; first look whether their pops are into continuations that
+   build tables (allocation after the pop: the popped trace's sink / snapshot shape).
+2. **RETURN1 at other sites** (`lzretf` bit 2 covers calls that want no result): a fib-like family whose leaf exit serves both call sites
+   still takes an exit + side trace for the other site; the out-of-line native return needs the result stored into the function slot first
+   (the `rec_ret` writeback of `RETURN1`).
+3. **towers**: per-transition cost (89.3), not recording shape: the receiver's metatable facts across links (section 28 (b)), `sloadhome`.
+4. **Deeper subtrees with a size budget / per-site policy** (the assignment's second stage): `recinl` / `sidesub` depth is capped by `MAX_INL`
+   (4 frames in one chain push); `recinl=5` is refused at every level (89.2: 34x on towers with `recinl=13`). Raising `MAX_INL` needs the chain
+   push and `RecCall::inl` widened (`ir::MAX_INL`), and a code-size budget per family (`unrollcode`-like) before it can be a default.
+5. **permute** is now below LuaJIT's instruction count per call (46.4 vs 48); its default-size cycles are the compile cost of the per-level
+   side traces (section 83.3).
