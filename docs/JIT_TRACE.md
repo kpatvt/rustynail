@@ -9452,3 +9452,31 @@ Rolled root traces place their loop head `HEAD_OFFSET` bytes into a 64-byte line
 executes. A trace that ends in a native return (`rec_ret`, no `rec_call`) never jumps back to its head, so the placement buys nothing and the
 `jmp` is one instruction per entry (permute's traces 8 / 9 / 4). Now omitted there (layout only, no mutant). permute 104.88 -> **104.46**
 instructions per call; whole set: permute -0.37 %, fib -0.59 %, nothing else beyond 0.2 % but the noise programs; geomean 0.00 %.
+
+### 79.13 Numbers and what is left
+
+One machine, `RUSTYNAIL_SEED=0`, CPU 9, interleaved runs (the machine carried a load average of 40-70 from other jobs: cycles are minima
+of 11 / 5 runs and carry a few per cent of noise; instructions are exact):
+
+| | c707218 | final (4458617) | LuaJIT 2.1 (75.1) |
+|---|---|---|---|
+| permute instructions / call (N = 1000) | 127.5 | **104.5** (-18.1 %) | 48 |
+| permute cycles / call (N = 1000, steady state) | 21.6 | **18.0** (-16 %) | 9.9 |
+| permute default size, instructions | 117.6 M | **97.6 M** (-17.1 %) | 58 M (best run) |
+| permute default size, cycles | 23.1 M | **20.2 M** (-12.5 %) | 14.5 M (best run) |
+
+Per item (instructions per call): `chainlive` + `pushtag` -0.7, `rootproto` -1.8, `mfside` -3.6, `siteord` -0.5, `retremat` -0.3, `mfconst` -9.5,
+`selfst` -6.3, `retpad` -0.4. Whole set, every 79.x knob off against the defaults in one binary (223 programs, instructions): permute -17.1 %,
+fib -1.5 %, queens -1.1 %, binary_trees -0.4 %, astar_jumper -0.6 % (noise); rises only in the noise programs (testrunner_luaunit +0.3 %,
+real_dis_x86 +0.35 %); geomean -0.10 %. Cycles of the movers (min of 5, off -> on): fib 645.2 -> 609.8 M (-5.5 %), queens 1833 -> 1824 M
+(-0.5 %), binary_trees -0.2 %, towers -1.9 %, storage +0.4 % (instructions -0.1 %: noise). Against the c707218 binary the whole set also shows
+lua_parser +1.6 %, lib/match +1.6 %, scheme_interp +0.8 %, expr_compiler +0.6 %, classic_vector +0.3 %: the same with every 79.x knob off, so
+binary layout (address-dependent formation), not these handles.
+
+Left, ranked by the last profile (traces 7 / 8 / 3 / 11 / 4 / 9: 33.6 / 29.0 / 16.3 / 8.0 / 6.5 / 6.3 instructions per call): the frame
+protocol of every non-leaf call (push writeback, lazy completion of the chain frames, cell dispatch, the native return's root test and site
+chain, about 55 per call) and the entry costs of every trace transition (`POLL`, `BUDGET`, slot type guards, spill round-trips of the entry
+loads) are what LuaJIT avoids by recording the subtree per depth (75.6 (A)); not built here. Not built either: the root test of a lazy return
+(root-ness is dynamic: a caller that becomes the root continues at the inner entry), the `POLL` of push-entered traces (the CP3 retest's
+soundness note: a native push skips `luaD_precall`'s hook test), entry slot-guard elision (21.3.2), `sloadhome` (77.6, still off: its open
+correctness failure), the adaptive `dynunroll` default (79.7: the bar is missed).
