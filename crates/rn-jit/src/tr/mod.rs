@@ -3033,7 +3033,15 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         None
     };
     let assembled = match fused.take() {
-        Some(fz) => fz.finish(ir, &al, &snaps, &rec.writeback, &env, dlink_in.as_ref()),
+        Some(fz) => asm::assemble_dl_in(
+            ir,
+            &al,
+            &snaps,
+            &rec.writeback,
+            &env,
+            dlink_in.as_ref(),
+            Some(fz.into_body()),
+        ),
         None => asm::assemble_dl(ir, &al, &snaps, &rec.writeback, &env, dlink_in.as_ref()),
     };
     let mut a = assembled.map_err(|e| {

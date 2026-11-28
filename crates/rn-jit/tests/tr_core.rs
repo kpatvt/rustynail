@@ -306,6 +306,15 @@ fn trace_cfg(job: &Job) -> TrConfig {
             cfg.limits.asmfuse = v.min(2);
         }
     }
+    // Section 91: `TR_FUSECOV=N` likewise for `fusecov`
+    if let Some(v) = std::env::var("TR_FUSECOV")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        if !job.limits.contains("fusecov") {
+            cfg.limits.fusecov = v.min(15);
+        }
+    }
     // K3a: the struct default of every knob is the shipped value, so every job already runs the shipped configuration. `TR_CORE_PROCESS=1` is kept
     // as an alias that additionally applies `apply_process_limits` (which differs from the default only in `lockstep`: off in a process, on in the
     // tests); the start gates stay off (the programs are tiny)
@@ -10688,7 +10697,15 @@ fn s87_asmfuse_programs() {
 /// `fusecov=0` (control). Mutant `fusecov_patch_skip`.
 #[test]
 fn s91_fusecov_programs() {
-    let progs = ["r2_side_room", "s87_fuse_arith", "s76_side_fail"];
+    let progs = [
+        "r2_side_room",
+        "s87_fuse_arith",
+        "s76_side_fail",
+        "pm3_rec",
+        "rec_fib",
+        "rec_tree",
+        "h1_towers_piles",
+    ];
     let res = compare(b1_jobs(
         &progs,
         &[
@@ -10698,7 +10715,7 @@ fn s91_fusecov_programs() {
         ],
     ));
     assert!(!res.is_empty());
-    assert_eq!(TrLimits::default().fusecov, 1);
+    assert_eq!(TrLimits::default().fusecov, 7);
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at

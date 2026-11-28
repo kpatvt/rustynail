@@ -9739,3 +9739,25 @@ order: (1) lean emitters writing bytes for the hot classes, micro-ops generated 
 entries; (2) `ExitSnap`s built inside the pass, entry lists interned, register state recorded per distinct snapshot; (3) roots (fuse the
 peeled copy and the loop body in one backward pass, the PHI locations as end locations, the snapshot maps shared), native-recursion side
 traces, lazy regions, `TNEXT`, preludes; (4) the pass's own cost, then S3c and S3d.
+
+## 91. Compile cost, round 4: coverage of the fused pass (`fusecov`), and where the remaining compile goes (2026-11-28, base be06bff)
+
+Numbers are user-mode instructions (`RUSTYNAIL_JIT_PHASECTR=1`, `RUSTYNAIL_SEED=0`, CPU 6), the same binary path for both sides of a comparison
+(`exec` wrappers that only set `RUSTYNAIL_JIT_TRACE_LIMITS`).
+
+### 91.0 What the trace kinds cost (measured before changing anything)
+
+`RUSTYNAIL_JIT_OPSTAT=1` + `RUSTYNAIL_JIT_PIPELOG=1`, the per-pipeline totals grouped by the fused pass's verdict (base be06bff; the `[opstat]`
+printing inflates each total by ~80 k, the shares are what matters):
+
+| program | fused sides | room sides (R2) | native sides | roots | lazy / segs |
+|---|---|---|---|---|---|
+| awfy/cd (106.9 M) | 90, 21.6 % | 47, 30.2 % (688 k each) | 85, 17.7 % | 25, 28.1 % | 9, 1.7 % |
+| apps/raytrace (32.6 M) | 26, 31.0 % | 1, 3.6 % | 6, 25.2 % (1.37 M each) | 4, 36.0 % | 2, 4.1 % |
+| awfy/richards (20.3 M) | 4, 8.4 % | 25, 86.8 % | 0 | 2, 4.8 % | 0 |
+| awfy/json (24.9 M) | 21, 22.9 % | 3, 2.3 % | 15, 11.7 % | 13, 52.0 % | 9, 11 % |
+| awfy/towers (12.7 M) | 1, 2.0 % | 3, 4.6 % | 11, 58.4 % | 6, 15.0 % | 6, 20.0 % |
+
+The roots are mostly **not loops**: of cd's 25 roots 3 are peeled loops (11.6 M), 3 rolled roots without native frames (9.4 M) and 19
+native-recursion roots (9.1 M, 480 k each); raytrace 2 loops + 2 rolled, json 4 loops + 5 rolled + 4 native, towers 1 rolled + 5 native,
+richards 2 loops. So the coverage that matters first is the R2 room checks (cd, richards), native recursion (sides and roots) and rolled roots.

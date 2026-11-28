@@ -33,6 +33,11 @@ const GPR_POOL_MASK: u16 = 0x37F;
 
 /// Section 91 (`fusecov` bit 0): side traces with body room checks (R2).
 pub const COV_ROOM: u32 = 1;
+/// Section 91 (`fusecov` bit 1): native-recursion traces (`rec_call` / `rec_ret`: the placeholder guard emits nothing, the guards and tails are
+/// [`assemble_dl_in`]'s).
+pub const COV_NATIVE: u32 = 2;
+/// Section 91 (`fusecov` bit 2): rolled root traces (entry bookkeeping, first-iteration flag, second / inner entries: [`assemble_dl_in`]'s).
+pub const COV_ROOT: u32 = 4;
 
 fn idx(r: Ref) -> usize {
     usize::from(r - REF_BIAS)
@@ -93,18 +98,10 @@ fn bump(k: usize, n: u64) {
     STAT[k].fetch_add(n, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// What the body pass hands to [`FuseBody::finish`]: the body's micro-ops in program order and the assembler state they refer to (stub labels, cold
-/// blocks), plus the allocation records ([`FuseBody::allocation`]).
+/// What the body pass hands on: the assembler state with the body's micro-ops in program order ([`FuseBody::into_body`], for
+/// [`assemble_dl_in`]), plus the allocation records ([`FuseBody::allocation`]).
 pub struct FuseBody {
-    p: Program,
-    stubs: Vec<Stub>,
-    stub_ix: crate::fx::HashMap<(u32, u8), L>,
-    bud_cold: Vec<(L, L, i32)>,
-    hk_cold: Vec<HkCold>,
-    shape_cold: Vec<ShapeCold>,
-    hk_fused_n: u32,
-    hk_split_n: u32,
-    dbl: Vec<u32>,
+    body: FusedBody,
     fal: Vec<InsAlloc>,
     snap_locs: Vec<Vec<Loc>>,
     fused: Vec<bool>,
@@ -114,10 +111,18 @@ pub struct FuseBody {
     ext: u16,
 }
 
-/// Section 87 (`RUSTYNAIL_JIT_OPSTAT=1`): why a trace is not eligible (the first reason).
-fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts, cov: u32) -> String {
+/// Section 87 (`RUSTYNAIL_JIT_OPSTAT=1`) / 91: why a trace is not eligible (the first reason), `None` when it is.
+fn refusal(
+    ir: &TraceIr,
+    env: &AsmEnv,
+    opts: &TraceOpts,
+    ropts: &RaOpts,
+    cov: u32,
+) -> Option<&'static str> {
+    let root = env.side.is_none();
+    let native = ir.rec_call.is_some() || ir.rec_ret.is_some();
     let checks: [(&str, bool); 12] = [
-        ("root", env.side.is_none()),
+        ("root", root && (cov & COV_ROOT == 0 || ir.loop_at.is_some())),
         ("loop", ir.loop_at.is_some()),
         (
             "carry",
@@ -127,10 +132,11 @@ fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts, cov: u3
                 || ir.carry_link,
         ),
         ("segs", !ir.segs.is_empty()),
-        ("native", ir.rec_call.is_some() || ir.rec_ret.is_some()),
+        ("native", native && cov & COV_NATIVE == 0),
         ("prelude", env.prelude),
         ("room", env.side_room && cov & COV_ROOM == 0),
-        ("lazy", env.lazy || env.head != 0),
+        // (a root's entry bookkeeping is `head`; a side trace with a head is a link root)
+        ("lazy", env.lazy || (env.head != 0 && !root)),
         (
             "budget",
             env.budget_reg != Some(ra::BUDGET_GPR) || ropts.reserve_gpr != Some(ra::BUDGET_GPR),
@@ -142,38 +148,16 @@ fn refusal(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts, cov: u3
         ),
         ("op", !(0..ir.ins.len()).all(|i| converted(ir, i))),
     ];
-    match checks.iter().find(|c| c.1) {
-        Some(("op", _)) => {
-            let i = (0..ir.ins.len()).find(|&i| !converted(ir, i)).unwrap_or(0);
-            format!("op {}", ir.ins[i].op.name())
-        }
-        Some((w, _)) => (*w).to_string(),
-        None => "?".into(),
-    }
+    checks.iter().find(|c| c.1).map(|c| c.0)
 }
 
-/// The eligibility scan (cheap: no allocation).
-fn eligible(ir: &TraceIr, env: &AsmEnv, opts: &TraceOpts, ropts: &RaOpts, cov: u32) -> bool {
-    env.side.is_some()
-        && ir.loop_at.is_none()
-        && ir.carry.is_empty()
-        && ir.carry_in.is_empty()
-        && ir.carry_store.is_empty()
-        && !ir.carry_link
-        && ir.segs.is_empty()
-        && ir.rec_call.is_none()
-        && ir.rec_ret.is_none()
-        && !env.prelude
-        && (!env.side_room || cov & COV_ROOM != 0)
-        && !env.lazy
-        && env.head == 0
-        && env.budget_reg == Some(ra::BUDGET_GPR)
-        && opts.randra.is_none()
-        && ropts.carry_at == 0
-        && !ropts.homes
-        && !ropts.homes_snap
-        && ropts.reserve_gpr == Some(ra::BUDGET_GPR)
-        && (0..ir.ins.len()).all(|i| converted(ir, i))
+fn refusal_text(ir: &TraceIr, why: &str) -> String {
+    if why == "op" {
+        let i = (0..ir.ins.len()).find(|&i| !converted(ir, i)).unwrap_or(0);
+        format!("op {}", ir.ins[i].op.name())
+    } else {
+        why.to_string()
+    }
 }
 
 /// Section 87: the fused pass over an eligible trace (`None`: not eligible or not handled; the old pipeline runs).
@@ -192,9 +176,9 @@ pub fn body(
     if lim == 0 {
         return None;
     }
-    if !eligible(ir, env, opts, ropts, cov) {
+    if let Some(why) = refusal(ir, env, opts, ropts, cov) {
         if super::super::opstat_on() {
-            eprintln!("[fuse] refused: {}", refusal(ir, env, opts, ropts, cov));
+            eprintln!("[fuse] refused: {}", refusal_text(ir, why));
         }
         bump(1, 1);
         return None;
@@ -805,6 +789,9 @@ fn run(
     };
     let mut cx = Cx::new(ir, &al0, &[], env);
     cx.fbody = true;
+    // (as `assemble_dl_in`: a rolled root with entry bookkeeping whose guards exit to the head's dispatch)
+    cx.first_flag =
+        env.head != 0 && (0..n).any(|i| cx.entry_kind(i) == EntryKind::FirstIter);
     cx.p.ops = Vec::with_capacity(32);
     cx.fal.resize_with(n, InsAlloc::default);
     cx.fsnap = vec![Vec::new(); ns];
@@ -835,6 +822,10 @@ fn run(
         cx.ktag.clear();
     }
     let mut rev: Vec<Op> = Vec::with_capacity(8 * n + 16);
+    // per instruction: (length of `rev` behind its group, offset of its code inside the group behind the R2 room checks)
+    let mut at_rev: Vec<(u32, u32)> = vec![(0, 0); n];
+    // the placeholder guard of a native self-call / return assembles to nothing (`assemble_dl_in` emits the push / the return's guards)
+    let placeholder = (ir.rec_call.is_some() || ir.rec_ret.is_some()).then_some(n.wrapping_sub(1));
     // an instruction whose emission waits for the one in front of it (B4-3: the `HLOAD` behind its `HREFK`: the pair is emitted forwards, the
     // `HREFK` decides the fusion with both allocated)
     let mut held: Option<usize> = None;
@@ -849,7 +840,15 @@ fn run(
             continue;
         }
         cx.p.ops.clear();
-        for j in i..=held.take().unwrap_or(i) {
+        let last = held.take().unwrap_or(i);
+        for j in i..=last {
+            if placeholder == Some(j) {
+                if !(ir.ins[j].op == TOp::Eq && ir.ins[j].flags & F_GUARD != 0) {
+                    return Err("native trace without its placeholder guard");
+                }
+                at_rev[j].1 = cx.p.ops.len() as u32;
+                continue;
+            }
             cx.ffree_x = (ir.ins[j].op == TOp::Fcmp).then(|| fa.free_x_here());
             cx.fcall = fa.calls.last().copied().filter(|c| c.at == j);
             if ir.ins[j].op == TOp::Hstore {
@@ -858,11 +857,15 @@ fn run(
                 }
             }
             cx.side_room_block(j).map_err(|_| "room checks")?;
+            at_rev[j].1 = cx.p.ops.len() as u32;
             cx.pre(j);
             cx.ins(j, loop_l).map_err(|_| "emitter")?;
             cx.post(j);
         }
         rev.extend(cx.p.ops.drain(..).rev());
+        for e in &mut at_rev[i..=last] {
+            e.0 = rev.len() as u32;
+        }
     }
     if held.is_some() {
         return Err("held instruction");
@@ -871,6 +874,8 @@ fn run(
         return Err("snapshot left open");
     }
     bump(4, u64::from(fa.next_slot));
+    let total = rev.len() as u32;
+    let at: Vec<u32> = at_rev.iter().map(|&(e, o)| total - e + o).collect();
     rev.reverse();
     cx.p.ops = rev;
     let snap_locs = std::mem::take(&mut cx.fsnap);
@@ -890,16 +895,9 @@ fn run(
     let mut calls = std::mem::take(&mut fa.calls);
     calls.reverse();
     drop(fa);
+    let st = cx.take_state();
     Ok(FuseBody {
-        p: std::mem::take(&mut cx.p),
-        stubs: std::mem::take(&mut cx.stubs),
-        stub_ix: std::mem::take(&mut cx.stub_ix),
-        bud_cold: std::mem::take(&mut cx.bud_cold),
-        hk_cold: std::mem::take(&mut cx.hk_cold),
-        shape_cold: std::mem::take(&mut cx.shape_cold),
-        hk_fused_n: cx.hk_fused_n,
-        hk_split_n: cx.hk_split_n,
-        dbl: std::mem::take(&mut cx.dbl),
+        body: FusedBody { st, at },
         fal: std::mem::take(&mut cx.fal),
         snap_locs,
         fused,
@@ -926,133 +924,8 @@ impl FuseBody {
         }
     }
 
-    /// The entry sequence, the body, the writeback and link, and the stubs and cold blocks: the trace's program, as [`assemble_dl`] lays out a side
-    /// trace.
-    #[inline(never)]
-    pub fn finish(
-        self,
-        ir: &TraceIr,
-        al: &Allocation,
-        snaps: &[ExitSnap],
-        writeback: &[SnapEntry],
-        env: &AsmEnv,
-        dl: Option<&DlinkIn>,
-    ) -> Result<Asm, AsmError> {
-        if snaps.len() != ir.snaps.len() || al.end_locs.len() != writeback.len() {
-            return incons("fused: exits / writeback do not match");
-        }
-        let Some(sd) = env.side else {
-            return incons("fused: not a side trace");
-        };
-        let mut cx = Cx::new(ir, al, snaps, env);
-        cx.pre_snaps = Cow::Owned(exit::pre_roll_snaps(ir));
-        cx.chain_snaps = Cow::Owned(if env.chain && !mutants::active("chain_stub_never") {
-            exit::guard_kinds(ir).iter().map(|g| g & 1 != 0).collect()
-        } else {
-            Vec::new()
-        });
-        cx.sites = Cow::Owned(exit::site_classes(ir));
-        cx.wb_ents = exit::wb_ents_ex(ir, env.guarddiet.then_some(&env.entry_tags));
-        cx.shape_dropped = shape_dropped(ir, env.shape_min);
-        cx.p.nlabels = self.p.nlabels;
-        cx.stubs = self.stubs;
-        cx.stub_ix = self.stub_ix;
-        cx.bud_cold = self.bud_cold;
-        cx.hk_cold = self.hk_cold;
-        cx.shape_cold = self.shape_cold;
-        cx.hk_fused_n = self.hk_fused_n;
-        cx.hk_split_n = self.hk_split_n;
-        cx.dbl = self.dbl;
-        let entry = cx.label();
-        let loop_l = cx.label();
-        let entry_fail = cx.label();
-        cx.bind(entry);
-        cx.seg_oracle_entry();
-        cx.entry_checks(entry_fail)?;
-        let dl =
-            dl.filter(|d| !d.carry && env.no_room_checks && env.budget_reg == Some(ra::BUDGET_GPR));
-        let dl_after = dl.map(|_| {
-            let l = cx.label();
-            cx.bind(l);
-            l
-        });
-        let start_l = cx.label();
-        cx.bind(start_l);
-        cx.bind(loop_l);
-        cx.count_iteration();
-        cx.p.ops.extend(self.p.ops);
-        if !mutants::active("rolled_no_writeback") {
-            for (k, e) in writeback.iter().enumerate() {
-                cx.store_slot(e.slot, e.r, al.end_locs[k])?;
-            }
-        }
-        if sd.link_cell != 0 {
-            cx.emit_link(sd, writeback)?;
-        }
-        let entry_dl = match (dl, dl_after) {
-            (Some(dl), Some(after)) => {
-                let l = cx.label();
-                cx.bind(l);
-                cx.seg_oracle_entry();
-                if let Some((ctr, inc)) = dl.count.filter(|_| !mutants::active("slink_count_skip"))
-                {
-                    cx.push(Op::Mov(7, ctr));
-                    cx.push(Op::AddM {
-                        w: W::B4,
-                        m: rm(7, 0),
-                        imm: inc,
-                    });
-                }
-                if !mutants::active("dlink_store_skip") {
-                    for op in &dl.ops {
-                        cx.push(*op);
-                    }
-                }
-                let refund = if mutants::active("dlink_refund_off") {
-                    dl.refund + 1
-                } else {
-                    dl.refund
-                };
-                if refund != 0 {
-                    cx.push(Op::Add(ra::BUDGET_GPR, Src::Imm(refund)));
-                }
-                cx.push(Op::Jmp(after));
-                Some(l)
-            }
-            _ => None,
-        };
-        cx.stubs_and_tail(entry_fail, None)?;
-        let stubs = cx.nstubs;
-        let defer_g = std::mem::take(&mut cx.defer_g);
-        let shared_label = cx.shared_l;
-        let defer = (!defer_g.is_empty()).then(|| DeferCtx {
-            env: *env,
-            pre_snaps: std::mem::take(&mut cx.pre_snaps).into_owned(),
-            chain_snaps: std::mem::take(&mut cx.chain_snaps).into_owned(),
-            sites: std::mem::take(&mut cx.sites).into_owned(),
-            reload_k: false,
-        });
-        Ok(Asm {
-            prog: std::mem::take(&mut cx.p),
-            entry,
-            loop_label: loop_l,
-            stubs,
-            hk_fused: cx.hk_fused_n,
-            hk_split: cx.hk_split_n,
-            dbl: std::mem::take(&mut cx.dbl),
-            dl_ok: std::mem::take(&mut cx.dl_ok),
-            entry_dl,
-            inner: None,
-            entry2: None,
-            e2_req: Vec::new(),
-            entry2n: None,
-            entry3: None,
-            entry_c: None,
-            carry: Vec::new(),
-            carry_budget: 0,
-            defer,
-            defer_g,
-            shared_label,
-        })
+    /// The body for [`assemble_dl_in`] (call after [`FuseBody::allocation`]).
+    pub(crate) fn into_body(self) -> FusedBody {
+        self.body
     }
 }

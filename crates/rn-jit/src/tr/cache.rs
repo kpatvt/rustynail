@@ -70,7 +70,7 @@ pub const CODEMAP_PROCESS: u32 = 1;
 /// geomean -0.03 %, no program above +0.1 %).
 pub const ASMFUSE_PROCESS: u32 = 1;
 /// Section 91 (`fusecov`): the process default of [`TrLimits::fusecov`] (also the struct default).
-pub const FUSECOV_PROCESS: u32 = 1;
+pub const FUSECOV_PROCESS: u32 = 7;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
 pub const LAZYSTUB_PROCESS: u32 = 1;
 /// Section 80.1 (`gexit`): the process default of [`TrLimits::gexit`] (also the struct default).

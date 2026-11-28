@@ -2761,6 +2761,68 @@ struct Cx<'a> {
     fcall: Option<CallSite>,
 }
 
+/// Section 91: the owned assembler state that the fused pass (`fuse`) hands to [`assemble_fused`]: the body's program and every stub, cold block
+/// and label table its emitters created (label numbers continue from it).
+macro_rules! cx_state {
+    ($($f:ident : $t:ty),* $(,)?) => {
+        #[derive(Default)]
+        pub(crate) struct CxState {
+            $($f: $t),*
+        }
+        impl Cx<'_> {
+            fn take_state(&mut self) -> CxState {
+                CxState { $($f: std::mem::take(&mut self.$f)),* }
+            }
+            fn put_state(&mut self, s: CxState) {
+                $(self.$f = s.$f;)*
+            }
+        }
+    };
+}
+
+cx_state! {
+    p: Program,
+    stubs: Vec<Stub>,
+    stub_ix: crate::fx::HashMap<(u32, u8), L>,
+    disp_ix: crate::fx::HashMap<u32, L>,
+    disps: Vec<Disp>,
+    saved: Vec<(Loc, u16)>,
+    mat_shared: Vec<(Vec<MatKey>, L)>,
+    mat_frames: Vec<Vec<exit::FrameRestore>>,
+    mat_codes: Vec<u64>,
+    hk_fused: Option<usize>,
+    hk_cold: Vec<HkCold>,
+    shape_cold: Vec<ShapeCold>,
+    rec_ci_cold: Vec<(L, L)>,
+    root_ci_cold: Vec<(L, L, L)>,
+    bud_cold: Vec<(L, L, i32)>,
+    bh_tramps: Vec<(L, L, i32)>,
+    bh_tramp_ix: std::collections::HashMap<(L, i32), L>,
+    rc_cold: Vec<(L, L, Vec<(u16, Ref, Loc)>)>,
+    dense_cold: Vec<(L, L, Vec<Op>)>,
+    carry_slow: Vec<(L, L, u64, ExitSnap)>,
+    hk_fused_n: u32,
+    hk_split_n: u32,
+    dbl: Vec<u32>,
+    dl_ok: Vec<u32>,
+    defer_g: Vec<(u32, L)>,
+    shared_l: Option<L>,
+    rf_sites: Vec<L>,
+    rf_nr: Vec<L>,
+    ext_leave_used: [bool; 2],
+    tramps: Vec<(L, u64)>,
+    far: Vec<(L, u64)>,
+    lz_leave: [Option<L>; 2],
+}
+
+/// Section 91: what the fused pass (`fuse::run`) hands to [`assemble_dl_in`] in place of the per-instruction walk: the assembler state with the
+/// body's micro-ops in program order, and per instruction the index of the body op where its code starts behind the R2 room checks (the place of the
+/// native return's guards and of the second entry's label).
+pub(crate) struct FusedBody {
+    pub(crate) st: CxState,
+    pub(crate) at: Vec<u32>,
+}
+
 impl<'a> Cx<'a> {
     /// An assembler state with nothing emitted; the IR-derived tables (`pre_snaps`, `chain_snaps`, `sites`, `wb_ents`) are empty (the caller fills them).
     fn new(ir: &'a TraceIr, al: &'a Allocation, snaps: &'a [ExitSnap], env: &'a AsmEnv) -> Cx<'a> {
@@ -3380,6 +3442,20 @@ pub fn assemble_dl(
     env: &AsmEnv,
     dl: Option<&DlinkIn>,
 ) -> Result<Asm, AsmError> {
+    assemble_dl_in(ir, al, snaps, writeback, env, dl, None)
+}
+
+/// [`assemble_dl`]; section 91: with `fb`, the body is the fused pass's (its micro-ops and assembler state, `al` its allocation) instead of the
+/// per-instruction walk; the entries, writeback, link / native tails and stubs are laid out around it as for any trace.
+pub(crate) fn assemble_dl_in(
+    ir: &TraceIr,
+    al: &Allocation,
+    snaps: &[ExitSnap],
+    writeback: &[SnapEntry],
+    env: &AsmEnv,
+    dl: Option<&DlinkIn>,
+    fb: Option<FusedBody>,
+) -> Result<Asm, AsmError> {
     if al.ins.len() != ir.ins.len() || snaps.len() != ir.snaps.len() {
         return incons("allocation / exits do not match the IR");
     }
@@ -3425,6 +3501,20 @@ pub fn assemble_dl(
     cx.first_flag = rolled
         && env.head != 0
         && (0..ir.ins.len()).any(|i| cx.entry_kind(i) == EntryKind::FirstIter);
+    // section 91: the fused body's state first (its labels are numbered from 0, everything allocated below follows them)
+    let fused_body = match fb {
+        Some(mut fb) => {
+            if !rolled {
+                return incons("fused body of a looped trace");
+            }
+            let ops = std::mem::take(&mut fb.st.p.ops);
+            let keep = std::mem::take(&mut cx.p.ops);
+            cx.put_state(fb.st);
+            cx.p.ops = keep;
+            Some((ops, fb.at))
+        }
+        None => None,
+    };
     let entry = cx.label();
     let loop_l = cx.label();
     let entry_fail = cx.label();
@@ -3540,8 +3630,50 @@ pub fn assemble_dl(
         e2plan.as_ref().map(|p| p.0),
     );
     let mut cloop_done = false;
+    if let Some((ops, at)) = &fused_body {
+        // section 91: the fused body, with the native return's guards (in front of the first budget charge, or at the end with `rec_late`) and the
+        // second entry's label spliced in where the walk below would emit them
+        let n = ir.ins.len();
+        if at.len() != n {
+            return incons("fused body positions do not match the IR");
+        }
+        let mut k = 0usize;
+        for i in 0..n {
+            let rrg = matches!(
+                (ir.rec_ret, ir.ins[i].op, env.rec_late),
+                (Some(_), TOp::Budget, false)
+            );
+            let e2 = e2plan.as_ref().is_some_and(|p| p.0 == i);
+            if rrg || e2 {
+                let pos = at[i] as usize;
+                cx.p.ops.extend_from_slice(&ops[k..pos]);
+                k = pos;
+            }
+            if rrg {
+                if let Some(rr) = ir.rec_ret {
+                    cx.rec_ret_guards(i, rr)?;
+                }
+            }
+            if e2 {
+                cx.bind(e2_after);
+            }
+        }
+        cx.p.ops.extend_from_slice(&ops[k..]);
+        if let (Some(rr), true) = (ir.rec_ret, env.rec_late) {
+            let i = n - 1;
+            if !cx.al.ins[i].pre.is_empty() {
+                return incons("reloads in front of a native return's placeholder guard");
+            }
+            let at = if mutants::active("t4_late_start_snap") {
+                ir.ins.iter().position(|x| x.op == TOp::Budget).unwrap_or(i)
+            } else {
+                i
+            };
+            cx.rec_ret_guards(at, rr)?;
+        }
+    }
     for i in 0..ir.ins.len() {
-        if cloop_done {
+        if cloop_done || fused_body.is_some() {
             break;
         }
         if let Some((g, cnt, ref adds)) = cloop {
