@@ -5088,6 +5088,11 @@ const TABLE: &[Row] = &[
         owner: "S87",
         dets: &[d("tr_core", "s87_asmfuse_programs")],
     },
+    Row {
+        name: "asmfuse_call_live",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

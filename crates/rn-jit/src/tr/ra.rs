@@ -569,7 +569,7 @@ fn is_call_op(op: TOp) -> bool {
 /// Section 51 (`RAPOL_CALLSPILL`): a call site whose helper call is on the main path of the assembled code, whatever the assembler's options:
 /// the instructions with an inline fast path (`TLEN` / `TNEXT`, the `LIB` kinds `BYTE`, `STREQ`, `TYPE`, `TYPENAME`, `SETMT`, `CCALLS`,
 /// `RANDOM`, `RANDF`; `TBAR`'s test of the colours) keep the save / reload of the call site, which their fast path does not execute.
-fn always_calls(ins: &Ins) -> bool {
+pub(crate) fn always_calls(ins: &Ins) -> bool {
     match ins.op {
         TOp::Calln | TOp::Tnew | TOp::Newref | TOp::Tset | TOp::Snew | TOp::Concat | TOp::Strto => {
             true

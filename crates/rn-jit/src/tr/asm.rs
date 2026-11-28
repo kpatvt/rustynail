@@ -2757,6 +2757,8 @@ struct Cx<'a> {
     ffree_x: Option<Option<u8>>,
     /// Section 87: the snapshot exits are not built yet (the fused pass registers stub labels before `build_exits_ex` runs).
     fbody: bool,
+    /// Section 87: the call site of the instruction the fused pass is emitting (the registers to save around its helper call).
+    fcall: Option<CallSite>,
 }
 
 impl<'a> Cx<'a> {
@@ -2825,6 +2827,7 @@ impl<'a> Cx<'a> {
             fsnap: Vec::new(),
             ffree_x: None,
             fbody: false,
+            fcall: None,
         }
     }
 
@@ -5501,6 +5504,9 @@ impl<'a> Cx<'a> {
     fn pre(&mut self, i: usize) {
         if !self.fal.is_empty() {
             // (section 87: the fused pass's own record; the lists are almost always empty)
+            if self.fal[i].pre.is_empty() {
+                return;
+            }
             for r in &self.fal[i].pre.clone() {
                 self.reload(r);
             }
@@ -5514,6 +5520,9 @@ impl<'a> Cx<'a> {
     }
 
     fn post(&mut self, i: usize) {
+        if !self.fal.is_empty() && self.fal[i].stores.is_empty() && self.fal[i].post.is_empty() {
+            return;
+        }
         let owned;
         let a: &InsAlloc = if self.fal.is_empty() {
             let al: &'a Allocation = self.al;
@@ -8083,6 +8092,9 @@ impl<'a> Cx<'a> {
     // ---- helper calls (7.5) ----------------------------------------------------------------------------------------
 
     fn call_site(&self, i: usize) -> Result<CallSite, AsmError> {
+        if let Some(c) = self.fcall.filter(|c| c.at == i) {
+            return Ok(c);
+        }
         match self.al.calls.iter().find(|c| c.at == i) {
             Some(c) => Ok(*c),
             None => incons(format!("no call site for instruction {i}")),

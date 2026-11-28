@@ -10669,7 +10669,7 @@ fn s80_gexit_programs() {
 /// Section 87 (`asmfuse`): side traces allocated and selected by the fused backward pass run identically in every mode (verification, exit
 /// storms, budgets, `-loop`, GC stress 1 / 2, stack moves), with all registers (1), with three general and four double registers (2: evictions,
 /// spills and pinned exit maps everywhere) and with the old back end (0, control). Mutants `asmfuse_no_reload`, `asmfuse_no_store`,
-/// `asmfuse_two_addr`.
+/// `asmfuse_two_addr`, `asmfuse_call_live`.
 #[test]
 fn s87_asmfuse_programs() {
     let progs = [

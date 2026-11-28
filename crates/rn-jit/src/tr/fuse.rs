@@ -54,7 +54,17 @@ pub fn converted(ir: &TraceIr, i: usize) -> bool {
         TOp::Hrefk | TOp::Hload | TOp::Hmiss | TOp::Hshape | TOp::Hstore | TOp::Hrefv => true,
         TOp::Uref | TOp::Uload | TOp::Ustore | TOp::Uvrel => true,
         TOp::Aref | TOp::Aload | TOp::Astore | TOp::Xload => true,
-        TOp::Tlen => !ra::is_call(ir, ins),
+        // stage 3: helper calls (the call site's saved registers are the pass's live registers at the call)
+        TOp::Tlen
+        | TOp::Tbar
+        | TOp::Tnew
+        | TOp::Newref
+        | TOp::Tset
+        | TOp::Lib
+        | TOp::Calln
+        | TOp::Snew
+        | TOp::Concat
+        | TOp::Strto => true,
         _ => false,
     }
 }
@@ -89,6 +99,8 @@ pub struct FuseBody {
     snap_locs: Vec<Vec<Loc>>,
     fused: Vec<bool>,
     end_locs: Vec<Loc>,
+    used: [u32; 2],
+    calls: Vec<CallSite>,
 }
 
 /// Section 87 (`RUSTYNAIL_JIT_OPSTAT=1`): why a trace is not eligible (the first reason).
@@ -206,11 +218,21 @@ struct Fa<'a> {
     xmm: [u32; 16],
     held_g: u16,
     held_x: u16,
+    /// Every register the pass handed out (the allocation's `used` masks).
+    used_g: u16,
+    used_x: u16,
     avail_g: u16,
     avail_x: u16,
     cur_g: u16,
     cur_x: u16,
     cur_i: usize,
+    /// Registers evicted at the current instruction (reloaded behind it: a helper call there need not save them).
+    ev_g: u16,
+    ev_x: u16,
+    /// `ra::RAPOL_CALLSPILL`: values live across an always-taken helper call are evicted there.
+    callspill: bool,
+    /// The call sites found so far (backwards).
+    calls: Vec<CallSite>,
     next_slot: u16,
     snap_first: Vec<u32>,
     snap_last: Vec<u32>,
@@ -231,9 +253,11 @@ impl Fa<'_> {
 
     fn take_reg(&mut self, v: usize, r: u8) {
         if self.is_x[v] {
+            self.used_x |= 1 << r;
             self.xmm[usize::from(r)] = v as u32;
             self.held_x |= 1 << r;
         } else {
+            self.used_g |= 1 << r;
             self.gpr[usize::from(r)] = v as u32;
             self.held_g |= 1 << r;
         }
@@ -340,7 +364,40 @@ impl Fa<'_> {
             });
         }
         self.free_reg(v);
+        if x {
+            self.ev_x |= 1 << r;
+        } else {
+            self.ev_g |= 1 << r;
+        }
         Ok(r)
+    }
+
+    /// `RAPOL_CALLSPILL`: every unpinned value in a register the helper call destroys is evicted at the call.
+    fn spill_across_call(&mut self, out: &mut [InsAlloc]) -> R<()> {
+        for x in [false, true] {
+            let mut m = if x { self.held_x } else { self.held_g & 0x1FF };
+            while m != 0 {
+                let r = m.trailing_zeros() as u8;
+                m &= m - 1;
+                let v = self.holder(x, r) as usize;
+                if self.pins[v] > 0 {
+                    continue;
+                }
+                let slot = self.ensure_slot(v)?;
+                out[self.cur_i].post.push(Reload {
+                    reg: Self::rloc(x, r),
+                    slot,
+                    r: (v + usize::from(REF_BIAS)) as Ref,
+                });
+                self.free_reg(v);
+                if x {
+                    self.ev_x |= 1 << r;
+                } else {
+                    self.ev_g |= 1 << r;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn alloc_temp(
@@ -408,6 +465,8 @@ impl Fa<'_> {
         self.cur_i = i;
         self.cur_g = 0;
         self.cur_x = 0;
+        self.ev_g = 0;
+        self.ev_x = 0;
         let (mut dmask_g, mut dmask_x) = (0u16, 0u16);
         let mut dst_loc = Loc::None;
         if self.defines[i] {
@@ -422,14 +481,25 @@ impl Fa<'_> {
             dst_loc = Self::rloc(x, r);
             if x {
                 dmask_x = 1 << r;
+                self.used_x |= 1 << r;
             } else {
                 dmask_g = 1 << r;
+                self.used_g |= 1 << r;
             }
             out[i].dst = dst_loc;
             if self.slot[i] != NOSLOT && !mutants::active("asmfuse_no_store") {
                 out[i].stores.push(self.slot[i]);
             }
         }
+        let live_after = if ra::is_call(ir, &ins) {
+            if self.callspill && ra::always_calls(&ins) {
+                self.spill_across_call(out)?;
+            }
+            // (`V9` / `V10` are callee-saved)
+            Some((self.held_g & 0x1FF, self.held_x))
+        } else {
+            None
+        };
         let refs = ra::operand_refs(ir, self.fused, i);
         let mut locs = [Loc::None; 3];
         for k in 0..3 {
@@ -476,6 +546,20 @@ impl Fa<'_> {
             locs[k] = Self::rloc(x, reg);
         }
         out[i].ops = locs;
+        if let Some((g, x)) = live_after {
+            self.calls.push(CallSite {
+                at: i,
+                live: ra::CallClobber {
+                    // (MUTANT `asmfuse_call_live`: the general registers live across the call are not saved)
+                    gpr: if mutants::active("asmfuse_call_live") {
+                        0
+                    } else {
+                        g & !self.ev_g
+                    },
+                    xmm: x & !self.ev_x,
+                },
+            });
+        }
         if ins.flags & F_GUARD != 0 {
             let s = aux_snap(ins.aux);
             let su = s as usize;
@@ -629,11 +713,17 @@ fn run(
         xmm: [NONE; 16],
         held_g: 0,
         held_x: 0,
+        used_g: 0,
+        used_x: 0,
         avail_g,
         avail_x,
         cur_g: 0,
         cur_x: 0,
         cur_i: n,
+        ev_g: 0,
+        ev_x: 0,
+        callspill: ropts.pol & ra::RAPOL_CALLSPILL != 0,
+        calls: Vec::new(),
         next_slot: 0,
         snap_first,
         snap_last,
@@ -646,7 +736,8 @@ fn run(
     };
     let mut cx = Cx::new(ir, &al0, &[], env);
     cx.fbody = true;
-    cx.fal = vec![InsAlloc::default(); n];
+    cx.p.ops = Vec::with_capacity(32);
+    cx.fal.resize_with(n, InsAlloc::default);
     cx.fsnap = vec![Vec::new(); ns];
     // R1 (`regcarry`): a link that hands values over in registers reads the allocation's end locations in its own way: not converted
     if let Some(sd) = env.side.filter(|s| s.link_cell != 0) {
@@ -691,6 +782,7 @@ fn run(
         cx.p.ops.clear();
         for j in i..=held.take().unwrap_or(i) {
             cx.ffree_x = (ir.ins[j].op == TOp::Fcmp).then(|| fa.free_x_here());
+            cx.fcall = fa.calls.last().copied().filter(|c| c.at == j);
             if ir.ins[j].op == TOp::Hstore {
                 if let Some(k) = ktags.iter().position(|e| e.0 == j) {
                     cx.ktag = std::mem::take(&mut ktags[k].1);
@@ -724,6 +816,10 @@ fn run(
             }
         })
         .collect();
+    let used = [u32::from(fa.used_g), u32::from(fa.used_x)];
+    let mut calls = std::mem::take(&mut fa.calls);
+    calls.reverse();
+    drop(fa);
     Ok(FuseBody {
         p: std::mem::take(&mut cx.p),
         stubs: std::mem::take(&mut cx.stubs),
@@ -738,6 +834,8 @@ fn run(
         snap_locs,
         fused,
         end_locs,
+        used,
+        calls,
     })
 }
 
@@ -746,12 +844,13 @@ impl FuseBody {
     pub fn allocation(&mut self) -> Allocation {
         Allocation {
             ins: std::mem::take(&mut self.fal),
-            weak: vec![false; self.fused.len()],
             fused: std::mem::take(&mut self.fused),
             snap_locs: std::mem::take(&mut self.snap_locs),
             end_locs: std::mem::take(&mut self.end_locs),
             nspill: FUSE_EXT,
             backedge_after: 0,
+            used: std::cell::OnceCell::from(self.used),
+            calls: std::mem::take(&mut self.calls),
             ..Allocation::default()
         }
     }
