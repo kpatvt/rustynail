@@ -242,6 +242,8 @@ pub const CHAINLIVE_PROCESS: u32 = 1;
 pub const PUSHTAG_PROCESS: u32 = 1;
 /// Section 79.3 (`rootproto`): the process default of [`TrLimits::rootproto`] (also the struct default).
 pub const ROOTPROTO_PROCESS: u32 = 1;
+/// Section 101.1 (`tailf0`): the process default of [`TrLimits::tailf0`] (the struct default is 0).
+pub const TAILF0_PROCESS: u32 = 0;
 /// Section 79.4 (`mfside`): the process default of [`TrLimits::mfside`] (also the struct default).
 pub const MFSIDE_PROCESS: u32 = 1;
 /// Section 79.5 (`siteord`): the process default of [`TrLimits::siteord`] (also the struct default).
@@ -1088,6 +1090,10 @@ pub struct TrLimits {
     /// ref (the `SLOAD` of the function slot, as E5's fold gives it) takes no prototype guard: the root frame of a trace always runs the trace's
     /// prototype. 0 = off, 1 = on (default [`ROOTPROTO_PROCESS`]).
     pub rootproto: u32,
+    /// Section 101.1 (`tailf0`, docs/JIT_TRACE.md section 101.1): bit 0: a side recording's `TAILCALL` of a Lua closure in its root frame is
+    /// recorded as the frame replacement of TAILF (section 86.1) also before any pop (the root frame is the frame the side trace was entered in),
+    /// instead of aborting `TailCall` / `LeaveFrame` or ending before it. 0 = off (default [`TAILF0_PROCESS`]).
+    pub tailf0: u32,
     /// Section 79.4 (`mfside`, docs/JIT_TRACE.md section 79.4): E5's fold of the family key also in a frame of the root prototype that `mfdeep` does
     /// not cover (a side trace's seeded chain frames, an inlined frame called with another closure ref), under a guard that the frame's register 0
     /// is the root frame's register 0. 0 = off, 1 = on (default [`MFSIDE_PROCESS`]).
@@ -1531,6 +1537,7 @@ impl Default for TrLimits {
             chainlive: CHAINLIVE_PROCESS,
             pushtag: PUSHTAG_PROCESS,
             rootproto: ROOTPROTO_PROCESS,
+            tailf0: 0,
             mfside: MFSIDE_PROCESS,
             siteord: SITEORD_PROCESS,
             retremat: RETREMAT_PROCESS,
@@ -1818,6 +1825,7 @@ impl TrLimits {
                 "chainlive" => l.chainlive = v.min(1),
                 "pushtag" => l.pushtag = v.min(1),
                 "rootproto" => l.rootproto = v.min(1),
+                "tailf0" => l.tailf0 = v.min(1),
                 "mfside" => l.mfside = v.min(1),
                 "siteord" => l.siteord = v.min(1),
                 "retremat" => l.retremat = v.min(1),
@@ -2068,6 +2076,9 @@ impl TrConfig {
         // section 86.2: `lazydec` is on in a process (the struct default, used by the tests, stays 0)
         if !names_limit(limits_env, "lazydec") {
             self.limits.lazydec = LAZYDEC_PROCESS;
+        }
+        if !names_limit(limits_env, "tailf0") {
+            self.limits.tailf0 = TAILF0_PROCESS;
         }
         if !names_limit(limits_env, "tickkeep") {
             self.limits.tickkeep = TICKKEEP_PROCESS;
@@ -3980,8 +3991,9 @@ pub struct TrStats {
     pub efkept: u64,
     /// Section 81.2 (`eflazy`): slots added to heads' `eflazy` sets.
     pub eflazy_slots: u64,
-    /// Section 78.1 (`stitch`): installed traces by what they used (the bits of `Recorded::stitch_use`).
-    pub stitch_use: [u64; 6],
+    /// Section 78.1 (`stitch`): installed traces by what they used (the bits of `Recorded::stitch_use`; section 101.1: bit 6 a TAILF before any
+    /// pop, bit 7 a root tail call of a native followed by its pop).
+    pub stitch_use: [u64; 8],
 }
 
 /// F2a: a side recording or trace hangs off exit `exit` (a snapshot index) of trace `parent` (7.8).
@@ -5813,6 +5825,7 @@ pub fn dlink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
         || es.top.is_some()
         || !es.usable
         || es.seg_pops != 0
+        || !es.root_code.is_null()
     {
         return None;
     }
@@ -5850,6 +5863,7 @@ pub fn slink_source(st: &mut State, id: TrId) -> Option<super::exit::ExitSnap> {
         || es.top.is_some()
         || !es.usable
         || es.seg_pops != 0
+        || !es.root_code.is_null()
     {
         return None;
     }

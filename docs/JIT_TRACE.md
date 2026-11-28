@@ -11889,3 +11889,97 @@ offset 0x700 changed nothing (reverted). A front-end layout effect of the binary
 loop-free iterators (a `loopfree` word in the prototype header, `t1g` bit 3): iter_pipeline unchanged, stream_closures +1.8 % instructions
 against bit 2 alone (reverted). Open: a per-site rule for the flat push in iter_pipeline's map/filter chain. Defaults unchanged (bit 2 is
 worth -3.7 % instructions on stream_closures).
+
+## 101. Gaps to LuaJIT on the worst performers: raytrace profile, `tailf0`, coroutine resume into tier 1 (2026-11-28, base 82c5871 = integ10)
+
+Branch `jit-gap101`. Method: release `rn-cli` of the branch, `RUSTYNAIL_SEED=0`, `perf stat -e cycles:u,instructions:u`, pinned CPU 8, knob
+settings in one binary (`RUSTYNAIL_JIT_TRACE_LIMITS`), interleaved min of N; LuaJIT 2.1 (`/usr/bin/luajit`) on the same CPU.
+
+### 101.0 raytrace: where the gap is
+
+Rounds (`raytrace.lua R`, Mcyc / M instructions): R = 1 ours 63.5 / 174.0, LuaJIT 25.0 / 90.4; R = 2 (the benchmark) 89.5 / 268.6 against
+40.8 / 166.0; every further round about 25-30 Mcyc / 94 M instructions against LuaJIT's 16.5-19 / 76 M. So at the benchmark size **two thirds
+of the cycle gap is the first round** (formation: 68 M instructions of compile — `rec_step` 29.4 M for 7041 recorded steps, pipeline 30 M for
+42 compiles, tier 1 9 M for 15 prototypes — plus the stays in tier 1 / the interpreter before the traces exist); the steady state is 1.5x.
+
+Steady state (R = 12, perf `cycles:u` with `RUSTYNAIL_JIT_PERFMAP=2`): traces 31 %, tier 1 31 % (`vec` 11.8 %, `render` 8.2 %, `trace` 4.1 %,
+`V:add` / `V:mul` / `Plane:*` the rest), table allocation 17.7 % (`setnodevector`, `jit_newtable`, `resize`: the tables of the tier-1
+constructors), GC 5.7 %, compile 11 %. Coverage:
+
+* `render`'s pixel loop is never traced: its root recording aborts `InnerLoop` at the `FORPREP` of `trace`'s object loop (a callee loop),
+  twice, then waits 16393 (`innerretry`). Its continuation heads are refused (`ContNotRecursive`). So `render`, `vec(dx, dy, 1):norm()` and
+  the code after `trace` returns run in tier 1, and every `vec` there allocates.
+* The code of `trace` between its loops (`p = o:add(d:mul(t))`, `normal`, `color`) and the sky path run in tier 1 because the side traces of
+  the object loop's exits abort: `TooLong[sideins]` (recorded before the lights loop had its trace, then blacklisted at the first failure,
+  `sideblf`) and `LeaveFrame` at the root `TAILCALL` of the sky path `return vec(...)` (82 k exits per 12 rounds, about 60 % of the rays).
+* 1.0-1.5 M exits per 12 rounds (about 11 per ray), mostly **integer / float type guards on hash loads**: sphere centres `vec(0, 1, 6)`, the
+  eye `vec(0, 1.5, -3)`, the lights and the plane have integer fields, everything computed is float, so the inlined `V:sub` / `V:dot` of the
+  object loop see a different subtype combination per object and leave through side traces that link back to the loop head (LuaJIT has
+  one number type: no such exits). A micro (`o.x * 0.5` over four objects, one with an integer field) costs **81 instructions / 19 cycles per
+  type exit** (stub, side trace, link through the dispatch cell, the root's pre-roll again).
+
+Existing knobs on raytrace (one binary; R = 2 interleaved min of 9 / R = 12 min of 5, cycles M / instructions M):
+
+| setting | R = 2 | R = 12 |
+|---|---|---|
+| defaults | 87.5 / 269.2 | 330.2 / 1207.2 |
+| `innerlink=3` (section 47) | 86.2 / 259.8 | 316.8 / 1152.3 |
+| `dynunroll=8` (section 75.7) | 88.2 / 254.0 | **308.2 / 1062.4** |
+| `dynunroll=72,dynmiss=3` (79.7) | 88.1 / 254.2 | 305.2 / 1061.4 |
+| `dynunroll=8,innerlink=3` | 86.2 / 259.6 | 316.6 / 1153.4 |
+| source ceiling: sky path `local r = vec(..) return r`, `innerlink=3` | 83.1 / 248.5 | 302.5 / 1104.4 |
+
+`innerlink=3` makes `render` a root that links into the object loop (`links 1`), but the return half never fires (`rets 0`): the object loop's
+exit sides end `TooLong` / `LeaveFrame` before they reach `trace`'s `RETURN`. With the sky path's root tail call removed by hand the return
+half works (`rets 1`).
+
+### 101.1 `tailf0`: TAILF on the entry frame, and the root native tail call with its pop (`TrLimits::tailf0`, default 0)
+
+Section 86.1's TAILF (`retf` bit 10) records a root `TAILCALL` of a Lua closure as the native frame replacement, but only after a `RETF`. The
+root frame of a side trace before any pop is just as real (the frame the trace was entered in), so `tailf0=1`:
+
+* `Rec::tailcall` at depth 0 in a side recording without segments: when `Rec::tailf_applicable` holds (no protected-call body or unroll
+  frame, `C == 0`, `k == 0`, neither the root nor the callee vararg), the entry segment is opened (`Rec::push_entry_seg`, the code shared with
+  `Rec::retf`) and `Rec::tailf` runs as after a pop: callee guard, `TAILF`, a new segment with the callee's prototype (shift 0, pops 0).
+* `Rec::root_tailnat`: a root `TAILCALL` of `setmetatable` (the callee of the TAILF ends in `return setmetatable(t, mt)`): the interpreter calls
+  the native and returns from the frame (`luaD_pretailcall` + `luaD_poscall`); the recording records the native with all results (`C = 0`) and
+  then the root `RETURN B=0` of them as a `RETF` (synthetic instruction; `top_in` set from the native's `top_rel`). Taken only when the pop's
+  gate holds and a dry run of `Rec::retf` (`retf_dry`: it stops at its point of no return) passes, so nothing is recorded that cannot be
+  popped. The pop's guard uses the snapshot taken before the native (`retf_snap`): its exit re-runs the `TAILCALL`, and setting the same
+  metatable twice is setting it once (only `setmetatable`; library functions are not taken).
+* The root-return questions of `on_step` (`retfsel`, `retf` bit 12 / 6, `inner_ret`, `cont_ret`) are also asked at a root `TAILCALL` and in
+  a TAILF segment before any pop (`root_ret_step`; the caller of the replaced frame is the original root's caller).
+* **Bug fixed on the way** (reached only with the knob): `ExitSnap::code_or` chose the entry prototype's code for every snapshot with
+  `seg_pops == 0`; a TAILF segment before any pop has pops 0 and its own code, so its exits landed in the callee's tier-1 code with the
+  caller's `savedpc` (`bad 'for' initial value` in raytrace). The test is now `root_code.is_null()` (null exactly for segment 0); `dlink` /
+  `slink` refuse such snapshots like the popped ones. With the knob off both tests are equivalent.
+* Counters: `[trace] stitch: ... tailf0 N tailnat0 M` (bits 6 / 7 of `Recorded::stitch_use`).
+
+Measured on raytrace (interleaved, as above): `tailf0=1` R = 12 325.6 / 1149.8 (-1.4 % / -4.8 %), R = 2 268.1 M instructions (-0.4 %);
+`innerlink=15,tailf0=1` 322.6 / 1120.2 (-2.3 % / -7.2 %), R = 2 90.4 / 263.2 (cycles +3 %); with `dynunroll=8` it is worse than `dynunroll=8`
+alone (323.6 / 1130.2 against 308.2 / 1062.4: the sides that pop into `render` take the place of `render`'s own unrolled root). **Default
+OFF**: built, sound, tested; no setting with it beats `dynunroll` on its target.
+
+Tests: `tests/vm/s101_tailf0.lua` (vm corpus; the sky-path shape from two call sites, type changes after the TAILF, arity mismatches, errors
+with levels, traceback and `istailcall` inside the tail-called function, `__gc` / `__metatable` metatables), `tr_core::s101_tailf0_programs`
+(`tailf0` 1 / 0, with `innerlink=15`, with `retf=1203`; modes `always` / `on2` / `on`, `+verify`, exit storms, budgets 3 / 17, GC stress 2;
+asserts TAILF and native-tail pops with the knob and none without). Mutants (registry 966 -> 969): `tailf0_never`, `tailf0_code_by_pops`,
+`tailnat0_never`, all caught by `s101_tailf0_programs`. Not claimed (no detector found, dropped): the root-return questions skipped in the TAILF
+segment (function-entry families: the shapes tried did not form a TAILF), and the pop guarding with the post-native snapshot (equivalent in the
+tested shapes: the recorded `setmetatable` takes its snapshot before the pop does).
+
+### 101.2 Coroutine resume into tier 1 (`cot1`): built, measured, dropped
+
+lib/co_yield (`wrap` body `while true do n = n + 1 coroutine.yield(n) end`, 1.49 M resume / yield pairs): 1031 M instructions (694 per pair;
+PUC 5.5 1311 M, LuaJIT 596 M). The body runs in the interpreter (`run_mode` 52 %, `coro_direct` 21 %, `jit_call` 11 %): it is compiled but
+entered twice. Prototype: in `fused_body`, before `run(prev)`, flag the resumed frame `TRAP_JIT` when its prototype has compiled code, so the
+`'frame` head enters tier 1 at the `CALL`'s continuation. Result: 1.49 M entries, **+17.5 % instructions, +12 % cycles** (enter / thunk per
+pair, the yield leaves through the helper's error path, tier 1's `GETTABUP` + `GETFIELD` for `coroutine.yield` are slower than the interpreter's
+cached path). Reverted; nothing kept.
+
+### 101.3 matmul
+
+n = 200: 40.5 Mcyc against LuaJIT's 37.4 (1.08x); n = 400 (the benchmark): 430 against 276 (1.56x) at 1622 / 1123 M instructions. The kernel
+trace is 17 IR per iteration (two array loads, one bounds check, `FMUL` / `FADD`, `POLL`, `BUDGET`, two counters). The cycle gap at n = 400 is
+the 16-byte `TValue`: the 400 x 400 matrix `b` read by columns is 2.56 MB against LuaJIT's 1.28 MB of 8-byte doubles. Not a trace-compiler
+lever (an unboxed float array part in `rn-core::table` would be).

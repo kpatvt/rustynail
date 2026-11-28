@@ -34,4 +34,10 @@ pub const S77_PROGS: &[Prog] = &[
         // section 86.1 (TAILF, `retf` bit 10): the vm-corpus program, also compared with the reference there
         src: include_str!("../../../../tests/vm/s86_tailf.lua"),
     },
+    Prog {
+        name: "s101_tailf0",
+        small: true,
+        // section 101.1 (`tailf0`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s101_tailf0.lua"),
+    },
 ];

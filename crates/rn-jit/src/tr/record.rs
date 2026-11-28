@@ -237,6 +237,8 @@ pub struct RecCfg {
     pub chainlive: bool,
     /// Section 79.3 (`rootproto`): a call of the root frame's own closure ref takes no prototype guard.
     pub rootproto: bool,
+    /// Section 101.1 (`tailf0`): TAILF before any pop (a side recording's root `TAILCALL` of a Lua closure).
+    pub tailf0: bool,
     /// Section 79.4 (`mfside`): E5's fold in any frame of the root prototype under a guard that its register 0 is the root's.
     pub mfside: bool,
     /// Section 77.3 (`uvk`): read-only upvalues of a closure held by identity are constants (bit 0); bit 1: not in the root frame of the
@@ -656,6 +658,7 @@ impl Default for RecCfg {
             mfshare: super::cache::MFSHARE_PROCESS != 0,
             chainlive: super::cache::CHAINLIVE_PROCESS != 0,
             rootproto: super::cache::ROOTPROTO_PROCESS != 0,
+            tailf0: false,
             mfside: super::cache::MFSIDE_PROCESS != 0,
             // (section 77.3: the driver sets it from `TrLimits::uvk`; recorder unit tests replay against handle models that cannot evaluate an
             // identity guard on a closure address, and tr_core covers the knob)
@@ -1628,6 +1631,10 @@ struct Rec {
     reroot: Option<usize>,
     /// Section 89.1 (`lzretf`): the `RETF` being recorded is the lazy form (the root frame pops into a frame of its own closure in the region).
     lzretf_now: bool,
+    /// Section 101.1: [`Rec::retf`] stops at its point of no return and answers `Some(0)` (the pop is possible), without recording anything.
+    retf_dry: bool,
+    /// Section 101.1: the snapshot the next [`Rec::retf`] guards with (taken before the native of a root tail call, see [`Rec::root_tailnat`]).
+    retf_snap: Option<u32>,
     /// Section 89.1 (`lzretfmax`): the IR length at the lazy `RETF` (0: none yet).
     lzretf_at: usize,
     /// Section 89.5: the IR budget of the current lazy pop (`lzretfmax`, or a quarter of it outside a loop with `lzretf` bit 5).
@@ -1965,6 +1972,8 @@ impl Rec {
             seg_steps: Vec::new(),
             reroot: None,
             lzretf_now: false,
+            retf_dry: false,
+            retf_snap: None,
             lzretf_at: 0,
             lzretf_budget: 0,
             retail: None,
@@ -2497,60 +2506,48 @@ impl Rec {
                 return Err(AbortReason::DepFreed);
             }
         }
+        // section 101.1 (`tailf0`): the root-return questions below are also asked at a root `TAILCALL` and in the segment of a TAILF before
+        // any pop (the caller of the replaced frame is the caller of the original root frame)
+        let root_ret_step = (self.segs.is_empty() || (self.cfg.tailf0 && self.seg_pops() == 0))
+            && match Instruction(code[idx]).opcode() {
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1) => true,
+                Some(OpCode::Tailcall) => self.cfg.tailf0,
+                _ => false,
+            };
         // section 39.1 (T1, `retfsel`): at a `RETURN` of the root frame of a function-entry family's side recording (before the first pop), ask
         // the selector with the caller's head state; `ret` reads the answer
         self.retf_sel_ok = self.cfg.retf_sel
             && self.cfg.fn_root
             && self.cfg.side.is_some()
             && depth == 0
-            && self.segs.is_empty()
-            && matches!(
-                Instruction(code[idx]).opcode(),
-                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
-            )
+            && root_ret_step
             && self.retf_sel_check(st, ci);
         // section 86.5 (`retf` bit 12): the caller's innermost loop around its `CALL` exists and has no installed root trace
         self.retf_untraced_loop = self.cfg.retf & 4096 != 0
             && self.cfg.fn_root
             && self.cfg.side.is_some()
             && depth == 0
-            && self.segs.is_empty()
-            && matches!(
-                Instruction(code[idx]).opcode(),
-                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
-            )
+            && root_ret_step
             && self.caller_loop_state(st, ci) == Some(false);
         // section 77.7 (`retf` bit 6): the caller's loop around the call is traced
         self.retf_self_traced = self.cfg.retf & 64 != 0
             && self.cfg.fn_root
             && self.cfg.side.is_some()
             && depth == 0
-            && self.segs.is_empty()
-            && matches!(
-                Instruction(code[idx]).opcode(),
-                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
-            )
+            && root_ret_step
             && self.caller_loop_traced(st, ci);
         // T9 (`inner_ret`): the same question without the recursion test, for any family whose root head a root trace links into
         self.inner_ret_ok = self.cfg.inner_ret
             && self.cfg.side.is_some()
             && depth == 0
-            && self.segs.is_empty()
-            && matches!(
-                Instruction(code[idx]).opcode(),
-                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
-            )
+            && root_ret_step
             && !mutants::active("innerret_never")
             && self.caller_loop_traced(st, ci);
         // section 78.1 (`stitch` bit 3): the same question for a generic continuation root and for any side recording
         self.cont_ret_ok = self.cfg.cont_ret
             && (self.cfg.side.is_some() || self.cfg.cont_gen)
             && depth == 0
-            && self.segs.is_empty()
-            && matches!(
-                Instruction(code[idx]).opcode(),
-                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
-            )
+            && root_ret_step
             && (self.caller_loop_traced(st, ci) || self.caller_cont_traced(st, ci))
             // section 84.3: not out of a recursion (the pops of recursive code replaced its recursion machinery: sudoku_solver +2.1 %)
             && !Self::ret_in_recursion(st, ci);
@@ -8926,6 +8923,29 @@ impl Rec {
                 }
                 return self.end_exit();
             }
+            // section 101.1 (`tailf0`): the same frame replacement before any pop: the root frame is the real frame the side trace was entered in
+            // (its `CallInfo`, function slot and base); the entry segment is opened first, the callee's segment follows
+            if self.cfg.tailf0
+                && self.segs.is_empty()
+                && self.cfg.side.is_some()
+                && !cfg!(rustynail_lua54)
+                && self.tailf_applicable(vm, i)
+                && !mutants::active("tailf0_never")
+            {
+                self.push_entry_seg(vm);
+                if let Some(r) = self.tailf(vm, idx, i)? {
+                    self.stitch_use |= 64;
+                    return Ok(r);
+                }
+                return Err(AbortReason::Diverge);
+            }
+            // section 101.1 (`tailf0`): `return setmetatable(t, mt)` / `return string.sub(..)` of the root frame (after a TAILF this is the
+            // tail-called function's own tail): the recorded native, then the pop of the root frame with its results, when the pop is certain
+            if self.cfg.tailf0 && self.cfg.side.is_some() && !cfg!(rustynail_lua54) {
+                if let Some(r) = self.root_tailnat(vm, idx, i)? {
+                    return Ok(r);
+                }
+            }
             if self.cfg.fn_root {
                 // (section 78.7: a tail call of a Lua function is a dispatcher, not a leaf: the short-body exemption of `fnleaf` does not apply)
                 if vm.slot(a).as_lclosure().is_some() {
@@ -9062,6 +9082,101 @@ impl Rec {
         };
         let wanted = self.frames[0].nresults as i32;
         self.call_lua(vm, idx, a, nargs, wanted, cl, true).map(Some)
+    }
+
+    /// Section 101.1 (`tailf0`): a root-frame `TAILCALL` of `setmetatable` in a side
+    /// recording. The interpreter calls the native and then returns from the frame with its results (`luaD_pretailcall` + `luaD_poscall`); the
+    /// recording does the same: the native with all results (`C = 0`), then the root `RETURN` of those results as a `RETF` pop. Taken only when
+    /// the pop's gate holds and its checks pass before anything is recorded (a dry run of [`Rec::retf`]); `Ok(None)` otherwise.
+    fn root_tailnat(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction) -> R<Option<usize>> {
+        let (a, b) = (i.a() as usize, i.b() as usize);
+        if b == 0
+            || i.c() != 0
+            || i.k() != 0
+            || self.pcall.is_some()
+            || self.frames[0].pc_shift != 0
+            || !self.cfg.tailnat
+        {
+            return Ok(None);
+        }
+        let fv = vm.slot(a);
+        if fv.tag() != LUA_VLCF {
+            return Ok(None);
+        }
+        let addr = fv.as_native().map_or(0, |f| f as usize);
+        // (only `setmetatable`: the pop's guard exits to the `TAILCALL` before the native, which tier 1 then runs again; setting the same
+        // metatable twice is the same as once, the guards of the recorded native exit before its store)
+        if !(self.cfg.setmt && addr == rn_std::lib_base::jit_setmt_addr()) {
+            return Ok(None);
+        }
+        // the gate of `Rec::ret` for a root `RETURN` (`on_step` asked its questions at this `TAILCALL` too)
+        let gate = self.cfg.retf & 1 != 0
+            && (!self.cfg.fn_root
+                || (self.cfg.retf & 4 != 0 && !self.retf_untraced_loop)
+                || self.retf_sel_ok
+                || self.inner_ret_ok
+                || self.cont_ret_ok
+                || (self.cfg.retf & 16 != 0 && self.retf_into_self(vm)));
+        if !gate {
+            return Ok(None);
+        }
+        self.retf_dry = true;
+        let dry = self.retf(
+            vm,
+            Instruction::abck(OpCode::Return0, a as u32, 1, 0, 0),
+            OpCode::Return0,
+        );
+        self.retf_dry = false;
+        if !matches!(dry, Ok(Some(_))) || mutants::active("tailnat0_never") {
+            return Ok(None);
+        }
+        let nargs = b - 1;
+        let pre = self.cur_snapshot()?;
+        self.tail_lib = true;
+        let r = self.setmt_call(vm, idx, a, nargs, -1, addr);
+        self.tail_lib = false;
+        r?;
+        self.retf_snap = Some(pre);
+        // (the native's results end at the `top` it left: the synthetic `RETURN B=0` reads it as the next instruction would)
+        self.top_in = self.top_rel.take();
+        let synth = Instruction::abck(OpCode::Return, a as u32, 0, 0, 0);
+        match self.retf(vm, synth, OpCode::Return)? {
+            Some(r) => {
+                self.stitch_use |= 128;
+                Ok(Some(r))
+            }
+            None => Err(AbortReason::Diverge),
+        }
+    }
+
+    /// N2c / section 101.1: opens the entry segment (the root frame as the trace was entered) before the first `RETF` or `TAILF`.
+    fn push_entry_seg(&mut self, vm: &Vm<'_>) {
+        if self.segs.is_empty() {
+            self.segs.push(Seg {
+                proto: ProtoKey(self.entry_proto),
+                code: vm.code.as_ptr() as u64,
+                shift: 0,
+                pops: 0,
+                call_pc: 0,
+                a: 0,
+                retf_ins: NOREF,
+            });
+        }
+    }
+
+    /// Section 101.1: the static conditions of [`Rec::tailf`] (checked before the entry segment is opened, so that `tailf` cannot refuse after it).
+    fn tailf_applicable(&self, vm: &Vm<'_>, i: Instruction) -> bool {
+        self.pcall.is_none()
+            && self.frames[0].pc_shift == 0
+            && !self.frames[0].unr
+            && self.frames[0].vdelta == 0
+            && i.c() == 0
+            && i.k() == 0
+            && !vm.cl.proto().is_vararg()
+            && vm
+                .slot(i.a() as usize)
+                .as_lclosure()
+                .is_some_and(|cl| !cl.proto().is_vararg())
     }
 
     /// N2c: frames popped since the entry (the `RETF`s of the recording; a `TAILF` segment keeps its predecessor's count).
@@ -9646,6 +9761,9 @@ impl Rec {
         {
             return Err(AbortReason::RetfAlias);
         }
+        if self.retf_dry {
+            return Ok(Some(0));
+        }
         self.uv_below_stores.clear();
         // ---- point of no return: from here the recording is a RETF recording ----
         let b = ca + 1;
@@ -9681,23 +9799,15 @@ impl Rec {
             })?;
             self.cur_snap = None;
         }
-        let snap = self.cur_snapshot()?;
+        let snap = match self.retf_snap.take() {
+            Some(s) => s,
+            _ => self.cur_snapshot()?,
+        };
         let site = self.b.ir.konst(KVal::Ptr(sp as u64, PtrKind::Raw));
         let bits = ((wanted + 1) as u32 & 0xFF) | if kflag { RETF_K } else { 0 };
         let retf_ins = self.b.emit_retf(site, b as Ref, guard_aux(snap, bits))?;
         // ---- the rebase onto C ----
-        let entry_code = vm.code.as_ptr() as u64;
-        if self.segs.is_empty() {
-            self.segs.push(Seg {
-                proto: ProtoKey(self.entry_proto),
-                code: entry_code,
-                shift: 0,
-                pops: 0,
-                call_pc: 0,
-                a: 0,
-                retf_ins: NOREF,
-            });
-        }
+        self.push_entry_seg(vm);
         let (cum_shift, cum_pops) = (self.shift + b, self.seg_pops() as u8 + 1);
         RETF_USED.with(|c| c.set(true));
         self.segs.push(Seg {

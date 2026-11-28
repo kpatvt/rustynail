@@ -302,8 +302,12 @@ impl ExitSnap {
     /// N2a: the code pointer the root frame of this snapshot's segment runs (`meta_root` for segment 0).
     #[inline]
     pub fn code_or(&self, meta_root: *const u32) -> *const u32 {
-        // (one test of `seg_pops`, which the exit handler needs anyway: segment 0 is the hot case)
-        if self.seg_pops == 0 || mutants::active("seg_root_code_stale") {
+        // (segment 0 is the hot case; section 101.1: a TAILF segment before any pop has `seg_pops == 0` but its own code, so the test is on
+        // `root_code`, null exactly for segment 0)
+        if self.root_code.is_null()
+            || mutants::active("seg_root_code_stale")
+            || (self.seg_pops == 0 && mutants::active("tailf0_code_by_pops"))
+        {
             meta_root
         } else {
             self.root_code
