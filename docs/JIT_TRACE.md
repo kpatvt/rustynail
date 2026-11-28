@@ -9578,3 +9578,53 @@ emits its branch to the exit stub, whose snapshot map is resolved from the curre
 Expected bound: a side trace that is fully fused drops the four back-end phases (about 230 k of cd's 267 k per side trace after 85.2, 86 %) to
 the cost of one pass; LuaJIT's whole compile is ~70 k per trace. The win is gated by the coverage of step 1, which must be measured before
 writing the emitters.
+
+## 87. S3: the fused backward allocate + emit pass (`asmfuse`, 2026-11-27, base 4b33c65)
+
+### 87.0 Step 0: coverage of the class sets (`RUSTYNAIL_JIT_OPSTAT=1`)
+
+`RUSTYNAIL_JIT_OPSTAT=1` prints per pipeline (before allocation) the trace's traits and its op histogram (`[opstat]`), and the fused pass's verdict
+(`[fuse] fused|old`, `[fuse] refused: <first reason>`, `[fuse] fallback: <reason>` and the running counters of `asm::fuse::stats()`). Over the
+six target programs (cd, raytrace, towers, json, fmt_s, richards; 377 side traces, 52 roots, base 4b33c65):
+
+- the 85.5 start set (stack loads, arithmetic, compare guards, `FLOAD`, `BUDGET` / `POLL`) covers 21 side traces (221 of 24620 side-trace
+  instructions); with the hash / upvalue memory ops (`HREFK` / `HLOAD` / `HMISS` / `HSHAPE` / `UREF` / `UVREL` / `ULOAD`) 138 (3854); with the stores
+  and array ops 181 (8146). Every side trace has a `BUDGET`, 376 an `EQ`; 293 `HREFK` + `HLOAD`, 200 `HSHAPE`, 138 `TBAR` (a helper call).
+- traits: 303 side traces have inlined frames in their snapshots (no obstacle: the stubs are the old code), 117 are native-recursion traces
+  (`rec_call` / `rec_ret`), 63 have sunk tables, 8 `RETF` segments, 6 preludes, none carry.
+- deferred stubs (`lazystub`, default on) and `dlink` entries are on nearly every side trace: excluding them (85.5 step 1) would leave nothing,
+  so the fused traces keep them (both are built from the `ExitSnap`s, which the fused pass produces as the old one does).
+
+### 87.1 Shape built (stage S3a-1)
+
+`asm::fuse` (`crates/rn-jit/src/tr/fuse.rs`, a child module of `asm` so that it drives `Cx`). For an eligible trace (`asmfuse` >= 1; side
+trace, no loop / carry / segments / native frames / lazy region / prelude / body room checks / `+randra`, every instruction in `fuse::converted`),
+`fuse::body` runs at the place of `ra::allocate_hinted`:
+
+1. one forward scan of the IR: the fusion flags (`ra::fusion`: the same rules as the allocator's), `defines`, the register class, the
+   clobbered registers, the first / last guard of each snapshot (and the B2 known-tag facts for `HSTORE`, a forward fact of the code);
+2. the end of the trace first: the writeback values get their end locations;
+3. one backward scan: per instruction the allocation (`Fa::process`: the result takes the register its later uses chose and is freed, the
+   operands get registers at the use with the two-address rule and the destination hint, an evicted value gets a spill slot whose store is
+   emitted at its definition and a reload right behind the evicting instruction, at the last guard of a snapshot its exit map is the register
+   state there and the registers it names are pinned until its first guard), then at once the micro-ops of that instruction: the old
+   per-instruction emitters of `Cx` read the record just made (`Cx::fal` / `Cx::fsnap` override `Allocation::ins` / `snap_locs`; `ffree_x`
+   replaces the whole-trace free-XMM scan of `FCMP` by a register free at that point). The ops of each instruction are appended reversed to a
+   buffer that grows backwards (one reversal at the end). An `HREFK` + `HLOAD` pair is emitted forwards once both are allocated (the B4-3
+   fusion decision needs both records). The extension slots start at `fuse::FUSE_EXT` (24): a trace needing more spill slots falls back.
+4. `FuseBody::allocation` hands the records in the old form to the stages that read one (`build_exits_ex` reads the maps; the shape hash,
+   dumps); `FuseBody::finish` lays out the program as `assemble_dl` does for a side trace (entry checks and budget load, `dlink` entry, body,
+   writeback, link, stubs and cold blocks through the old `stubs_and_tail`), so deferred stubs, `dlink` / `slink`, `gexit`, the emulator
+   modes (they run the `Program`) and the exit handler are unchanged.
+
+Anything the pass does not handle (only pinned eviction victims, too many slots, an emitter refusing) returns `Err` and the old pipeline runs:
+the fallback is complete because nothing of the pass is visible outside it. To make the pass possible the per-trace environment (`AsmEnv`) is
+now built before allocation in every pipeline: `pipeline_inner` computes the allocation, the exits, the counters and the cells after the
+environment and patches the three cell fields (`counters`, `exit_cells`, `exit_rcells`) and the frame-link cell of the snapshots afterwards.
+
+`asmfuse=2` (tests): three general and four double registers, so that evictions, spills, reloads and pinned exit maps are everywhere. In debug
+builds every guard of an open snapshot asserts that the registers its map names still hold their values (the pin invariant).
+
+Converted classes: constants, `SLOAD`, integer arithmetic including `IDIV` / `MOD` / shifts, float arithmetic and conversions, every compare
+guard, `EQREF`, `FLOAD`, `BUDGET`, `POLL`, `SSTORE`, `TVIRT`, the hash ops (`HREFK`, `HLOAD`, `HMISS`, `HSHAPE`, `HSTORE`, `HREFV`), the upvalue
+ops, `AREF` / `ALOAD` / `ASTORE`, `XLOAD`, string `TLEN`. Not converted: helper calls (`TBAR`, `CALLN`, class A), `NEWREF`, `RETF`, loops.

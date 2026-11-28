@@ -537,7 +537,7 @@ pub fn has_call(ir: &TraceIr) -> bool {
     ir.ins.iter().any(|i| is_call(ir, i))
 }
 
-fn is_call(ir: &TraceIr, ins: &Ins) -> bool {
+pub(crate) fn is_call(ir: &TraceIr, ins: &Ins) -> bool {
     // P-B: the length of a string is two loads in the assembler, not a helper call
     if ins.op == TOp::Tlen && matches!(ir.ty_of(ins.a), Ty::ShrStr | Ty::LngStr) {
         return false;
@@ -652,7 +652,7 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
 }
 
 /// Does the instruction define a value (a register result)?
-fn defines(op: TOp, fused: bool) -> bool {
+pub(crate) fn defines(op: TOp, fused: bool) -> bool {
     match op {
         TOp::Eq
         | TOp::Ne
@@ -681,6 +681,55 @@ fn defines(op: TOp, fused: bool) -> bool {
         TOp::Add => !fused,
         _ => true,
     }
+}
+
+/// Section 87 (`asmfuse`): the fusion flags [`allocate_hinted`] computes (`Aref` / `Uref`, `hkaddr` `HREFK`s, `ixfuse` index sums), for the fused back end.
+/// The same rules: a fusable address stays fused only if every user is a memory op reading it as its address, no snapshot of a guard and no end use
+/// names it.
+pub fn fusion(ir: &TraceIr, end_uses: &[Ref], opts: &RaOpts) -> Vec<bool> {
+    let mut fused: Vec<bool> = ir
+        .ins
+        .iter()
+        .map(|i| {
+            matches!(i.op, TOp::Aref | TOp::Uref)
+                || (opts.hkaddr && i.op == TOp::Hrefk && TraceIr::is_ins(i.a))
+        })
+        .collect();
+    if !fused.iter().any(|&f| f) {
+        return fused;
+    }
+    let n = fused.len();
+    let unfuse = |fused: &mut Vec<bool>, r: Ref| {
+        if TraceIr::is_ins(r) && idx(r) < n {
+            fused[idx(r)] = false;
+        }
+    };
+    let mut seen = vec![false; ir.snaps.len()];
+    for ins in &ir.ins {
+        let (ra, rb) = ins.op.ref_operands();
+        let a_ok = is_mem(ins.op) && ins.a != ins.b;
+        if ra && !a_ok {
+            unfuse(&mut fused, ins.a);
+        }
+        if rb {
+            unfuse(&mut fused, ins.b);
+        }
+        if ins.flags & F_GUARD != 0 {
+            let s = aux_snap(ins.aux) as usize;
+            if s < seen.len() && !std::mem::replace(&mut seen[s], true) {
+                for e in ir.snap_entries(s as u32) {
+                    unfuse(&mut fused, e.r);
+                }
+            }
+        }
+    }
+    for &r in end_uses {
+        unfuse(&mut fused, r);
+    }
+    if opts.ixfuse {
+        fuse_index_adds(ir, &mut fused, end_uses);
+    }
+    fused
 }
 
 /// Largest `|c|` of a fused index `ADD x, #c` (the displacements `4 + c` and `8 * (c + 1)` fit 32 bits with room to spare).

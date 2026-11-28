@@ -5073,6 +5073,20 @@ const TABLE: &[Row] = &[
         name: "fwdk_key_shift",
         owner: "S85",
         dets: &[d("tr_core", "c1_cspeed_identical_code")],
+    },    Row {
+        name: "asmfuse_no_reload",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
+    Row {
+        name: "asmfuse_no_store",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
+    },
+    Row {
+        name: "asmfuse_two_addr",
+        owner: "S87",
+        dets: &[d("tr_core", "s87_asmfuse_programs")],
     },
 ];
 

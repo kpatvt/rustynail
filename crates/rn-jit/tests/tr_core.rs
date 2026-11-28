@@ -59,6 +59,8 @@ mod s68_progs;
 mod s76_progs;
 #[path = "tr_core/s77_progs.rs"]
 mod s77_progs;
+#[path = "tr_core/s87_progs.rs"]
+mod s87_progs;
 #[path = "tr_core/sink_progs.rs"]
 mod sink_progs;
 #[path = "tr_core/t5_progs.rs"]
@@ -89,6 +91,7 @@ use s64_progs::S64_PROGS;
 use s68_progs::S68_PROGS;
 use s76_progs::S76_PROGS;
 use s77_progs::S77_PROGS;
+use s87_progs::S87_PROGS;
 use sink_progs::SINK_PROGS;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -226,6 +229,7 @@ fn find(name: &str) -> &'static Prog {
         .chain(S77_PROGS)
         .chain(S64_PROGS)
         .chain(S76_PROGS)
+        .chain(S87_PROGS)
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no program {name}"))
 }
@@ -291,6 +295,15 @@ fn trace_cfg(job: &Job) -> TrConfig {
         cfg.limits = TrLimits::parse(&job.limits).0;
         if let Some(m) = sidemin {
             cfg.limits.sidemin = m;
+        }
+    }
+    // Section 87: `TR_ASMFUSE=N` runs every job without its own `asmfuse` with the fused back end at level N (the whole matrix as its oracle)
+    if let Some(v) = std::env::var("TR_ASMFUSE")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        if !job.limits.contains("asmfuse") {
+            cfg.limits.asmfuse = v.min(2);
         }
     }
     // K3a: the struct default of every knob is the shipped value, so every job already runs the shipped configuration. `TR_CORE_PROCESS=1` is kept
@@ -10651,6 +10664,23 @@ fn s80_gexit_programs() {
     let res = compare(b1_jobs(&progs, &["gexit=3", "gexit=1", "gexit=0"]));
     assert!(!res.is_empty());
     assert_eq!(TrLimits::default().gexit, 3);
+}
+
+/// Section 87 (`asmfuse`): side traces allocated and selected by the fused backward pass run identically in every mode (verification, exit
+/// storms, budgets, `-loop`, GC stress 1 / 2, stack moves), with all registers (1), with three general and four double registers (2: evictions,
+/// spills and pinned exit maps everywhere) and with the old back end (0, control). Mutants `asmfuse_no_reload`, `asmfuse_no_store`,
+/// `asmfuse_two_addr`.
+#[test]
+fn s87_asmfuse_programs() {
+    let progs = [
+        "s87_fuse_arith",
+        "s87_fuse_fields",
+        "s76_side_fail",
+        "s64_call_loops",
+    ];
+    let res = compare(b1_jobs(&progs, &["asmfuse=2", "asmfuse=1", "asmfuse=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().asmfuse, 0);
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at

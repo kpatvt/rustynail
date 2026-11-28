@@ -1153,6 +1153,12 @@ pub const NAMES: &[&str] = &[
     "sinkd_group_any",
     // section 85.2 (`cspeed` lever `FWDK`): the constant table of the loop / forwarding copy memoises a copy under the next constant too
     "fwdk_key_shift",
+    // section 87 (`asmfuse`): the fused pass evicts a value without its reload behind the evicting instruction
+    "asmfuse_no_reload",
+    // section 87 (`asmfuse`): the fused pass gives a spilled value its slot but no store at its definition
+    "asmfuse_no_store",
+    // section 87 (`asmfuse`): the second operand of a two-address op may get the destination's register
+    "asmfuse_two_addr",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1246,7 +1252,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 922);
+        assert_eq!(NAMES.len(), 925);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

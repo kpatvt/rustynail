@@ -56,7 +56,7 @@ use super::ir::*;
 /// N5: clears the short / long variant bit of a string tag byte (`ctb(LUA_VSHRSTR)` = 0x44, `ctb(LUA_VLNGSTR)` = 0x54).
 const ANYSTR_MASK: i32 = 0xEF;
 use super::mutants;
-use super::ra::{Allocation, CallSite, Loc, Move, SCRATCH_SPILL};
+use super::ra::{Allocation, CallSite, InsAlloc, Loc, Move, SCRATCH_SPILL};
 use super::{exit_area, NSPILL};
 use crate::ir::{Base, Cc, FOp, Mi, Op, Program, Src, L, M, V, W, X};
 use rn_core::gc::{BLACKBIT, WHITEBITS};
@@ -2748,6 +2748,15 @@ struct Cx<'a> {
     far: Vec<(L, u64)>,
     /// BUNDLE-K L1: labels of the shared leave blocks (`[0]`: plain, `[1]`: the innermost frame was just pushed natively), see [`Cx::lazy_leave_block`].
     lz_leave: [Option<L>; 2],
+    /// Section 87 (`asmfuse`): the per-instruction allocation of the fused pass (owned, filled backwards as the pass goes; empty: read `al`).
+    fal: Vec<InsAlloc>,
+    /// Section 87: the snapshot maps of the fused pass (filled when a snapshot's last guard is allocated; read by `hk_same_state`).
+    fsnap: Vec<Vec<Loc>>,
+    /// Section 87: the fused pass's free double register for the constant operands of `FCMP` (`Some`: use it instead of the whole-trace scan of `al`:
+    /// in a backward pass the registers of the earlier instructions are not known, a register free at this point holds no live value here).
+    ffree_x: Option<Option<u8>>,
+    /// Section 87: the snapshot exits are not built yet (the fused pass registers stub labels before `build_exits_ex` runs).
+    fbody: bool,
 }
 
 impl<'a> Cx<'a> {
@@ -2812,6 +2821,10 @@ impl<'a> Cx<'a> {
             tramps: Vec::new(),
             far: Vec::new(),
             lz_leave: [None, None],
+            fal: Vec::new(),
+            fsnap: Vec::new(),
+            ffree_x: None,
+            fbody: false,
         }
     }
 
@@ -3087,7 +3100,7 @@ impl<'a> Cx<'a> {
     }
 
     fn stub_label(&mut self, snap: u32, entry: bool) -> Result<L, AsmError> {
-        if (snap as usize) >= self.snaps.len() {
+        if (snap as usize) >= self.snaps.len() && !self.fbody {
             return incons(format!("snapshot {snap} has no exit"));
         }
         if let Some(&l) = self.stub_ix.get(&(snap, u8::from(entry))) {
@@ -3140,7 +3153,7 @@ impl<'a> Cx<'a> {
     }
 
     fn poll_stub_label(&mut self, snap: u32) -> Result<L, AsmError> {
-        if (snap as usize) >= self.snaps.len() {
+        if (snap as usize) >= self.snaps.len() && !self.fbody {
             return incons(format!("snapshot {snap} has no exit"));
         }
         if self.ir.snaps[snap as usize].land != Land::Pre {
@@ -3166,7 +3179,7 @@ impl<'a> Cx<'a> {
     /// S4: the label of the shape-miss stub of `snap`: a generic stub whose exit number carries `exit::EXIT_SHAPE` (the cold path of an `HSHAPE`
     /// has stored the node vector and its size in the exit area).
     fn shape_stub_label(&mut self, snap: u32) -> Result<L, AsmError> {
-        if (snap as usize) >= self.snaps.len() {
+        if (snap as usize) >= self.snaps.len() && !self.fbody {
             return incons(format!("snapshot {snap} has no exit"));
         }
         if let Some(&l) = self.stub_ix.get(&(snap, 3)) {
@@ -5486,6 +5499,13 @@ impl<'a> Cx<'a> {
     }
 
     fn pre(&mut self, i: usize) {
+        if !self.fal.is_empty() {
+            // (section 87: the fused pass's own record; the lists are almost always empty)
+            for r in &self.fal[i].pre.clone() {
+                self.reload(r);
+            }
+            return;
+        }
         // (section 80.2: the allocation outlives the assembler state, so its lists are read in place)
         let al: &'a Allocation = self.al;
         for r in &al.ins[i].pre {
@@ -5494,8 +5514,14 @@ impl<'a> Cx<'a> {
     }
 
     fn post(&mut self, i: usize) {
-        let al: &'a Allocation = self.al;
-        let a = &al.ins[i];
+        let owned;
+        let a: &InsAlloc = if self.fal.is_empty() {
+            let al: &'a Allocation = self.al;
+            &al.ins[i]
+        } else {
+            owned = self.fal[i].clone();
+            &owned
+        };
         let (dst, stores, post) = (a.dst, &a.stores, &a.post);
         for &s in stores {
             if self.home_of(s).is_some() {
@@ -5519,11 +5545,37 @@ impl<'a> Cx<'a> {
     // ---- instructions -------------------------------------------------------------------------------------------------
 
     fn ops(&self, i: usize) -> [Loc; 3] {
-        self.al.ins[i].ops
+        if self.fal.is_empty() {
+            self.al.ins[i].ops
+        } else {
+            self.fal[i].ops
+        }
     }
 
     fn dst(&self, i: usize) -> Loc {
-        self.al.ins[i].dst
+        if self.fal.is_empty() {
+            self.al.ins[i].dst
+        } else {
+            self.fal[i].dst
+        }
+    }
+
+    /// The allocation record of instruction `i` (section 87: the fused pass's own while it runs).
+    fn ia(&self, i: usize) -> &InsAlloc {
+        if self.fal.is_empty() {
+            &self.al.ins[i]
+        } else {
+            &self.fal[i]
+        }
+    }
+
+    /// The exit map of snapshot `s` (section 87: the fused pass's own while it runs).
+    fn snap_locs_of(&self, s: usize) -> Option<&Vec<Loc>> {
+        if self.fbody {
+            self.fsnap.get(s)
+        } else {
+            self.al.snap_locs.get(s)
+        }
     }
 
     /// Section 59: the chunk setup of a hoisted loop, at the loop entry (behind the entry moves) and at every chunk end with a nonzero bias. The count
@@ -6685,7 +6737,10 @@ impl<'a> Cx<'a> {
         // constant operands go through a temporary X register: one the allocation never uses (no save, no store/load
         // pair on the dependency chain of the compared value: mandelbrot's `zr*zr + zi*zi < 4.0` lost a third of its
         // speed to the save of the live register the old code picked), else a register saved around the compare
-        let free_x = (0..16u8).rev().find(|&x| !self.al.uses_xmm(x));
+        let free_x = match self.ffree_x {
+            Some(f) => f,
+            None => (0..16u8).rev().find(|&x| !self.al.uses_xmm(x)),
+        };
         self.saved.clear();
         let mut regs = [0u8; 2];
         let mut used: Vec<X> = ops[..2]
@@ -7287,8 +7342,8 @@ impl<'a> Cx<'a> {
     fn hk_same_state(&self, i: usize, sh: usize, sl: usize) -> bool {
         if sh >= self.ir.snaps.len()
             || sl >= self.ir.snaps.len()
-            || sh >= self.al.snap_locs.len()
-            || sl >= self.al.snap_locs.len()
+            || self.snap_locs_of(sh).is_none()
+            || self.snap_locs_of(sl).is_none()
         {
             return false;
         }
@@ -7296,7 +7351,7 @@ impl<'a> Cx<'a> {
         if self.entry_kind(i) != self.entry_kind(i + 1) {
             return false;
         }
-        if !self.al.ins[i].post.is_empty() || !self.al.ins[i + 1].pre.is_empty() {
+        if !self.ia(i).post.is_empty() || !self.ia(i + 1).pre.is_empty() {
             return false;
         }
         let (a, b) = (&self.ir.snaps[sh], &self.ir.snaps[sl]);
@@ -7312,7 +7367,7 @@ impl<'a> Cx<'a> {
         let win = |s: &super::ir::Snap| {
             &self.ir.snapmap[s.map.0 as usize..s.map.0 as usize + usize::from(s.map.1)]
         };
-        win(a) == win(b) && self.al.snap_locs[sh] == self.al.snap_locs[sl]
+        win(a) == win(b) && self.snap_locs_of(sh) == self.snap_locs_of(sl)
     }
 
     /// H1: the base register and the displacement of the node an `HLOAD` / `HSTORE` at `i` accesses: `(node, idx * 24)` when its address is a
@@ -11276,6 +11331,9 @@ impl<'a> Cx<'a> {
 
 /// Support for tests and for the pipeline driver until `cache` keeps a per-prototype pc -> address map.
 #[doc(hidden)]
+#[path = "fuse.rs"]
+pub mod fuse;
+
 pub mod support {
     use crate::lower::{lower_ex, LowerCfg};
     use crate::tr::cache::{emit_dispatch, Dispatch, DispatchCfg, TrMode};
