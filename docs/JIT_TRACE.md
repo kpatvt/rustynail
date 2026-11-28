@@ -9541,3 +9541,15 @@ Next steps (for the coordinator): outerlink per-exit attribution (78.10); msgpac
 `CLOSURE` on trace) which would clear both `stitch` and `eflazy`; the formation knock-ons of `eflazy` (lua_parser head 154 pc 27 `LeaveFrame`
 blacklist, inspect_lua's new continuation root that exits more than tier 1); sudoku_solver under `stitch`; programs/json's arm sensitivity; then
 the unbuilt items (a) and (b) of the brief.
+
+### 81.8 State for the next round (coordinator follow-up queue; nothing else built yet)
+
+* programs/json +0.82 % (81.1): **deterministic, not bimodal**: three runs each, binary before section 81 6758.77 / 6758.77 / 6758.77 M, final
+  binary 6814.30 / 6814.30 / 6814.30 M. Still to attribute: which of programs/json's function roots take allocation exits whose armed firing
+  now refuses to compile a prototype outside the exit's frames (log the refused firings: prototype, pc, exiting trace), and whether that
+  prototype should be allowed (e.g. a caller frame of the root that the 8-frame walk does not reach, or a callee entered right after the return).
+* Queue, in order: (1) msgpack_pure under `stitch`: `SETLIST` with open results from a C call on trace (`{ byte(s, i, e) }`), then the
+  closure-creating `__index` miss path if it pays; sudoku_solver +1.36 % and csv_ini_yaml +0.43 % under `stitch` (bisect by bit, diff trace sets);
+  (2) the `eflazy` knock-ons (lua_parser head 154 pc 27, roguelike heads 37 pc 41 / 8, inspect_lua head 88 pc 22), then `eflazy=1` + `efkeep=4`
+  ON together; (3) `outerlink` per-exit attribution (class_middleclass, dijkstra_routes, sudoku_solver); (4) the unbuilt items (a) cd's unlinked
+  exits + raw-copy materialisation, (b) raytrace (`fnleaf` bit 12 discriminator, links for loops inside callees).
