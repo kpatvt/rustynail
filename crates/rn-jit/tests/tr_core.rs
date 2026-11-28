@@ -15718,7 +15718,8 @@ fn s92_knob_programs() {
         "s60_phases",
     ];
     let off = "sidemin=4,sretry=0,libsite=0";
-    let on = "sidemin=4,sretry=1,libsite=1,reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=100,rerootgain=110";
+    // (section 94.2: `rerootfn=1`: the re-root of the queens test program is on a function-entry / continuation root)
+    let on = "sidemin=4,sretry=1,libsite=1,reroot=1,domn=64,rerootall=0,rerootchk=1024,rerootkeep=100,rerootgain=110,rerootfn=1";
     let mut jobs = Vec::new();
     for p in progs {
         for trace in ["always", "on2"] {

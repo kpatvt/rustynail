@@ -9810,3 +9810,75 @@ Not reached from the coordinator's list: roguelike's `LeaveFrame` loop root (88.
 serpent_ser (the aborting key at pc 172 is a **non-integral float** key, `int_key` -> `TableHash`, not an integer key: it needs a float-key hash
 path, e.g. a `LIB` node lookup returning the node pointer for `HLOAD`; pc 356's abort is a table key with `objkey` bit 0 off), lua_parser 3-path
 under `eflazy`, cd's unlinked exits / raw-copy template, raytrace (`fnleaf` bit 12, callee loop links), the json tick-arm flag test.
+
+## 94. Shipping the section-92 candidate, `reroot` on loop roots only (`rerootfn`), `libsite` / `efkeep` / `eflazy` / `t5` ON (2026-11-28, base 0d0596f)
+
+Method as section 92 (release `rn-cli`, `RUSTYNAIL_SEED=0`, `perf stat -e cycles:u,instructions:u`, absolute script paths, environment padded
+equal per configuration, one binary per comparison; movers with three script path lengths, median of the per-path minima). Whole-set runs:
+223 programs, one run, CPU 13, instructions. Cycles: min of 15 interleaved runs on CPU 14 with three path lengths, only when the sibling (CPU 6)
+was not saturated (a run under load showed every program 1.5x the cycles and +2.7 .. +7.9 % noise between configurations; repeated quiet).
+The bar (user rule): no program up by more than 2 % in cycles, instructions down on the whole.
+
+### 94.1 `sretry=64,reroot=50,rerootkeep=100,rerootgain=110` and `outerlink=1` ON
+
+dijkstra_routes, the only riser of 92.4 (three paths, min of 15): `sretry`+`reroot` set +0.35 % instructions, **+0.98 % cycles** (1118.7 ->
+1129.6 M); with `outerlink=1` +1.05 % instructions, **+1.90 % cycles**; awfy/queens -25.2 % instructions, -21.6 % cycles. Both within the bar:
+**process defaults `sretry=64`, `reroot=50`, `rerootkeep=100` (struct default stays 75), `rerootgain=110`, `outerlink=1`** (struct defaults 0;
+`REROOT_PROCESS_ON` / `REROOTKEEP_PROCESS_ON` beside the struct-default constants).
+
+dijkstra_routes under `outerlink` (cause, not fixed): the 14 outer links carry the end of the inner `for k` loop (line 102) past the untraced
+`while h.n > 0` head (89 pc 42) into the traced loops; `heap_push`'s sift-up loop (14 pc 5) then runs inlined in those side traces instead of
+in its own root (root entries 695 k -> 93 k; the side recordings no longer abort `InnerLoop`, they record one trip count of the sift-up loop and
+exit on the others). Exits are equal (15.0 M / 15.4 M); the extra instructions are the longer side paths (head 89 pc 42: 15 % -> 20 % of the
+samples).
+
+### 94.2 `rerootfn`: `reroot` on loop roots only (stream_closures +13 .. +17 % under `eflazy`)
+
+With the 94.1 defaults `efkeep=4,eflazy=1` measured stream_closures **+16.7 %** (three paths); `reroot=0` turns it into -0.8 %. The rule fired on
+the function root of `filter`'s closure (line 36, `while true do ... src() ... pred(v)`): the root's pre-roll exits were 106 % of its entries
+(the exits of the loop it contains count once per trip, the entries once per call), so `rerootgain`'s "old root completes" was 0 and anything
+won. The re-record then hit the rolled rule of 92.1 32 times (a function root never peels: every unconstrained re-record was dropped, 16 drops,
+then given up), and with that fixed `rerootchk` kept a re-record (326 against 1065 per mille, the same broken ratio) that lost the old family's
+coverage (+13.6 %). Fixes: (1) the rolled-drop rule does not apply to function roots (`TraceIr::fn_root`); (2) **`rerootfn`** (default 0): the
+rule fires only on loop roots (not on function-entry or continuation heads, `TrProto::is_fn_head` / `is_cont_head`); `rerootfn=1` restores the
+old reach. Whole set (94.1 defaults): `rerootfn=1` against 0 geomean +0.01 % (astar_jumper +0.69 %, serpent_ser +0.35 %, testrunner +0.31 %;
+queens, diff_levenshtein, class_middleclass unchanged: their re-roots are loop roots). Formation only: no mutant.
+
+### 94.3 `libsite=1`, `efkeep=4,eflazy=1`, `t5=7` ON
+
+Whole set against the 94.1 defaults (+`rerootfn=0`), one path: `efkeep=4,eflazy=1` -0.13 % (parser_combinator -20 %, cd -5.3 %; up
+stream_closures +4.3 % on this path (three paths: -0.8 %), lua_parser +1.0 %, serpent_ser +0.55 %; roguelike_turns 0.00 %: the
+`LeaveFrame` lottery of 88.3 now falls the good way); `libsite=1` -0.12 % (astar_jumper -7 %, csv_report -6.2 %, real_dis_x86 -3.4 %, json
+-3.4 %, expr_compiler -2.8 %: it removes the expr_compiler rise of `sretry`; up gmatch_words +0.88 %, parser_combinator +0.54 % (the 92.2
+rise of +3.9 % is gone at these defaults)); **`t5=7` -0.34 %** (section 48's object keys: containers_lru_heap -42.4 %, havlak -8.4 %,
+testrunner_luaunit -6.9 %, astar_jumper -5 %; up serpent_ser +0.52 %, json_rxi +0.45 %).
+
+All four on, against the defaults before 94.1 (`sretry=0,reroot=0,outerlink=0`): geomean **-1.42 %** (the 94.1 set alone -0.87 %). Rises
+(three paths, instructions / cycles min of 15): dijkstra_routes +1.04 % / **+1.82 %**, lua_parser +1.09 % / +0.09 %, expr_compiler +0.60 % /
+-0.15 %, gmatch_words +0.87 % / -2.75 % (that cycle pair from a loaded run), astar_jumper +0.55 % / -0.62 % (its instruction count moves run to run by +-5 %), stream_closures
+-0.84 % / -0.36 %. **Process defaults `libsite=1`, `efkeep=4`, `eflazy=1`, `t5=7`** (struct defaults 0; `T5_PROCESS` stays 0 as the struct
+default, `T5_PROCESS_ON` is the process value).
+
+Notes: serpent_ser's pc 356 abort (object key, `t5` bit 0) is gone with `t5=7`; the non-integral float key at pc 172 no longer aborts a root
+(the head is traced, 115 k entries) and serpent_ser spends 83 % of its samples in runtime helpers / the collector, so the float-key hash path is
+not worth building now. cd's blacklisted `LTI` pair (88.5) is `MaxSide` (36 `MaxSide` failures): `maxside=24` -1.55 %, `=32` +2.7 %,
+`polyside=96` +3.7 % (a family-shape lottery, not a lever).
+
+Final binary (f6120cd's code, process defaults as above) against the pre-94 defaults named in the limits string, 223 programs, one path:
+geomean **-1.41 %**; up stream_closures +4.2 % (this path; three paths -0.84 %), astar_jumper +1.33 % (run-to-run), dijkstra_routes +1.04 %,
+gmatch_words +0.88 %, expr_compiler +0.60 %; down containers_lru_heap -42.9 %, awfy/queens -25.2 %, parser_combinator -22.3 %, tinsert_append
+-16.6 %, fmt_s -13.6 %, havlak -8.4 %, loops_arith -8.1 %, mandelbrot -8.1 %, programs/queens -8.0 %, testrunner_luaunit -7.6 %, inspect_lua
+-7.4 %, cd -6.6 %.
+
+### 94.4 Not reached, and the queue
+
+* roguelike `wander_step` (`LeaveFrame` loop root, 88.3): not built; at the 94.3 defaults `eflazy` no longer moves roguelike (0.00 %), so the
+  lottery is not a blocker. A loop root that reaches its root frame's `RETURN` could end with an exit there like a function root (`fn_end`)
+  instead of aborting `LeaveFrame` (`record.rs`, the `d == 0` branch of `ret`); not measured.
+* serpent_ser's non-integral float key (`int_key` -> `TableHash`): not built (see 94.3: helpers / collector dominate the program).
+* cd: the unlinked `LTI` pair is `MaxSide` (94.3); the stitching exits before `put`'s `RETURN1` (pc 82) are a non-tail recursive tree insert
+  (`h.left = put(tree, h.left, key, val)`): needs up-recursion traces, not a link rule. Raw-copy materialisation template not built.
+* raytrace: `fnleaf` bit 12 at these defaults (`fnleaf=4112`, three paths): raytrace +5.8 %, cd +2.75 %, richards 0.00 % (the GETTABUP /
+  GETUPVAL rule of 78.7 is in): the discriminator (callee-prototype stability over the first calls) is still the open item; callee-loop links
+  not built.
+* programs/json's tick-arm residual (0.157 %, 88.1 / 88.9): not changed.
