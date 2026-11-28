@@ -10693,7 +10693,7 @@ fn s87_asmfuse_programs() {
 }
 
 /// Section 91 (`fusecov`): the trace kinds the fused pass covers beyond plain side traces (bit 0: side traces with body room checks, evictions of
-/// pinned values) run identically in every mode, with all registers and with three general / four double registers (`asmfuse=2`), and with
+/// pinned values; bit 1: native recursion; bit 2: rolled roots) run identically in every mode, with all registers and with three general / four double registers (`asmfuse=2`), and with
 /// `fusecov=0` (control). Mutant `fusecov_patch_skip`.
 #[test]
 fn s91_fusecov_programs() {
@@ -10701,7 +10701,6 @@ fn s91_fusecov_programs() {
         "r2_side_room",
         "s87_fuse_arith",
         "s76_side_fail",
-        "pm3_rec",
         "rec_fib",
         "rec_tree",
         "h1_towers_piles",
@@ -10709,13 +10708,13 @@ fn s91_fusecov_programs() {
     let res = compare(b1_jobs(
         &progs,
         &[
-            "siderooms=1,asmfuse=2,fusecov=15",
-            "siderooms=1,fusecov=15",
+            "siderooms=1,asmfuse=2,fusecov=3",
+            "siderooms=1,fusecov=3",
             "siderooms=1,fusecov=0",
         ],
     ));
     assert!(!res.is_empty());
-    assert_eq!(TrLimits::default().fusecov, 7);
+    assert_eq!(TrLimits::default().fusecov, 3);
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at

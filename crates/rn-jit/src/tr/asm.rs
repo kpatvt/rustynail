@@ -3644,6 +3644,8 @@ pub(crate) fn assemble_dl_in(
                 (Some(_), TOp::Budget, false)
             );
             let e2 = e2plan.as_ref().is_some_and(|p| p.0 == i);
+            // (MUTANT `fusecov_rrg_skip`: the native return's guards are left out of a fused body)
+            let rrg = rrg && !mutants::active("fusecov_rrg_skip");
             if rrg || e2 {
                 let pos = at[i] as usize;
                 cx.p.ops.extend_from_slice(&ops[k..pos]);
@@ -3659,7 +3661,11 @@ pub(crate) fn assemble_dl_in(
             }
         }
         cx.p.ops.extend_from_slice(&ops[k..]);
-        if let (Some(rr), true) = (ir.rec_ret, env.rec_late) {
+        if let (Some(rr), true, false) = (
+            ir.rec_ret,
+            env.rec_late,
+            mutants::active("fusecov_rrg_skip"),
+        ) {
             let i = n - 1;
             if !cx.al.ins[i].pre.is_empty() {
                 return incons("reloads in front of a native return's placeholder guard");

@@ -122,7 +122,10 @@ fn refusal(
     let root = env.side.is_none();
     let native = ir.rec_call.is_some() || ir.rec_ret.is_some();
     let checks: [(&str, bool); 12] = [
-        ("root", root && (cov & COV_ROOT == 0 || ir.loop_at.is_some())),
+        (
+            "root",
+            root && (cov & COV_ROOT == 0 || ir.loop_at.is_some()),
+        ),
         ("loop", ir.loop_at.is_some()),
         (
             "carry",
@@ -790,8 +793,7 @@ fn run(
     let mut cx = Cx::new(ir, &al0, &[], env);
     cx.fbody = true;
     // (as `assemble_dl_in`: a rolled root with entry bookkeeping whose guards exit to the head's dispatch)
-    cx.first_flag =
-        env.head != 0 && (0..n).any(|i| cx.entry_kind(i) == EntryKind::FirstIter);
+    cx.first_flag = env.head != 0 && (0..n).any(|i| cx.entry_kind(i) == EntryKind::FirstIter);
     cx.p.ops = Vec::with_capacity(32);
     cx.fal.resize_with(n, InsAlloc::default);
     cx.fsnap = vec![Vec::new(); ns];

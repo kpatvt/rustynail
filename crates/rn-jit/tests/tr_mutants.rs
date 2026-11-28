@@ -5098,6 +5098,12 @@ const TABLE: &[Row] = &[
         owner: "S91",
         dets: &[d("tr_core", "s91_fusecov_programs")],
     },
+    Row {
+        name: "fusecov_rrg_skip",
+        owner: "S91",
+        dets: &[d("tr_core", "s91_fusecov_programs")],
+    },
+
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

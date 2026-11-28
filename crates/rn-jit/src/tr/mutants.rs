@@ -1163,6 +1163,8 @@ pub const NAMES: &[&str] = &[
     "asmfuse_call_live",
     // section 91 (`fusecov`): an evicted pinned value's open exit maps keep its register
     "fusecov_patch_skip",
+    // section 91 (`fusecov` bit 1): the native return's guards are left out of a fused body
+    "fusecov_rrg_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1256,7 +1258,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 927);
+        assert_eq!(NAMES.len(), 928);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

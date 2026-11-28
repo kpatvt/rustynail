@@ -9761,3 +9761,60 @@ printing inflates each total by ~80 k, the shares are what matters):
 The roots are mostly **not loops**: of cd's 25 roots 3 are peeled loops (11.6 M), 3 rolled roots without native frames (9.4 M) and 19
 native-recursion roots (9.1 M, 480 k each); raytrace 2 loops + 2 rolled, json 4 loops + 5 rolled + 4 native, towers 1 rolled + 5 native,
 richards 2 loops. So the coverage that matters first is the R2 room checks (cd, richards), native recursion (sides and roots) and rolled roots.
+
+### 91.1 `fusecov` bit 0: R2 room checks, pinned victims, high extension slots (commit fb09076)
+
+New knob `TrLimits::fusecov` (`FUSECOV_PROCESS`, bits; `TR_FUSECOV=N` runs the `tr_core` jobs that do not name it at level N). Bit 0: (1) side
+traces with body room checks (`env.side_room`) are eligible: the R2 block (`Cx::side_room_block`, factored out of `assemble_dl`) is emitted in
+front of the `BUDGET`'s code inside the fused group; (2) when every eviction candidate is pinned by an open snapshot, the lowest pinned value is
+evicted and the open exit maps naming its register are patched to its spill slot (it is stored at its definition, so it holds the value at every
+guard of those snapshots: `ra::Ra::patch_pins`' rule); (3) the extension slots of a fused trace start at `FUSE_EXT_COV` = `ITER_SLOT - 16` instead
+of 24, so a trace no longer falls back for "spill slots" (every spill slot is a disp32 access either way). Before (2) and (3), 8 of cd's 47 room
+traces fell back after running the pass (1.35 M each, wasted work as large as the gain). Mutant `fusecov_patch_skip` (the patch left out).
+
+### 91.2 `fusecov` bits 1 / 2: native recursion and rolled roots through `assemble_dl_in`
+
+The fused pass no longer lays out the trace itself (`FuseBody::finish` is gone): it hands the assembler state (`asm::CxState`, every owned field
+of `Cx`: program, stubs, label tables, cold blocks; `take_state` / `put_state`) and per instruction the body op where its code starts behind the
+R2 block (`FusedBody::at`) to `asm::assemble_dl_in`, which lays out entries, second / inner entries, writeback, link, native tails and stubs exactly
+as for a walked body (its label numbers continue after the body's). The native-recursion placeholder guard emits nothing in the pass; the native
+return's guards are spliced in at `at[budget]` (or emitted at the end with `rec_late`), the second entry's label is bound at `at[p.0]`. Bit 1:
+native-recursion traces (`rec_call` / `rec_ret`, not lazy); bit 2: rolled roots (no loop, not lazy; a root's `head` is its entry bookkeeping).
+Mutant `fusecov_rrg_skip` (the native return's guards left out of a fused body).
+
+**Bit 2 is not on by default**: `tr_core::m1_interp_shapes` crashes in `m1_interp [on +verify]` with it (tier-1 code calls `jit_get` with a
+bad table after an exit of the fused root `proto:27 pc 4`, a rolled root ending in the always-false stitch guard with a `HREFV dyn` call). The
+fused allocation and program of that trace were compared with the old ones (`ra::dump`, the micro-ops, the `ExitSnap`s): they are equivalent
+up to spill-slot numbers, the extension-slot base and the order of the stubs (created backwards); the crash disappears with `lazystub=0`, not
+with the old extension base (24) or the stubs sorted by snapshot. So the suspect is the deferred stub of one of its exits (assembled at the
+first exit from `DeferCtx` with an empty allocation): the next builder should dump the deferred stub of each exit of that trace in both
+configurations. Repro: `TR_FUSECOV=7 TR_CORE_JOB='m1_interp|on|+verify||||0' target/debug/deps/tr_core-* child_entry --exact`.
+
+Also: under `ccheck=1` a fused trace's `ExitSnap`s are now compared with the old exit builder's on the same allocation (before, `ccheck` skipped
+fused traces entirely).
+
+Numbers (default binary, `fusecov` 0 -> 3 on the same binary; compile = recorder + pipelines + tier 1 + deferred stubs; instructions M):
+
+| program | pipelines M | compile M | share | k / pipeline |
+|---|---|---|---|---|
+| apps/raytrace | 28.21 -> 27.51 (-2.5 %) | 66.14 -> 65.43 | 24.5 % -> 24.3 % | 672 -> 655 |
+| awfy/cd | 93.44 -> 90.80 (-2.8 %) | 165.70 -> 163.07 | 27.8 % -> 27.5 % | 358 -> 348 |
+| awfy/richards | 15.79 -> 14.82 (-6.1 %) | 34.86 -> 33.91 | 22.8 % -> 22.3 % | 509 -> 478 |
+| awfy/json | 18.78 -> 18.64 | 43.03 -> 42.89 | 10.4 % -> 10.3 % | 293 -> 291 |
+| awfy/towers | 10.20 (=) | 17.10 (=) | 10.6 % | 378 (its native traces are lazy: refused) |
+| lib/fmt_s | 0.41 (=) | 1.59 (=) | 6.9 % | 205 |
+
+With bit 2 as well (`fusecov=7`, measured before the crash was found): raytrace 64.98 M, cd 162.14 M, json 42.52 M of compile. Fused / pipelines
+on cd: 138 -> 216 (bit 1) -> 232 (bit 2). Whole set (223 programs, `fusecov` 0 against 3, one binary): no output differs, geomean -0.033 %,
+largest rise corpus/testrunner_luaunit +0.32 % (rerun twice: -0.00 %, -0.00 %: the program varies run to run), largest falls astar_jumper
+-4.5 % (varies), richards -0.61 %, cd -0.44 %, lru_cache -0.32 %, raytrace -0.27 %.
+
+**What this says.** Coverage multiplies the per-trace gain of the fused pass, and that gain is small (~6 % of a pipeline: the pass costs what the
+old allocator cost and saves the forward walk). Even with every trace fused, the pipelines would drop by ~6 %, i.e. ~3 % of compile. The fused
+pass must get cheaper per instruction (lean emission) before coverage pays.
+
+### 91.3 Exit restores copied from an equal previous snapshot: killed by measurement
+
+`build_exits_ex` with a `cspeed` lever copying the previous snapshot's `SlotRestore`s when the maps (`snap_entries`) and the locations are equal
+(identical exits, `ccheck` clean, mutant caught): cd pipelines 90.80 -> 90.69 M (-0.1 %), towers +0.4 %, richards +0.1 %. The slice comparisons cost
+what the skipped `slot_value` calls save (as 85.0 found for the delta merge). Removed.

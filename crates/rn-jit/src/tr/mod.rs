@@ -2904,6 +2904,25 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             return Err(abort_err("ccheck", format!("cspeed differs: {what}")));
         }
     }
+    // Section 91.3: a fused trace's exits are compared with the old exit builder's on the same allocation (the allocation itself has no old twin)
+    // SAFETY: as above.
+    if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ccheck } != 0
+        && !opts.emurun
+        && !opts.emuverify
+        && fused.is_some()
+    {
+        let slow = crate::cspeed::with(0, || exit::build_exits_ex(ir, &al, &res, exit_tags));
+        CCHECK[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let same =
+            slow.is_ok_and(|(s2, d2)| format!("{s2:?}{d2:?}") == format!("{snaps:?}{descs:?}"));
+        if !same {
+            CCHECK[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(abort_err(
+                "ccheck",
+                "cspeed differs: fused exits".to_string(),
+            ));
+        }
+    }
     // The entry snapshot's exits are entry-check failures: the entry-failure rule of 3.3 (`entry_fail` / free peel)
     // decides about them, not the hot type-guard rule, so they never flush.
     if let Some(e) = rec.entry_snap {
