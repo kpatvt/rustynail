@@ -207,6 +207,9 @@ pub struct RaOpts {
     /// N1a (`ixfuse`): an integer `ADD x, #c` whose users are all the index operand of fused `AREF`s is *fused* into them (no register, no instruction): the
     /// accesses address `[base + x + c + ...]`, `x` stays live up to them.
     pub ixfuse: bool,
+    /// Section 93.1 (`peep` bit 0): a byte / 32-bit `FLOAD` whose only user is an `EQ` / `NE` with a small constant is fused into the compare
+    /// (`cmp [base + field], imm`): no register, its base stays live up to the compare.
+    pub fcfuse: bool,
     /// R1 (`regcarry`): the index of the first instruction behind the leading `SLOAD` run of a root (`exit::lead_run`): the allocator records where the
     /// run's values are before that instruction ([`Allocation::carry`]). 0: nothing is recorded.
     pub carry_at: usize,
@@ -231,6 +234,7 @@ impl Default for RaOpts {
             xregs: 0,
             hkaddr: false,
             ixfuse: false,
+            fcfuse: false,
             carry_at: 0,
             homes: false,
             homes_snap: false,
@@ -618,6 +622,11 @@ pub fn operand_refs(ir: &TraceIr, fused: &[bool], i: usize) -> [Ref; 3] {
         TOp::Phi | TOp::Loop => [NOREF; 3],
         // N1a: a fused index `ADD` is no instruction: its operand is read by the accesses that use it
         TOp::Add if fused[i] => [NOREF; 3],
+        // Section 93.1: a fused `FLOAD` is no instruction: its base is read by the compare that uses it
+        TOp::Fload if fused[i] => [NOREF; 3],
+        TOp::Eq | TOp::Ne if TraceIr::is_ins(a) && fused[idx(a)] && ir.at(a).op == TOp::Fload => {
+            [ir.at(a).a, b, NOREF]
+        }
         TOp::Tset => [a, b, ins.aux as Ref],
         TOp::Concat => [a, b, if ins.aux != 0 { ins.aux as Ref } else { NOREF }],
         TOp::Lib => [
@@ -676,8 +685,8 @@ fn defines(op: TOp, fused: bool) -> bool {
         | TOp::Sstore
         | TOp::Loop => false,
         TOp::Aref | TOp::Uref | TOp::Hrefk => !fused,
-        // N1a: a fused index sum
-        TOp::Add => !fused,
+        // N1a: a fused index sum; section 93.1: a fused field load
+        TOp::Add | TOp::Fload => !fused,
         _ => true,
     }
 }
@@ -740,6 +749,74 @@ fn fuse_index_adds(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
     }
     for k in 0..n {
         if cand[k] && users[k] > 0 {
+            fused[k] = true;
+        }
+    }
+}
+
+/// Section 93.1 (`peep` bit 0): may the field `f` of an `FLOAD` be compared in memory (`cmp byte / dword [base + field], imm`)?
+pub fn fcfuse_field(f: Ref) -> bool {
+    f == super::ir::Field::Lsizenode as Ref
+        || f == super::ir::Field::Flags as Ref
+        || f == super::ir::Field::Asize as Ref
+}
+
+/// Section 93.1 (`peep` bit 0): marks in `fused` the `FLOAD`s of a byte / 32-bit field (base an instruction) whose only user is the `a` operand of an
+/// `EQ` / `NE` guard against a constant that fits the field's width unsigned (`0..=255` for a byte, `0..2^31` for 32 bits): no snapshot, `PHI`,
+/// `end_uses` entry or other operand names them. The compare then reads the field from memory: the loaded value zero-extended equals the constant
+/// iff the field's bits equal the constant's low bits (the constant's other bits are zero).
+fn fuse_field_cmps(ir: &TraceIr, fused: &mut [bool], end_uses: &[Ref]) {
+    let n = ir.ins.len();
+    let mut cand: Vec<bool> = ir
+        .ins
+        .iter()
+        .map(|i| i.op == TOp::Fload && TraceIr::is_ins(i.a) && fcfuse_field(i.b))
+        .collect();
+    let mut users = vec![0u32; n];
+    let kill = |cand: &mut Vec<bool>, r: Ref| {
+        if TraceIr::is_ins(r) && idx(r) < n {
+            cand[idx(r)] = false;
+        }
+    };
+    for ins in ir.ins.iter() {
+        if ins.op == TOp::Phi {
+            kill(&mut cand, ins.a);
+            kill(&mut cand, ins.b);
+            continue;
+        }
+        let (ra, rb) = ins.op.ref_operands();
+        if ra {
+            let ok = matches!(ins.op, TOp::Eq | TOp::Ne)
+                && TraceIr::is_ins(ins.a)
+                && idx(ins.a) < n
+                && cand[idx(ins.a)]
+                && !TraceIr::is_ins(ins.b)
+                && ins.b != NOREF
+                && ir.as_int(ins.b).is_some_and(|c| {
+                    let w1 = ir.at(ins.a).b != super::ir::Field::Asize as Ref;
+                    c >= 0 && c <= if w1 { 255 } else { i64::from(i32::MAX) }
+                });
+            if ok {
+                users[idx(ins.a)] += 1;
+            } else {
+                kill(&mut cand, ins.a);
+            }
+        }
+        if rb && !is_kconst(ins.op) {
+            kill(&mut cand, ins.b);
+        }
+        if let Some(t) = ins.third() {
+            kill(&mut cand, t);
+        }
+    }
+    for e in &ir.snapmap {
+        kill(&mut cand, e.r);
+    }
+    for &r in end_uses {
+        kill(&mut cand, r);
+    }
+    for k in 0..n {
+        if cand[k] && users[k] == 1 {
             fused[k] = true;
         }
     }
@@ -1160,6 +1237,9 @@ pub fn allocate_hinted(
     }
     if opts.ixfuse {
         fuse_index_adds(ir, &mut fused, end_uses);
+    }
+    if opts.fcfuse {
+        fuse_field_cmps(ir, &mut fused, end_uses);
     }
     for e in &ir.snapmap {
         if e.r != NOREF && e.r < REF_BIAS && usize::from(e.r) > ir.k.len() {

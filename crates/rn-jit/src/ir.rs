@@ -397,6 +397,17 @@ pub enum Op {
         /// Target.
         to: L,
     },
+    /// Section 93.1: `if (load8[m] & imm) <cc> 0 goto to` (`test byte [m], imm8` + `jcc`), `cc` is `Eq` or `Ne`.
+    TstM {
+        /// Condition (`Eq`: no bit of `imm` set; `Ne`: some).
+        cc: Cc,
+        /// Address.
+        m: M,
+        /// Bit mask.
+        imm: u8,
+        /// Target.
+        to: L,
+    },
     /// H3-F: `if load64[m] <cc> V[src] goto to` (`cmp [m], r64` + `jcc`); any `cc` (H7c: signed / unsigned order tests, memory on the left).
     BrMR {
         /// Condition.

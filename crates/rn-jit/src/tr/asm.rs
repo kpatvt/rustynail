@@ -233,6 +233,9 @@ pub struct AsmEnv {
     pub nopay: bool,
     /// H3-F (`hk64`): `HREFK` compares the key address with one 64-bit compare (`cmp [m], r`) instead of two 32-bit halves.
     pub hk_key64: bool,
+    /// Section 93.1 (`peep`): bit 1 `TBAR` colour tests with `test byte [m], imm`; bit 2 the `TBAR` slow path out of line; bit 3 `HMISS` without the
+    /// key-tag compare (bit 0, the fused field compares, is the allocator's `fcfuse`).
+    pub peep: u32,
     /// B4-3: an `HREFK` followed by the `HLOAD` of its node checks the key tag and the value tag with one 16-bit compare (`hkfuse`).
     pub hk_fuse: bool,
     /// N1d (`leaadd`): an integer `ADD a, #imm` into another register is `lea d, [a + imm]` (one instruction instead of `mov d, a; add d, imm`).
@@ -447,6 +450,7 @@ impl Default for AsmEnv {
             lea_add: false,
             hk_fuse: false,
             hk_key64: false,
+            peep: 0,
             f2_byte: false,
             f2_byte_ext: false,
             ccalls_inline: false,
@@ -2722,6 +2726,8 @@ struct Cx<'a> {
     root_ci_cold: Vec<(L, L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
     bud_cold: Vec<(L, L, i32)>,
+    /// Section 93.1 (`peep` bit 2): the out-of-line `TBAR` slow paths: (entry label, return label, instruction, call site, operands).
+    tbar_cold: Vec<(L, L, usize, CallSite, [Loc; 2])>,
     /// Section 89.1 (`lzretf` bit 2): the native-return tails of lazy `RETF`s: `(label, exit, RETF instruction, its site)`.
     lzretf_alts: Vec<(L, L, usize, u64)>,
     /// Section 59 (`budhoist`): the plan of the hoisted budget of the loop, if any.
@@ -2809,6 +2815,7 @@ impl<'a> Cx<'a> {
             rec_ci_cold: Vec::new(),
             root_ci_cold: Vec::new(),
             bud_cold: Vec::new(),
+            tbar_cold: Vec::new(),
             lzretf_alts: Vec::new(),
             bh: None,
             bh_tramps: Vec::new(),
@@ -6277,6 +6284,8 @@ impl Cx<'_> {
             }
             TOp::Fcmp => self.fcmp(i)?,
             TOp::Eqref => self.eqref(i)?,
+            // Section 93.1: fused into the compare that uses it
+            TOp::Fload if self.al.fused[i] => {}
             TOp::Fload => {
                 let d = self.g(dst);
                 let (w, off) = match ins.b {
@@ -6927,6 +6936,28 @@ impl Cx<'_> {
             if !holds {
                 self.push(Op::Jmp(x));
             }
+            return Ok(());
+        }
+        // Section 93.1 (`peep` bit 0): a fused `FLOAD` operand: compare the field in memory (`ops[0]` is the table)
+        if TraceIr::is_ins(ins.a) && self.al.fused[usize::from(ins.a - REF_BIAS)] {
+            let f = self.ir.at(ins.a);
+            let (w, off) = match f.b {
+                b if b == Field::Asize as Ref => (W::B4, table::ASIZE),
+                b if b == Field::Flags as Ref => (W::B1, table::FLAGS),
+                b if b == Field::Lsizenode as Ref => (W::B1, table::LSIZENODE),
+                b => return incons(format!("fused FLOAD of field {b}")),
+            };
+            let Some(c) = self.ir.as_int(ins.b) else {
+                return incons("fused FLOAD compared with a non-constant");
+            };
+            let t = self.reg(ops[0], 7);
+            self.push(Op::BrM {
+                cc: neg_cc(cc),
+                w,
+                m: rm(t, off as i32),
+                imm: c as i32,
+                to: x,
+            });
             return Ok(());
         }
         let a = match ops[0] {
@@ -8046,13 +8077,18 @@ impl Cx<'_> {
             });
         }
         let ok = self.label();
-        self.push(Op::BrM {
-            cc: Cc::Ne,
-            w: W::B1,
-            m: rm(n, off + node::KEY_TT as i32),
-            imm: i32::from(ctb(LUA_VSHRSTR) as i8),
-            to: ok,
-        });
+        // Section 93.1 (`peep` bit 3): with the 64-bit key compare, no key-tag test: a node whose key has the same bits under another tag fails the
+        // guard (an exit, never a wrong answer); a short string's bits are its address, which no other key value can have while the string lives
+        let notag = self.env.peep & 8 != 0 && n != 7 && self.env.hk_key64;
+        if !notag {
+            self.push(Op::BrM {
+                cc: Cc::Ne,
+                w: W::B1,
+                m: rm(n, off + node::KEY_TT as i32),
+                imm: i32::from(ctb(LUA_VSHRSTR) as i8),
+                to: ok,
+            });
+        }
         if !mutants::active("hmiss_key_skip") && n != 7 && self.env.hk_key64 {
             // J1-1: the 64-bit key address in one compare against a register (`movabs v7, key; cmp [node + KEY], v7; je exit`)
             let k = if mutants::active("hmiss_key64_hi") {
@@ -9871,6 +9907,54 @@ impl Cx<'_> {
         }
         let site = self.call_site(i)?;
         let done = self.label();
+        if self.env.peep & 2 != 0 {
+            // Section 93.1 (`peep` bit 1): `test byte [t + marked], black; je done` (a constant operand still goes through `V7`); bit 2: the slow
+            // path out of line (`tbar_cold`), the fast path falls through to `done`
+            let cold = self.env.peep & 4 != 0;
+            let slow = if cold { self.label() } else { done };
+            let tst = |s: &mut Self, l: Loc, mask: u8, cc: Cc, to: L| {
+                let b = match l {
+                    Loc::G(t) => t,
+                    Loc::Const(r) => {
+                        let b = s.kbits_of(r);
+                        s.push(Op::Mov(7, b));
+                        7
+                    }
+                    l => panic!("operand {l:?}"),
+                };
+                s.push(Op::TstM {
+                    cc,
+                    m: rm(b, table::MARKED as i32),
+                    imm: mask,
+                    to,
+                });
+            };
+            // MUTANT `peep_tbar_white_skip`: the value's colour is not tested (a white value is stored into a black table without the barrier)
+            let white_skip = mutants::active("peep_tbar_white_skip");
+            if cold {
+                // black table and white value -> slow
+                let fast = done;
+                tst(self, ops[0], BLACKBIT, Cc::Eq, fast);
+                if white_skip {
+                    self.push(Op::Jmp(fast));
+                } else {
+                    tst(self, ops[1], WHITEBITS, Cc::Ne, slow);
+                }
+                self.bind(done);
+                self.tbar_cold.push((slow, done, i, site, [ops[0], ops[1]]));
+                return Ok(());
+            }
+            tst(self, ops[0], BLACKBIT, Cc::Eq, done);
+            if white_skip {
+                self.push(Op::Jmp(done));
+            } else {
+                tst(self, ops[1], WHITEBITS, Cc::Eq, done);
+            }
+            let _ = slow;
+            self.tbar_slow(i, &site, [ops[0], ops[1]]);
+            self.bind(done);
+            return Ok(());
+        }
         // table black?
         match ops[0] {
             Loc::G(t) => self.ld(7, W::B1, rm(t, table::MARKED as i32)),
@@ -9895,7 +9979,15 @@ impl Cx<'_> {
         }
         self.push(Op::And(7, Src::Imm(i32::from(WHITEBITS))));
         self.br(Cc::Eq, 7, Src::Imm(0), done);
-        // slow path: `barrier_back(table, (tag, payload))`, bracketed
+        self.tbar_slow(i, &site, [ops[0], ops[1]]);
+        self.bind(done);
+        Ok(())
+    }
+
+    /// The slow path of `TBAR` `i`: `barrier_back(table, (tag, payload))`, bracketed by the saves of the live registers.
+    fn tbar_slow(&mut self, i: usize, site: &CallSite, ops: [Loc; 2]) {
+        let ins = self.ir.ins[i];
+        let vt = self.ir.ty_of(ins.b);
         for (k, a) in [ops[0], ops[1]].into_iter().enumerate() {
             let m = area_m(exit_area::ARGS + 8 * k);
             match a {
@@ -9908,16 +10000,14 @@ impl Cx<'_> {
                 l => panic!("operand {l:?}"),
             }
         }
-        self.save_live(&site);
+        self.save_live(site);
         let tag = tag_of(vt).expect("a collectable type has a tag");
         self.push(Op::CallH {
             f: self.env.barrier,
             a: u32::from(tag),
             b: u32::from(ins.aux & 1), // (BUNDLE-V: 1 = the barrier of an upvalue)
         });
-        self.reload_live(&site);
-        self.bind(done);
-        Ok(())
+        self.reload_live(site);
     }
 
     /// `ATOUCH tab u` (5.4, TR30): the `alimit_touch` sequence of `templates_table.rs` on the table `ops[0]` and the
@@ -10343,6 +10433,12 @@ impl Cx<'_> {
             self.st(W::B8, m(8), Src::V(c.node));
             self.st(W::B8, m(16), Src::Imm(i32::from(c.lsizenode)));
             self.push(Op::Jmp(c.stub));
+        }
+        // Section 93.1 (`peep` bit 2): the out-of-line `TBAR` slow paths
+        for (label, back, i, site, ops) in std::mem::take(&mut self.tbar_cold) {
+            self.bind(label);
+            self.tbar_slow(i, &site, ops);
+            self.push(Op::Jmp(back));
         }
         // R1: the cold exits of a carrying link
         for (label, x, stores) in std::mem::take(&mut self.rc_cold) {

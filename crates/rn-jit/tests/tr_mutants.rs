@@ -5104,6 +5104,14 @@ const TABLE: &[Row] = &[
         owner: "S89",
         dets: &[d("tr_core", "s89_lzretf_programs")],
     },
+    Row {
+        name: "peep_tbar_white_skip",
+        owner: "S93",
+        dets: &[
+            d("tr_core", "s93_peep_programs"),
+            d("tr_asm", "e2e_tbar_in_an_incremental_gc_cycle"),
+        ],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).

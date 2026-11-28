@@ -546,6 +546,13 @@ impl Emu {
                         pc = labels[to as usize];
                     }
                 }
+                Op::TstM { cc, m, imm, to } => {
+                    // SAFETY: per the function contract.
+                    let v = unsafe { addr(&r, &m).read() };
+                    if (v & imm == 0) == (cc == Cc::Eq) {
+                        pc = labels[to as usize];
+                    }
+                }
                 Op::BrMR { cc, m, src, to } => {
                     // SAFETY: per the function contract.
                     let v = unsafe { addr(&r, &m).cast::<u64>().read_unaligned() };

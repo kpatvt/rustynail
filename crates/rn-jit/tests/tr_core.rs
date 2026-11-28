@@ -4932,6 +4932,42 @@ fn s89_lzretf_programs() {
     compare(jobs);
 }
 
+/// Section 93.1 (`peep`): fused field compares, the `TBAR` test form and its out-of-line slow path, `HMISS` without the key-tag compare:
+/// `tests/vm/s93_peep.lua` (barriers of fresh objects into old tables under both collector modes, node vectors and array parts that change size
+/// under a reading loop, method keys and keys of other types added to receivers) with every bit alone, all and none, the trace modes with
+/// `+verify`, exit storms, budgets 17 / 3 and GC stress 2; plus the method-recursion programs with all bits. Mutant `peep_tbar_white_skip`.
+#[test]
+fn s93_peep_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in ["peep=15", "peep=0", "peep=1", "peep=2", "peep=6", "peep=8"] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("", 3),
+            ] {
+                let mut j = Job::new("s93_peep", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new("s93_peep", trace)
+                    .limits_s(limits)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+        for p in ["s79_mfside", "s89_lzretf", "s83_subtree", "s75_mfkeys"] {
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s("peep=15"));
+            jobs.push(Job::new(p, trace).opts("+exitstorm=3").limits_s("peep=15"));
+        }
+    }
+    compare(jobs);
+}
+
 /// Sections 79.5 / 79.6 (`siteord`, `retremat`): the site chains of native returns and pushes in self-call-first order, and the fused `RETURN0`
 /// guards rematerialising pointer constants and unmodified `SLOAD`s on their failure path: the recursion programs of section 75 / 77 / 79 with
 /// both knobs on / off (and `retpad=0`, section 79.12), the trace modes with `+verify`, exit storms (the failure paths) and budget 17.

@@ -2190,6 +2190,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // SAFETY: as above.
         ixfuse: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.ixfuse } != 0,
         // SAFETY: as above.
+        fcfuse: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.peep } & 1 != 0,
+        // SAFETY: as above.
         pol: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.rapol },
         // SAFETY: as above.
         homes: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.sloadhome } & 1 != 0,
@@ -2886,6 +2888,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         // SAFETY: as above.
         bhmin: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.bhmin },
         hk_key64: true,
+        // SAFETY: as above.
+        peep: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.peep },
         budget_sub: vbreg.is_some(),
         // `+emuverify` runs the emulation on a private copy of the header, which the far `[r15 + disp]` poll word is not part of: the trace polls
         // by the absolute address there (the only code difference of that mode; the exit area and the `fpool` pool are copied)

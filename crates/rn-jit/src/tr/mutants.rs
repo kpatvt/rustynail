@@ -1165,6 +1165,8 @@ pub const NAMES: &[&str] = &[
     "lzretf_root_pops",
     // section 89.1 (`lzretf` bit 2): the native return at another site refunds one instruction too many
     "lzretf_alt_refund_off",
+    // section 93.1 (`peep` bit 1): the `TBAR` test form does not test the value's colour
+    "peep_tbar_white_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1281,7 +1283,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 928);
+        assert_eq!(NAMES.len(), 929);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

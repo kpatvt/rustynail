@@ -293,6 +293,11 @@ pub fn emit_ex(prog: &Program, refs: &[bool]) -> Result<Emitted, AsmError> {
                 a.cmp_m16_i(mem(&m), imm);
                 a.jcc_label(cond(cc), lab(to));
             }
+            Op::TstM { cc, m, imm, to } => {
+                debug_assert!(matches!(cc, Cc::Eq | Cc::Ne));
+                a.test_m8_i(mem(&m), imm);
+                a.jcc_label(cond(cc), lab(to));
+            }
             Op::BrMR { cc, m, src, to } => {
                 a.alu_mr(Alu::Cmp, Size::S64, mem(&m), vr(src));
                 a.jcc_label(cond(cc), lab(to));
