@@ -297,6 +297,13 @@ pub struct RecCfg {
     pub inner_link: bool,
     /// T9 (`TrLimits::innerlink` bit 2): `inner_link` also for a loop of a frame deeper than the root frame's callee.
     pub inner_deep: bool,
+    /// Section 86.3 (`TrLimits::innerlink` bit 4): a backward edge of a `while` / `repeat` loop of an inlined frame whose target is a loop head (or
+    /// the function-entry head, when the loop starts the function) of its prototype with an installed root trace ends the recording with the
+    /// frame-linking exit into that trace at the next step, instead of unrolling the loop or aborting `InnerLoop`.
+    pub back_link: bool,
+    /// Section 86.3 (`TrLimits::innerlink` bit 5): at a frame-linking exit, the tables in registers of the linked frame that are dead temporaries at
+    /// the head (the liveness of [`super::cache::prune_cached`]) are stored as nil (a sunk record that died in the frame is not materialised).
+    pub link_dead_nil: bool,
     /// T5 (`TrLimits::t5`): bit 0 = `GETTABLE` with an object key, bit 1 = `SETTABLE` over a present object key, bit 2 = insertion of an object key.
     pub objkey: u32,
     /// T9 (`TrLimits::innerlink` bit 3): `inner_link` in side recordings after their `RETF` or into a head a root trace links into (the side trace
@@ -672,6 +679,8 @@ impl Default for RecCfg {
             nest_frame_roots: false,
             inner_link: false,
             inner_deep: false,
+            back_link: false,
+            link_dead_nil: false,
             objkey: 0,
             inner_link_sides: false,
             inner_ret: false,
@@ -1573,6 +1582,10 @@ struct Rec {
     prep_link_ok: bool,
     /// T9: `(depth, pc)` of the loop head the recorded `FORPREP` of `prep_link_ok` entered: the next step, at that head, ends with the frame-linking exit.
     prep_link: Option<(usize, u32)>,
+    /// Section 86.3: the target of the backward edge the instruction of this step may take that links (computed in `on_step`).
+    back_ok: Option<u32>,
+    /// Section 86.3: `(depth, pc)` of the head the backward edge recorded by `target` went to: the next step there links.
+    back_link: std::cell::Cell<Option<(usize, u32)>>,
     /// T9 (`inner_ret`): the return half allows the pop at the root `RETURN` this step executes (computed in `on_step`; false at every other step).
     inner_ret_ok: bool,
     /// Section 78.1 (`stitch` bit 3): at a `RETURN` of the root frame (before any pop), the caller's loop around its `CALL` is traced.
@@ -1619,6 +1632,10 @@ struct Rec {
     lzretf_at: usize,
     /// Section 89.5: the IR budget of the current lazy pop (`lzretfmax`, or a quarter of it outside a loop with `lzretf` bit 5).
     lzretf_budget: u32,
+    /// Section 86.1: the closure the root frame runs after the `TAILCALL` the step recorded as a `TAILF` (the step re-targets the VM-side root).
+    retail: Option<usize>,
+    /// Section 86.5 (`retf` bit 12): at a root `RETURN` of a function-entry family's side recording, the caller's loop around the call is untraced.
+    retf_untraced_loop: bool,
     /// N2c: the prototype of the entry root (the current root's, `proto`, changes at a `RETF`).
     entry_proto: usize,
     /// N2c: entry-relative extent, `room` and spare-`CallInfo` count of the segments before the current one.
@@ -1925,6 +1942,8 @@ impl Rec {
             retf_self_traced: false,
             prep_link_ok: false,
             prep_link: None,
+            back_ok: None,
+            back_link: std::cell::Cell::new(None),
             inner_ret_ok: false,
             cont_ret_ok: false,
             cont_pop_lazy_ok: false,
@@ -1948,6 +1967,8 @@ impl Rec {
             lzretf_now: false,
             lzretf_at: 0,
             lzretf_budget: 0,
+            retail: None,
+            retf_untraced_loop: false,
             entry_proto: proto,
             ext_entry: 0,
             room_entry: 0,
@@ -2087,6 +2108,7 @@ impl Rec {
         self.ext = self.nslots;
         self.room = 0;
         self.max_ci = 0;
+        self.retail = None;
         self.deps.clear();
         self.want_dep.clear();
         self.late_dep.clear();
@@ -2178,6 +2200,8 @@ impl Rec {
         self.prep_link_ok = false;
         self.prep_link = None;
         self.prep_tfor = false;
+        self.back_ok = None;
+        self.back_link.set(None);
     }
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
@@ -2344,7 +2368,20 @@ impl Rec {
             prep_hit = false;
             self.stitch_use &= !16;
         }
-        let frame_head = if prep_hit {
+        // section 86.3: the step behind a recorded backward edge to a traced head of an inlined frame links there (the head lost its trace meanwhile:
+        // the abort the edge used to be)
+        let back_hit = self.back_link.take() == Some((depth, idx as u32));
+        if back_hit
+            && !super::cache::proto_ref(&p)
+                .is_some_and(|pr| super::cache::head_traced_any(st, pr, idx as u32) == Some(true))
+        {
+            return Err(AbortReason::InnerLoop);
+        }
+        let prep_hit = prep_hit || back_hit;
+        let frame_head = if back_hit {
+            self.inner_linked = true;
+            true
+        } else if prep_hit {
             let traced = self
                 .cfg
                 .nest_frame
@@ -2425,6 +2462,25 @@ impl Rec {
                     && Instruction(code[idx]).opcode() == Some(OpCode::Call)
                     && Instruction(code[idx + 1]).opcode() == Some(OpCode::Tforprep)
                     && tq(st, idx + 2));
+        // section 86.3: may the backward edge this instruction may take (a `while` / `repeat` of an inlined frame) link into a traced head?
+        self.back_ok = None;
+        if self.cfg.back_link
+            && depth > 0
+            && self.frames[depth].mm.is_none()
+            && self.frames[depth].pc_shift == 0
+            && self.frames[depth].tfor.is_none()
+            && !p.is_vararg()
+        {
+            if let Some(t) = back_edge_target(code, idx) {
+                if super::cache::proto_ref(&p).is_some_and(|pr| {
+                    !super::cache::proto_lazy(st, pr)
+                        && !super::cache::proto_lazy_cand(st, pr)
+                        && super::cache::head_traced_any(st, pr, t as u32) == Some(true)
+                }) {
+                    self.back_ok = Some(t as u32);
+                }
+            }
+        }
         // F8: a table the recording holds a handle to was freed by a collector step since the last step
         if st.heap().watch_hit() {
             return Err(AbortReason::DepFreed);
@@ -2453,6 +2509,17 @@ impl Rec {
                 Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
             )
             && self.retf_sel_check(st, ci);
+        // section 86.5 (`retf` bit 12): the caller's innermost loop around its `CALL` exists and has no installed root trace
+        self.retf_untraced_loop = self.cfg.retf & 4096 != 0
+            && self.cfg.fn_root
+            && self.cfg.side.is_some()
+            && depth == 0
+            && self.segs.is_empty()
+            && matches!(
+                Instruction(code[idx]).opcode(),
+                Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+            )
+            && self.caller_loop_state(st, ci) == Some(false);
         // section 77.7 (`retf` bit 6): the caller's loop around the call is traced
         self.retf_self_traced = self.cfg.retf & 64 != 0
             && self.cfg.fn_root
@@ -2743,6 +2810,13 @@ impl Rec {
             // SAFETY: `c` is the `previous` of the live root `CallInfo` (checked by `Rec::retf` this very step).
             let caller = unsafe { Ci::from_raw(c as *mut _) };
             if !jit_hooks::rec_reroot(vm.st, caller) {
+                return Err(AbortReason::Frame);
+            }
+        }
+        if let Some(c) = self.retail.take() {
+            // section 86.1: the instruction just recorded was the root `TAILCALL` that `Rec::tailf` turned into a `TAILF`: the interpreter
+            // replaces the root frame's function next
+            if !jit_hooks::rec_retail(vm.st, vm.st.ci(), c) {
                 return Err(AbortReason::Frame);
             }
         }
@@ -3049,6 +3123,28 @@ impl Rec {
             super::diag::set_limit("snaps");
             return Err(AbortReason::TooLong);
         }
+        if self.cfg.link_dead_nil && self.cur_depth > 0 {
+            // section 86.3: the dead temporaries of the linked frame at the head need no value; a table there would be materialised for nothing
+            if let Some(pi) = super::cache::prune_cached(p, false, self.cfg.opencall) {
+                if let Some(d) = pi.dead.get(at as usize).copied() {
+                    let (base, n) = (
+                        self.frames[self.cur_depth].base_off,
+                        self.frames[self.cur_depth].nslots,
+                    );
+                    let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
+                    for r in 0..n {
+                        let s = base + r;
+                        if crate::live::has(&d, r as u32)
+                            && s < self.sm.len()
+                            && self.sm.cur[s] != NOREF
+                            && self.b.ir.ty_of(self.sm.cur[s]) == Ty::Tab
+                        {
+                            self.def_abs(s, nil);
+                        }
+                    }
+                }
+            }
+        }
         let low = self.frames[self.cur_depth].low;
         let frames = self.frame_recs();
         self.cur_pc = at;
@@ -3186,10 +3282,9 @@ impl Rec {
         if self.segs.is_empty() {
             ir.extent = self.ext.max(self.room as usize) as u16;
         }
-        ir.depth = self.ci_entry.max(
-            self.max_ci
-                .saturating_sub(self.segs.len().saturating_sub(1) as u8),
-        );
+        ir.depth = self
+            .ci_entry
+            .max(self.max_ci.saturating_sub(self.seg_pops() as u8));
         ir.deps = std::iter::once(ProtoKey(self.entry_proto))
             .chain(self.deps.iter().copied())
             .collect();
@@ -3791,6 +3886,11 @@ impl Rec {
                 s.append(&mut self.model.slots);
                 self.model.slots = s;
                 self.model.shift += ins.b;
+                self.model_func = self.retf_funcs.pop_front().ok_or(AbortReason::Diverge)?;
+                return Ok((0, false));
+            }
+            // section 86.1: the frame replacement keeps the base; the function slot holds the callee from here on
+            TOp::Tailf => {
                 self.model_func = self.retf_funcs.pop_front().ok_or(AbortReason::Diverge)?;
                 return Ok((0, false));
             }
@@ -7207,6 +7307,11 @@ impl Rec {
         }
         let t = target as usize;
         if t <= idx {
+            if self.cur_depth > 0 && self.back_ok == Some(t as u32) {
+                // section 86.3: the next step, at the traced head, links
+                self.back_link.set(Some((self.cur_depth, t as u32)));
+                return Ok(t);
+            }
             if self.cur_depth > 0 {
                 // P-E: a loop of an inlined callee is unrolled (each iteration recorded) up to `loop_unroll` backward edges
                 // per recording; beyond that it is the inner loop the prototype always aborted on
@@ -8709,8 +8814,22 @@ impl Rec {
                     args.push(self.rd(vm, a + j)?.0);
                 }
             }
-            let fslot = self.frames[d].base_off - 1;
-            if !mutants::active("tail_args_not_moved") {
+            // section 86.1 (TAILF): the root frame's function slot lies below the trace's slots: the native op stores the callee there and
+            // rewrites the `CallInfo` (the slot map moves below, as for an inlined frame)
+            let tailf_ins = if d == 0 {
+                let kp = self.b.ir.konst(KVal::Ptr(key as u64, PtrKind::Proto));
+                Some(self.b.emit_tailf(fcref, kp, nslots as u32)?)
+            } else {
+                None
+            };
+            if tailf_ins.is_some() {
+                // (mutant: the arguments stay where they were, one slot above the callee's parameters)
+                let off = usize::from(mutants::active("tailf_args_unshifted"));
+                for (j, r) in args.into_iter().enumerate() {
+                    self.def_abs(new_base + j + off, r);
+                }
+            } else if !mutants::active("tail_args_not_moved") {
+                let fslot = self.frames[d].base_off - 1;
                 self.def_abs(fslot, cref);
                 for (j, r) in args.into_iter().enumerate() {
                     self.def_abs(new_base + j, r);
@@ -8738,6 +8857,9 @@ impl Rec {
             f.vdelta = 0;
             f.nextra = 0;
             self.next_depth = d;
+            if let Some(ti) = tailf_ins {
+                self.tailf_rebase(cl, key, p.code_ptr() as u64, nslots, low, fcref, ti)?;
+            }
             return Ok(0);
         }
         // `pre_call_lua_fast` completes the missing arguments with nil
@@ -8787,6 +8909,14 @@ impl Rec {
     fn tailcall(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction) -> R<usize> {
         let (a, b) = (i.a() as usize, i.b() as usize);
         if self.cur_depth == 0 {
+            // section 86.1 (`retf` bit 10, TAILF): after a pop the root frame is a real frame of the caller: its `TAILCALL` of a Lua closure is
+            // recorded as the frame replacement `pre_tail_call` makes (the mirror of `RETF`); anything else ends with the stitching exit before it
+            if self.cfg.retf & 1024 != 0 && !self.segs.is_empty() && self.cfg.side.is_some() {
+                if let Some(r) = self.tailf(vm, idx, i)? {
+                    return Ok(r);
+                }
+                return self.end_exit();
+            }
             if self.cfg.fn_root {
                 // (section 78.7: a tail call of a Lua function is a dispatcher, not a leaf: the short-body exemption of `fnleaf` does not apply)
                 if vm.slot(a).as_lclosure().is_some() {
@@ -8891,6 +9021,95 @@ impl Rec {
         Err(AbortReason::TailCall)
     }
 
+    /// Section 86.1 (TAILF, `retf` bit 10): the `TAILCALL` of the root frame of a side recording after a `RETF` (the root is the real frame
+    /// the pop returned into). `Ok(None)`: not applicable (a protected-call body or unroll frame, a vararg caller or callee, `k` (upvalues
+    /// to close), `C` (vararg), a callee that is not a Lua closure); the caller ends the recording with the stitching exit before the
+    /// instruction. Otherwise [`Rec::call_lua`] with `tail` at depth 0 emits the callee guard and [`TOp::Tailf`] (the native half of
+    /// `pre_tail_call`: function slot, `ci.top`, `savedpc`, `kcache`, `CIST_TAIL`) and moves the slot map; a new segment with the callee's
+    /// prototype starts at the next step (same shift and pops: the frame keeps its base and `CallInfo`).
+    fn tailf(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction) -> R<Option<usize>> {
+        let (a, b) = (i.a() as usize, i.b() as usize);
+        if self.pcall.is_some()
+            || self.frames[0].pc_shift != 0
+            || self.frames[0].unr
+            || self.frames[0].vdelta != 0
+            || i.c() != 0
+            || i.k() != 0
+            || vm.cl.proto().is_vararg()
+            || self.segs.len() >= 250
+        {
+            return Ok(None);
+        }
+        let Some(cl) = vm.slot(a).as_lclosure() else {
+            return Ok(None);
+        };
+        if cl.proto().is_vararg() {
+            return Ok(None);
+        }
+        let nargs = if b == 0 {
+            self.values_to_top(a + 1)?
+        } else {
+            b - 1
+        };
+        let wanted = self.frames[0].nresults as i32;
+        self.call_lua(vm, idx, a, nargs, wanted, cl, true).map(Some)
+    }
+
+    /// N2c: frames popped since the entry (the `RETF`s of the recording; a `TAILF` segment keeps its predecessor's count).
+    fn seg_pops(&self) -> usize {
+        self.segs.last().map_or(0, |g| usize::from(g.pops))
+    }
+
+    /// Section 86.1 (TAILF): the root fields after the frame replacement of [`Rec::tailf`]: the root runs the callee (prototype, slot count, the
+    /// closure ref its upvalue loads use, the model's function handle at the `TAILF`), and the steps from the next one on are a new segment
+    /// (landing labels and frame restores in the callee's code, same shift and pops).
+    #[allow(clippy::too_many_arguments)]
+    fn tailf_rebase(
+        &mut self,
+        cl: rn_core::value::Gc<LClosure>,
+        key: usize,
+        code: u64,
+        nslots: usize,
+        low: u32,
+        fcref: Ref,
+        ti: Ref,
+    ) -> R<()> {
+        let last = self.segs.last().cloned().ok_or(AbortReason::Diverge)?;
+        RETF_USED.with(|c| c.set(true));
+        self.segs.push(Seg {
+            proto: ProtoKey(if mutants::active("tailf_seg_proto_stale") {
+                last.proto.0
+            } else {
+                key
+            }),
+            code: if mutants::active("tailf_seg_proto_stale") {
+                last.code
+            } else {
+                code
+            },
+            shift: last.shift,
+            pops: last.pops,
+            call_pc: last.call_pc,
+            a: last.a,
+            retf_ins: ti,
+        });
+        self.seg_steps.push(self.path.len() as u32);
+        let ch = self.closure_handle(cl);
+        self.fill_closure(ch);
+        self.retf_funcs.push_back(ch);
+        self.proto = key;
+        self.nslots = nslots;
+        let _ = low;
+        self.retail = Some(cl.as_ptr() as usize);
+        // (the function slot holds the guarded callee now: its upvalue loads use that ref)
+        self.func_ref = if mutants::active("tailf_func_ref_stale") {
+            self.func_ref
+        } else {
+            fcref
+        };
+        Ok(())
+    }
+
     /// `RETURN0` / `RETURN1` / `RETURN` in an inlined frame: the results move to the caller's slots from the function slot
     /// on (nil-filled up to the wanted count; F4: `RETURN B=0` returns up to the `top` a producer left, and a call with
     /// `C=0` takes all of them and leaves `top` after the last), the frame is popped. The callee's registers stay in the
@@ -8948,7 +9167,10 @@ impl Rec {
             if self.cfg.retf & 1 != 0
                 && (self.cfg.side.is_some() || (self.cfg.cont_gen && self.cont_ret_ok))
                 && (!self.cfg.fn_root
-                    || self.cfg.retf & 4 != 0
+                    // (section 86.5, bit 12: function-entry families do not pop into an untraced loop of the caller: the side trace would cover the
+                    // loop's body after the call and stand in for the loop's own root trace)
+                    || (self.cfg.retf & 4 != 0
+                        && !self.retf_untraced_loop)
                     || self.retf_sel_ok
                     || self.inner_ret_ok
                     || self.cont_ret_ok
@@ -9225,6 +9447,25 @@ impl Rec {
         !self.cfg.lzretf_short || cont_short(code, call_pc)
     }
 
+    /// Section 86.5: the state of the head of the innermost loop of the caller of frame `ci` around its `CALL` (asked through `retf_head`):
+    /// `None` when the call is in no loop (or the caller is not a Lua frame suspended at a call).
+    fn caller_loop_state(&self, st: &mut State, ci: Ci) -> Option<bool> {
+        let q = self.cfg.retf_head.clone()?;
+        let c_ci = ci.previous()?;
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return None;
+        }
+        let ccl = st.ci_lclosure(c_ci)?;
+        let cp = ccl.proto();
+        let ccode = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let call_pc = (sp.wrapping_sub(ccode.as_ptr() as usize) / 4).checked_sub(1)?;
+        if call_pc >= ccode.len() {
+            return None;
+        }
+        super::cache::enclosing_loop_head(ccode, call_pc).and_then(|h| q(st, &cp, h))
+    }
+
     /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?
     /// Section 89.1: the lazy RETF of a lazy family pops into its own frames, which are in the region (the assembler's lazy form).
     fn pop_into_ok(&self, cp: &Proto) -> bool {
@@ -9298,7 +9539,7 @@ impl Rec {
         const NO: R<Option<usize>> = Ok(None);
         if (cfg!(rustynail_lua54) && !self.inner_ret_ok)
             || self.cfg.retfmax == 0
-            || self.segs.len() > self.cfg.retfmax as usize
+            || self.seg_pops() + usize::from(!self.segs.is_empty()) > self.cfg.retfmax as usize
         {
             return NO; // (5.4: wired and measured in C63, not kept: `programs/heapsort` +11.6 % instructions, see docs/JIT_PARKED.md)
         }
@@ -9338,14 +9579,19 @@ impl Rec {
             return NO;
         }
         let ci_ins = Instruction(ccode[call_pc]);
-        if ci_ins.opcode() != Some(OpCode::Call) {
-            return NO;
-        }
-        let ca = ci_ins.a() as usize;
+        // section 82.2 (`retf` bit 8): C may also be suspended at a `TFORCALL` whose Lua iterator tier 1 pushed as a flat frame (`t1g` bit 2): the
+        // iterator's frame starts at the call copy (`R[A+3]`, 5.4 `R[A+4]`), it wants `C` results, and C goes on at the `TFORLOOP` behind it
+        let (ca, wanted) = match ci_ins.opcode() {
+            Some(OpCode::Call) => (ci_ins.a() as usize, ci_ins.c() as i32 - 1),
+            Some(OpCode::Tforcall) if self.cfg.retf & 256 != 0 => {
+                let fa = if rn_core::jit_layout::LUA54 { 4 } else { 3 };
+                (ci_ins.a() as usize + fa, ci_ins.c() as i32)
+            }
+            _ => return NO,
+        };
         if f_ci.r().func.0 != cbase + ca || ca + 1 > 200 {
             return NO;
         }
-        let wanted = ci_ins.c() as i32 - 1;
         if (f_ci.r().callstatus & 0xFF) as i32 != wanted + 1 {
             return NO; // (a call through something that changed the wanted count)
         }
@@ -9443,7 +9689,7 @@ impl Rec {
                 retf_ins: NOREF,
             });
         }
-        let (cum_shift, cum_pops) = (self.shift + b, self.segs.len() as u8);
+        let (cum_shift, cum_pops) = (self.shift + b, self.seg_pops() as u8 + 1);
         RETF_USED.with(|c| c.set(true));
         self.segs.push(Seg {
             proto: ProtoKey(ckey),
@@ -9456,7 +9702,7 @@ impl Rec {
         });
         self.seg_steps.push(self.path.len() as u32);
         // entry-relative maxima of the segment that ends here (its coordinates are `shift` slots / `segs.len() - 1` pops above the entry's)
-        let (sh0, pops0) = (self.shift, self.segs.len().saturating_sub(2) as u8);
+        let (sh0, pops0) = (self.shift, self.segs[self.segs.len() - 2].pops);
         self.ext_entry = self.ext_entry.max(self.ext.saturating_sub(sh0));
         self.room_entry = self
             .room_entry
@@ -14413,6 +14659,34 @@ thread_local! {
 /// BUNDLE-E (`contok`): did a recording observe a self-call of the prototype at `key`?
 pub fn cont_ok(key: usize) -> bool {
     CONT_OK.with(|c| c.borrow().contains(&key))
+}
+
+/// Section 86.3: the target of the backward edge the instruction at `idx` may take: a `JMP` with a negative offset, or a comparison / test whose
+/// follower is one (a `while` / `repeat` loop); `None` otherwise (counted and generic `for` loops have their own rules).
+fn back_edge_target(code: &[u32], idx: usize) -> Option<usize> {
+    let i = Instruction(*code.get(idx)?);
+    let jmp_at = |j: usize| -> Option<usize> {
+        let n = Instruction(*code.get(j)?);
+        if n.opcode() != Some(OpCode::Jmp) || n.sj() >= 0 {
+            return None;
+        }
+        usize::try_from(j as isize + 1 + n.sj() as isize).ok()
+    };
+    match i.opcode()? {
+        OpCode::Jmp => jmp_at(idx),
+        OpCode::Eq
+        | OpCode::Lt
+        | OpCode::Le
+        | OpCode::Eqk
+        | OpCode::Eqi
+        | OpCode::Lti
+        | OpCode::Lei
+        | OpCode::Gti
+        | OpCode::Gei
+        | OpCode::Test
+        | OpCode::Testset => jmp_at(idx + 1),
+        _ => None,
+    }
 }
 
 /// Could the prototype be lazy-aware (`TrProto::lazy`: loop-free, non-vararg; the rest of the rule is dynamic)? A conservative superset, for

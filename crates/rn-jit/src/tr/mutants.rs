@@ -484,6 +484,10 @@ pub const NAMES: &[&str] = &[
     "retf_demote_recursive",
     // section 77.17 (`polyhead`): the polymorphic-head rule never applies
     "polyhead_never",
+    // section 82.1 (`pfam`): a family member's fallback cell is the family dispatch stub (a loop through `F_H`)
+    "pfam_member_cell_stub",
+    // section 82.1: the family dispatch enters a member through its guard-free second entry
+    "pfam_guard_free_entry",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1214,6 +1218,18 @@ pub const NAMES: &[&str] = &[
     "mrset_vals_reversed",
     // section 97.1: the `+verify` segment oracle's store comes before the parent exit map's stores in a `dlink` entry (it clobbers a parent spill slot)
     "dlink_oracle_first",
+    // section 86.1 (TAILF, `retf` bit 10): the moved arguments land one slot above the callee's parameters
+    "tailf_args_unshifted",
+    // section 86.1: the segment after a `TAILF` keeps the replaced caller's prototype (exits land in the caller's code)
+    "tailf_seg_proto_stale",
+    // section 86.1: the root's closure ref stays the replaced caller's (the callee's upvalue loads read the caller's closure)
+    "tailf_func_ref_stale",
+    // section 86.1: the native frame replacement does not store the callee into the function slot
+    "tailf_func_store_skip",
+    // section 86.1: the native frame replacement keeps the caller's `ci.kcache`
+    "tailf_kcache_skip",
+    // section 86.1: the native frame replacement does not set `CIST_TAIL`
+    "tailf_cist_tail_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1330,7 +1346,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 956);
+        assert_eq!(NAMES.len(), 964);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

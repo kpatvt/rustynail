@@ -1646,6 +1646,7 @@ fn compile_inner(
                 hot: d.tr.cfg.hot_loop,
                 always: d.tr.cfg.mode == crate::tr::cache::TrMode::Always,
                 tracemove: d.tr.cfg.opts.tracemove,
+                pfam: d.tr.cfg.limits.pfam,
                 seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                 line: p.linedefined,
                 fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)
@@ -1980,6 +1981,7 @@ fn recompile_inner(
                         hot: d.tr.cfg.hot_loop,
                         always: d.tr.cfg.mode == crate::tr::cache::TrMode::Always,
                         tracemove: d.tr.cfg.opts.tracemove,
+                        pfam: d.tr.cfg.limits.pfam,
                         seed: (p.linedefined as u32) ^ ((p.code().len() as u32) << 16),
                         line: p.linedefined,
                         fn_root: (d.tr.cfg.limits.fnroot != 0 || d.tr.cfg.limits.recnat != 0)
@@ -2341,6 +2343,43 @@ fn rearm_entry_ok(d: &mut JitData, entry_ok: u32, trace: Option<crate::tr::cache
 /// `monwarm` credit, no entry-monitor query, the head's counter and state untouched). A head whose rearm stays are all short is refused
 /// (budget per head: [`crate::tr::cache::REARM_BUDGET`]). A miss re-arms the tick for the next back-edge while the span lasts.
 #[cfg(feature = "trace")]
+/// Section 86.7 (`tickkeep`): the tick armed after an allocation exit: the loop at `pc` re-enters compiled code when its head has an installed trace;
+/// nothing else (no formation credit, no start-gate clock, no stay monitor).
+#[cfg(feature = "trace")]
+fn keep_loop(st: &mut State, ci: Ci, pc: *const u32) -> bool {
+    use crate::tr::cache::HeadState;
+    let Some(cl) = proto_of(st, ci) else {
+        return false;
+    };
+    let p = cl.proto();
+    let jp = p.jit.get() as usize;
+    if jp <= NOJIT {
+        return false;
+    }
+    // SAFETY: as in `hot_loop`.
+    let jp = unsafe { &*(jp as *const JitProto) };
+    if entry_offset(jp, pc).is_none() {
+        return false;
+    }
+    let idx = ((pc as usize) - (jp.code_ptr as usize)) / 4;
+    let Some(tp) = jp.tr.as_ref() else {
+        return false;
+    };
+    let Some(hi) = tp.head_index(idx as u32) else {
+        return false;
+    };
+    let h = tp.head(hi);
+    let ok = h.state.get() == HeadState::Traced && h.trace.get().is_some();
+    // SAFETY: the per-state data is live (see `set_mode`).
+    let d = unsafe { &mut *data_ptr(st) };
+    if ok {
+        d.tr.stats.tickkeep_enters += 1;
+    } else {
+        d.tr.stats.tickkeep_misses += 1;
+    }
+    ok
+}
+
 fn rearm_loop(st: &mut State, ci: Ci, pc: *const u32, span: u32) -> bool {
     use crate::tr::cache::{HeadState, REARM_BUDGET, REARM_SHORT, REARM_WAIT};
     // SAFETY: the per-state data is live (see `set_mode`); the borrow ends before any call that could reach it again.
@@ -2476,6 +2515,13 @@ fn rearm_after_exit(st: &mut State, code: u32, ret_ci: usize, entry: (usize, usi
 /// prototype may never have been compiled (it ran inlined): that compile stays (sudoku_solver +14.6 % without it).
 #[cfg(feature = "trace")]
 pub(crate) fn arm_tick_enter_only(st: &mut State, root: Option<Ci>) {
+    // section 86.7 (`tickkeep`): arm without resetting the formation countdown; that firing only enters compiled code (`keep_loop`), so no
+    // compile restriction is needed
+    // SAFETY: the per-state data is live; read-only.
+    if unsafe { &*data_ptr(st) }.tr.cfg.limits.tickkeep != 0 {
+        jit_hooks::arm_tick_keep(st);
+        return;
+    }
     jit_hooks::arm_tick_next(st);
     // (section 84.1: the common case, an arm without restriction, writes no key array)
     let protos = root.and_then(|root| {
@@ -2509,6 +2555,10 @@ pub(crate) fn arm_tick_enter_only(st: &mut State, root: Option<Ci>) {
 pub(crate) const ARM_PROTOS: usize = 8;
 
 fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
+    #[cfg(feature = "trace")]
+    if rearmed == jit_hooks::TICK_KEEP {
+        return keep_loop(st, ci, pc);
+    }
     #[cfg(feature = "trace")]
     if rearmed != 0 {
         if crate::tr::mutants::active("rearm_tick_reset") {

@@ -2311,6 +2311,16 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_policy", "s77_polyhead_rule")],
     },
     Row {
+        name: "pfam_member_cell_stub",
+        owner: "S82",
+        dets: &[d("tr_core", "s82_pfam_programs")],
+    },
+    Row {
+        name: "pfam_guard_free_entry",
+        owner: "S82",
+        dets: &[d("tr_core", "s82_pfam_programs")],
+    },
+    Row {
         name: "tmove_presize_holes",
         owner: "S59",
         dets: &[d("tr_tlib_fast", "tlib_fast_paths_match_reference")],
@@ -5201,7 +5211,8 @@ const TABLE: &[Row] = &[
         name: "fwdk_key_shift",
         owner: "S85",
         dets: &[d("tr_core", "c1_cspeed_identical_code")],
-    },    Row {
+    },
+    Row {
         name: "asmfuse_no_reload",
         owner: "S87",
         dets: &[d("tr_core", "s87_asmfuse_programs")],
@@ -5245,6 +5256,36 @@ const TABLE: &[Row] = &[
         name: "dlink_oracle_first",
         owner: "S97",
         dets: &[d("tr_core", "s93_latent_stale_slot")],
+    },
+    Row {
+        name: "tailf_args_unshifted",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_seg_proto_stale",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_func_ref_stale",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_func_store_skip",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_kcache_skip",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_cist_tail_skip",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
     },
 ];
 
@@ -5292,7 +5333,13 @@ const V55_ONLY: &[&str] = &[
     "retf_untraced_aborts",
     "retf_second_return_aborts",
     // (CP1L: its detector asserts a RETF trace over a lazy caller, which 5.4 never installs)
-    "retf_lazy_caller_ok",
+    "retf_lazy_caller_ok", // section 86.1 (TAILF): only after a `RETF`, which 5.4 never installs
+    "tailf_args_unshifted",
+    "tailf_seg_proto_stale",
+    "tailf_func_ref_stale",
+    "tailf_func_store_skip",
+    "tailf_kcache_skip",
+    "tailf_cist_tail_skip",
 ];
 
 /// Mutants that are equivalent since the same-table `table.move` pre-reads its source elements (BUNDLE-VA): the order of the stores no longer changes any value

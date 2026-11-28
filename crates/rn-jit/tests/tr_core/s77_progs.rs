@@ -22,4 +22,16 @@ pub const S77_PROGS: &[Prog] = &[
         // section 77.17 (`polyhead`): the vm-corpus program, also compared with the reference there
         src: include_str!("../../../../tests/vm/s77_polyhead.lua"),
     },
+    Prog {
+        name: "s82_pfam",
+        small: true,
+        // section 82.1 (`pfam`): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s82_pfam.lua"),
+    },
+    Prog {
+        name: "s86_tailf",
+        small: true,
+        // section 86.1 (TAILF, `retf` bit 10): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s86_tailf.lua"),
+    },
 ];

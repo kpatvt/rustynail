@@ -250,6 +250,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.midfold_traces, s.midfold_refused, s.midfold_banned
         );
     }
+    if s.lazydec_off > 0 {
+        let _ = writeln!(o, "[trace] lazydec: decided eager {}", s.lazydec_off);
+    }
     if s.lazyloop_on > 0 {
         let _ = writeln!(o, "[trace] lazyloop: lazy-aware {}", s.lazyloop_on);
     }
@@ -328,6 +331,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             o,
             "[trace] chaindepth: callee-guard exits that got no further link {}",
             s.chain_deep
+        );
+    }
+    if s.fam_dispatch > 0 || s.fam_started > 0 || s.fam_on > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] pfam: families on {} dispatch misses {} member recordings {} refused (full) {}",
+            s.fam_on, s.fam_dispatch, s.fam_started, s.fam_full
         );
     }
     if s.ncallee_heads > 0 {

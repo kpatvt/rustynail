@@ -218,6 +218,8 @@ pub struct TraceOpts {
     pub sinkmt: u32,
     /// BUNDLE-5: `TrLimits::sinkside` (set from the limits when a recording starts): allocation sinking in side and stitched traces.
     pub sinkside: u32,
+    /// Section 86.4: `TrLimits::sinkseg` (set from the limits when a recording starts): sinking in traces with segments.
+    pub sinkseg: u32,
     /// P2 bundle 2: `TrLimits::uvsep` (set from the limits when a recording starts): guarded disjointness of upvalue cells in the loop optimiser.
     pub uvsep: u32,
     /// Section 79.11: `TrLimits::selfst` (set from the limits when a recording starts): array stores of the value the element holds are dropped.
@@ -268,6 +270,7 @@ impl Default for TraceOpts {
             hdrlib: 0,
             sinkmt: 0,
             sinkside: 0,
+            sinkseg: 0,
             uvsep: 0,
             selfst: 0,
             aidx: 0,
@@ -382,6 +385,8 @@ struct Active {
     side_rooms: bool,
     /// G1: the guard diet (`TrLimits::guarddiet`).
     guarddiet: bool,
+    /// Section 86.2 (`retf` bit 11): an eager side trace of a pinned, never recursive lazy-aware family (compiled without lazy frames).
+    eager_side: bool,
 }
 
 /// A trace installed with `+emurun` / `+emuverify`: the micro-op program the emulator runs.
@@ -395,6 +400,8 @@ struct EmuTrace {
     verifiable: bool,
     root: usize,
     head_pc: u32,
+    /// Section 82.1: the head's `HeadData` (0: none), whose entry counters the emulation saves and restores.
+    head_ptr: u64,
     /// Address of the exit handler (the emulation intercepts it).
     exit_fn: u64,
     calln_fn: u64,
@@ -868,9 +875,10 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
     } else {
         None
     };
+    // (section 86.5: `innerlink` bit 4 asks too)
     let nest_frame: Option<record::FrameHeadQuery> = if cfg.limits.nest >= 2
         || cfg.limits.sidenest != 0
-        || cfg.limits.innerlink & 1 != 0
+        || cfg.limits.innerlink & 17 != 0
         || cfg.limits.stitch & 8 != 0
     {
         Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
@@ -894,6 +902,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         nest_frame_sides: cfg.limits.sidenest != 0,
         inner_link: cfg.limits.innerlink & 1 != 0,
         inner_deep: cfg.limits.innerlink & 4 != 0,
+        back_link: cfg.limits.innerlink & 16 != 0,
+        link_dead_nil: cfg.limits.innerlink & 32 != 0,
         objkey: cfg.limits.t5,
         // T9: the `RETF` caller rule (`Rec::pop_into_ok`) decides where a link may be made (see `driver_start_side`)
         retf_nolazy: if cfg.limits.lazyci != 0 && cfg.limits.lazyloop != 0 {
@@ -1103,6 +1113,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                             };
                         o.sinkmt = cfg.limits.sinkmt;
                         o.sinkside = cfg.limits.sinkside;
+                        o.sinkseg = cfg.limits.sinkseg;
                         o.uvsep = 1;
                         o.selfst = cfg.limits.selfst;
                         o.aidx = cfg.limits.aidx;
@@ -1124,6 +1135,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                     max_ci: 0,
                     side_rooms: false,
                     guarddiet: cfg.limits.guarddiet != 0,
+                    eager_side: false,
                 });
             });
             true
@@ -1148,6 +1160,15 @@ pub fn driver_start_side(
     // (see `driver_start`)
     let cfg = crate::rt::trace_config(st);
     let lazy_root = cache::proto_lazy(st, pr);
+    // section 86.2 (`retf` bit 11): a side recording of a lazy-aware family that never recursed (no native self-call compiled: no frame of it was
+    // ever lazy) is recorded and compiled as an eager trace, so that it may pop (`RETF`); the family is pinned (`retf_pin`: a later native self-call
+    // of it aborts its compile), so no lazy frame ever exists below it
+    let eager_side = lazy_root
+        && cfg.limits.retf & 2048 != 0
+        && cfg.limits.retf & 1 != 0
+        && !start.no_retf
+        && cache::retf_side_demote(st, pr);
+    let lazy_root = lazy_root && !eager_side;
     let low = cache::landing_cached(&proto)?;
     // S1: a start inside inlined frames lands at a label of the innermost frame's prototype
     let inner_low = if start.frames.is_empty() {
@@ -1245,6 +1266,8 @@ pub fn driver_start_side(
         inner_ret: start.inner_ret,
         inner_link_sides: cfg.limits.innerlink & 8 != 0,
         inner_deep: cfg.limits.innerlink & 4 != 0,
+        back_link: cfg.limits.innerlink & 16 != 0,
+        link_dead_nil: cfg.limits.innerlink & 32 != 0,
         objkey: cfg.limits.t5,
         // P-E2: a side trace of a function-entry root ends before the root frame's `RETURN` (exit, no link)
         pack: true,
@@ -1317,18 +1340,20 @@ pub fn driver_start_side(
         pcall: true,
         landcache: true,
         fn_root: fn_side,
-        rec_native: cfg.limits.recnat != 0 && fn_side,
-        rec_conts: cfg.limits.recnat != 0 && fn_side,
+        // (section 86.2: an eager side of a lazy-aware family makes no native push, and folds nothing by the region invariants: after a pop its root
+        // frame is not the region's)
+        rec_native: cfg.limits.recnat != 0 && fn_side && !eager_side,
+        rec_conts: cfg.limits.recnat != 0 && fn_side && !eager_side,
         rec_any: cfg.limits.recany != 0,
         cnum: true,
         nil_store: cfg.limits.nilstore != 0,
         hstore_mt: cfg.limits.hstoreguard != 0,
         slot_live: cfg.limits.slotlive != 0,
         rec_seen: cache::proto_recursive(st, pr),
-        idfold: idf_fold,
-        idfold_ident: idf_ident.is_some(),
-        midfold: mf_fold,
-        mfkeys: if mf_fold.is_some() {
+        idfold: if eager_side { None } else { idf_fold },
+        idfold_ident: idf_ident.is_some() && !eager_side,
+        midfold: if eager_side { None } else { mf_fold },
+        mfkeys: if mf_fold.is_some() && !eager_side {
             Some(std::rc::Rc::new(cache::midfold_extra(st, pr)))
         } else {
             None
@@ -1338,7 +1363,7 @@ pub fn driver_start_side(
         } else {
             None
         },
-        midfold_ident: mf_ident.is_some(),
+        midfold_ident: mf_ident.is_some() && !eager_side,
         smallkeys: (cfg.limits.smallkeys & 3) as u8,
         smallkeys_self: cfg.limits.smallkeys & 4 != 0,
         unroll: if deep {
@@ -1407,6 +1432,7 @@ pub fn driver_start_side(
                     };
                 o.sinkmt = cfg.limits.sinkmt;
                 o.sinkside = cfg.limits.sinkside;
+                o.sinkseg = cfg.limits.sinkseg;
                 o.uvsep = 1;
                 o.selfst = cfg.limits.selfst;
                 o.aidx = cfg.limits.aidx;
@@ -1423,6 +1449,7 @@ pub fn driver_start_side(
             max_ci: start.max_ci,
             side_rooms: cfg.limits.siderooms != 0,
             guarddiet: cfg.limits.guarddiet != 0,
+            eager_side,
         });
     });
     Some(rem)
@@ -2489,10 +2516,11 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         {
             // SAFETY: the root prototype is live (running frame).
             let rootp = unsafe { &*(act.root as *const rn_core::func::Proto) };
+            let am = cache::proto_ref(rootp).and_then(|pr| cache::active_member(st, pr));
             let sig = cache::proto_ref(rootp)
                 .and_then(|pr| {
                     cache::with_tr(st, pr, |tp| {
-                        tp.head_index(si.link_pc)
+                        tp.head_index_in(si.link_pc, am)
                             .map(|i| tp.head(i).e3_sig_inst.get())
                     })
                     .flatten()
@@ -2559,6 +2587,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     if !act.side {
         let on = cache::lazy_loop_rule(pc, ir.rec_call.is_some(), !ir.segs.is_empty());
         cache::lazy_loop_decide(st, rpr, pc, on);
+        // section 86.2 (`lazydec`): the same decision for a loop-free prototype lazy-aware by the static rule
+        cache::lazy_static_decide(st, rpr, on, ir.idfold || ir.midfold);
         // E5: a first root trace without a folded method lookup turns folding off
         cache::midfold_first(st, rpr, ir.midfold);
     }
@@ -2571,8 +2601,10 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         && ir.rec_ret.is_none()
         && ir.segs.is_empty()
         && !cache::proto_lazy(st, rpr);
-    // (section 87: the exit cell, set below once the exits are built)
+    // (section 87: the exit cell, set below once the exits are built; the carry / replay / exit cells are allocated there too)
     let mut frame_link_cell: Option<(usize, u64)> = None;
+    // (section 82.1: the family member of the head, 1-based; 0 = the head at `pc`)
+    let mut head_ix = 0u32;
     let (head, pcl) = if act.side {
         // a side trace books no entry counters; a failing TR6 check lands at the tier-1 label it was entered at
         let si = side.expect("side recording without SideInfo");
@@ -2581,16 +2613,19 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             .ok_or_else(|| abort_err("no-label", format!("pc {}", si.start_pc)))?;
         (0, pcl)
     } else {
-        let (head, pcl) = cache::with_tr(st, rpr, |tp| {
-            tp.head_index(pc).map(|i| {
+        let am = cache::active_member(st, rpr);
+        let (head, pcl, ix) = cache::with_tr(st, rpr, |tp| {
+            tp.head_index_in(pc, am).map(|i| {
                 (
                     tp.head(i) as *const HeadData as u64,
                     tp.head(i).pcl_addr.get() as u64,
+                    i as u32 + 1,
                 )
             })
         })
         .flatten()
         .ok_or_else(|| abort_err("no-head", format!("pc {pc}")))?;
+        head_ix = ix;
         (head, pcl)
     };
     let mut carry_env = (0u64, 0u32);
@@ -2615,8 +2650,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 let p = unsafe { &*(si.link_proto.0 as *const rn_core::func::Proto) };
                 cache::proto_ref(p).ok_or_else(|| abort_err("no-descriptor", "link proto"))?
             };
+            let am = cache::active_member(st, tpr);
             let link_cell = cache::with_tr(st, tpr, |tp| {
-                tp.head_index(si.link_pc).map(|i| {
+                tp.head_index_in(si.link_pc, am).map(|i| {
                     if prelude {
                         &tp.head(i).entry as *const std::cell::Cell<usize> as u64
                     } else {
@@ -2642,7 +2678,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 && rec.ir.segs.is_empty()
             {
                 cache::with_tr(st, tpr, |tp| {
-                    tp.head_index(si.link_pc).map(|i| {
+                    tp.head_index_in(si.link_pc, am).map(|i| {
                         let h = tp.head(i);
                         (
                             &h.e2 as *const std::cell::Cell<usize> as u64,
@@ -2665,7 +2701,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 )
             {
                 carry_env = cache::with_tr(st, tpr, |tp| {
-                    tp.head_index(si.link_pc).map(|i| {
+                    tp.head_index_in(si.link_pc, am).map(|i| {
                         let h = tp.head(i);
                         if h.e3_code.get() != 0 && h.e3_sig_inst.get() != 0 {
                             (h as *const HeadData as u64, h.e3_sig_inst.get())
@@ -2687,11 +2723,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     };
     // P-M3: the continuation heads of the root prototype (the targets of a native return), and the function-entry head's
     // dispatch cell (the target of the native self-call of a continuation trace)
-    let lazy = cache::proto_lazy(st, rpr);
+    // (section 86.2: the family rules below keep the family's mode; an eager side trace is assembled without lazy frames)
+    let lazy_fam = cache::proto_lazy(st, rpr);
+    let lazy = lazy_fam && !act.eager_side;
     // E2 (`idfold`, docs/JIT_TRACE.md section 34.3): the family rule. While the family is under the region invariant (folding on, or a folded
     // trace installed), no trace of it may store an upvalue (`(closure, index)` pairs may alias the self upvalue, P3d): the recording is
     // refused and folding goes off for good (the folded families are flushed at their next hot exit)
-    let idf_env = if lazy {
+    let idf_env = if lazy_fam {
         cache::idfold_cfg(st, rpr).1
     } else {
         None
@@ -2709,14 +2747,14 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     // E5 (`midfold`, docs/JIT_TRACE.md section 35.4): a folded trace needs the region's checked entries, which only a lazy-aware family has (a
     // candidate with loops that was decided eager at this compile: refused, folding off for good); the family rule: while the family is under
     // the method invariant, no trace of it may store with the key or `__index` (or a key not known) into any table, or set a metatable
-    if ir.midfold && !lazy {
+    if ir.midfold && !lazy_fam {
         cache::midfold_ban(st, rpr);
         return Err(abort_err(
             "midfold_eager",
             "a folded method lookup in a family that is not lazy-aware",
         ));
     }
-    let mf_env = if lazy {
+    let mf_env = if lazy_fam {
         cache::midfold_cfg(st, rpr).1
     } else {
         None
@@ -2920,6 +2958,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         pcl_h: pcl,
         head,
         head_pc: pc,
+        head_ix,
         entry_fail_fn: cache::jit_tr_entry_fail as *const () as usize as u64,
         ci_spare_fn: cache::jit_tr_ci_spare as *const () as usize as u64,
         ci_spare_root_fn: if unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cispare } & 2 != 0 {
@@ -2994,8 +3033,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
-        idfold_uv: idf_env,
-        midfold_kidx: mf_env,
+        // (section 86.2: an eager side trace has no checked region entry)
+        idfold_uv: idf_env.filter(|_| lazy),
+        midfold_kidx: mf_env.filter(|_| lazy),
         midfold_fn: cache::jit_tr_midfold_check as *const () as usize as u64,
         root_maxstack: u16::from(rootp.maxstacksize),
         // S1: a frameful side trace has no entry checks. CP2: neither has a frameless one whose needs the parent's checks cover (it is entered
@@ -3780,6 +3820,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     // N2b: the native run moves the frame below the private copy the re-run uses (`+emurun` runs on the live frame)
                     | ir::TOp::Retf
                     | ir::TOp::Lroot
+                    | ir::TOp::Tailf
             ) || is_uv_identity_guard(&ir, i)
         });
         let t = EmuTrace {
@@ -3790,6 +3831,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             verifiable,
             root,
             head_pc: pc,
+            head_ptr: env.head,
             exit_fn: env.exit_handler,
             calln_fn: env.calln,
             entry_fail_fn: env.entry_fail_fn,
@@ -4162,7 +4204,7 @@ fn verify_probe(st: &mut State, id: TrId) {
         cnt: hdr.as_mut_ptr().cast::<i32>(),
     };
     // the emulation books entries in the head's counters again: save and restore them
-    let head_state = head_counters(st, t.root, t.head_pc);
+    let head_state = head_counters(st, t.root, t.head_pc, t.head_ptr);
     let mut hl = VerifyHelpers {
         t: &t,
         exit_reached: false,
@@ -4180,7 +4222,7 @@ fn verify_probe(st: &mut State, id: TrId) {
     let u = unsafe { emu.run(&t.prog, &[], &env, u64::MAX, &mut hl) };
     // SAFETY: as above.
     unsafe { *pre.ci.cast::<u8>().add(ci_layout::TRAP).cast::<i32>() = live_trap };
-    set_head_counters(st, t.root, t.head_pc, head_state);
+    set_head_counters(st, t.root, t.head_pc, t.head_ptr, head_state);
     assert!(
         matches!(u, Until::Stop(Stop::Unsupported)),
         "emuverify: emulator stopped with {u:?}"
@@ -4245,7 +4287,12 @@ fn verify_probe(st: &mut State, id: TrId) {
 
 thread_local! {}
 
-fn head_counters(st: &mut State, root: usize, pc: u32) -> (u32, u32, u32) {
+fn head_counters(st: &mut State, root: usize, pc: u32, hp: u64) -> (u32, u32, u32) {
+    if hp != 0 {
+        // SAFETY: `hp` is the `HeadData` of the trace's head, in the head table of its live root prototype (address-stable).
+        let h = unsafe { &*(hp as *const HeadData) };
+        return (h.entry_fail.get(), h.entry_ok.get(), h.pending.get());
+    }
     // SAFETY: the root prototype is live (the trace is running in it).
     let p = unsafe { &*(root as *const rn_core::func::Proto) };
     cache::proto_ref(p)
@@ -4259,7 +4306,15 @@ fn head_counters(st: &mut State, root: usize, pc: u32) -> (u32, u32, u32) {
         .unwrap_or((0, 0, 0))
 }
 
-fn set_head_counters(st: &mut State, root: usize, pc: u32, c: (u32, u32, u32)) {
+fn set_head_counters(st: &mut State, root: usize, pc: u32, hp: u64, c: (u32, u32, u32)) {
+    if hp != 0 {
+        // SAFETY: as in `head_counters`.
+        let h = unsafe { &*(hp as *const HeadData) };
+        h.entry_fail.set(c.0);
+        h.entry_ok.set(c.1);
+        h.pending.set(c.2);
+        return;
+    }
     // SAFETY: as in `head_counters`.
     let p = unsafe { &*(root as *const rn_core::func::Proto) };
     if let Some(pr) = cache::proto_ref(p) {
