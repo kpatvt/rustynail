@@ -9699,3 +9699,114 @@ Not started from the coordinator's second list: the `LeaveLoop` / first-back-edg
 for serpent_ser (`TableHash`), the 3-path re-measure of lua_parser under `eflazy`, cd's unlinked exits and raw-copy template, raytrace. Next step for
 `reroot`: attribute diff_levenshtein +17.7 % (`RUSTYNAIL_JIT_VERBOSE=2`, grep `reroot:` / `rerootchk:`), then decide `rerootfam` / `rerootkeep`
 from the whole set.
+
+## 92. `reroot` + `outerlink` causes: short side traces (`sretry`), `LIB` outcome sites (`libsite`), the predicted re-root gain (`rerootgain`) (2026-11-28, base 661ca5b)
+
+Method as section 88: release `rn-cli`, `RUSTYNAIL_SEED=0`, `perf stat -e instructions:u`, the 223 programs of bench_fast's nine sets, serially on
+CPU 14, absolute script paths, environment padded equal per configuration, one binary per comparison; programs that move are re-measured with
+three path lengths (the original and two copies at other path lengths). The new knobs are all **default 0** (process and struct).
+
+### 92.0 Path lottery, again
+
+diff_levenshtein under `reroot=50,rerootkeep=100,rerootfam=32` runs 2544 M with an absolute script path (any length) and 2215 M with the relative
+path (base 2162 M in both): the +17.7 % of 88.9 is the absolute-path mode, the relative mode is +2.4 %. Both are real formations with different
+causes (92.1). `perf record` and `RUSTYNAIL_JIT_VERBOSE` runs must use the same path form as the measurement.
+
+### 92.1 diff_levenshtein under `reroot`: two causes, three fixes
+
+* **Absolute-path mode (+17.7 %): the re-record is rolled and never checked.** The re-record (after 2 `Reroot` drops) records an iteration whose
+  `cur[j] = best` grows the row: a generic `TSET` (header-mutating) makes the loop pass give up peeling, so the root is rolled. `rerootchk` runs from
+  `pre_exit_check`, which only pre-roll exits call: a rolled root has none, so the probation never ran and the worse root stayed (head entries
+  4.64 M -> 5.94 M, exits 7.1 M -> 12.4 M, unlinked 1.05 M -> 3.03 M). **Fix (built, active whenever `reroot` is on):** a closed root recording of
+  a head that carries a `reroot` constraint (`cache::reroot_pending`) and would not peel (`opt_loop::peelable`: shaped for peeling, every
+  instruction header-safe at `hdrlib`) is dropped like a recording that completed the avoided prefix (`abort_reroot`, no penalty, counts against
+  `REROOT_TRIES`); once the constraint is used up the unconstrained re-record is held to the same rule for another `REROOT_TRIES` drops
+  (`HeadData::reroot_rolled`). Alone: 2544 -> 2407 M (the constrained re-records of this loop are mostly growth iterations: 16 drops, given up).
+* **Relative-path mode (+2.4 %) and the base: hot exits blacklisted `SideShort`.** The kept re-record (pre-roll 772 against 875 per mille) has
+  twice the unlinked exits of the old family: side traces recorded on the loop's final iteration exit at the inner `FORLOOP` (pc 67) on every
+  other iteration (1.48 M), and their side attempts abort `SideShort` (`sidemin` = 4) twice, which blacklists the exit. The base has the same
+  structure at a smaller scale (630 k exits at pc 59 `LT`, 187 k at pc 66 `SETTABLE`, all `SideShort`). `sidemin=0`: diff_levenshtein 2162 -> 2066 M
+  and the `reroot` rise gone (2069 M), but over the 223 programs `sidemin=0` is -0.26 % with list +25 %, lua_parser +8.7 %, sha2_base64 +8.5 %,
+  dijkstra_routes +5.2 %, roguelike +3.7 %, msgpack_pure +2.6 %, text_adventure +2.5 % (tinsert_append -16 %, fmt_s -8 %, loops_arith -8 %,
+  queens -7 %, fannkuch -5 %, sieve -5 %, cd -4.8 %).
+  **Fix: `sretry=W`** (built): the second `SideShort` of an exit does not blacklist it; it waits `W` report windows (`hot_exit` exits each, the
+  `bwait` back-off, at most 255) and the third attempt has no `sidemin` (`SideStart::sretry`, `cache::sretry_due` / `sretry_free`). Only exits
+  outside inlined frames (bit 8: also framed ones, which `fretry` covers otherwise) and not at a `TFORCALL` (bit 9: also those; msgpack_pure
+  +1.74 % and json_roundtrip +0.42 % came from `TFORCALL` exits). Counter `[trace] sretry: starts N`.
+* `sretry=64` over the 223 programs (with the `TFORCALL` rule): geomean **-0.38 %**; tinsert_append -16.2 %, loops_arith -8.1 %, awfy/queens
+  -8.0 %, fannkuch -5.5 %, sudoku_solver -4.8 %, sieve -4.8 %, particles_physics -4.6 %, fmt_s -3.9 %, diff_levenshtein -3.7 %, bignum_arith
+  -3.6 %, ecs_world -3.3 %; rises **expr_compiler +5.1 %** (92.2), programs/queens +0.44 %, penlight_mix +0.28 %, dijkstra_routes +0.28 %.
+
+### 92.2 expr_compiler under `sretry`: `NE %lib, 1` was an allocation site (`libsite`)
+
+Bisected per `sretry` start (a start mask): the first short side alone (in `run`'s dispatch loop) gives +7.8 %, all others together -2.4 %. The
+mechanism is not that side trace: the moved formation records the tokenizer's root (`tokenize`, line 6) on the "found" outcome of `c:match("%s")`,
+whose outcome guard is `NE %findm, 1`. `exit::site_classes` called every `NE` guard on a `LIB` / `TNEW` / `SNEW` / `CONCAT` result an allocation
+guard (P-B: `NE %alloc, 0`), so the snapshot was an `Alloc` site and its exits never got a side trace: 307 k exits into tier 1, `string.find` then
+called through `jit_call` -> `str_find_aux` (+166 M) instead of the trace helper. **Fix: `libsite=1`** (built; `TraceIr::lib_site` from
+`RecCfg::lib_site`): behind a `LIB` only the guard against the constant 0 is an allocation guard; outcome guards are ordinary sites. expr_compiler
+`sretry=64`: 5151 -> 4890 M (base 4899). Whole set, `libsite=1` alone: -0.06 %; csv_report -6.25 %, astar_jumper -3.5 %, json -3.4 %,
+real_dis_x86 -2.9 %, markdown_conv -1.8 %; rises **parser_combinator +5.7 %** (median of three paths +3.9 %, 9270 -> 9635 M): the new side traces
+route 8.7x more entries into a root whose callee-identity chain at a combinator call (`pc 0 GETUPVAL`, guard kind 48: four side traces in a chain,
+the fifth exit blacklisted `InnerLoop`) now carries 3.3 M exits instead of 377 k; gmatch_words +1.26 %, scheme_interp +0.87 %. Not shipped: the
+megamorphic chain is the open cause.
+
+### 92.3 The `reroot` decision on a prediction: `rerootgain`
+
+The re-record follows the path of the side trace at the busiest pre-roll site, so entries of that side trace that leave it before its end are
+pre-roll exits of the re-record too. Counters at the firing (`pre_exit_check`): `c` the side trace's entries, `x` the sum of its exit counters,
+`e` the root's entries, `p` its pre-roll exits. **`rerootgain=G`** (built): fire only when `(c - x) * 100 >= (e - p) * G`; otherwise the head is
+marked done (`reroot_done`) and counted (`[trace] reroot: ... held H`). Logged with `RUSTYNAIL_JIT_VERBOSE=2` (`rerootgain:`):
+
+| program | completed iterations: side path / old root (of e) | ratio | outcome without the condition |
+|---|---|---:|---|
+| awfy/queens | 35163 / 7760 (65915) | 4.5 | kept, -24 % |
+| containers_lru_heap | 28870 / 6805 (66125) | 4.2 | kept, -1 % |
+| class_middleclass | 74378 / 63596 (319044) | 1.17 | kept |
+| diff_levenshtein (with `sretry`) | 9683 / 9508 (66150) | 1.02 | kept |
+| oop_mixins | 9629 / 9549 and 529 / 8545 | 1.01, 0.06 | reverted: two flushes, +1.35 % |
+| testrunner_luaunit | 0 / 5092 | 0 | never checked, +2.7 % |
+| awfy/cd | 0 / 5255 | 0 | flush cost, +0.76 % |
+
+`rerootgain=110` holds the losers and keeps the winners; `rerootfam` is not needed with it (`rerootfam=32` and no cap measure the same).
+Without `sretry` diff_levenshtein's side trace has fewer exits (23813 / 8237: fires) and the re-root stays a loss (+11 .. +14 %).
+
+### 92.4 Whole set (223 programs, instructions)
+
+| configuration | geomean | rises above +0.3 % (astar_jumper: run-to-run spread, not counted) |
+|---|---:|---|
+| `sretry=64` | -0.38 % | expr_compiler +5.13 %, programs/queens +0.44 % |
+| `reroot=50,rerootkeep=100,rerootgain=110` | -0.05 % | diff_levenshtein +14.3 %, ecs_world +0.91 %, testrunner_luaunit +0.32 % |
+| `sretry=64,reroot=50,rerootkeep=100,rerootgain=110` | **-0.54 %** | **dijkstra_routes +0.35 %** (three paths: 2823 -> 2833 M; +0.28 % from `sretry` alone) |
+| the same + `outerlink=1` | **-0.86 %** | dijkstra_routes +1.04 % |
+| `outerlink=1,reroot=50,rerootkeep=100,rerootgain=110` | -0.46 % | diff_levenshtein +14.3 %, ecs_world +0.88 %, dijkstra_routes +0.76 %, roguelike +0.54 % |
+
+The third row's gains: awfy/queens -25.2 %, tinsert_append -16.3 %, loops_arith -8.1 %, programs/queens -8.0 %, fannkuch -5.4 %, sudoku_solver
+-4.8 %, sieve -4.8 %, particles_physics -4.6 %, ecs_world -3.9 %, fmt_s -3.8 %, diff_levenshtein -3.7 %, bignum_arith -3.6 %. `sretry` and `reroot`
+need each other (without `sretry` the levenshtein re-root is a loss; without `reroot` expr_compiler is +5 %). The fourth row adds fmt_s -13 %,
+mandelbrot -8 % / -5 %, it_ipairs -5 %. **Defaults unchanged (all off)**: both candidate rows fail the +0.3 % bar on dijkstra_routes alone.
+
+* dijkstra_routes under `sretry` (+0.28 %): the short sides link 352 k + 51 k exits that went to tier 1 (`FORLOOP` at pc 62, a side's loop-end exit
+  back to the `while` head at pc 42, and an `LE` at pc 32): exits and entries are unchanged, so a linked exit costs about 20 instructions more
+  than the tier-1 continuation (side entry, the link into the root's entry). A minimum length of 1-3 fetches for the `sretry` side does not
+  separate it (the same sides remain; at 3 diff_levenshtein loses its gain). Open.
+* dijkstra_routes under `outerlink` (+0.7 %): 14 outer-link sides; exits, entries and unlinked exits are equal within 3 k, the extra 15 M are
+  instructions inside trace code (perf: JIT +14.8 M). Open: compare the outer-link sides' bodies with the sides they replace.
+
+### 92.5 Tests
+
+`tr_core::s92_knob_programs` (programs `s92_short_tails`: levenshtein / sieve tails, a growing row, an error and a count hook on short tails, a
+float change; `s92_lib_outcomes`: a tokenizer whose `match` / `find` outcomes change between phases, an error behind a find outcome; plus
+`s60_queens`, `s60_worse`, `s60_phases`) in `always` / `on2` x knobs off / on (`sidemin=4,sretry=1,libsite=1,reroot=1,domn=64,rerootall=0,
+rerootkeep=100,rerootgain=110`) x plain, `+verify`, budget 17; with the knobs on `+exitstorm=3 +verify`, budget 3, GC stress 1 / 2 in both modes,
+stack moves, oracle identity. Outputs match the interpreter; asserts `sretry` starts in `s92_short_tails` (23), none with the knobs off, and the
+queens re-root still fires under `rerootgain` (`s60_worse` is held). No mutants: the three rules choose between formations of the same code.
+
+### 92.6 State and queue for the next builder
+
+Built and measured, default off: `sretry`, `libsite`, `rerootgain` (+ the rolled re-record rule, active with `reroot`). Shipping candidate:
+`sretry=64,reroot=50,rerootkeep=100,rerootgain=110` (-0.54 %), with `outerlink=1` -0.86 %; blocker dijkstra_routes (+0.35 % / +1.04 %, 92.4).
+Not reached from the coordinator's list: roguelike's `LeaveFrame` loop root (88.3; `wander_step`'s function head also aborts `FnShort`),
+serpent_ser (the aborting key at pc 172 is a **non-integral float** key, `int_key` -> `TableHash`, not an integer key: it needs a float-key hash
+path, e.g. a `LIB` node lookup returning the node pointer for `HLOAD`; pc 356's abort is a table key with `objkey` bit 0 off), lua_parser 3-path
+under `eflazy`, cd's unlinked exits / raw-copy template, raytrace (`fnleaf` bit 12, callee loop links), the json tick-arm flag test.

@@ -442,6 +442,9 @@ are ignored with a warning at `RUSTYNAIL_JIT_VERBOSE>=1`.
 | `domn` | 65536 | any | C36: see `domtop`. |
 | `reroot` | 0 | 0-100 | Section 59 (built, off): a root with at least `domn` entries, `reroot` percent of which leave through ONE pre-roll site into a side trace, is re-recorded once with a path constraint ... |
 | `rerootfam` | 0 | 0-1024 | Section 88.9 (built): `reroot` does not fire on a root whose family has at least this many side traces (cd: 64). |
+| `rerootgain` | 0 | 0-10000 | Section 92.3 (built, off): `reroot` fires only when the side trace's path promises `rerootgain` percent of the old root's completed iterations, `(c - x) * 100 >= (e - p) * rerootgain` (recommended 110 together with `sretry=64`). |
+| `sretry` | 0 | 0-1023 | Section 92.1 (built, off; recommended 64 with `reroot=50,rerootkeep=100,rerootgain=110`, blocked by dijkstra_routes +0.35 %): an exit whose second side attempt ended `SideShort` waits `sretry & 255` report windows instead of being blacklisted, and the third attempt is not held to `sidemin`; bit 8: also exits inside inlined frames, bit 9: also `TFORCALL` exits. |
+| `libsite` | 0 | 0-1 | Section 92.2 (built, off: parser_combinator +3.9 %): behind a `LIB` helper only the guard against 0 is an allocation site; its outcome guards (`NE %find, 1`) are ordinary exit sites with side traces (expr_compiler under `sretry`). |
 | `rerootall` | 80 | 0-100 | Section 59: `reroot` fires only when all pre-roll exits are at least `rerootall` percent of the entries. |
 | `ncallee` | 1 | 0-1 | P3: after an entry-failure flush of a root whose entry segment holds a callee identity guard (TR6d), the head is recorded again ... |
 | `chainre` | 95 | 0-100 | P3: a side trace of which `chainre` percent or more of at least `chainn` entries leave through its callee-guard exit into a child ... |
