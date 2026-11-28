@@ -9628,3 +9628,78 @@ builds every guard of an open snapshot asserts that the registers its map names 
 Converted classes: constants, `SLOAD`, integer arithmetic including `IDIV` / `MOD` / shifts, float arithmetic and conversions, every compare
 guard, `EQREF`, `FLOAD`, `BUDGET`, `POLL`, `SSTORE`, `TVIRT`, the hash ops (`HREFK`, `HLOAD`, `HMISS`, `HSHAPE`, `HSTORE`, `HREFV`), the upvalue
 ops, `AREF` / `ALOAD` / `ASTORE`, `XLOAD`, string `TLEN`. Not converted: helper calls (`TBAR`, `CALLN`, class A), `NEWREF`, `RETF`, loops.
+
+Stage 3 (commit 9c75995): helper calls are converted too (`TBAR`, `TLEN`, `TNEW`, `NEWREF`, `TSET`, `LIB`, `CALLN`, `SNEW`, `CONCAT`, `STRTO`;
+not `TNEXT`): the call site's saved registers are the pass's live registers at the call minus the ones evicted there, and `RAPOL_CALLSPILL`
+evicts the unpinned values across an always-taken call as the allocator does. Side traces with entry room checks are eligible (the entry is
+the old `entry_checks`). The allocation's `used` masks are the pass's own (the old `uses_gpr` scanned the whole allocation in
+`stubs_and_tail`); `Cx::pre` / `post` skip empty records.
+
+### 87.2 Numbers (CPU 5, `RUSTYNAIL_SEED=0`, instructions; pipelines matched by order between `asmfuse=0` and `asmfuse=1`, same traces)
+
+Coverage after stage 3 (fused / pipelines): cd 90 / 267, raytrace 26 / 39, json 18 / 58, richards 4 / 31, towers 1 / 27, fmt_s 0 / 2. The
+refusals over the six programs (stage 2): native-recursion traces 117, roots 52, `lazy` 11, `RETF` segments 6, preludes 6 (room checks and
+calls were the rest, now converted).
+
+Per fused side pipeline (`scripts`-style per-pipeline log, `RUSTYNAIL_JIT_PIPELOG=1`):
+
+| program | IR ins / snapshot entries | old total | fused total | allocator(+fused body) | assembler | exits | encoder |
+|---|---|---|---|---|---|---|---|
+| cd | 34 / 143 | 273.6 k | 256.9 k (-6.1 %) | 46.7 -> 49.0 k | 40.1 -> 21.3 k | 41.8 k (=) | 23.7 k (=) |
+| raytrace | 56 / 202 | 415.5 k | 388.5 k (-6.5 %) | 71.3 -> 73.3 k | 54.3 -> 25.4 k | 56.9 k (=) | 26.2 k (=) |
+| json | 51 / 45 | 278.7 k | 262.8 k (-5.7 %) | 58.5 -> 72.2 k | 51.7 -> 22.3 k | 20.4 k (=) | 35.4 k (=) |
+| richards | 88 / 76 | 451.3 k | 423.8 k (-6.1 %) | 95.4 -> 116.4 k | 79.8 -> 31.6 k | 27.5 k (=) | 40.5 k (=) |
+
+All pipelines of a run: cd -0.95 %, raytrace -1.85 %, json -0.85 %, richards -0.05 %. The fused pass (allocation + body selection) costs
+what the old allocator alone cost; the saving is the old forward walk and the whole-allocation scans of the assembler (-47 .. -60 % of the
+`asm` phase). A sub-phase probe on raytrace (stage 2, per trace of 52 instructions / 189 entries): fusion flags 5.8 k, setup 3.8 k, `Cx`
+state 6.6 k, allocation 25.7 k (about 490 per instruction, dominated by the snapshot entries), emission through the old emitters 28.4 k (about
+545 per instruction), tail 1.5 k.
+
+Generated code (whole-run instructions, asmfuse 0 / 1, each run twice, outputs identical): nbody -0.006 %, fib 0.000 %, queens -0.005 %,
+lua_lexer 0.000 %, cd -0.076 %, raytrace -0.130 %, towers +0.001 %, json +0.001 %, fmt_s +0.005 %, richards +0.009 %, deltablue -0.026 %,
+havlak -0.006 % (stage 2 binary): no bar miss. Whole set (stage 3 binary, `scripts/compile-cost.sh whole`, 223 programs, wrappers setting `asmfuse` 0 / 1 on one binary): no output
+mismatch, geomean -0.033 %; the largest increases (`corpus/serpent_ser` +0.25 %, `corpus/classic_vector` +0.08 %) rerun twice: serpent_ser
+-0.21 % / 0.00 % (noise), classic_vector +0.08 % both times (below the 0.5 % bar); `corpus/astar_jumper` (-5.3 %, then +0.9 %, +1.8 %) varies
+by 1.4 % between two `asmfuse=0` runs (not deterministic).
+
+### 87.3 Gates and oracles
+
+- `tr_core::s87_asmfuse_programs` (`s87_fuse_arith`, `s87_fuse_fields`, `s76_side_fail`, `s64_call_loops`; `asmfuse` 2 / 1 / 0 in the `b1_jobs`
+  matrix: always / on2 / on, `+verify`, exit storms 3 and 7, budgets 3 / 17, `-loop`, GC stress 1 / 2, stack moves).
+- `TR_ASMFUSE=N` runs every `tr_core` job without its own `asmfuse` at level N: the whole suite (286 tests) passes with `TR_ASMFUSE=2`
+  (stage 2 classes).
+- tests/vm corpus, `asmfuse=0` against `asmfuse=1` / `2` (always, hot 2,2, `sidemin=0`; plain, `+verify`, `+exitstorm=3` in `on` mode): 252
+  programs identical (two `+verify` runs of `tables_14` / `tables_15` hit the 60 s leash of the ad-hoc script under load, without fused traces,
+  identical when rerun).
+- Mutants `asmfuse_no_reload`, `asmfuse_no_store`, `asmfuse_two_addr`, `asmfuse_call_live`: caught by `s87_asmfuse_programs`. A pin mutant
+  (`asmfuse_pin_skip`: the registers of a snapshot shared by several guards not pinned) was written and dropped: no program of the suite
+  takes an exit of an earlier guard of such a snapshot after an eviction would have moved one of its values (the pin skips do happen: 84 on cd
+  under `asmfuse=2`); the invariant is checked instead by the debug assertion at every guard of an open snapshot.
+- gate-light on dd7afe2 and on 9c75995: every step PASS (mutant group `asmfuse_`).
+
+### 87.4 State and the remaining stages (for the next builder)
+
+What S3a-1..3 shows: with the old emitters, fusing the allocation into the emission removes the forward walk and the whole-allocation
+scans, not the per-instruction cost of the emitters (~545 per IR instruction) nor the per-snapshot-entry cost, which is now spread over the
+pass's exit-map capture (~100-150 per entry), `build_exits_ex` (~290 per entry) and `stub_plan` (per entry again, even for deferred stubs).
+The four remaining levers, in order of size:
+
+1. **Lean emitters writing bytes** for the hot classes (`SLOAD`, compare guards, integer / float arithmetic, `HREFK` + `HLOAD`, `FLOAD`,
+   `BUDGET`): the encoder (24-40 k per side pipeline) and the old emitters (~545 per instruction) are about 40 % of a fused pipeline. Shape:
+   per class a function that appends the x86 bytes in reverse into the backwards buffer (each instruction's encoding is produced forwards
+   into a 16-byte scratch and copied), guards as `jcc rel32` with a fix-up list against the stub buffer, encoded separately by the old
+   encoder and placed behind the body. A trace whose every instruction has a lean emitter skips `x86::emit_ex` for the body; the stubs stay.
+   The emulator modes need the `Program`: such traces use the micro-op path (`+emurun` / `+emuverify` is a test mode).
+2. **Exit maps as products of the pass**: build each `ExitSnap` at its snapshot's open point from the state (`exit::build_exits_ex`'s
+   per-snapshot body factored out; the cells only need the location-free part), and share the slot list of consecutive snapshots with equal
+   maps (the stub planner then plans once per distinct map).
+3. **Coverage**: native-recursion side traces (117 of 377 over the six programs: `rec_ret_guards` reads the end locations and whether an
+   earlier instruction defines a register, a forward question: answer it from the pass's `used` masks after the body, emitting the guards in
+   `finish`), roots (loops: `PHI` / homes / back-edge moves; the pass would start at the back-edge with the PHI locations as end locations),
+   `TNEXT`, preludes.
+4. The cost of the pass itself: the fusion flags (5.8 k per raytrace trace) can come from the recorder's builder, the per-value arrays can be
+   one arena, and the snapshot open can skip entries whose value has not changed location since the previous snapshot of the same map
+   prefix.
+
+S3c (forwarding at record time) and S3d (the recorder's per-step cost) were not started.
