@@ -1155,6 +1155,18 @@ pub const NAMES: &[&str] = &[
     "htramp_swap_args",
     // section 76.10 (`t1exit` bit 2): the rolled `__index` chain answers nil when it runs out of levels
     "chain_end_nil",
+    // section 86.1 (TAILF, `retf` bit 10): the moved arguments land one slot above the callee's parameters
+    "tailf_args_unshifted",
+    // section 86.1: the segment after a `TAILF` keeps the replaced caller's prototype (exits land in the caller's code)
+    "tailf_seg_proto_stale",
+    // section 86.1: the root's closure ref stays the replaced caller's (the callee's upvalue loads read the caller's closure)
+    "tailf_func_ref_stale",
+    // section 86.1: the native frame replacement does not store the callee into the function slot
+    "tailf_func_store_skip",
+    // section 86.1: the native frame replacement keeps the caller's `ci.kcache`
+    "tailf_kcache_skip",
+    // section 86.1: the native frame replacement does not set `CIST_TAIL`
+    "tailf_cist_tail_skip",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1271,7 +1283,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 923);
+        assert_eq!(NAMES.len(), 929);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

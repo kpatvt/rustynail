@@ -5064,6 +5064,53 @@ impl Cx<'_> {
         Ok(())
     }
 
+    /// Section 86.1: `TAILF` (see [`TOp::Tailf`]): the function slot gets the callee, the running `CallInfo` (`r13`, the root frame after a
+    /// `RETF`) gets the callee's `top`, `savedpc`, `kcache` and `CIST_TAIL`, `r14 = kcache`. The stack room for the callee's frame is part of
+    /// the trace's extent (entry checks). Scratch: `V7`; `V10` is excluded from the trace around it (`ra::op_clobbers`).
+    fn tailf(&mut self, i: usize, loc_a: Loc) -> Result<(), AsmError> {
+        let ins = self.ir.ins[i];
+        if self.env.lazy
+            || self.ir.loop_at.is_some()
+            || self.ir.rec_call.is_some()
+            || self.ir.rec_ret.is_some()
+            || self.ir.segs.is_empty()
+        {
+            return incons("TAILF outside a segmented eager trace");
+        }
+        if self.al.uses_gpr(10) {
+            return incons("TAILF in a trace that allocated V10");
+        }
+        let Some(KVal::Ptr(pk, PtrKind::Proto)) = self.ir.kval_opt(ins.b) else {
+            return incons("TAILF without a proto constant");
+        };
+        // SAFETY: the proto is a dependency of the trace being assembled (registered by the recording step): alive.
+        let p: &rn_core::func::Proto = unsafe { &*(pk as usize as *const rn_core::func::Proto) };
+        let (code, kp) = (p.code_ptr() as u64, p.k_ptr() as u64);
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
+        if !mutants::active("tailf_func_store_skip") {
+            self.store_slot(FUNC_SLOT, ins.a, loc_a)?;
+        }
+        self.ld(7, W::B8, ciw(ci::FUNC));
+        self.push(Op::Add(7, Src::Imm(ins.aux as i32 + 1)));
+        self.st(W::B8, ciw(ci::TOP), Src::V(7)); // func + 1 + maxstacksize
+        self.push(Op::Mov(7, code));
+        self.st(W::B8, ciw(ci::SAVEDPC), Src::V(7));
+        self.push(Op::Mov(7, kp));
+        if !mutants::active("tailf_kcache_skip") {
+            self.st(W::B8, ciw(ci::KCACHE), Src::V(7));
+        }
+        self.push(Op::SetK(7));
+        if !mutants::active("tailf_cist_tail_skip") {
+            self.ld(7, W::B4, ciw(ci::CALLSTATUS));
+            self.push(Op::Or(7, Src::Imm(ci::CIST_TAIL as i32)));
+            self.st(W::B4, ciw(ci::CALLSTATUS), Src::V(7));
+        }
+        Ok(())
+    }
+
     /// TR6a / TR6b: stack room and spare `CallInfo` nodes of the running frame (failures jump to `fail`; `V0`, `V1`).
     fn room_checks(&mut self, fail: L) {
         self.room_stack_check(fail);
@@ -6040,6 +6087,7 @@ impl Cx<'_> {
             TOp::Hstore => self.hstore(i)?,
             TOp::Uload | TOp::Ustore | TOp::Uvrel => self.uop(i)?,
             TOp::Retf => self.retf(i)?,
+            TOp::Tailf => self.tailf(i, ops[0])?,
             TOp::Tbar => self.tbar(i)?,
             TOp::Atouch => self.atouch(i)?,
             TOp::Calln => self.calln(i)?,

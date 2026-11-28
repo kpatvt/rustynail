@@ -375,6 +375,8 @@ struct Active {
     side_rooms: bool,
     /// G1: the guard diet (`TrLimits::guarddiet`).
     guarddiet: bool,
+    /// Section 86.2 (`retf` bit 11): an eager side trace of a pinned, never recursive lazy-aware family (compiled without lazy frames).
+    eager_side: bool,
 }
 
 /// A trace installed with `+emurun` / `+emuverify`: the micro-op program the emulator runs.
@@ -1012,6 +1014,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                     max_ci: 0,
                     side_rooms: false,
                     guarddiet: cfg.limits.guarddiet != 0,
+                    eager_side: false,
                 });
             });
             true
@@ -1036,6 +1039,15 @@ pub fn driver_start_side(
     // (see `driver_start`)
     let cfg = crate::rt::trace_config(st);
     let lazy_root = cache::proto_lazy(st, pr);
+    // section 86.2 (`retf` bit 11): a side recording of a lazy-aware family that never recursed (no native self-call compiled: no frame of it was
+    // ever lazy) is recorded and compiled as an eager trace, so that it may pop (`RETF`); the family is pinned (`retf_pin`: a later native self-call
+    // of it aborts its compile), so no lazy frame ever exists below it
+    let eager_side = lazy_root
+        && cfg.limits.retf & 2048 != 0
+        && cfg.limits.retf & 1 != 0
+        && !start.no_retf
+        && cache::retf_side_demote(st, pr);
+    let lazy_root = lazy_root && !eager_side;
     let low = cache::landing_cached(&proto)?;
     // S1: a start inside inlined frames lands at a label of the innermost frame's prototype
     let inner_low = if start.frames.is_empty() {
@@ -1168,23 +1180,25 @@ pub fn driver_start_side(
         pcall: true,
         landcache: true,
         fn_root: fn_side,
-        rec_native: cfg.limits.recnat != 0 && fn_side,
-        rec_conts: cfg.limits.recnat != 0 && fn_side,
+        // (section 86.2: an eager side of a lazy-aware family makes no native push, and folds nothing by the region invariants: after a pop its root
+        // frame is not the region's)
+        rec_native: cfg.limits.recnat != 0 && fn_side && !eager_side,
+        rec_conts: cfg.limits.recnat != 0 && fn_side && !eager_side,
         rec_any: cfg.limits.recany != 0,
         cnum: true,
         nil_store: cfg.limits.nilstore != 0,
         hstore_mt: cfg.limits.hstoreguard != 0,
         slot_live: cfg.limits.slotlive != 0,
         rec_seen: cache::proto_recursive(st, pr),
-        idfold: idf_fold,
-        idfold_ident: idf_ident.is_some(),
-        midfold: mf_fold,
-        mfkeys: if mf_fold.is_some() {
+        idfold: if eager_side { None } else { idf_fold },
+        idfold_ident: idf_ident.is_some() && !eager_side,
+        midfold: if eager_side { None } else { mf_fold },
+        mfkeys: if mf_fold.is_some() && !eager_side {
             Some(std::rc::Rc::new(cache::midfold_extra(st, pr)))
         } else {
             None
         },
-        midfold_ident: mf_ident.is_some(),
+        midfold_ident: mf_ident.is_some() && !eager_side,
         unroll: if deep {
             cfg.limits.unroll.max(cfg.limits.deep)
         } else {
@@ -1247,6 +1261,7 @@ pub fn driver_start_side(
             max_ci: start.max_ci,
             side_rooms: cfg.limits.siderooms != 0,
             guarddiet: cfg.limits.guarddiet != 0,
+            eager_side,
         });
     });
     Some(rem)
@@ -2318,6 +2333,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     if !act.side {
         let on = cache::lazy_loop_rule(pc, ir.rec_call.is_some(), !ir.segs.is_empty());
         cache::lazy_loop_decide(st, rpr, pc, on);
+        // section 86.2 (`lazydec`): the same decision for a loop-free prototype lazy-aware by the static rule
+        cache::lazy_static_decide(st, rpr, on, ir.idfold || ir.midfold);
         // E5: a first root trace without a folded method lookup turns folding off
         cache::midfold_first(st, rpr, ir.midfold);
     }
@@ -2503,11 +2520,13 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     };
     // P-M3: the continuation heads of the root prototype (the targets of a native return), and the function-entry head's
     // dispatch cell (the target of the native self-call of a continuation trace)
-    let lazy = cache::proto_lazy(st, rpr);
+    // (section 86.2: the family rules below keep the family's mode; an eager side trace is assembled without lazy frames)
+    let lazy_fam = cache::proto_lazy(st, rpr);
+    let lazy = lazy_fam && !act.eager_side;
     // E2 (`idfold`, docs/JIT_TRACE.md section 34.3): the family rule. While the family is under the region invariant (folding on, or a folded
     // trace installed), no trace of it may store an upvalue (`(closure, index)` pairs may alias the self upvalue, P3d): the recording is
     // refused and folding goes off for good (the folded families are flushed at their next hot exit)
-    let idf_env = if lazy {
+    let idf_env = if lazy_fam {
         cache::idfold_cfg(st, rpr).1
     } else {
         None
@@ -2525,14 +2544,14 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
     // E5 (`midfold`, docs/JIT_TRACE.md section 35.4): a folded trace needs the region's checked entries, which only a lazy-aware family has (a
     // candidate with loops that was decided eager at this compile: refused, folding off for good); the family rule: while the family is under
     // the method invariant, no trace of it may store with the key or `__index` (or a key not known) into any table, or set a metatable
-    if ir.midfold && !lazy {
+    if ir.midfold && !lazy_fam {
         cache::midfold_ban(st, rpr);
         return Err(abort_err(
             "midfold_eager",
             "a folded method lookup in a family that is not lazy-aware",
         ));
     }
-    let mf_env = if lazy {
+    let mf_env = if lazy_fam {
         cache::midfold_cfg(st, rpr).1
     } else {
         None
@@ -2722,8 +2741,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             && unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.retfuse } & 2 != 0,
         lazy_cs,
         lazy_nparams: u16::from(rootp.numparams),
-        idfold_uv: idf_env,
-        midfold_kidx: mf_env,
+        // (section 86.2: an eager side trace has no checked region entry)
+        idfold_uv: idf_env.filter(|_| lazy),
+        midfold_kidx: mf_env.filter(|_| lazy),
         midfold_fn: cache::jit_tr_midfold_check as *const () as usize as u64,
         root_maxstack: u16::from(rootp.maxstacksize),
         // S1: a frameful side trace has no entry checks. CP2: neither has a frameless one whose needs the parent's checks cover (it is entered
@@ -3232,6 +3252,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     | ir::TOp::Lib
                     // N2b: the native run moves the frame below the private copy the re-run uses (`+emurun` runs on the live frame)
                     | ir::TOp::Retf
+                    | ir::TOp::Tailf
             ) || is_uv_identity_guard(&ir, i)
         });
         let t = EmuTrace {

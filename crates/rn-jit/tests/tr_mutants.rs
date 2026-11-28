@@ -5078,6 +5078,35 @@ const TABLE: &[Row] = &[
         name: "chain_end_nil",
         owner: "S76",
         dets: &[d("tr_core", "s76_t1exit_programs")],
+    },    Row {
+        name: "tailf_args_unshifted",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_seg_proto_stale",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_func_ref_stale",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_func_store_skip",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_kcache_skip",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
+    },
+    Row {
+        name: "tailf_cist_tail_skip",
+        owner: "S86",
+        dets: &[d("tr_core", "s86_tailf_programs")],
     },
 ];
 
@@ -5122,7 +5151,13 @@ const V55_ONLY: &[&str] = &[
     "retf_untraced_aborts",
     "retf_second_return_aborts",
     // (CP1L: its detector asserts a RETF trace over a lazy caller, which 5.4 never installs)
-    "retf_lazy_caller_ok",
+    "retf_lazy_caller_ok", // section 86.1 (TAILF): only after a `RETF`, which 5.4 never installs
+    "tailf_args_unshifted",
+    "tailf_seg_proto_stale",
+    "tailf_func_ref_stale",
+    "tailf_func_store_skip",
+    "tailf_kcache_skip",
+    "tailf_cist_tail_skip",
 ];
 
 /// Mutants that are equivalent since the same-table `table.move` pre-reads its source elements (BUNDLE-VA): the order of the stores no longer changes any value

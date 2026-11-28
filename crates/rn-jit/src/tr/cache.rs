@@ -125,6 +125,8 @@ pub const DEEPPROBE_PROCESS: u32 = 12;
 pub const T4_PROCESS: u32 = 3;
 /// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the process default of [`TrLimits::innerlink`] (also the struct default).
 pub const INNERLINK_PROCESS: u32 = 0;
+/// Section 86.2 (`lazydec`): the process default of [`TrLimits::lazydec`] (also the struct default).
+pub const LAZYDEC_PROCESS: u32 = 0;
 /// T5 (`t5`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t5`] (also the struct default).
 pub const T5_PROCESS: u32 = 0;
 /// T7 (`t7`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t7`] (also the struct default).
@@ -805,7 +807,10 @@ pub struct TrLimits {
     /// stub; bit 2 (value 4): function-entry roots; bit 3 (8): test mode, the recording ends right after a pop. Section 77.7: bit 4 (16) a
     /// function-entry family's side recording pops when its root returns into a frame of the same closure; bit 5 (32) only into a call inside a
     /// loop of the caller; bit 6 (64) only when that loop's head has a root trace; bit 7 (128) not when that loop is a generic `for`. Section 77.15: bit 9 (512) a
-    /// loop-free maybe-lazy caller is popped into when it never recursed (`TrProto::retf_demote`), off by default. Default
+    /// loop-free maybe-lazy caller is popped into when it never recursed (`TrProto::retf_demote`), off by default. Section 82.2: bit 8 (256) into a
+    /// caller suspended at a flat `TFORCALL`. Section 86.1: bit 10 (1024, TAILF) after a pop the caller's `TAILCALL` of a Lua closure is recorded
+    /// as the frame replacement. Section 86.2: bit 11 (2048) a side recording of a never recursive lazy-aware family is an eager trace that may
+    /// pop (the family is pinned). Default
     /// [`RETF_PROCESS`] = 179 (0 = off, byte-identical IR and machine code).
     pub retf: u32,
     /// BUNDLE-N: root `RETURN`s a recording may turn into `RETF` (default [`RETFMAX_PROCESS`]).
@@ -1127,6 +1132,10 @@ pub struct TrLimits {
     /// also for loops of frames deeper than the root frame's callee. Bit 3: bit 0 in side recordings too (after their `RETF`, or into a head a
     /// root trace links into). 0 = off. Default [`INNERLINK_PROCESS`].
     pub innerlink: u32,
+    /// Section 86.2 (`lazydec`): bit 0: a loop-free prototype that is lazy-aware by the static rule (BUNDLE-K L1) is decided like an E4 candidate
+    /// at the compile of its first root trace: it stays lazy-aware only when that trace is its function-entry trace ending in a native self-call;
+    /// otherwise (and when nothing of it is folded by the region invariants) it becomes eager for good. 0 = off. Default [`LAZYDEC_PROCESS`].
+    pub lazydec: u32,
     /// T5 (`t5`, docs/JIT_TRACE.md section 48): `GETTABLE` / `SETTABLE` with an object key (a table, function, userdata or thread) on trace as an
     /// `HREFV` of the object form (pointer hash, chain walk). Bit 0: reads (a present key: typed `HLOAD`; an absent key: the `HREF_ABS` proof);
     /// bit 1: stores into a present key (`HSTORE` + barrier); bit 2: insertions of an absent key (`TSET` with an object key). 0 = off.
@@ -1311,6 +1320,7 @@ impl Default for TrLimits {
             deepprobe: DEEPPROBE_PROCESS,
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
+            lazydec: LAZYDEC_PROCESS,
             t5: T5_PROCESS,
             t7: T7_PROCESS,
         };
@@ -1484,7 +1494,7 @@ impl TrLimits {
                 "t1ccall" => l.t1ccall = v.min(1),
                 "tfmt" => l.tfmt = v.min(1),
                 "libcall" => l.libcall = v.min(4095),
-                "retf" => l.retf = v.min(1023),
+                "retf" => l.retf = v.min(4095),
                 "retfmax" => l.retfmax = v.min(8),
                 "retfsel" => l.retfsel = v.min(1),
                 "restarts" => l.restarts = v.min(4),
@@ -1556,6 +1566,7 @@ impl TrLimits {
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(15),
+                "lazydec" => l.lazydec = v.min(1),
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
@@ -3489,6 +3500,8 @@ pub struct TrStats {
     pub resink_sides: u64,
     /// C38 slice 1: side traces installed that end with a frame-linking exit into a callee loop trace (`sidenest`).
     pub side_frame_links: u64,
+    /// Section 86.2 (`lazydec`): static lazy-aware prototypes decided eager at their first root compile.
+    pub lazydec_off: u64,
     /// F2a: side traces installed.
     pub side_installed: u64,
     /// F2a: side recordings that failed (aborted, refused, compile failed).
@@ -7648,6 +7661,37 @@ pub fn lazy_loop_decide(st: &mut State, pr: ProtoRef, pc: u32, on: bool) {
     }
 }
 
+/// Section 86.2 (`lazydec` bit 0): the E4 decision for a loop-free prototype that is lazy-aware by the static rule, at the compile of its first root trace
+/// (`on`: that trace is the function-entry trace ending in a native self-call; `folded`: it folds by the region invariants, `idfold` / `midfold`, which
+/// only a lazy-aware family may). Not `on`, nothing folded, no trace of it installed and never recursive: eager for good (its heads' cells follow).
+pub fn lazy_static_decide(st: &mut State, pr: ProtoRef, on: bool, folded: bool) {
+    let d = d_of(st);
+    if d.tr.cfg.limits.lazydec & 1 == 0 {
+        return;
+    }
+    let Some(tp) = tr_of(d, pr.0) else {
+        return;
+    };
+    if tp.lazy_st.get() != LAZY_STATIC || !tp.lazy.get() || on || folded || tp.recursive.get() {
+        return;
+    }
+    let untraced = !d
+        .tr
+        .slots
+        .iter()
+        .any(|sl| matches!(&sl.body, Body::Trace(t) if t.root == pr.0));
+    if !untraced {
+        return;
+    }
+    tp.lazy_st.set(LAZY_OFF);
+    tp.lazy.set(false);
+    for h in tp.heads() {
+        h.lazy.set(false);
+        h.set_rec();
+    }
+    d.tr.stats.lazydec_off += 1;
+}
+
 /// E4: is `pr` an undecided lazy candidate (a prototype with loops whose first root trace is not compiled yet)?
 pub fn proto_lazy_cand(st: &mut State, pr: ProtoRef) -> bool {
     let d = d_of(st);
@@ -7924,6 +7968,20 @@ pub fn retf_demote_proto(p: &rn_core::func::Proto) -> bool {
         return false;
     };
     tp.retf_demote()
+}
+
+/// Section 86.2 (`retf` bit 11): may a side recording of the lazy-aware family `pr` be an eager trace (and pop)? Only when the family's lazy mode is
+/// the static one and no native self-call of it was ever compiled (`recursive` false: no frame of it was ever lazy); the family is then pinned
+/// (`retf_pin`: a native self-call of it is refused from now on, see `retf_pinned`), so none ever is.
+pub fn retf_side_demote(st: &mut State, pr: ProtoRef) -> bool {
+    let d = d_of(st);
+    tr_of(d, pr.0).is_some_and(|tp| {
+        if tp.lazy_st.get() != LAZY_STATIC || tp.recursive.get() {
+            return false;
+        }
+        tp.retf_pin.set(true);
+        true
+    })
 }
 
 /// R2: has a native self-call of `pr` been recorded?

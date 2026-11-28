@@ -250,6 +250,9 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.midfold_traces, s.midfold_refused, s.midfold_banned
         );
     }
+    if s.lazydec_off > 0 {
+        let _ = writeln!(o, "[trace] lazydec: decided eager {}", s.lazydec_off);
+    }
     if s.lazyloop_on > 0 {
         let _ = writeln!(o, "[trace] lazyloop: lazy-aware {}", s.lazyloop_on);
     }

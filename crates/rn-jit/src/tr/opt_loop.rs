@@ -1731,6 +1731,7 @@ fn is_root(i: &Ins) -> bool {
                 | TOp::Loop
                 | TOp::Poll
                 | TOp::Budget
+                | TOp::Tailf
         )
 }
 

@@ -1490,6 +1490,8 @@ struct Rec {
     uv_below_stores: Vec<usize>,
     /// N2c: the `CallInfo` of the caller the VM is about to return into (the step re-roots the VM-side recording after the instruction).
     reroot: Option<usize>,
+    /// Section 86.1: the closure the root frame runs after the `TAILCALL` the step recorded as a `TAILF` (the step re-targets the VM-side root).
+    retail: Option<usize>,
     /// N2c: the prototype of the entry root (the current root's, `proto`, changes at a `RETF`).
     entry_proto: usize,
     /// N2c: entry-relative extent, `room` and spare-`CallInfo` count of the segments before the current one.
@@ -1803,6 +1805,7 @@ impl Rec {
             shift: 0,
             seg_steps: Vec::new(),
             reroot: None,
+            retail: None,
             entry_proto: proto,
             ext_entry: 0,
             room_entry: 0,
@@ -1938,6 +1941,7 @@ impl Rec {
         self.ext = self.nslots;
         self.room = 0;
         self.max_ci = 0;
+        self.retail = None;
         self.deps.clear();
         self.want_dep.clear();
         self.late_dep.clear();
@@ -2471,6 +2475,13 @@ impl Rec {
                 return Err(AbortReason::Frame);
             }
         }
+        if let Some(c) = self.retail.take() {
+            // section 86.1: the instruction just recorded was the root `TAILCALL` that `Rec::tailf` turned into a `TAILF`: the interpreter
+            // replaces the root frame's function next
+            if !jit_hooks::rec_retail(vm.st, vm.st.ci(), c) {
+                return Err(AbortReason::Frame);
+            }
+        }
         self.pend = Some(Pend {
             next,
             depth: self.next_depth,
@@ -2911,10 +2922,9 @@ impl Rec {
         if self.segs.is_empty() {
             ir.extent = self.ext.max(self.room as usize) as u16;
         }
-        ir.depth = self.ci_entry.max(
-            self.max_ci
-                .saturating_sub(self.segs.len().saturating_sub(1) as u8),
-        );
+        ir.depth = self
+            .ci_entry
+            .max(self.max_ci.saturating_sub(self.seg_pops() as u8));
         ir.deps = std::iter::once(ProtoKey(self.entry_proto))
             .chain(self.deps.iter().copied())
             .collect();
@@ -3487,6 +3497,11 @@ impl Rec {
                 s.append(&mut self.model.slots);
                 self.model.slots = s;
                 self.model.shift += ins.b;
+                self.model_func = self.retf_funcs.pop_front().ok_or(AbortReason::Diverge)?;
+                return Ok((0, false));
+            }
+            // section 86.1: the frame replacement keeps the base; the function slot holds the callee from here on
+            TOp::Tailf => {
                 self.model_func = self.retf_funcs.pop_front().ok_or(AbortReason::Diverge)?;
                 return Ok((0, false));
             }
@@ -8059,8 +8074,22 @@ impl Rec {
                     args.push(self.rd(vm, a + j)?.0);
                 }
             }
-            let fslot = self.frames[d].base_off - 1;
-            if !mutants::active("tail_args_not_moved") {
+            // section 86.1 (TAILF): the root frame's function slot lies below the trace's slots: the native op stores the callee there and
+            // rewrites the `CallInfo` (the slot map moves below, as for an inlined frame)
+            let tailf_ins = if d == 0 {
+                let kp = self.b.ir.konst(KVal::Ptr(key as u64, PtrKind::Proto));
+                Some(self.b.emit_tailf(fcref, kp, nslots as u32)?)
+            } else {
+                None
+            };
+            if tailf_ins.is_some() {
+                // (mutant: the arguments stay where they were, one slot above the callee's parameters)
+                let off = usize::from(mutants::active("tailf_args_unshifted"));
+                for (j, r) in args.into_iter().enumerate() {
+                    self.def_abs(new_base + j + off, r);
+                }
+            } else if !mutants::active("tail_args_not_moved") {
+                let fslot = self.frames[d].base_off - 1;
                 self.def_abs(fslot, cref);
                 for (j, r) in args.into_iter().enumerate() {
                     self.def_abs(new_base + j, r);
@@ -8088,6 +8117,9 @@ impl Rec {
             f.vdelta = 0;
             f.nextra = 0;
             self.next_depth = d;
+            if let Some(ti) = tailf_ins {
+                self.tailf_rebase(cl, key, p.code_ptr() as u64, nslots, low, fcref, ti)?;
+            }
             return Ok(0);
         }
         // `pre_call_lua_fast` completes the missing arguments with nil
@@ -8137,6 +8169,14 @@ impl Rec {
     fn tailcall(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction) -> R<usize> {
         let (a, b) = (i.a() as usize, i.b() as usize);
         if self.cur_depth == 0 {
+            // section 86.1 (`retf` bit 10, TAILF): after a pop the root frame is a real frame of the caller: its `TAILCALL` of a Lua closure is
+            // recorded as the frame replacement `pre_tail_call` makes (the mirror of `RETF`); anything else ends with the stitching exit before it
+            if self.cfg.retf & 1024 != 0 && !self.segs.is_empty() && self.cfg.side.is_some() {
+                if let Some(r) = self.tailf(vm, idx, i)? {
+                    return Ok(r);
+                }
+                return self.end_exit();
+            }
             if self.cfg.fn_root {
                 return self.fn_end();
             }
@@ -8228,6 +8268,95 @@ impl Rec {
             );
         }
         Err(AbortReason::TailCall)
+    }
+
+    /// Section 86.1 (TAILF, `retf` bit 10): the `TAILCALL` of the root frame of a side recording after a `RETF` (the root is the real frame
+    /// the pop returned into). `Ok(None)`: not applicable (a protected-call body or unroll frame, a vararg caller or callee, `k` (upvalues
+    /// to close), `C` (vararg), a callee that is not a Lua closure); the caller ends the recording with the stitching exit before the
+    /// instruction. Otherwise [`Rec::call_lua`] with `tail` at depth 0 emits the callee guard and [`TOp::Tailf`] (the native half of
+    /// `pre_tail_call`: function slot, `ci.top`, `savedpc`, `kcache`, `CIST_TAIL`) and moves the slot map; a new segment with the callee's
+    /// prototype starts at the next step (same shift and pops: the frame keeps its base and `CallInfo`).
+    fn tailf(&mut self, vm: &Vm<'_>, idx: usize, i: Instruction) -> R<Option<usize>> {
+        let (a, b) = (i.a() as usize, i.b() as usize);
+        if self.pcall.is_some()
+            || self.frames[0].pc_shift != 0
+            || self.frames[0].unr
+            || self.frames[0].vdelta != 0
+            || i.c() != 0
+            || i.k() != 0
+            || vm.cl.proto().is_vararg()
+            || self.segs.len() >= 250
+        {
+            return Ok(None);
+        }
+        let Some(cl) = vm.slot(a).as_lclosure() else {
+            return Ok(None);
+        };
+        if cl.proto().is_vararg() {
+            return Ok(None);
+        }
+        let nargs = if b == 0 {
+            self.values_to_top(a + 1)?
+        } else {
+            b - 1
+        };
+        let wanted = self.frames[0].nresults as i32;
+        self.call_lua(vm, idx, a, nargs, wanted, cl, true).map(Some)
+    }
+
+    /// N2c: frames popped since the entry (the `RETF`s of the recording; a `TAILF` segment keeps its predecessor's count).
+    fn seg_pops(&self) -> usize {
+        self.segs.last().map_or(0, |g| usize::from(g.pops))
+    }
+
+    /// Section 86.1 (TAILF): the root fields after the frame replacement of [`Rec::tailf`]: the root runs the callee (prototype, slot count, the
+    /// closure ref its upvalue loads use, the model's function handle at the `TAILF`), and the steps from the next one on are a new segment
+    /// (landing labels and frame restores in the callee's code, same shift and pops).
+    #[allow(clippy::too_many_arguments)]
+    fn tailf_rebase(
+        &mut self,
+        cl: rn_core::value::Gc<LClosure>,
+        key: usize,
+        code: u64,
+        nslots: usize,
+        low: u32,
+        fcref: Ref,
+        ti: Ref,
+    ) -> R<()> {
+        let last = self.segs.last().cloned().ok_or(AbortReason::Diverge)?;
+        RETF_USED.with(|c| c.set(true));
+        self.segs.push(Seg {
+            proto: ProtoKey(if mutants::active("tailf_seg_proto_stale") {
+                last.proto.0
+            } else {
+                key
+            }),
+            code: if mutants::active("tailf_seg_proto_stale") {
+                last.code
+            } else {
+                code
+            },
+            shift: last.shift,
+            pops: last.pops,
+            call_pc: last.call_pc,
+            a: last.a,
+            retf_ins: ti,
+        });
+        self.seg_steps.push(self.path.len() as u32);
+        let ch = self.closure_handle(cl);
+        self.fill_closure(ch);
+        self.retf_funcs.push_back(ch);
+        self.proto = key;
+        self.nslots = nslots;
+        let _ = low;
+        self.retail = Some(cl.as_ptr() as usize);
+        // (the function slot holds the guarded callee now: its upvalue loads use that ref)
+        self.func_ref = if mutants::active("tailf_func_ref_stale") {
+            self.func_ref
+        } else {
+            fcref
+        };
+        Ok(())
     }
 
     /// `RETURN0` / `RETURN1` / `RETURN` in an inlined frame: the results move to the caller's slots from the function slot
@@ -8443,7 +8572,7 @@ impl Rec {
         const NO: R<Option<usize>> = Ok(None);
         if (cfg!(rustynail_lua54) && !self.inner_ret_ok)
             || self.cfg.retfmax == 0
-            || self.segs.len() > self.cfg.retfmax as usize
+            || self.seg_pops() + usize::from(!self.segs.is_empty()) > self.cfg.retfmax as usize
         {
             return NO; // (5.4: wired and measured in C63, not kept: `programs/heapsort` +11.6 % instructions, see docs/JIT_PARKED.md)
         }
@@ -8578,7 +8707,7 @@ impl Rec {
                 retf_ins: NOREF,
             });
         }
-        let (cum_shift, cum_pops) = (self.shift + b, self.segs.len() as u8);
+        let (cum_shift, cum_pops) = (self.shift + b, self.seg_pops() as u8 + 1);
         RETF_USED.with(|c| c.set(true));
         self.segs.push(Seg {
             proto: ProtoKey(ckey),
@@ -8591,7 +8720,7 @@ impl Rec {
         });
         self.seg_steps.push(self.path.len() as u32);
         // entry-relative maxima of the segment that ends here (its coordinates are `shift` slots / `segs.len() - 1` pops above the entry's)
-        let (sh0, pops0) = (self.shift, self.segs.len().saturating_sub(2) as u8);
+        let (sh0, pops0) = (self.shift, self.segs[self.segs.len() - 2].pops);
         self.ext_entry = self.ext_entry.max(self.ext.saturating_sub(sh0));
         self.room_entry = self
             .room_entry

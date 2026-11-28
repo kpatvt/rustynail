@@ -486,6 +486,11 @@ pub fn op_clobbers(i: &Ins, ir: &TraceIr) -> CallClobber {
             gpr: 0b110 | 1 << 10,
             xmm: 0,
         },
+        // section 86.1: `r14` is reloaded from the callee's constants (V7 is the assembler's scratch)
+        TOp::Tailf => CallClobber {
+            gpr: 1 << 10,
+            xmm: 0,
+        },
         _ => CallClobber::default(),
     }
 }

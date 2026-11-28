@@ -1038,6 +1038,26 @@ pub fn rec_reroot(st: &mut State, caller: Ci) -> bool {
     true
 }
 
+/// Section 86.1 (TAILF): the recorder turned a `TAILCALL` of the root frame `root` into a frame replacement: the interpreter performs it next
+/// (same `CallInfo` and function index, the function slot then holds closure `cl`), so the validation's root closure becomes `cl`. Returns
+/// `false` (nothing changed) under the conditions of [`rec_reroot`] or when `root` is not the recording's root.
+#[cfg(feature = "jit_trace")]
+pub fn rec_retail(st: &mut State, root: Ci, cl: usize) -> bool {
+    let c = rec_ctx();
+    if c.th == 0
+        || c.th != st.th_ptr() as usize
+        || c.g != rec_owner(st)
+        || st.hook_mask() != 0
+        || c.root != root.as_ptr() as usize
+    {
+        return false;
+    }
+    let mut v = c;
+    v.root_cl = cl;
+    REC.with(|r| r.0.set(v));
+    true
+}
+
 /// S1: forget an armed recording whose recorder was never installed (the recorder refused its start): clears the context and the
 /// traps without calling the recorder.
 #[cfg(feature = "jit_trace")]
