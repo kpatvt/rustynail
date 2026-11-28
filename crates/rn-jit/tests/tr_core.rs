@@ -4754,6 +4754,10 @@ fn s86_tailf_programs() {
         for limits in [
             "t1g=7,retf=4023,retfmax=3",
             "t1g=7,retf=4023,retfmax=3,lazydec=1",
+            // section 86.3 / 86.4: backward-edge links (dead tables nil at the link) and sinking in segmented side traces
+            "t1g=7,retf=1975,retfmax=3,lazyci=0,innerlink=48",
+            "t1g=7,retf=1975,retfmax=3,lazyci=0,sinkseg=1",
+            "t1g=7,retf=4023,retfmax=3,lazydec=1,innerlink=48,sinkseg=1",
         ] {
             for opts in ["", "+verify", "+exitstorm=3 +verify"] {
                 jobs.push(Job::new("s86_tailf", trace).opts(opts).limits_s(limits));
@@ -4766,6 +4770,16 @@ fn s86_tailf_programs() {
                 "retf=4023,retfmax=3,lazydec=1",
             ] {
                 jobs.push(Job::new(name, trace).opts("+verify").limits_s(limits));
+            }
+        }
+        for name in ["s82_pfam", "s77_tflat", "s77_polyhead"] {
+            for limits in [
+                "t1g=7,retf=4023,retfmax=3,lazydec=1,innerlink=48,sinkseg=1",
+                "t1g=7,retf=1975,retfmax=3,lazyci=0,innerlink=48,sinkseg=1",
+            ] {
+                for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                    jobs.push(Job::new(name, trace).opts(opts).limits_s(limits));
+                }
             }
         }
     }

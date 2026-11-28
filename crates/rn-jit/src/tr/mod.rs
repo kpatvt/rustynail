@@ -218,6 +218,8 @@ pub struct TraceOpts {
     pub sinkmt: u32,
     /// BUNDLE-5: `TrLimits::sinkside` (set from the limits when a recording starts): allocation sinking in side and stitched traces.
     pub sinkside: u32,
+    /// Section 86.4: `TrLimits::sinkseg` (set from the limits when a recording starts): sinking in traces with segments.
+    pub sinkseg: u32,
     /// P2 bundle 2: `TrLimits::uvsep` (set from the limits when a recording starts): guarded disjointness of upvalue cells in the loop optimiser.
     pub uvsep: u32,
     /// BUNDLE-L A: `TrLimits::aidx` (set from the limits when a recording starts): the complemented array index is an IR value.
@@ -263,6 +265,7 @@ impl Default for TraceOpts {
             hdrlib: 0,
             sinkmt: 0,
             sinkside: 0,
+            sinkseg: 0,
             uvsep: 0,
             aidx: 0,
             bhoist: 0,
@@ -819,7 +822,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         None
     };
     let nest_frame: Option<record::FrameHeadQuery> =
-        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 || cfg.limits.innerlink & 1 != 0 {
+        if cfg.limits.nest >= 2 || cfg.limits.sidenest != 0 || cfg.limits.innerlink & 17 != 0 {
             Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {
                 cache::proto_ref(p).and_then(|pr| cache::head_traced(st, pr, pc))
             }))
@@ -841,6 +844,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         nest_frame_sides: cfg.limits.sidenest != 0,
         inner_link: cfg.limits.innerlink & 1 != 0,
         inner_deep: cfg.limits.innerlink & 4 != 0,
+        back_link: cfg.limits.innerlink & 16 != 0,
+        link_dead_nil: cfg.limits.innerlink & 32 != 0,
         objkey: cfg.limits.t5,
         // T9: the `RETF` caller rule (`Rec::pop_into_ok`) decides where a link may be made (see `driver_start_side`)
         retf_nolazy: if cfg.limits.lazyci != 0 && cfg.limits.lazyloop != 0 {
@@ -995,6 +1000,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                             };
                         o.sinkmt = cfg.limits.sinkmt;
                         o.sinkside = cfg.limits.sinkside;
+                        o.sinkseg = cfg.limits.sinkseg;
                         o.uvsep = 1;
                         o.aidx = cfg.limits.aidx;
                         o.nidx = cfg.limits.nidx;
@@ -1124,6 +1130,8 @@ pub fn driver_start_side(
         inner_ret: start.inner_ret,
         inner_link_sides: cfg.limits.innerlink & 8 != 0,
         inner_deep: cfg.limits.innerlink & 4 != 0,
+        back_link: cfg.limits.innerlink & 16 != 0,
+        link_dead_nil: cfg.limits.innerlink & 32 != 0,
         objkey: cfg.limits.t5,
         // P-E2: a side trace of a function-entry root ends before the root frame's `RETURN` (exit, no link)
         pack: true,
@@ -1246,6 +1254,7 @@ pub fn driver_start_side(
                     };
                 o.sinkmt = cfg.limits.sinkmt;
                 o.sinkside = cfg.limits.sinkside;
+                o.sinkseg = cfg.limits.sinkseg;
                 o.uvsep = 1;
                 o.aidx = cfg.limits.aidx;
                 o.nidx = cfg.limits.nidx;

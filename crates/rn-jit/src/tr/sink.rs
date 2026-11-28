@@ -630,8 +630,14 @@ fn revert_replay(rec: &mut Recorded) -> Result<(), String> {
 
 /// [`run`] without the replay decision: returns the indices of the `TNEW`s it sank.
 fn run0(rec: &mut Recorded, opts: &TraceOpts) -> Result<Vec<usize>, String> {
-    if !opts.sink || rec.ir.loop_at.is_some() || !rec.ir.segs.is_empty() {
-        return Ok(Vec::new()); // (N2b: slots of different segments are different stack cells: the dead-slot analysis is per root frame)
+    if !opts.sink
+        || rec.ir.loop_at.is_some()
+        || (!rec.ir.segs.is_empty() && (opts.sinkseg == 0 || rec.side.is_none()))
+    {
+        // (N2b: slots of different segments are different stack cells: the dead-slot analysis of a loop is per root frame. Section 86.4, `sinkseg`: a
+        // side trace's end is decided in the last segment's coordinates, the writeback's and the link's, and each snapshot names slots of its own
+        // segment, so the analysis holds there)
+        return Ok(Vec::new());
     }
     let end = match (rec.side, rec.stitched) {
         // a native self-call / return continues in the frame that the writeback describes: nothing in it is dead

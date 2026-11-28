@@ -266,6 +266,13 @@ pub struct RecCfg {
     pub inner_link: bool,
     /// T9 (`TrLimits::innerlink` bit 2): `inner_link` also for a loop of a frame deeper than the root frame's callee.
     pub inner_deep: bool,
+    /// Section 86.3 (`TrLimits::innerlink` bit 4): a backward edge of a `while` / `repeat` loop of an inlined frame whose target is a loop head (or
+    /// the function-entry head, when the loop starts the function) of its prototype with an installed root trace ends the recording with the
+    /// frame-linking exit into that trace at the next step, instead of unrolling the loop or aborting `InnerLoop`.
+    pub back_link: bool,
+    /// Section 86.3 (`TrLimits::innerlink` bit 5): at a frame-linking exit, the tables in registers of the linked frame that are dead temporaries at
+    /// the head (the liveness of [`super::cache::prune_cached`]) are stored as nil (a sunk record that died in the frame is not materialised).
+    pub link_dead_nil: bool,
     /// T5 (`TrLimits::t5`): bit 0 = `GETTABLE` with an object key, bit 1 = `SETTABLE` over a present object key, bit 2 = insertion of an object key.
     pub objkey: u32,
     /// T9 (`TrLimits::innerlink` bit 3): `inner_link` in side recordings after their `RETF` or into a head a root trace links into (the side trace
@@ -595,6 +602,8 @@ impl Default for RecCfg {
             nest_frame_roots: false,
             inner_link: false,
             inner_deep: false,
+            back_link: false,
+            link_dead_nil: false,
             objkey: 0,
             inner_link_sides: false,
             inner_ret: false,
@@ -1470,6 +1479,10 @@ struct Rec {
     prep_link_ok: bool,
     /// T9: `(depth, pc)` of the loop head the recorded `FORPREP` of `prep_link_ok` entered: the next step, at that head, ends with the frame-linking exit.
     prep_link: Option<(usize, u32)>,
+    /// Section 86.3: the target of the backward edge the instruction of this step may take that links (computed in `on_step`).
+    back_ok: Option<u32>,
+    /// Section 86.3: `(depth, pc)` of the head the backward edge recorded by `target` went to: the next step there links.
+    back_link: std::cell::Cell<Option<(usize, u32)>>,
     /// T9 (`inner_ret`): the return half allows the pop at the root `RETURN` this step executes (computed in `on_step`; false at every other step).
     inner_ret_ok: bool,
     /// T9: a `RETF` of this recording was taken where the return half allows it.
@@ -1795,6 +1808,8 @@ impl Rec {
             retf_self_traced: false,
             prep_link_ok: false,
             prep_link: None,
+            back_ok: None,
+            back_link: std::cell::Cell::new(None),
             inner_ret_ok: false,
             inner_ret_used: false,
             inner_linked: false,
@@ -2029,6 +2044,8 @@ impl Rec {
         self.midfolded = false;
         self.prep_link_ok = false;
         self.prep_link = None;
+        self.back_ok = None;
+        self.back_link.set(None);
     }
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
@@ -2170,7 +2187,20 @@ impl Rec {
         // T9 (`inner_link`): the step behind a recorded data-dependent `FORPREP` of an inlined frame is its loop head: it links (or, the head lost its
         // trace meanwhile, aborts as the prep used to)
         let prep_hit = self.prep_link.take() == Some((depth, idx as u32));
-        let frame_head = if prep_hit {
+        // section 86.3: the step behind a recorded backward edge to a traced head of an inlined frame links there (the head lost its trace meanwhile:
+        // the abort the edge used to be)
+        let back_hit = self.back_link.take() == Some((depth, idx as u32));
+        if back_hit
+            && !super::cache::proto_ref(&p)
+                .is_some_and(|pr| super::cache::head_traced_any(st, pr, idx as u32) == Some(true))
+        {
+            return Err(AbortReason::InnerLoop);
+        }
+        let prep_hit = prep_hit || back_hit;
+        let frame_head = if back_hit {
+            self.inner_linked = true;
+            true
+        } else if prep_hit {
             let traced = self
                 .cfg
                 .nest_frame
@@ -2217,6 +2247,25 @@ impl Rec {
                 .nest_frame
                 .clone()
                 .is_some_and(|q| q(st, &p, idx as u32 + 1) == Some(true));
+        // section 86.3: may the backward edge this instruction may take (a `while` / `repeat` of an inlined frame) link into a traced head?
+        self.back_ok = None;
+        if self.cfg.back_link
+            && depth > 0
+            && self.frames[depth].mm.is_none()
+            && self.frames[depth].pc_shift == 0
+            && self.frames[depth].tfor.is_none()
+            && !p.is_vararg()
+        {
+            if let Some(t) = back_edge_target(code, idx) {
+                if super::cache::proto_ref(&p).is_some_and(|pr| {
+                    !super::cache::proto_lazy(st, pr)
+                        && !super::cache::proto_lazy_cand(st, pr)
+                        && super::cache::head_traced_any(st, pr, t as u32) == Some(true)
+                }) {
+                    self.back_ok = Some(t as u32);
+                }
+            }
+        }
         // F8: a table the recording holds a handle to was freed by a collector step since the last step
         if st.heap().watch_hit() {
             return Err(AbortReason::DepFreed);
@@ -2784,6 +2833,28 @@ impl Rec {
         if self.b.ir.snaps.len() >= MAX_SNAPS - 2 {
             super::diag::set_limit("snaps");
             return Err(AbortReason::TooLong);
+        }
+        if self.cfg.link_dead_nil && self.cur_depth > 0 {
+            // section 86.3: the dead temporaries of the linked frame at the head need no value; a table there would be materialised for nothing
+            if let Some(pi) = super::cache::prune_cached(p, false, self.cfg.opencall) {
+                if let Some(d) = pi.dead.get(at as usize).copied() {
+                    let (base, n) = (
+                        self.frames[self.cur_depth].base_off,
+                        self.frames[self.cur_depth].nslots,
+                    );
+                    let nil = self.b.ir.konst(KVal::Pri(Ty::Nil));
+                    for r in 0..n {
+                        let s = base + r;
+                        if crate::live::has(&d, r as u32)
+                            && s < self.sm.len()
+                            && self.sm.cur[s] != NOREF
+                            && self.b.ir.ty_of(self.sm.cur[s]) == Ty::Tab
+                        {
+                            self.def_abs(s, nil);
+                        }
+                    }
+                }
+            }
         }
         let low = self.frames[self.cur_depth].low;
         let frames = self.frame_recs();
@@ -6694,6 +6765,11 @@ impl Rec {
         }
         let t = target as usize;
         if t <= idx {
+            if self.cur_depth > 0 && self.back_ok == Some(t as u32) {
+                // section 86.3: the next step, at the traced head, links
+                self.back_link.set(Some((self.cur_depth, t as u32)));
+                return Ok(t);
+            }
             if self.cur_depth > 0 {
                 // P-E: a loop of an inlined callee is unrolled (each iteration recorded) up to `loop_unroll` backward edges
                 // per recording; beyond that it is the inner loop the prototype always aborted on
@@ -13373,6 +13449,34 @@ thread_local! {
 /// BUNDLE-E (`contok`): did a recording observe a self-call of the prototype at `key`?
 pub fn cont_ok(key: usize) -> bool {
     CONT_OK.with(|c| c.borrow().contains(&key))
+}
+
+/// Section 86.3: the target of the backward edge the instruction at `idx` may take: a `JMP` with a negative offset, or a comparison / test whose
+/// follower is one (a `while` / `repeat` loop); `None` otherwise (counted and generic `for` loops have their own rules).
+fn back_edge_target(code: &[u32], idx: usize) -> Option<usize> {
+    let i = Instruction(*code.get(idx)?);
+    let jmp_at = |j: usize| -> Option<usize> {
+        let n = Instruction(*code.get(j)?);
+        if n.opcode() != Some(OpCode::Jmp) || n.sj() >= 0 {
+            return None;
+        }
+        usize::try_from(j as isize + 1 + n.sj() as isize).ok()
+    };
+    match i.opcode()? {
+        OpCode::Jmp => jmp_at(idx),
+        OpCode::Eq
+        | OpCode::Lt
+        | OpCode::Le
+        | OpCode::Eqk
+        | OpCode::Eqi
+        | OpCode::Lti
+        | OpCode::Lei
+        | OpCode::Gti
+        | OpCode::Gei
+        | OpCode::Test
+        | OpCode::Testset => jmp_at(idx + 1),
+        _ => None,
+    }
 }
 
 /// Could the prototype be lazy-aware (`TrProto::lazy`: loop-free, non-vararg; the rest of the rule is dynamic)? A conservative superset, for

@@ -446,6 +446,8 @@ pub const SINKMT_PROCESS: u32 = 1;
 /// BUNDLE-5: process default of [`TrLimits::sinkside`]: 2 = sinking in the side traces that link back to a root frame only (BUNDLE-L: raytrace 0.91 x,
 /// `classic_vector` 0.93 x, `cd` 0.97 x cycles; 1 = every side / stitched trace, which loses on `awfy/json` and `stream_closures`; 0 = off), docs/JIT_PARKED.md A8.
 pub const SINKSIDE_PROCESS: u32 = 2;
+/// Section 86.4 (`sinkseg`): process default of [`TrLimits::sinkseg`].
+pub const SINKSEG_PROCESS: u32 = 0;
 /// J1-2: process default of [`TrLimits::sinkstub`]. SINK-F: 1.
 pub const SINKSTUB_PROCESS: u32 = 1;
 /// Section 52 (`resink`): process default of [`TrLimits::resink`] (also the struct default).
@@ -771,6 +773,9 @@ pub struct TrLimits {
     pub sinkmt: u32,
     /// BUNDLE-5: allocation sinking in side and stitched traces (their writeback is dead by the link target's active locals, or never runs). Default 0 here, [`SINKSIDE_PROCESS`] in a process.
     pub sinkside: u32,
+    /// Section 86.4 (`sinkseg`): allocation sinking also in side traces with segments (`RETF` / `TAILF`): their writeback and link are in the last
+    /// segment's coordinates, every snapshot names slots of its own segment (default [`SINKSEG_PROCESS`]).
+    pub sinkseg: u32,
     /// SINK-R: the ineffective-root rule is sink-aware: a root that would be flushed as ineffective while the sunk tables its pre-roll exits name
     /// exist is re-recorded once without sinking those shapes (0 = off, 1 = the shape is demoted globally, 2 = for the root head only).
     /// Default 0 here, [`SINKROOT_PROCESS`] in a process.
@@ -1233,6 +1238,7 @@ impl Default for TrLimits {
             hdrlib: HDRLIB_PROCESS,
             sinkmt: SINKMT_PROCESS,
             sinkside: SINKSIDE_PROCESS,
+            sinkseg: SINKSEG_PROCESS,
             sinkroot: SINKROOT_PROCESS,
             sinkstub: SINKSTUB_PROCESS,
             sinkmm: SINKMM_PROCESS,
@@ -1484,6 +1490,7 @@ impl TrLimits {
                 "hdrlib" => l.hdrlib = v.min(4),
                 "sinkmt" => l.sinkmt = v.min(1),
                 "sinkside" => l.sinkside = v.min(2),
+                "sinkseg" => l.sinkseg = v.min(1),
                 "sinkroot" => l.sinkroot = v.min(2),
                 "sinkstub" => l.sinkstub = v.min(1),
                 "sinkmm" => l.sinkmm = v.min(1),
@@ -1565,7 +1572,7 @@ impl TrLimits {
                 "regcall" => l.regcall = v.min(1),
                 "deepprobe" => l.deepprobe = v.min(64),
                 "t4" => l.t4 = v.min(3),
-                "innerlink" => l.innerlink = v.min(15),
+                "innerlink" => l.innerlink = v.min(63),
                 "lazydec" => l.lazydec = v.min(1),
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
@@ -8014,6 +8021,20 @@ pub fn head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
         })
     })
     .flatten()
+}
+
+/// Section 86.3: [`head_traced`], and for the function-entry head (a loop that starts the function jumps back to it) whether its root trace is
+/// installed.
+pub fn head_traced_any(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
+    let fnh = with_tr(st, pr, |tp| {
+        if !tp.is_fn_head(pc) {
+            return None;
+        }
+        tp.head_index(pc)
+            .map(|i| tp.head(i).state.get() == HeadState::Traced)
+    })
+    .flatten();
+    fnh.or_else(|| head_traced(st, pr, pc))
 }
 
 /// Section 82.1: head `ix - 1` when `ix != 0` and it is a head at `pc`, else the head at `pc`.

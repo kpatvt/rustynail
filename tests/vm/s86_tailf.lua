@@ -151,3 +151,40 @@ end
 local hsum = 0
 for round = 1, 4 do hsum = hsum + fold(add, 0, map(hold, filter(function(x) return x % 2 == 0 end, range(1, 3000)))) end
 print("hold", hsum)
+
+-- 10. a `repeat` loop in the middle of a callee (its head is not the function entry) called from a hot loop; records that escape after the pops
+-- (kept in a table, in a weak table, as an upvalue) and records that die in the caller
+local function scan_to(t, i, want)
+  local n = 0
+  repeat
+    i = i + 1
+    n = n + 1
+  until t[i] == nil or t[i] % 7 == want
+  return i, n
+end
+local arr = {}
+for i = 1, 400 do arr[i] = (i * 13) % 50 end
+local tot = 0
+for round = 1, 30 do
+  local i = 0
+  while true do
+    local j, n = scan_to(arr, i, round % 7)
+    if arr[j] == nil then break end
+    tot = tot + n + j
+    i = j
+  end
+end
+print("scan", tot)
+local kept, weak = {}, setmetatable({}, { __mode = "v" })
+local last
+local function keepsome(r)
+  if r.id % 211 == 0 then kept[#kept + 1] = r end
+  if r.id % 307 == 0 then weak[#weak + 1] = r end
+  if r.id % 401 == 0 then last = r end
+  return r.value
+end
+local ks = fold(add, 0, map(keepsome, filter(function(r) return r.kind ~= 2 end, records(5000))))
+collectgarbage()
+local ksum = 0
+for _, r in ipairs(kept) do ksum = ksum + r.id * 3 + r.value end
+print("escape", ks, #kept, ksum, last and last.id, type(weak))
