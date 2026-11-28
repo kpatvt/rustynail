@@ -11782,3 +11782,66 @@ link, function-entry traces) end within a bounded number of instructions and ste
 unchanged. Determinism test planned with it: a GC-debt offset test knob (shift the debt at state creation by N bytes) and two `arg[-1]`
 lengths, requiring identical trace lists (`RUSTYNAIL_JIT_VERBOSE=2`, addresses normalised) and instruction counts on stream_closures (chain
 configuration) and ecs_world.
+
+## 99. The return-chain branches (82, 86) on integ10: merge, gates, whole set (2026-11-28, base ebca249 = integ10)
+
+### 99.1 Merge
+
+`integ10` (ebca249) + `worktree-agent-a499724d501914a0e` (5e4c655: 82 `pfam` = 24 and `t1g` bit 2 on, 86 TAILF / `lazydec` on, `retf`
+bits 10-12, `innerlink` bits 4/5, `sinkseg`, `tickkeep`, most of 86 off). Semantic resolutions:
+
+- **IR ops** (`ir.rs`): both appended ops kept in merge order, `Lroot` (89) then `Tailf` (86); `TOp::COUNT = Tailf + 1`; names, `header_safe`
+  (`Lroot | Tailf`), `ra::op_clobbers` (both arms), the `+emurun` exclusion list of `mod.rs` and the assembler dispatch name both. The fused
+  back end (87/91) converts neither (`fuse::converted` has no arm: `_ => false`), so a trace that contains one is assembled by the old path.
+- **Assembler** (`asm.rs`): `retf_lazy`, `lzretf_alt_tails`, `lroot_guard` (89) and `tailf` (86) interleaved in one hunk; each written whole.
+- **Exit cells** (`mod.rs::pipeline_inner`): 87/91 moved the carry / replay (`resink`) / exit cell allocation behind the exit construction
+  (`frame_link_cell` set there). The 82/86 side did not change that block (checked with `git log -p` of both sides: only `head_ix`, the
+  family member index of the head, was added next to it), so the 87 placement stays and `head_ix` is declared beside `frame_link_cell`.
+- `nest_frame` (`driver_start`): asked when `innerlink & 17` (86.5 bits 0/4) or `stitch & 8` (78.1).
+- `driver_start_side`: `mfconst` / `smallkeys` (93) beside `midfold_ident: mf_ident.is_some() && !eager_side` (86).
+- **Entry failures** (`cache.rs`): `entry_fail_hot(ci, ..)` (81.2 `eflazy`) and `entry_fail_hot_at(.., ix)` (82.1 family members) merged into
+  `entry_fail_hot_at(st, ci, pr, pc, ix)`; `eflazy_learn` resolves the head with `head_at(pc, ix)`, so a family member learns its own lazy set.
+- **Armed ticks** (`rt.rs`, `exit.rs`): the 81.1 `arm_tick_enter_only` (compile restriction to the exit's frames) stays at both call sites;
+  86.7's `tickkeep` is folded into it (with `tickkeep` on it arms `TICK_KEEP`, whose firing only enters, so no restriction is written).
+- **Recorder** (`record.rs`): the 88.2 `TFORPREP` short-side rule and the 86.3 backward-edge link combined in the frame-head step (`prep_hit`
+  is computed and possibly cleared by 88.2 first, then `back_hit` is or-ed in); `caller_is_self` (89) and `caller_loop_state` (86.5) both whole.
+- Registry 964 (911 + 45 + 18, ten names common to both sides); the `tr_mutants` TABLE re-sorted into registry order (two row junctions
+  `},    Row {` repaired); mutant map regenerated.
+
+### 99.2 Gates
+
+gate-light (`--base integ10`, CPUs 8-11): fmt, clippy (3), core (2), vm_corpus, jit-diff 1-50 pass. Failures, none caused by the merge:
+- `registry_is_the_frozen_list` / `table_covers_the_registry_exactly_once`: count and TABLE order, fixed in the merge commit.
+- `tr_core::s60_reroot_programs` ("s60_queens: the reroot rule never fired") fails on integ10 (ebca249) alone, same output; its three
+  mutants (`reroot_never`, `rerootchk_keep_always`, `rerootchk_revert_always`) survive for that reason.
+- `tr_core::instruction_count_identity` (features `tr_mutants,t15_oracle`): 5 `bc_sbump` IDENT failures, identical on integ10 alone.
+- `sloadhome_slot_reused` survives intermittently: caught 2 of 6 runs on the merge, 0 of 6 (1 of 7 counting the first) on integ10. A flaky
+  detector (s77_home_programs), not a merge effect.
+
+### 99.3 Whole set
+
+223 programs, instructions, one run each, serial on CPU 8, `RUSTYNAIL_SEED=1`, both binaries copied to the same path; outputs identical on all
+223. integ10 -> merge: geomean **-0.020 %**; movers beyond 0.3 % (instruction movers re-run a second time; the second run in brackets):
+awfy/json -3.35 % (-3.8 %), stream_closures -3.08 % (-4.7 %; its known window-to-window spread, 86.6), containers_lru_heap -1.18 % (-1.3 %),
+real_dis_x86 -0.72 % (+0.2 %, noise), prototype_objects -0.36 % (-0.3 %), serpent_ser -0.34 % (-0.1 %, noise), coroutines +0.41 % (+0.41 %,
+`t1g` bit 2), astar_jumper +0.73 % (-0.9 %, its known spread), iter_pipeline +1.37 % (+1.36 %, `t1g` bit 2).
+
+Cycles (interleaved A/B, both binaries at the same path, minimum of 15, CPU 8; machine load from the other builder on CPUs 2-7): stream_closures
+**-12.1 %**, containers_lru_heap -3.8 %, json -1.7 %, real_dis_x86 -1.2 %. Above +2 %: tail_loop +15.2 %, tinsert_front +7.9 %, tonumber_int
++5.5 %, heapsort +4.0 %, prototype_objects +3.8 %, fmt_s +3.7 %, tconcat +3.6 %, iter_pipeline +3.4 %, load_small +3.4 %, coroutines +2.6 %,
+tmove_1k +2.5 %.
+
+**Binary layout, not the knobs.** In the merged binary the 82/86 knobs set back to integ10's values (`t1g=3,pfam=0,lazydec=0`, same binary,
+interleaved, min of 9) leave all of them unchanged except iter_pipeline: tail_loop -0.2 %, tinsert_front 0.0 %, tonumber_int +0.1 %, tconcat
++0.4 %, load_small -0.1 %, heapsort -2.5 %, tmove_1k -4.5 %, fmt_s -1.4 %, coroutines +0.6 %, prototype_objects **-7.2 %** (the knobs gain).
+tail_loop in detail: the trace machine code is byte-identical between the two binaries apart from embedded addresses, at the same page offset;
+JIT off the two binaries are within 2.3 %; padding the environment or the Lua heap does not move either binary; `ic_tag_hit_miss` is 30 % higher
+in the merge. Placing the poll byte (`TRACE_POLL`, which sat at page offset 0x0f6, on a low spill slot of the page-aligned exit area) at a fixed
+offset 0x700 changed nothing (reverted). A front-end layout effect of the binary as a whole; no per-site lever.
+
+**iter_pipeline** is a knob effect: `t1g` bit 2 costs +1.34 % instructions and +3.5 % cycles (same binary, min of 9; 82.1 measured +1.0 % /
++0.7 % on its base). With bit 2 the program records 86 side traces instead of 53 (98 KB of trace code instead of 49 KB; `pipeline_inner`
+1.75 % of the samples) and map's function root (line 95) is flushed `Ineffective` after 29 entries (16422 with bit 2 off). Tried: flat-calling only
+loop-free iterators (a `loopfree` word in the prototype header, `t1g` bit 3): iter_pipeline unchanged, stream_closures +1.8 % instructions
+against bit 2 alone (reverted). Open: a per-site rule for the flat push in iter_pipeline's map/filter chain. Defaults unchanged (bit 2 is
+worth -3.7 % instructions on stream_closures).
