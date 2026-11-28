@@ -135,6 +135,21 @@ pub fn arm_tick_next(st: &mut State) {
     let _ = st;
 }
 
+/// Section 86.7 (`tickkeep`): the value [`jit_hot_loop`] passes as `rearmed` for a tick armed by [`arm_tick_keep`].
+pub const TICK_KEEP: u32 = u32::MAX;
+
+/// Section 86.7 (`tickkeep`): like [`arm_tick_next`] (the next loop back-edge fires the tick, so that a loop whose trace left at an allocation
+/// re-enters compiled code at once), but the formation countdown is kept: the tick reaches the compiler as `rearmed == TICK_KEEP` (entry only, no
+/// formation credit) and the countdown continues from its saved value. An allocation exit happens where the collector's debt crosses its
+/// threshold, which depends on every allocation of the program (the `arg` strings included); resetting the countdown there made the phase of
+/// every later formation sample, and so the trace set, depend on the collector's pacing.
+pub fn arm_tick_keep(st: &mut State) {
+    #[cfg(all(feature = "jit_counter_b", not(feature = "jit_counter_g")))]
+    st.jit_tick_rearm(TICK_KEEP, 0);
+    #[cfg(not(all(feature = "jit_counter_b", not(feature = "jit_counter_g"))))]
+    arm_tick_next(st);
+}
+
 /// R1 (`rearm`): a stay of compiled code handed a frame to the interpreter: the next `span` loop back-edges of the interpreter fire a
 /// *rearmed* tick for `key` (the prototype the frame belongs to; `span` counts in units, see `rn-jit`'s `REARM_UNIT`) (it restores the formation countdown instead of resetting it and reaches the compiler as `rearmed != 0`).
 pub fn rearm_tick(st: &mut State, span: u32, key: usize) {

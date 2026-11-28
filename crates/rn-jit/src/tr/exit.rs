@@ -2581,7 +2581,19 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         flushed = cache::alloc_storm(&mut st, id, unsafe { budget.read() });
         if !flushed {
             // N3b: the interpreter allocates (and steps the collector) now; the loop's next back-edge should enter compiled code again
-            rn_core::jit_hooks::arm_tick_next(&mut st);
+            // (section 86.7, `tickkeep`: without resetting the formation countdown)
+            // SAFETY: the per-state data is live; read-only.
+            if unsafe { &*crate::rt::data_ptr(&mut st) }
+                .tr
+                .cfg
+                .limits
+                .tickkeep
+                != 0
+            {
+                rn_core::jit_hooks::arm_tick_keep(&mut st);
+            } else {
+                rn_core::jit_hooks::arm_tick_next(&mut st);
+            }
         }
     }
     if out.count > 0 && !flushed {

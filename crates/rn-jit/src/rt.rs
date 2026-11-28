@@ -2341,6 +2341,43 @@ fn rearm_entry_ok(d: &mut JitData, entry_ok: u32, trace: Option<crate::tr::cache
 /// `monwarm` credit, no entry-monitor query, the head's counter and state untouched). A head whose rearm stays are all short is refused
 /// (budget per head: [`crate::tr::cache::REARM_BUDGET`]). A miss re-arms the tick for the next back-edge while the span lasts.
 #[cfg(feature = "trace")]
+/// Section 86.7 (`tickkeep`): the tick armed after an allocation exit: the loop at `pc` re-enters compiled code when its head has an installed trace;
+/// nothing else (no formation credit, no start-gate clock, no stay monitor).
+#[cfg(feature = "trace")]
+fn keep_loop(st: &mut State, ci: Ci, pc: *const u32) -> bool {
+    use crate::tr::cache::HeadState;
+    let Some(cl) = proto_of(st, ci) else {
+        return false;
+    };
+    let p = cl.proto();
+    let jp = p.jit.get() as usize;
+    if jp <= NOJIT {
+        return false;
+    }
+    // SAFETY: as in `hot_loop`.
+    let jp = unsafe { &*(jp as *const JitProto) };
+    if entry_offset(jp, pc).is_none() {
+        return false;
+    }
+    let idx = ((pc as usize) - (jp.code_ptr as usize)) / 4;
+    let Some(tp) = jp.tr.as_ref() else {
+        return false;
+    };
+    let Some(hi) = tp.head_index(idx as u32) else {
+        return false;
+    };
+    let h = tp.head(hi);
+    let ok = h.state.get() == HeadState::Traced && h.trace.get().is_some();
+    // SAFETY: the per-state data is live (see `set_mode`).
+    let d = unsafe { &mut *data_ptr(st) };
+    if ok {
+        d.tr.stats.tickkeep_enters += 1;
+    } else {
+        d.tr.stats.tickkeep_misses += 1;
+    }
+    ok
+}
+
 fn rearm_loop(st: &mut State, ci: Ci, pc: *const u32, span: u32) -> bool {
     use crate::tr::cache::{HeadState, REARM_BUDGET, REARM_SHORT, REARM_WAIT};
     // SAFETY: the per-state data is live (see `set_mode`); the borrow ends before any call that could reach it again.
@@ -2468,6 +2505,10 @@ fn rearm_after_exit(st: &mut State, code: u32, ret_ci: usize, entry: (usize, usi
 }
 
 fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
+    #[cfg(feature = "trace")]
+    if rearmed == jit_hooks::TICK_KEEP {
+        return keep_loop(st, ci, pc);
+    }
     #[cfg(feature = "trace")]
     if rearmed != 0 {
         if crate::tr::mutants::active("rearm_tick_reset") {
@@ -2812,7 +2853,12 @@ fn enter(st: &mut State, ci: Ci) -> JitExit {
             // instruction tier 1 cannot do): the loop wants back in compiled code at its next back-edge, not after a whole tick period
             #[cfg(feature = "trace")]
             if jit_hooks::take_alloc_refusal() && executed >= LONG_STAY {
-                jit_hooks::arm_tick_next(st);
+                // SAFETY: the per-state data is live; read-only.
+                if unsafe { &*data_ptr(st) }.tr.cfg.limits.tickkeep != 0 {
+                    jit_hooks::arm_tick_keep(st);
+                } else {
+                    jit_hooks::arm_tick_next(st);
+                }
             }
             #[cfg(feature = "trace")]
             rearm_after_exit(st, 0, ret.ci, entry_key);

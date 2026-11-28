@@ -125,6 +125,8 @@ pub const DEEPPROBE_PROCESS: u32 = 12;
 pub const T4_PROCESS: u32 = 3;
 /// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the process default of [`TrLimits::innerlink`] (also the struct default).
 pub const INNERLINK_PROCESS: u32 = 0;
+/// Section 86.7 (`tickkeep`): the process default of [`TrLimits::tickkeep`] (the struct default is 0).
+pub const TICKKEEP_PROCESS: u32 = 0;
 /// Section 86.2 (`lazydec`): the process default of [`TrLimits::lazydec`] (the struct default is 0).
 pub const LAZYDEC_PROCESS: u32 = 1;
 /// T5 (`t5`, docs/JIT_TRACE.md section 48): the process default of [`TrLimits::t5`] (also the struct default).
@@ -1143,6 +1145,10 @@ pub struct TrLimits {
     /// otherwise (and when nothing of it is folded by the region invariants) it becomes eager for good. 0 = off. Default 0 here, [`LAZYDEC_PROCESS`] (1)
     /// in a process.
     pub lazydec: u32,
+    /// Section 86.7 (`tickkeep`): bit 0: the sampling tick armed after an allocation exit keeps the formation countdown and only re-enters
+    /// compiled code (`jit_hooks::arm_tick_keep`), so the trace set does not depend on where the collector's debt crosses its threshold. Default 0
+    /// here, [`TICKKEEP_PROCESS`] in a process.
+    pub tickkeep: u32,
     /// T5 (`t5`, docs/JIT_TRACE.md section 48): `GETTABLE` / `SETTABLE` with an object key (a table, function, userdata or thread) on trace as an
     /// `HREFV` of the object form (pointer hash, chain walk). Bit 0: reads (a present key: typed `HLOAD`; an absent key: the `HREF_ABS` proof);
     /// bit 1: stores into a present key (`HSTORE` + barrier); bit 2: insertions of an absent key (`TSET` with an object key). 0 = off.
@@ -1329,6 +1335,7 @@ impl Default for TrLimits {
             t4: T4_PROCESS,
             innerlink: INNERLINK_PROCESS,
             lazydec: 0,
+            tickkeep: 0,
             t5: T5_PROCESS,
             t7: T7_PROCESS,
         };
@@ -1576,6 +1583,7 @@ impl TrLimits {
                 "t4" => l.t4 = v.min(3),
                 "innerlink" => l.innerlink = v.min(63),
                 "lazydec" => l.lazydec = v.min(1),
+                "tickkeep" => l.tickkeep = v.min(1),
                 "t5" => l.t5 = v.min(7),
                 "t7" => l.t7 = v.min(15),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
@@ -1723,6 +1731,9 @@ impl TrConfig {
         // section 86.2: `lazydec` is on in a process (the struct default, used by the tests, stays 0)
         if !names_limit(limits_env, "lazydec") {
             self.limits.lazydec = LAZYDEC_PROCESS;
+        }
+        if !names_limit(limits_env, "tickkeep") {
+            self.limits.tickkeep = TICKKEEP_PROCESS;
         }
     }
 
@@ -3515,6 +3526,9 @@ pub struct TrStats {
     pub side_frame_links: u64,
     /// Section 86.2 (`lazydec`): static lazy-aware prototypes decided eager at their first root compile.
     pub lazydec_off: u64,
+    /// Section 86.7 (`tickkeep`): ticks armed after allocation exits that re-entered compiled code / found no trace.
+    pub tickkeep_enters: u64,
+    pub tickkeep_misses: u64,
     /// F2a: side traces installed.
     pub side_installed: u64,
     /// F2a: side recordings that failed (aborted, refused, compile failed).
