@@ -1168,7 +1168,8 @@ pub struct TrLimits {
     pub asmfuse: u32,
     /// Section 91 (`fusecov`, docs/JIT_TRACE.md section 91): the trace kinds the fused pass of `asmfuse` covers beyond plain side traces. Bit 0: side
     /// traces with body room checks (R2 `side_room`), evictions of pinned values, extension slots high in the exit area; bit 1: native-recursion
-    /// traces (`rec_call` / `rec_ret`); bit 2: rolled roots (not lazy, no loop). Default [`FUSECOV_PROCESS`].
+    /// traces (`rec_call` / `rec_ret`); bit 2: rolled roots (not lazy, no loop); bit 3 (section 100.5): also while `sloadhome` is on (the fused
+    /// allocation keeps no homes). Default [`FUSECOV_PROCESS`].
     pub fusecov: u32,
     /// Section 80.1 (`gexit`, docs/JIT_TRACE.md section 80.1): the shared exit routine (save every register, call the exit handler, land) is one
     /// routine per state instead of a copy embedded in every trace (73 micro-ops, about 480 bytes); a trace's generic stubs jump to a 3-op

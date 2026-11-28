@@ -38,6 +38,10 @@ pub const COV_ROOM: u32 = 1;
 pub const COV_NATIVE: u32 = 2;
 /// Section 91 (`fusecov` bit 2): rolled root traces (entry bookkeeping, first-iteration flag, second / inner entries: [`assemble_dl_in`]'s).
 pub const COV_ROOT: u32 = 4;
+/// Section 100.5 (`fusecov` bit 3): traces compiled while `sloadhome` is on are eligible (the pass keeps no value in its home slot: its
+/// allocation has no `homes`, every spilled `SLOAD` gets a spill slot as with `sloadhome=0`). Without the bit the shipped `sloadhome=3` refuses
+/// every trace (section 100.1).
+pub const COV_HOMES: u32 = 8;
 
 fn idx(r: Ref) -> usize {
     usize::from(r - REF_BIAS)
@@ -147,7 +151,7 @@ fn refusal(
         ("randra", opts.randra.is_some()),
         (
             "homes",
-            ropts.carry_at != 0 || ropts.homes || ropts.homes_snap,
+            ropts.carry_at != 0 || ((ropts.homes || ropts.homes_snap) && cov & COV_HOMES == 0),
         ),
         ("op", !(0..ir.ins.len()).all(|i| converted(ir, i))),
     ];
