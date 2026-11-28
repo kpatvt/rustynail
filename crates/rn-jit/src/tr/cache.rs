@@ -131,10 +131,10 @@ pub const T5_PROCESS: u32 = 0;
 pub const T7_PROCESS: u32 = 0;
 /// Section 78.8 (`efkeep`): entry-failure flushes one head may skip (then the flush happens as before).
 pub const EFKEEP_TIMES: u8 = 2;
-/// Section 78.5 / 78.8 (`efkeep`): the process default of [`TrLimits::efkeep`] (the struct default is 0).
-pub const EFKEEP_PROCESS: u32 = 0;
-/// Section 81.2 (`eflazy`): the process default of [`TrLimits::eflazy`] (the struct default is 0).
-pub const EFLAZY_PROCESS: u32 = 0;
+/// Section 78.5 / 78.8 (`efkeep`): the process default of [`TrLimits::efkeep`] (the struct default is 0; on since section 94.3).
+pub const EFKEEP_PROCESS: u32 = 4;
+/// Section 81.2 (`eflazy`): the process default of [`TrLimits::eflazy`] (the struct default is 0; on since section 94.3).
+pub const EFLAZY_PROCESS: u32 = 1;
 /// Section 84.2 (`mrset`): the process default of [`TrLimits::mrset`] (the struct default is 0).
 pub const MRSET_PROCESS: u32 = 1;
 /// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0; on since section 94.1).
@@ -147,6 +147,10 @@ pub const REROOT_PROCESS_ON: u32 = 50;
 pub const REROOTKEEP_PROCESS_ON: u32 = 100;
 /// Section 92.3 (`rerootgain`): the process default of [`TrLimits::rerootgain`] (the struct default is 0; on since section 94.1).
 pub const REROOTGAIN_PROCESS: u32 = 110;
+/// Section 92.2 (`libsite`): the process default of [`TrLimits::libsite`] (the struct default is 0; on since section 94.3).
+pub const LIBSITE_PROCESS: u32 = 1;
+/// Section 48 (`t5`): the value a process sets for [`TrLimits::t5`] (the struct default is [`T5_PROCESS`] = 0; 7 since section 94.3).
+pub const T5_PROCESS_ON: u32 = 7;
 /// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
 pub const WGLOOP_PROCESS: u32 = 16;
 /// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (the struct default is 0; back on since section 81.1).
@@ -673,6 +677,9 @@ pub struct TrLimits {
     /// iterations: `(c - x) * 100 >= (e - p) * rerootgain`, `c` the entries of the busiest pre-roll site's side trace, `x` the exits of that side
     /// trace, `e` the root's entries and `p` its pre-roll exits (0 = no condition).
     pub rerootgain: u32,
+    /// Section 94.2 (`rerootfn`): 1 = `reroot` also fires on function-entry and continuation roots (as before 94.2); 0 = loop roots only (a function
+    /// root's pre-roll share counts the exits of the loops it inlines, stream_closures +13 .. +17 %).
+    pub rerootfn: u32,
     /// BUNDLE-C: a side recording that starts inside inlined frames at an exit whose previous attempt ended `SideShort` gets `sbump` more recursion unrolls
     /// ([`SideStart::ubump`]). The common case: a stitch exit at the recursion limit; a side trace starting AT the limit stitches again at its first call and is too short
     /// by construction, so the exit is blacklisted and storms in tier 1 (`regex_nfa`: two exits of 1 M each). 0 = off; default [`SBUMP_PROCESS`] (process and tests).
@@ -1257,6 +1264,7 @@ impl Default for TrLimits {
             sretry: 0,
             libsite: 0,
             rerootgain: 0,
+            rerootfn: 0,
             sbump: SBUMP_PROCESS,
             fretry: FRETRY_PROCESS,
             ccalls: CCALLS_PROCESS,
@@ -1542,6 +1550,7 @@ impl TrLimits {
                 "sretry" => l.sretry = v.min(1023),
                 "libsite" => l.libsite = v.min(1),
                 "rerootgain" => l.rerootgain = v.min(10000),
+                "rerootfn" => l.rerootfn = v.min(1),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -1825,6 +1834,13 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "rerootgain") {
             self.limits.rerootgain = REROOTGAIN_PROCESS;
+        }
+        // section 94.3 (`libsite`, `t5`): on in a process, struct defaults 0
+        if !names_limit(limits_env, "libsite") {
+            self.limits.libsite = LIBSITE_PROCESS;
+        }
+        if !names_limit(limits_env, "t5") {
+            self.limits.t5 = T5_PROCESS_ON;
         }
     }
 
@@ -8327,6 +8343,7 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
     if rr != 0
         && !h.reroot_done.get()
         && e >= u64::from(d.tr.cfg.limits.domn)
+        && (d.tr.cfg.limits.rerootfn != 0 || !(tp.is_fn_head(h.pc) || tp.is_cont_head(h.pc)))
         && !mutants::active("reroot_never")
     {
         let mut best: Option<(usize, u64, TrId)> = None;
