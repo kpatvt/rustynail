@@ -9818,3 +9818,35 @@ pass must get cheaper per instruction (lean emission) before coverage pays.
 `build_exits_ex` with a `cspeed` lever copying the previous snapshot's `SlotRestore`s when the maps (`snap_entries`) and the locations are equal
 (identical exits, `ccheck` clean, mutant caught): cd pipelines 90.80 -> 90.69 M (-0.1 %), towers +0.4 %, richards +0.1 %. The slice comparisons cost
 what the skipped `slot_value` calls save (as 85.0 found for the delta merge). Removed.
+
+### 91.4 State and the remaining stages (for the next builder)
+
+Where cd's compile goes after 91.2 (163 M): recorder 45 M (28 %), pipelines 91 M (56 %), tier 1 18 M (11 %), deferred stubs 9 M (6 %). Inside
+the pipelines (k / pipeline, all traces): front 107 (sinking + `run_fwd` + root passes), fused pass / allocator 87, exits 47, assembler 39,
+encoder 39. A flat instruction profile of the whole cd run (`perf record -m 8 -e instructions:u -c 20000`, no call graph: `-g` fails to open
+the event here; `-m 8` is needed because `perf_event_mlock_kb` is 516) ranks the compile symbols: `x86::emit_ex` 2.95 % of the run (17.6 M:
+pipelines, tier 1 and deferred stubs), `exit::build_exits_ex` 1.88 %, `driver_step` 1.47 %, `lower::lower_ex` 0.93 %, `fuse::run` +
+`Fa::process` 1.62 %, `Ra::run` + `allocate_hinted` 1.46 %, `Builder::find` 0.66 %, `Em::copy_one` 0.64 %, allocation (`finish_grow`,
+`__rust_alloc`, `realloc`) 1.8 %, `sink::rebuild` 0.59 %, `slot_value` 0.58 %, `stub_plan` 0.56 %, `TraceIr::konst` 0.54 %.
+
+Remaining stages, in the coordinator's order, with what 91.0-91.3 measured about each:
+
+1. **Looped roots in the fused pass** (PHIs as end locations, homes, entry / back-edge moves, `cloop` / in-place add / `budhoist` decided at
+   the `LOOP` crossing): 11 traces over the six programs (cd 3 = 11.6 M of its pipelines, raytrace 2 = 4.9 M, json 4 = 3.0 M, richards 2 =
+   1.0 M). At the fused pass's ~6 % per pipeline that is ~0.7 M on cd. Plan: hold the emission of `POLL` / `BUDGET` / the PHIs until the `LOOP`
+   crossing (the `HREFK` + `HLOAD` hold generalised), compute the back-edge moves there (the PHI locations are known), decide `cloop` / `bh` with
+   the fused records, emit the tail instructions normally and truncate / replace them in `assemble_dl_in` when `cloop` or `last_add_in_place`
+   applies (the op index of each instruction is in `FusedBody::at`). Fix bit 2 first (91.2): the same layout path.
+2. **Lean emission**: the encoder alone is 17.6 M on cd (all users); a fused trace spends ~545 instructions per IR instruction in the old
+   emitters plus ~150 per micro-op in the encoder. Direct byte emission for the hot classes (oracle: under `ccheck`, the bytes of the old
+   emitters + encoder for the same allocation) is the largest lever left inside the pipelines (estimate ~8 % of a fused pipeline).
+3. **Recorder** (45 M on cd, `driver_step` 1.47 % of the run, `Builder::find` + `konst` + `emit_flags` + `fold` 2.2 %): untouched.
+4. **Tier 1** (18 M on cd, 450 k per compile): untouched; `lower_ex` is 5.5 M of it.
+5. Lazy-aware native traces (towers: all its native traces are refused `lazy`), preludes, `TNEXT`.
+
+Gates: 91.1 (fb09076): `s91_fusecov_programs`, mutant `fusecov_patch_skip` caught, whole set clean. 91.2 (87a5d45): gate-light
+(`GATE_CPUS=5-7`, `GATE_LOAD_MAX=0`, mutant groups `fusecov_,asmfuse_,side_room,rec_ret,t4_late`: 16 ran, 16 caught): fmt, mutant map, clippy x3,
+core x2, 5.5 trace suite, vm_corpus, jit-diff 1-50 PASS; the 5.4 trace suite failed only `h2_newkey_programs` / `h2_setmt_programs` on the 120 s
+leash of their `GC_STRESS=2` + `GC_VERIFY=1` children under load (as in 85.4), both pass alone (22 s). The whole `tr_core` suite with
+`TR_ASMFUSE=2` and `fusecov=7` failed only `m1_interp_shapes` (bit 2, above) and `pm3_rec` under `stackmove` (133 s with `fusecov=0` too: the
+job is over the leash in debug builds; dropped from the s91 program list).
