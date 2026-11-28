@@ -22,12 +22,18 @@ pub(crate) struct UvkTrack {
     assigned: Vec<bool>,
     /// vid of each `actvar` entry (same index).
     var_vid: Vec<u32>,
-    /// Per open function (parallel to `fstack`): the vid of each upvalue.
+    /// Per open function except the main one (`fstack[1..]`, index `fi - 1`): the vid of each upvalue.
     stack: Vec<Vec<u32>>,
     pid_stack: Vec<usize>,
-    /// Per function in open order: the vids of its upvalues.
+    /// Per function in open order, the main one left out (index `pid - 1`): the vids of its upvalues.
     done: Vec<Vec<u32>>,
+    /// Open functions, the main one included.
+    depth: u32,
 }
+
+// (section 100.3: the main function is not tracked: its only upvalue is `_ENV`, which captures no variable (vid `NONE`, never `ro`). A chunk
+// without nested functions, e.g. `load("return " .. k .. " + 1")`, then allocates nothing here: `load_small` +15 % instructions came from
+// the five vectors this tracker grew per compiled chunk.)
 
 impl UvkTrack {
     /// A variable descriptor was written at `actvar[at]`.
@@ -44,26 +50,40 @@ impl UvkTrack {
         self.var_vid.get(at).copied().unwrap_or(NONE)
     }
     pub(crate) fn open(&mut self) {
-        self.pid_stack.push(self.done.len());
+        self.depth += 1;
+        if self.depth == 1 {
+            return;
+        }
+        self.pid_stack.push(self.done.len() + 1);
         self.done.push(Vec::new());
         self.stack.push(Vec::new());
     }
     pub(crate) fn close(&mut self) {
+        let main = self.depth <= 1;
+        self.depth = self.depth.saturating_sub(1);
+        if main {
+            return;
+        }
         if let (Some(v), Some(pid)) = (self.stack.pop(), self.pid_stack.pop()) {
-            self.done[pid] = v;
+            self.done[pid - 1] = v;
         }
     }
     pub(crate) fn alloc_uv(&mut self, fi: usize) {
+        let Some(fi) = fi.checked_sub(1) else { return };
         if let Some(s) = self.stack.get_mut(fi) {
             s.push(NONE);
         }
     }
     pub(crate) fn set_uv(&mut self, fi: usize, idx: usize, vid: u32) {
+        let Some(fi) = fi.checked_sub(1) else { return };
         if let Some(e) = self.stack.get_mut(fi).and_then(|s| s.get_mut(idx)) {
             *e = vid;
         }
     }
     pub(crate) fn uv_vid(&self, fi: usize, idx: usize) -> u32 {
+        let Some(fi) = fi.checked_sub(1) else {
+            return NONE;
+        };
         self.stack
             .get(fi)
             .and_then(|s| s.get(idx))
@@ -77,13 +97,16 @@ impl UvkTrack {
     }
     /// Sets `ro` on every upvalue descriptor of the tree rooted at `pd` (the main function, opened first).
     pub(crate) fn apply<S>(&self, pd: &mut ProtoData<S>) {
+        if self.done.is_empty() {
+            return;
+        }
         let mut pid = 0;
         self.walk(pd, &mut pid);
     }
     fn walk<S>(&self, pd: &mut ProtoData<S>, pid: &mut usize) {
         let me = *pid;
         *pid += 1;
-        if let Some(v) = self.done.get(me) {
+        if let Some(v) = me.checked_sub(1).and_then(|i| self.done.get(i)) {
             for (u, &vid) in pd.upvalues.iter_mut().zip(v.iter()) {
                 u.ro = vid != NONE && !self.assigned.get(vid as usize).copied().unwrap_or(true);
             }
