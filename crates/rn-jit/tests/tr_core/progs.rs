@@ -12,6 +12,12 @@ pub struct Prog {
 
 pub const PROGS: &[Prog] = &[
     Prog {
+        name: "s89_lzretf",
+        small: true,
+        // section 89.1 (`lzretf`, the lazy RETF): the vm-corpus program, also compared with the reference there
+        src: include_str!("../../../../tests/vm/s89_lzretf.lua"),
+    },
+    Prog {
         name: "s83_subtree",
         small: true,
         // section 83 (subtree recording, `lzinner`, `predl`, `chainloop`): the vm-corpus program, also compared with the reference there

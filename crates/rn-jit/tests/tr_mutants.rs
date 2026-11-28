@@ -5069,6 +5069,16 @@ const TABLE: &[Row] = &[
         owner: "S83",
         dets: &[d("tr_core", "s83_subtree_programs")],
     },
+    Row {
+        name: "lzretf_root_pops",
+        owner: "S89",
+        dets: &[d("tr_core", "s89_lzretf_programs")],
+    },
+    Row {
+        name: "lzretf_alt_refund_off",
+        owner: "S89",
+        dets: &[d("tr_core", "s89_lzretf_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
@@ -5087,6 +5097,9 @@ const V54_ONLY: &[&str] = &[
 #[cfg_attr(not(all(feature = "tr_mutants", not(miri))), allow(dead_code))]
 const V55_ONLY: &[&str] = &[
     "lazyloop_retf_ok",
+    // section 89.1: the lazy RETF is a RETF (inert on 5.4)
+    "lzretf_root_pops",
+    "lzretf_alt_refund_off",
     "gfor_end_meta_skip",
     "gfor_end_guard_skip",
     "gfor_end_always",

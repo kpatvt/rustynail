@@ -924,6 +924,8 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                 Some(c) => c[pc],
                 None => val!(i.a),
             },
+            // Section 89.1: the emulator has no lazy region (traces with `LROOT` are not re-run, `mod.rs`); the frame is never the root here
+            TOp::Lroot => 0,
             TOp::Poll => {
                 polls += 1;
                 if m.poll_exit == Some(polls) {

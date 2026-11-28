@@ -445,6 +445,7 @@ pub fn optimize(src: &TraceIr, fold: bool, cse: bool) -> Result<TraceIr, IrAbort
                 let a = map(&mut b, &subst, ins.a);
                 b.emit_retf(a, ins.b, ins.aux)?
             }
+            TOp::Lroot => b.emit_raw(*ins)?,
             _ => {
                 let a = if ra {
                     map(&mut b, &subst, ins.a)

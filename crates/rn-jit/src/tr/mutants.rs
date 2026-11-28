@@ -1151,6 +1151,10 @@ pub const NAMES: &[&str] = &[
     "chain_end_nil",
     // section 83.1 (`lzinner`): the inner entry of a loop trace of a lazy-aware family stores the region root (as an outer entry does)
     "lzinner_root_store",
+    // section 89.1 (`lzretf`): the region root pops like a lazy frame (no exit at the `LROOT` test)
+    "lzretf_root_pops",
+    // section 89.1 (`lzretf` bit 2): the native return at another site refunds one instruction too many
+    "lzretf_alt_refund_off",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1244,7 +1248,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 921);
+        assert_eq!(NAMES.len(), 923);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

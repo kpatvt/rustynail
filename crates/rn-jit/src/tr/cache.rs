@@ -218,6 +218,10 @@ pub const PREDL_PROCESS: u32 = 1;
 pub const CHAINLOOP_PROCESS: u32 = 16;
 /// Section 83.3 (`sidesub`): the process default of [`TrLimits::sidesub`] (also the struct default).
 pub const SIDESUB_PROCESS: u32 = 1;
+/// Section 89 (`lzretfmax`): the process default of [`TrLimits::lzretfmax`] (also the struct default).
+pub const LZRETFMAX_PROCESS: u32 = 64;
+/// Section 89 (`lzretf`): the process default of [`TrLimits::lzretf`] (also the struct default).
+pub const LZRETF_PROCESS: u32 = 29;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1043,6 +1047,13 @@ pub struct TrLimits {
     /// seeded ones (at most `MAX_INL` + 1 deep), which may return and call again, so a side trace holds the subtree of its own level. 0 = off,
     /// 1 = on (default [`SIDESUB_PROCESS`]).
     pub sidesub: u32,
+    /// Section 89.1 (`lzretfmax`): the IR instructions a side recording may add after its lazy `RETF` (more: the recording aborts `RetfLong`, the exit records the native return next time); 0 = no limit (default [`LZRETFMAX_PROCESS`]).
+    pub lzretfmax: u32,
+    /// Section 89.1 (`lzretf`, docs/JIT_TRACE.md section 89.1): a side recording of a lazy-aware function-entry family pops its root frame at its `RETURN` into a caller of the same closure (RETF inside the region: the caller-site guard, no callstatus tests, the region root exits) and goes on recording in the caller (LuaJIT down-recursion). Bit 0: on; bit 1: only into a short continuation
+    /// (`record::cont_short`); bit 2: a caller at another continuation site returns natively there instead of exiting; bit 3: not into a continuation
+    /// that calls other receiver methods outside a loop (`record::cont_methods`); bit 4: not into a bare `RETURN0`. 0 = off; default 29
+    /// ([`LZRETF_PROCESS`]: bits 0, 2, 3, 4).
+    pub lzretf: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
     /// (default [`LAZYSTUB_PROCESS`]), 0 = every stub with the trace.
@@ -1363,6 +1374,8 @@ impl Default for TrLimits {
             predl: PREDL_PROCESS,
             chainloop: CHAINLOOP_PROCESS,
             sidesub: SIDESUB_PROCESS,
+            lzretfmax: LZRETFMAX_PROCESS,
+            lzretf: LZRETF_PROCESS,
             lazystub: LAZYSTUB_PROCESS,
             presize: PRESIZE_PROCESS,
             recunroll: RECUNROLL_PROCESS,
@@ -1626,6 +1639,8 @@ impl TrLimits {
                 "predl" => l.predl = v.min(1),
                 "chainloop" => l.chainloop = v.min(63),
                 "sidesub" => l.sidesub = v.min(1),
+                "lzretfmax" => l.lzretfmax = v.min(1023),
+                "lzretf" => l.lzretf = v.min(31),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),
@@ -4859,6 +4874,8 @@ pub struct TraceInstall {
     pub ce_off: usize,
     /// P-M3: the trace ends with a native return.
     pub rec_ret: bool,
+    /// Section 89.1 (`lzretf`): the exits whose side recordings must not pop their root frame (the region-root tests of lazy `RETF`s).
+    pub noretf_exits: Vec<u32>,
     /// T4 (`t4` bit 0, docs/JIT_TRACE.md section 46): the guards of the native return run at the end of the trace and fail through this snapshot
     /// (the placeholder guard's, in front of the `RETURN`); `None` when they sit in front of the first charge.
     pub ret_late_snap: Option<u32>,
@@ -5371,7 +5388,9 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         kids: Vec::new(),
         exit_st: vec![SideSt::Free; nex],
         fails: vec![0; nex],
-        noretf: vec![false; nex],
+        noretf: (0..nex)
+            .map(|k| ti.noretf_exits.contains(&(k as u32)))
+            .collect(),
         last: vec![None; nex],
         mark: vec![None; nex],
         nside: 0,

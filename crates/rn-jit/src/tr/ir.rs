@@ -346,6 +346,11 @@ pub enum TOp {
     /// Type `t` (the field's Lua type, static in the parent's snapshot). No operands; emitted at the start of a side trace only, before anything can write
     /// the replay words again (they are written only by exits).
     Xload,
+    // ---- section 89 additions (appended) ----
+    /// Section 89.1 (`lzretf`): the guard "the running frame (`r13`) is not the region root of the lazy family" (`ExitArea::lazy_root`), in front of a
+    /// lazy [`TOp::Retf`]. No operands; `aux` = [`guard_aux`]. Its exit (a snapshot of its own) is marked `noretf`: the region root returns through
+    /// the side trace of that exit, which does not pop. Never CSE'd (the frame changes at every `RETF`).
+    Lroot,
 }
 
 /// S4: bit of the op bits of an [`TOp::Hrefk`]: a dominating [`TOp::Hshape`] on the same node vector proves that the node holds the key (no key compare);
@@ -1084,7 +1089,7 @@ pub enum IrAbort {
 
 impl TOp {
     /// Number of operations (size of per-op tables).
-    pub const COUNT: usize = TOp::Xload as usize + 1;
+    pub const COUNT: usize = TOp::Lroot as usize + 1;
 
     /// Ops that are guards by definition (their `F_GUARD` flag is always set by the builder).
     pub const fn always_guard(self) -> bool {
@@ -1103,6 +1108,7 @@ impl TOp {
                 | TOp::Poll
                 | TOp::Budget
                 | TOp::Retf
+                | TOp::Lroot
         )
     }
 
@@ -1175,7 +1181,7 @@ impl TOp {
     /// Which of `a`, `b` are refs (the others are raw numbers: `Sload` slot, `Budget` charge, `Fload` field).
     pub const fn ref_operands(self) -> (bool, bool) {
         match self {
-            TOp::Sload | TOp::Budget | TOp::Tvirt | TOp::Xload => (false, false),
+            TOp::Sload | TOp::Budget | TOp::Tvirt | TOp::Xload | TOp::Lroot => (false, false),
             TOp::Retf => (true, false),
             TOp::Fload
             | TOp::Uvrel
@@ -1265,6 +1271,7 @@ impl TOp {
             TOp::Sstore => "SSTORE",
             TOp::Tnext => "TNEXT",
             TOp::Retf => "RETF",
+            TOp::Lroot => "LROOT",
         }
     }
 }

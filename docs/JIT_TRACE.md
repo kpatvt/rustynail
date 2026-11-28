@@ -9572,3 +9572,118 @@ nothing else beyond 0.3 %, geomean -0.116 %. (`recinl=5` = 4: the root chain pus
 
 Tests: `tr_core::s83_subtree_programs` also runs `sidesub=0`, `recinl=4,sidesub=1`, `recinl=5,sidesub=1,dynunroll=16` and the section 75 / 79
 recursion programs with `recinl=4,sidesub=1` under `+verify`.
+
+## 89. Subtree-per-depth, round 2: where M1 + M2 stand, the lazy RETF (`lzretf`), what towers needs (2026-11-27, base 2264408 = c707218 + 79 + 83)
+
+Method as section 83: instructions per call = (instructions at N = 1000 - at N = 100) / (900 * calls per iteration); instructions are exact
+(one run, `RUSTYNAIL_SEED=0`, serial on CPU 9); cycles are minima of 15 interleaved runs on CPU 11 (a 3.5 GHz core like CPU 9: CPUs 8 / 10 are
+the 5.1 GHz cores, where the same binary reads 30-60 % more cycles; do not mix them). Load: 4-11 during step 0, **60-70 during the 89.1 cycle
+readings** (other builders): the cycle columns of 89.1 carry a few per cent of noise. Whole set: the 223 programs, both settings in one binary
+with limit strings of equal length, outputs (stdout + stderr, addresses normalised) compared.
+
+### 89.0 Step 0: M1 + M2 (section 83) measured
+
+`lzinner=1,predl=1,chainloop=16,recinl=4,sidesub=1` (the defaults, `tr/cache.rs`) against `lzinner=0,predl=0,chainloop=00,recinl=2,sidesub=0`:
+
+| program | instructions | cycles (min of 15, CPU 11) |
+|---|---:|---:|
+| permute, instructions per call (N = 1000) | 104.46 -> **51.20** (LuaJIT 48) | |
+| permute, default size | 97.37 -> 71.19 M (**-26.9 %**) | 19.88 -> 19.11 M (-3.9 %) |
+| towers / queens / fib / binary_trees / json | identical (162.37 / 396.72 / 3791.63 / 5500.80 / 417.15 M) | identical within noise |
+
+Whole set: permute -26.89 %, astar_jumper -3.43 % (noise program), nothing else beyond 0.3 %, geomean -0.156 %, all outputs identical; no bar
+miss. No regression to fix.
+
+### 89.1 `lzretf`: the lazy RETF (`TrLimits::lzretf`, default 29; `lzretfmax`, default 64)
+
+**What was missing.** A side trace of a lazy-aware function-entry family ends at the `RETURN` of its root frame with the native return (guards,
+site chain, pop, `rec` cell, then the continuation trace's inner entry with `POLL`, `BUDGET`, its entry loads and type guards). RETF (N2c, the
+pop inside the trace, recording on in the caller) was never allowed there (I9: "never pop into a maybe-lazy caller": the eager RETF tests the
+returning frame's `callstatus`, which a lazy frame does not have, stores `thread.ci` and reloads `kcache`).
+
+**Mechanism.** A side recording of a lazy family (`RecCfg::lzretf`: the knob, the family lazy-aware, a function-entry family, the exit not
+`noretf`) whose root frame returns (`RETURN0` / `RETURN1`) into a Lua frame running the very same closure, suspended at an `OP_CALL`
+(`Rec::caller_is_self`), records `Rec::retf` in its lazy form (`lzretf_now`: `pop_into_ok` admits exactly the family's prototype): first
+`LROOT` (new `TOp::Lroot`, a guard with a snapshot of its own: exits when `r13 == lazy_root`), then `RETF` (`Cx::retf_lazy`: `previous`, the
+caller's `savedpc` against the recorded site, then `SetCi` + `AddFrame(-16 (A + 1))`; no callstatus tests, no `thread.ci` store, no `kcache`
+reload: the same prototype). The recording goes on in the caller as every RETF recording does (`Seg`, the rebased slot map); it may end with
+the native push from the caller (its next self-call), the native return of the caller, or an exit. The `LROOT` exits are marked `noretf` at
+install (`TraceInstall::noretf_exits`): the side trace of that exit records the plain native return, which handles the region root.
+
+**Why it is sound.** A frame above `lazy_root` was pushed natively in the current region by a self-call of the family from its `previous`,
+which is a Lua frame of the region (L-INV) running the family's closure (E2 / E5 identity at every push) and called for the family's one result
+count (`lazy_cs`): exactly what the eager RETF guards establish with `callstatus`, by construction. The site guard pins the caller's prototype
+and pc (the site is a code address, a dependency) and so the result count and `A`. After the pop the trace runs in the caller, which is in the
+region (lazy or the root), so the region invariants (E2 / E5 checked entries, no foreign code) hold for everything the trace does next; every
+exit completes the chain from `r13` (now the caller) down to `lazy_root` (`exit_entry` takes `ci = r13`; the segment snapshots restore in the
+caller's coordinates, unchanged N2a code). The region root never pops (`LROOT`): its caller is outside the region (it may have run foreign
+code, and it would become the root, E2's checked return). `RETURN` with `k` keeps the eager close checks. 5.4: RETF is inert there, so is
+`lzretf`.
+
+**Policy bits.** Bit 2 (4): a caller suspended at *another* continuation site returns natively there, out of line (`Cx::lzretf_alt_tails`:
+the snapshot's refund added to the budget, then the lazy native return's tail of that site; only for a call that wants no result, so nothing
+is written back), instead of exiting: one leaf exit serves both call sites of towers / permute, and without this the half whose site differs
+took an extra side-trace hop. Bit 3 (8): no pop into a continuation that calls other methods of the receiver outside a loop (`cont_methods`:
+towers' `moveTopDisk` between its two recursive calls; the popped side trace would inline the method chain the continuation trace of that site
+already holds: no steady-state gain, +4 % compile). Bit 4 (16): no pop into a bare `RETURN0` (towers' second site: one native return saved, a
+side trace per site paid; +1.2 % at the default size). Bit 1 (2, off): only into "short" continuations (`cont_short`: the next call is
+another self-call): loses permute. `lzretfmax` (64): a recording that adds more than 64 IR instructions after its pop aborts `RetfLong` (the
+exit becomes `noretf`).
+
+| setting (instructions, default size) | towers | fib | permute | binary_trees | memo_cache |
+|---|---:|---:|---:|---:|---:|
+| 1 | +6.5 % | -11.0 % | -3.2 % | +0.6 % | +0.5 % |
+| 5 | +4.2 % | -11.0 % | -11.0 % | +0.6 % | +0.5 % |
+| 13 | +1.2 % | -11.0 % | -11.0 % | | |
+| **29 (default)** | **0.0 %** | **-11.0 %** | **-12.6 %** | +0.6 % | +0.5 % |
+
+Whole set (29 against 0): permute **-12.62 %**, fib **-10.96 %**; rises: astar_jumper +0.84 % (noise program), binary_trees +0.59 %,
+memo_cache +0.47 %; nothing else beyond 0.3 %; geomean **-0.103 %**; all outputs identical. Bar met (no program above +1 % instructions).
+real/lua_interp reads -7.7 % under some environments (the measuring script's) and +0.1 % under the whole-set driver's: a formation lottery of
+that program (address-dependent), not counted. Cycles (min of 15, CPU 11, load 60-70): permute 19.19 -> 16.55 M (-13.8 %), fib 599.9 ->
+527.7 M (-12.0 %), towers 42.19 -> 41.94 M, binary_trees 1317.7 -> 1315.8 M, memo_cache (min of 5) 1621.7 -> 1637.4 M (+1.0 %, under this
+load; its instructions +0.47 %). permute: **46.36 instructions per call** at N = 1000 (51.20 before; LuaJIT 48).
+
+Mutants: `lzretf_root_pops` (the region root pops like a lazy frame: `lazy_root` is left above `r13`), `lzretf_alt_refund_off` (the native
+return at another site refunds one instruction too many), both owned by `tr_core::s89_lzretf_programs`; the RETF mutants `retf_site_unchecked`,
+`retf_ci_stays`, `retf_shift_off` have sites in the lazy form too. "Pop into a caller of another prototype" is equivalent (not registered):
+`caller_is_self` admits only the same closure, and a frame above the root always has a caller of the family.
+
+Tests: `tests/vm/s89_lzretf.lua` (vm_corpus, and `tr_core::s89_lzretf_programs`: `lzretf` 29 / 0 / 1 / 5 with `lzretfmax=32` / 7 with
+`retfmax=2`, trace modes `always` / `on2` / `on`, `+verify`, exit storms, budgets 17 / 3, GC stress 2, plus the section 75 / 77 / 79 / 83
+recursion programs with `lzretf` 5 / 29): towers at mixed sizes, fib through an upvalue and a global, multiple results, errors raised in the
+caller after the pop (pcall at the top and at an inner level, `xpcall` + traceback), `getinfo` after the pop, yields at the leaves and in the
+continuation, a count hook installed from inside, stack overflow, allocation / collections / finalizers at the leaves, the callee and the
+method replaced mid-run, closures of one prototype calling each other, `pcall` between levels.
+
+**Fixes found by gate-light.** (a) `t4=0` (native-return guards in front of the first charge) crashed `e1_01_unroll_shapes`: the guards then
+test the entry frame, not the caller a popped trace returns from. `lzretf` now requires `t4` bit 0 (`RecCfg::lzretf`), and the assembler refuses
+a lazy RETF with early return guards (`incons`). (b) A frame entered through `__call` (`CIST_CCMT` bits) is never popped (`caller_is_self`):
+`s75_oframe`'s callable-table recursion returned a function value at budget 17. `s89_lzretf.lua` case (11) mixes direct and `__call` calls at one
+site. (c) The out-of-line native return refunded the `RETURN` itself (the instruction-count identity, `t15_oracle`, caught it): the refund is
+now the one of the first snapshot behind the pop. The identity jobs (`s75_oframe` / `s79_push` / `s83_subtree`, `lzretf` 29 / 5 / 0 / 1,
+budgets none / 3 / 17) are part of `s89_lzretf_programs` and detect `lzretf_alt_refund_off`.
+
+### 89.2 Tried, not kept
+
+* **`recmeth`: E1 / `sidepush` chains for loop-free method recursion (towers).** Bit 0: E1 inlines a `self:m(..)` self-call on register 0
+  (the shape rule of 34.2 bypassed); bit 1: loop-free chain frames in side recordings. towers 162.4 M -> 173.3 (bit 0) / 190.6 (bit 1) /
+  207.0 (both) M; steady state per move 358.9 -> 361 (bit 0) / 479 (both). The 34.2 finding (towers is not helped by unrolling the descent)
+  still holds with M1 / M2. Removed from the tree.
+* **`recinl` bit 8 on towers** (continuation chains without the loop condition): 162.4 -> 190.2 M; `recinl=13` (k = 5) 5.6 G (34x). Not a
+  default; noted as a hazard of that test value.
+* **`lzretf` with `retfmax=2`** (a second pop: towers' leaf -> its parent at pc 28 -> the grandparent): towers +5 %, permute +116 % (with
+  bit 0 only), fib +10 %. Not used.
+
+### 89.3 towers against LuaJIT: what is left (not built)
+
+towers is at 359 instructions per move in steady state against LuaJIT's 244 (cycles at the default size are equal on CPU 11: 42 M against
+41-49 M; at N = 450 1.6-2x). LuaJIT's structure (`-jdump`): trace 2 is the descent of the function entry (three `moveDisks` frames per
+iteration, `stop -> up-recursion`), the side traces of its `disks == 1` exits inline `moveTopDisk`, return into the caller *inside the trace*
+and link to trace 2 at the next call. Ours has the same shape (entry loop trace, leaf side trace, continuation roots at pc 18 / 28) except
+that the returns are native returns: that is what `lzretf` replaces, and for towers it does not pay (the popped trace re-validates the caller's
+receiver, `moveTopDisk`'s three method lookups and its slots as the continuation trace does; steady state -1 % .. 0, compile +4 .. +6 %; the
+policy bits keep towers out). The remaining per-move cost is inside the traces: spills of entry `SLOAD`s (77.1), the `HMISS` / metatable /
+`__index` / `HREFK` chain per method lookup in every trace, and the per-transition entry costs (`POLL`, `BUDGET`, type guards). The handle that
+ranks first for towers is per-transition cost, not a recording shape: facts across transitions (the receiver's metatable shape known at a link,
+section 28 (b)) or `sloadhome` (77.6, off).

@@ -138,6 +138,9 @@ pub enum AbortReason {
     Hook,
     /// N3a (RETF): an upvalue store into the region below the root frame was recorded before a `RETF` (the caller's slots would be stale).
     RetfAlias,
+    /// Section 89.1 (`lzretfmax`): the recording added more IR instructions after its lazy `RETF` than the budget allows (a long continuation in
+    /// the caller); the exit is marked `noretf` and records the native return next time.
+    RetfLong,
     /// 5.4: a table whose array accesses were guarded `BITRAS`-clear had the bit set by the recorded path itself (a loop would exit at
     /// every second iteration); the head is re-recorded with plain `ATOUCH`s.
     AtouchFlip,
@@ -212,6 +215,16 @@ pub struct RecCfg {
     pub chainloop: u32,
     /// Section 83.3 (`sidesub`): side recordings inside chain frames extend the chain.
     pub sidesub: bool,
+    /// Section 89.1 (`lzretfmax`): IR budget after a lazy `RETF` (0: none).
+    pub lzretfmax: u32,
+    /// Section 89.1 (`lzretf`): the lazy RETF of side recordings of lazy-aware families (set only for such side recordings).
+    pub lzretf: bool,
+    /// Section 89.1 (`lzretf` bit 1): only into a short continuation of the caller (`cont_short`).
+    pub lzretf_short: bool,
+    /// Section 89.1 (`lzretf` bit 3): not into a continuation that calls other receiver methods outside a loop (`cont_methods`).
+    pub lzretf_loopmeth: bool,
+    /// Section 89.1 (`lzretf` bit 4): not into a bare `RETURN0` continuation.
+    pub lzretf_noret0: bool,
     /// Section 75.10 (`sidepush`): native pushes from side recordings that start inside chain frames.
     pub sidepush: bool,
     /// Section 75.13 (`mfdeep`): E5's fold in chain frames called with the root closure on the root receiver.
@@ -591,6 +604,11 @@ impl Default for RecCfg {
             recinl: super::cache::RECINL_PROCESS,
             chainloop: super::cache::CHAINLOOP_PROCESS,
             sidesub: super::cache::SIDESUB_PROCESS != 0,
+            lzretfmax: super::cache::LZRETFMAX_PROCESS,
+            lzretf: super::cache::LZRETF_PROCESS != 0,
+            lzretf_short: super::cache::LZRETF_PROCESS & 2 != 0,
+            lzretf_loopmeth: super::cache::LZRETF_PROCESS & 8 != 0,
+            lzretf_noret0: super::cache::LZRETF_PROCESS & 16 != 0,
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
@@ -1517,6 +1535,10 @@ struct Rec {
     uv_below_stores: Vec<usize>,
     /// N2c: the `CallInfo` of the caller the VM is about to return into (the step re-roots the VM-side recording after the instruction).
     reroot: Option<usize>,
+    /// Section 89.1 (`lzretf`): the `RETF` being recorded is the lazy form (the root frame pops into a frame of its own closure in the region).
+    lzretf_now: bool,
+    /// Section 89.1 (`lzretfmax`): the IR length at the lazy `RETF` (0: none yet).
+    lzretf_at: usize,
     /// N2c: the prototype of the entry root (the current root's, `proto`, changes at a `RETF`).
     entry_proto: usize,
     /// N2c: entry-relative extent, `room` and spare-`CallInfo` count of the segments before the current one.
@@ -1831,6 +1853,8 @@ impl Rec {
             shift: 0,
             seg_steps: Vec::new(),
             reroot: None,
+            lzretf_now: false,
+            lzretf_at: 0,
             entry_proto: proto,
             ext_entry: 0,
             room_entry: 0,
@@ -2475,6 +2499,14 @@ impl Rec {
             return Ok(Flow::Closed(Box::new(self.close())));
         }
         let next = self.record_one(&vm, idx)?;
+        if self.lzretf_at != 0
+            && self.cfg.lzretfmax != 0
+            && !self.stitched
+            && self.b.ir.ins.len() > self.lzretf_at + self.cfg.lzretfmax as usize
+        {
+            // Section 89.1 (`lzretfmax`): a long continuation after the lazy pop (the exit records the native return next time)
+            return Err(AbortReason::RetfLong);
+        }
         if self.stitched {
             return Ok(Flow::Closed(Box::new(self.close())));
         }
@@ -3519,7 +3551,7 @@ impl Rec {
                     false,
                 ))
             } // the root closure is handle 1 (N3a: the current segment's after a `RETF`)
-            TOp::Poll | TOp::Budget => return Ok((0, false)),
+            TOp::Poll | TOp::Budget | TOp::Lroot => return Ok((0, false)),
             // N2c: the guards of a `RETF` hold by construction (the recorder checked the caller's identity); the model was rebased by `Rec::retf`
             TOp::Retf => {
                 // (the model is rebased here, in IR order: the loads emitted before the `RETF` are evaluated against the callee's frame, which
@@ -8405,6 +8437,23 @@ impl Rec {
     fn ret(&mut self, vm: &Vm<'_>, i: Instruction, op: OpCode) -> R<usize> {
         let d = self.cur_depth;
         if d == 0 {
+            // Section 89.1 (`lzretf`): a side recording of a lazy-aware family pops its root frame into a caller of the same closure suspended at a
+            // `CALL` and goes on in it (the RETF inside the region; at run time the region root exits instead of popping)
+            if self.cfg.lzretf
+                && self.cfg.side.is_some()
+                && self.cfg.fn_root
+                && op != OpCode::Return
+                && self.segs.len() <= self.cfg.retfmax as usize
+                && self.caller_is_self(vm)
+            {
+                self.lzretf_now = true;
+                let r = self.retf(vm, i, op);
+                self.lzretf_now = false;
+                if let Some(r) = r? {
+                    self.lzretf_at = self.b.ir.ins.len();
+                    return Ok(r);
+                }
+            }
             if self.cfg.rec_conts
                 && (op == OpCode::Return1 || (op == OpCode::Return0 && self.cfg.rec_any))
                 && (!self.cfg.rec_any || self.cfg.rec_seen)
@@ -8542,8 +8591,57 @@ impl Rec {
         self.cfg.retf & 64 == 0 || self.retf_self_traced
     }
 
+    /// Section 89.1 (`lzretf`): the root frame's caller is a Lua frame running the very closure of the root frame (a self-recursion of the family).
+    fn caller_is_self(&self, vm: &Vm<'_>) -> bool {
+        let Some(c_ci) = vm.st.ci().previous() else {
+            return false;
+        };
+        if c_ci.r().callstatus & CIST_C != 0 {
+            return false;
+        }
+        let Some(ccl) = vm.st.ci_lclosure(c_ci) else {
+            return false;
+        };
+        let cp = ccl.proto();
+        if &*cp as *const Proto as usize != self.frames[0].proto || ccl.as_ptr() != vm.cl.as_ptr() {
+            return false;
+        }
+        // (not a frame entered through `__call`: its arguments were shifted over the caller's registers)
+        if vm.st.ci().r().callstatus & rn_core::state::MAX_CCMT != 0 {
+            return false;
+        }
+        if !self.cfg.lzretf_short && !self.cfg.lzretf_loopmeth && !self.cfg.lzretf_noret0 {
+            return true;
+        }
+        let code = cp.code();
+        let sp = c_ci.r().savedpc as usize;
+        let Some(call_pc) = (sp.wrapping_sub(code.as_ptr() as usize) / 4)
+            .checked_sub(1)
+            .filter(|&c| c < code.len())
+        else {
+            return false;
+        };
+        // (`lzretf` bit 3: not into a continuation that calls other methods of the receiver outside a loop, see `cont_methods`)
+        if self.cfg.lzretf_loopmeth && cont_methods(code, call_pc) {
+            return false;
+        }
+        // (`lzretf` bit 4: not into a bare `RETURN0` continuation: the pop saves one native return and costs a side trace per site)
+        if self.cfg.lzretf_noret0
+            && Instruction(code.get(call_pc + 1).copied().unwrap_or(0)).opcode()
+                == Some(OpCode::Return0)
+        {
+            return false;
+        }
+        // (`lzretf` bit 1: only into a short continuation, see `cont_short`)
+        !self.cfg.lzretf_short || cont_short(code, call_pc)
+    }
+
     /// I9 of `retf`: may a `RETF` pop into a caller of prototype `cp` (never into one that may be lazy-aware: its frames can be lazy)?
+    /// Section 89.1: the lazy RETF of a lazy family pops into its own frames, which are in the region (the assembler's lazy form).
     fn pop_into_ok(&self, cp: &Proto) -> bool {
+        if self.lzretf_now {
+            return std::ptr::eq(cp, self.frames[0].proto as *const Proto);
+        }
         !(self.cfg.retf_nolazy != 0
             && !mutants::active("retf_lazy_caller_ok")
             && (maybe_lazy_proto(cp, self.cfg.retf_nolazy & 3 >= 2, false)
@@ -8718,6 +8816,21 @@ impl Rec {
         if !self.deps.iter().any(|k| k.0 == ckey) {
             self.deps.push(ProtoKey(ckey));
             self.want_dep.push(cp.clone());
+        }
+        if self.lzretf_now {
+            // Section 89.1: the region-root test, with a snapshot of its own (its exit is `noretf`: the root returns natively from its side trace)
+            self.cur_snap = None;
+            let rs = self.cur_snapshot()?;
+            self.b.emit_raw(Ins {
+                op: TOp::Lroot,
+                t: Ty::Nil,
+                flags: F_GUARD,
+                a: NOREF,
+                b: NOREF,
+                prev: NOREF,
+                aux: guard_aux(rs, 0),
+            })?;
+            self.cur_snap = None;
         }
         let snap = self.cur_snapshot()?;
         let site = self.b.ir.konst(KVal::Ptr(sp as u64, PtrKind::Raw));
@@ -13337,6 +13450,111 @@ impl Rec {
     fn dynunroll_norec(&self) -> bool {
         self.cfg.dynunroll & 64 != 0
     }
+}
+
+/// Section 89.1 (`lzretf` bit 3): does the continuation after the `CALL` at `call_pc` (linear scan up to the next call of the same producer,
+/// a `RETURN`, a loop instruction or 32 instructions) call another method of register 0 (`SELF A 0 K` into a `CALL`) without reaching a loop
+/// instruction first? That is towers' shape (`moveTopDisk` between the two recursive calls): the popped side trace would inline the method chain
+/// that the continuation trace of the site holds already, and the steady state gains nothing for the compile it costs (section 89.1).
+fn cont_methods(code: &[u32], call_pc: usize) -> bool {
+    let a0 = Instruction(code[call_pc]).a();
+    let mut meth = false;
+    for j in call_pc + 1..code.len().min(call_pc + 33) {
+        let i = Instruction(code[j]);
+        match i.opcode() {
+            Some(OpCode::Return | OpCode::Return0 | OpCode::Return1) => return meth,
+            Some(OpCode::Jmp) if i.sj() < 0 => return false,
+            Some(
+                OpCode::Forloop
+                | OpCode::Forprep
+                | OpCode::Tforprep
+                | OpCode::Tforloop
+                | OpCode::Tforcall,
+            ) => return false,
+            Some(OpCode::Call | OpCode::Tailcall) if method_call_shape(code, j as u32) => {
+                {
+                    // (the same call site shape as the recursive call: the next self-call ends the continuation)
+                    let k = (j.saturating_sub(10)..j).rev().find_map(|q| {
+                        let w = Instruction(code[q]);
+                        (w.opcode() == Some(OpCode::SelfOp) && w.a() == i.a()).then(|| w.c())
+                    });
+                    let k0 = (call_pc.saturating_sub(10)..call_pc).rev().find_map(|q| {
+                        let w = Instruction(code[q]);
+                        (w.opcode() == Some(OpCode::SelfOp) && w.a() == a0).then(|| w.c())
+                    });
+                    if k.is_some() && k == k0 {
+                        return meth;
+                    }
+                    meth = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    meth
+}
+
+/// Section 89.1 (`lzretf` bit 1): is the continuation after the `CALL` at `call_pc` short? Linear scan from `call_pc + 1` (at most 32
+/// instructions, no backward jump): the first `RETURN` makes it short; the first `CALL` / `TAILCALL` makes it short when its function register
+/// was produced like the one of the `CALL` at `call_pc` (the same opcode and operands but `A`: the same callee, another self-call), not when it
+/// calls something else (towers' `moveTopDisk` between its two recursive calls: the popped side trace would inline a call chain that the
+/// continuation trace holds already).
+fn cont_short(code: &[u32], call_pc: usize) -> bool {
+    fn producer(code: &[u32], c: usize) -> Option<(u8, u32, u32, u32)> {
+        let a = Instruction(code[c]).a();
+        (0..c).rev().take(16).find_map(|j| {
+            let i = Instruction(code[j]);
+            (i.a() == a
+                && matches!(
+                    i.opcode(),
+                    Some(
+                        OpCode::Getupval
+                            | OpCode::SelfOp
+                            | OpCode::Gettabup
+                            | OpCode::Getfield
+                            | OpCode::Move
+                    )
+                ))
+            .then(|| (i.opcode_raw(), i.b(), i.c(), i.k()))
+        })
+    }
+    let me = producer(code, call_pc);
+    if me.is_none() {
+        return false;
+    }
+    for j in call_pc + 1..code.len().min(call_pc + 33) {
+        let i = Instruction(code[j]);
+        match i.opcode() {
+            Some(OpCode::Return | OpCode::Return0 | OpCode::Return1) => return true,
+            Some(OpCode::Call | OpCode::Tailcall) => return producer(code, j) == me,
+            Some(OpCode::Jmp) if i.sj() < 0 => return false,
+            Some(
+                OpCode::Forloop
+                | OpCode::Forprep
+                | OpCode::Tforprep
+                | OpCode::Tforloop
+                | OpCode::Tforcall,
+            ) => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Section 89.1 (`cont_methods`): the `CALL` at `call_pc` calls a method fetched by `SELF` on register 0 into its function register.
+fn method_call_shape(code: &[u32], call_pc: u32) -> bool {
+    let Some(&cw) = code.get(call_pc as usize) else {
+        return false;
+    };
+    let c = Instruction(cw);
+    if c.opcode_raw() != OpCode::Call as u8 {
+        return false;
+    }
+    let lo = (call_pc as usize).saturating_sub(c.b() as usize + 1);
+    code[lo..call_pc as usize].iter().any(|&w| {
+        let i = Instruction(w);
+        i.opcode_raw() == OpCode::SelfOp as u8 && i.a() == c.a() && i.b() == 0
+    })
 }
 
 /// Section 75.9 / 75.10: does the prototype's code have a counted loop?

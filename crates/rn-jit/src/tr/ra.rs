@@ -487,6 +487,8 @@ pub fn op_clobbers(i: &Ins, ir: &TraceIr) -> CallClobber {
             gpr: 0b110 | 1 << 10,
             xmm: 0,
         },
+        // Section 89.1: the root test uses V2 as scratch
+        TOp::Lroot => CallClobber { gpr: 0b100, xmm: 0 },
         _ => CallClobber::default(),
     }
 }

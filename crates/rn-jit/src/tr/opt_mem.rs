@@ -357,7 +357,8 @@ pub fn header_safe(op: TOp) -> bool {
         | TOp::Sstore
         | TOp::Uvrel
         // N2b: the pop touches the frame registers and `thread.ci` only
-        | TOp::Retf => true,
+        | TOp::Retf
+        | TOp::Lroot => true,
         // allocation (may run a GC step and so a finaliser), key insertion (rehash), string building: any of them
         // can change a header or run arbitrary code
         // F3: `Tlen` reads the array part and moves the length hint (5.4 `alimit`), so it is not a header-safe

@@ -281,6 +281,8 @@ pub struct AsmEnv {
     /// E6 (`dlink` bit 1): a native push / return of a lazy-aware family keeps the budget in its register when it jumps through a `rec` cell (an inner
     /// entry continues with the register); the word is stored on the null-cell path, the only one that leaves.
     pub rec_vb_keep: bool,
+    /// Section 89.1 (`lzretf` bit 2): a lazy `RETF` whose caller is suspended at another continuation site returns natively there.
+    pub lzretf_alt: bool,
     /// T4 (`t4` bit 0, docs/JIT_TRACE.md section 46): the guards of a native return run at the end of the trace (failing through the snapshot of the
     /// `RETURN`) instead of in front of the first charge (failing through the start snapshot).
     pub rec_late: bool,
@@ -459,6 +461,7 @@ impl Default for AsmEnv {
             dlink_snaps: false,
             slink_snaps: false,
             rec_vb_keep: false,
+            lzretf_alt: false,
             rec_late: false,
             rec_fuse: false,
             push_tags: false,
@@ -2719,6 +2722,8 @@ struct Cx<'a> {
     root_ci_cold: Vec<(L, L, L)>,
     /// P2-3a: the refund stubs of the `sub r, n; jl` budgets: `(label, exit, n)`: `add r, n; jmp exit`.
     bud_cold: Vec<(L, L, i32)>,
+    /// Section 89.1 (`lzretf` bit 2): the native-return tails of lazy `RETF`s: `(label, exit, RETF instruction, its site)`.
+    lzretf_alts: Vec<(L, L, usize, u64)>,
     /// Section 59 (`budhoist`): the plan of the hoisted budget of the loop, if any.
     bh: Option<BhPlan>,
     /// Section 59: the refund trampolines of the body exits: `(label, stub, extra)`: `budget += (cnt + extra) * n; cnt += bias; jmp stub`.
@@ -2804,6 +2809,7 @@ impl<'a> Cx<'a> {
             rec_ci_cold: Vec::new(),
             root_ci_cold: Vec::new(),
             bud_cold: Vec::new(),
+            lzretf_alts: Vec::new(),
             bh: None,
             bh_tramps: Vec::new(),
             bh_tramp_ix: std::collections::HashMap::new(),
@@ -5066,11 +5072,10 @@ impl Cx<'_> {
     /// Scratch: `V1` (`C`), `V2`, `V7`; the allocator excludes `V1` / `V2` from the trace (`ra::op_clobbers`).
     fn retf(&mut self, i: usize) -> Result<(), AsmError> {
         let ins = self.ir.ins[i];
-        if self.env.lazy
-            || self.ir.loop_at.is_some()
-            || self.ir.rec_call.is_some()
-            || self.ir.rec_ret.is_some()
-        {
+        if self.env.lazy {
+            return self.retf_lazy(i);
+        }
+        if self.ir.loop_at.is_some() || self.ir.rec_call.is_some() || self.ir.rec_ret.is_some() {
             return incons("RETF in a lazy, looping or native-push/pop trace");
         }
         if self.al.uses_gpr(1) || self.al.uses_gpr(2) || self.al.uses_gpr(10) {
@@ -5142,6 +5147,170 @@ impl Cx<'_> {
             self.ld(2, W::B8, ciw(ci::KCACHE)); // (r13 = C now)
             self.push(Op::SetK(2));
         }
+        Ok(())
+    }
+
+    /// Section 89.1 (`lzretf`): `RETF` in a trace of a lazy-aware family. The returning frame `F` (`r13`) must lie above the region root: then a
+    /// native self-call of the family pushed it in this region from its caller `C`, a Lua frame of the region (the root or a lazy frame), for the
+    /// family's one result count (`lazy_cs`), and `F`'s own fields are not complete (no callstatus tests, as the lazy native return). The region
+    /// root itself exits (its caller is outside the region: it may have run foreign code, and it would become the root). `C` must be suspended at
+    /// the recorded `CALL` (`savedpc`, which the lazy push wrote: the prototype is the site's, a dependency). The pop: `r13 = C`, `rbx -= 16 *
+    /// (A + 1)`; `thread.ci` is completed at the leave (lazy protocol); `r14` stays (the same prototype's constants).
+    fn retf_lazy(&mut self, i: usize) -> Result<(), AsmError> {
+        let ins = self.ir.ins[i];
+        if self.ir.loop_at.is_some() {
+            return incons("lazy RETF in a looping trace");
+        }
+        if self.ir.rec_ret.is_some() && !self.env.rec_late {
+            // (the native return's guards would run in front of the first charge, on the entry frame)
+            return incons("lazy RETF with early native-return guards (t4 bit 0 off)");
+        }
+        if self.al.uses_gpr(1) || self.al.uses_gpr(2) || self.al.uses_gpr(10) {
+            return incons("RETF in a trace that allocated V1 / V2 / V10");
+        }
+        let x = self.guard_label(i)?;
+        let ciw = |o: usize| M {
+            base: Base::Ci,
+            off: o as i32,
+        };
+        let thw = |o: usize| M {
+            base: Base::Thread,
+            off: o as i32,
+        };
+        let bits = aux_bits(ins.aux);
+        self.ld(1, W::B8, ciw(ci::PREVIOUS));
+        // (`lzretf` bit 2: a caller suspended at another continuation site of a call that wants no result takes the native return there instead
+        // of the exit)
+        let alt = if self.env.lzretf_alt
+            && bits & 0xFF == 1
+            && bits & RETF_K == 0
+            && self.env.rec_nsites > 0
+        {
+            Some(self.label())
+        } else {
+            None
+        };
+        if !mutants::active("retf_site_unchecked") {
+            self.ld(2, W::B8, rm(1, ci::SAVEDPC as i32));
+            let site = self.kbits_of(ins.a);
+            self.push(Op::Mov(7, site));
+            self.br(Cc::Ne, 2, Src::V(7), alt.unwrap_or(x));
+        }
+        if let Some(l) = alt {
+            self.lzretf_alts.push((l, x, i, self.kbits_of(ins.a)));
+        }
+        if bits & RETF_K != 0 && !mutants::active("retf_k_unchecked") {
+            self.ld(2, W::B8, thw(thr::TBC_LEN));
+            self.br(Cc::Ne, 2, Src::Imm(0), x);
+            let nc = self.label();
+            self.ld(2, W::B8, thw(thr::OPENUPVAL));
+            self.br(Cc::Eq, 2, Src::Imm(0), nc);
+            self.ld(2, W::B8, rm(2, rn_core::jit_layout::upval::V as i32));
+            self.push(Op::Lea(
+                7,
+                M {
+                    base: Base::Frame,
+                    off: 0,
+                },
+            ));
+            self.br(Cc::Ge, 2, Src::V(7), x);
+            self.bind(nc);
+        }
+        if !mutants::active("retf_ci_stays") {
+            self.push(Op::SetCi(1));
+        }
+        let up = if mutants::active("retf_shift_off") {
+            i32::from(ins.b) + 1
+        } else {
+            i32::from(ins.b)
+        };
+        self.push(Op::AddFrame(-up * 16));
+        Ok(())
+    }
+
+    /// Section 89.1 (`lzretf` bit 2): the out-of-line native returns of lazy `RETF`s whose caller is suspended at another continuation site
+    /// (`V1` = the caller, `V2` = its `savedpc`): the frame returns as the native `RETURN0` of a frame above the region root does (the `LROOT`
+    /// test passed; the call wants no result, so nothing is written back; the returning frame's registers are dead), after the refund of the
+    /// path not run (the snapshot's, as its exit would add). No other site: the exit.
+    fn lzretf_alt_tails(&mut self) {
+        for (l, x, i, site) in std::mem::take(&mut self.lzretf_alts) {
+            self.bind(l);
+            let snap = aux_snap(self.ir.ins[i].aux) as usize;
+            // (the `RETURN` itself runs: the refund is the one of the first snapshot behind the pop, the path after the `RETURN`; without one,
+            // the `RETURN`'s charge of 1)
+            let seg = self.ir.snaps[snap].seg;
+            let after = self.ir.snaps[snap + 1..]
+                .iter()
+                .find(|s| s.seg > seg)
+                .map_or(self.ir.snaps[snap].refund - 1, |s| s.refund);
+            let refund = after + i32::from(mutants::active("lzretf_alt_refund_off"));
+            let n = usize::from(self.env.rec_nsites);
+            for k in 0..n {
+                let (s, cell, a) = self.env.rec_sites[k];
+                if s == site {
+                    continue;
+                }
+                let next = self.label();
+                self.push(Op::Mov(7, s));
+                self.br(Cc::Ne, 2, Src::V(7), next);
+                match self.env.budget_reg {
+                    Some(r) => {
+                        if refund != 0 {
+                            self.push(Op::Add(r, Src::Imm(refund)));
+                        }
+                    }
+                    None => {
+                        let cnt = M {
+                            base: Base::Cnt,
+                            off: 0,
+                        };
+                        self.ld(7, W::B4, cnt);
+                        self.push(Op::Add(7, Src::Imm(refund)));
+                        self.st(W::B4, cnt, Src::V(7));
+                    }
+                }
+                self.push(Op::SetCi(1));
+                if let (Some(r), false) = (self.env.budget_reg, self.rec_vb_kept()) {
+                    self.st(
+                        W::B4,
+                        M {
+                            base: Base::Cnt,
+                            off: 0,
+                        },
+                        Src::V(r),
+                    );
+                }
+                self.push(Op::AddFrame(-(i32::from(a) + 1) * 16));
+                self.lazy_rec_jump(cell, false);
+                self.bind(next);
+            }
+            self.push(Op::Jmp(x));
+        }
+    }
+
+    /// Section 89.1 (`lzretf`, [`TOp::Lroot`]): exits when the running frame is the region root (`r13 == lazy_root`). Scratch `V2`.
+    fn lroot_guard(&mut self, i: usize) -> Result<(), AsmError> {
+        if !self.env.lazy {
+            return incons("LROOT outside a lazy-aware trace");
+        }
+        let x = self.guard_label(i)?;
+        if mutants::active("lzretf_root_pops") {
+            // (mutant: the region root pops like a lazy frame)
+            return Ok(());
+        }
+        self.push(Op::Lea(
+            2,
+            M {
+                base: Base::Ci,
+                off: 0,
+            },
+        ));
+        self.push(Op::BrMR {
+            cc: Cc::Eq,
+            m: Self::lroot_m(),
+            src: 2,
+            to: x,
+        });
         Ok(())
     }
 
@@ -6121,6 +6290,7 @@ impl Cx<'_> {
             TOp::Hstore => self.hstore(i)?,
             TOp::Uload | TOp::Ustore | TOp::Uvrel => self.uop(i)?,
             TOp::Retf => self.retf(i)?,
+            TOp::Lroot => self.lroot_guard(i)?,
             TOp::Tbar => self.tbar(i)?,
             TOp::Atouch => self.atouch(i)?,
             TOp::Calln => self.calln(i)?,
@@ -10160,6 +10330,8 @@ impl Cx<'_> {
             }
             self.push(Op::Jmp(x));
         }
+        // Section 89.1 (`lzretf` bit 2): the native returns of lazy `RETF`s at another site
+        self.lzretf_alt_tails();
         // P2-3a: the refund stubs of the budget (registers and flags are dead at the exit; only the budget register changes)
         for (label, exit, n) in std::mem::take(&mut self.bud_cold) {
             self.bind(label);

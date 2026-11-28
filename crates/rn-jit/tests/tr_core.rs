@@ -1510,10 +1510,11 @@ fn twins_gc_stress() {
 fn twins_stackmove() {
     let mut jobs = Vec::new();
     // (`pm3_rec`, `r2_rec_deep` and `bf_rec_deep` recurse to the stack limit: quadratic when the stack moves at every helper call; `pm3_rec2` and `r2_rec` cover it;
-    // `s83_subtree` has a stack-overflow case too)
+    // `s83_subtree` and `s89_lzretf` have a stack-overflow case too)
     for p in selected(false).into_iter().filter(|p| {
         p.name != "pm3_rec"
             && p.name != "s83_subtree"
+            && p.name != "s89_lzretf"
             && p.name != "r2_rec_deep"
             && p.name != "bf_rec_deep"
             && p.name != "bk_obs2"
@@ -4776,6 +4777,75 @@ fn s83_subtree_programs() {
                 Job::new(p, trace)
                     .opts("+verify")
                     .limits_s("recinl=4,sidesub=1"),
+            );
+        }
+    }
+    compare(jobs);
+}
+
+/// Section 89.1 (`lzretf`): side traces of lazy-aware recursion families pop their root frame into the caller (a frame of the same closure in the
+/// lazy region) and go on recording in it; the region root exits at the `LROOT` test (its exit is `noretf`): towers / fib / multiple results,
+/// errors and tracebacks raised in the caller after the pop, `getinfo` there, yields at the leaves and in the continuation, a count hook installed
+/// from inside, stack overflow, collections and finalizers at the leaves, the callee and the method replaced mid-run, closures of one prototype
+/// calling each other, `pcall` between levels; `lzretf` 29 / 0 / 1 / 5 (with `lzretfmax` 32) / 7 (with `retfmax` 2), in the trace modes with `+verify`, exit storms, budgets 3 / 17 and
+/// GC stress 2; plus the recursion programs of sections 75 / 77 / 79 / 83 with `lzretf` 5 / 29. Mutants `lzretf_root_pops`,
+/// `lzretf_alt_refund_off`.
+#[test]
+fn s89_lzretf_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "lzretf=29",
+            "lzretf=0",
+            "lzretf=1",
+            "lzretf=5,lzretfmax=32",
+            "lzretf=7,retfmax=2",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+                ("", 3),
+            ] {
+                let mut j = Job::new("s89_lzretf", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+            jobs.push(
+                Job::new("s89_lzretf", trace)
+                    .limits_s(limits)
+                    .env("RUSTYNAIL_GC_STRESS", "2"),
+            );
+        }
+        // (the instruction-count identity, TR5: the refunds of the lazy RETF's native returns at other sites; `s89_lzretf` itself installs hooks
+        // and yields, which the identity does not cover)
+        #[cfg(feature = "t15_oracle")]
+        for p in ["s75_oframe", "s79_push", "s83_subtree"] {
+            for lim in ["lzretf=29", "lzretf=5", "lzretf=0", "lzretf=1"] {
+                for b in [None, Some(3), Some(17)] {
+                    let mut j = Job::new(p, trace).limits_s(lim);
+                    j.budget = b;
+                    j.ident = true;
+                    jobs.push(j);
+                }
+            }
+        }
+        for p in [
+            "s75_recinl",
+            "s75_oframe",
+            "s77_rself",
+            "s79_push",
+            "s79_mfside",
+            "s83_subtree",
+        ] {
+            jobs.push(Job::new(p, trace).opts("+verify").limits_s("lzretf=5"));
+            jobs.push(
+                Job::new(p, trace)
+                    .opts("+exitstorm=3")
+                    .limits_s("lzretf=29"),
             );
         }
     }

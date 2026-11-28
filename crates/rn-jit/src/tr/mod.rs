@@ -475,6 +475,7 @@ pub fn abort_name(r: AbortReason) -> &'static str {
         AbortReason::Cap => "Cap",
         AbortReason::SideUntraced => "SideUntraced",
         AbortReason::RetfAlias => "RetfAlias",
+        AbortReason::RetfLong => "RetfLong",
         AbortReason::AtouchFlip => "AtouchFlip",
         AbortReason::SideShort => "SideShort",
         AbortReason::AllocStorm => "AllocStorm",
@@ -973,6 +974,11 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         recinl: cfg.limits.recinl,
         chainloop: cfg.limits.chainloop,
         sidesub: cfg.limits.sidesub != 0,
+        lzretfmax: cfg.limits.lzretfmax,
+        lzretf: false,
+        lzretf_short: false,
+        lzretf_loopmeth: false,
+        lzretf_noret0: false,
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
@@ -1231,6 +1237,17 @@ pub fn driver_start_side(
         recinl: cfg.limits.recinl,
         chainloop: cfg.limits.chainloop,
         sidesub: cfg.limits.sidesub != 0,
+        lzretfmax: cfg.limits.lzretfmax,
+        // (section 89.1: the native return after a pop needs its guards at the end of the trace, `t4` bit 0: in front of the first charge they
+        // would test the entry frame, not the caller the trace returns from)
+        lzretf: cfg.limits.lzretf != 0
+            && cfg.limits.t4 & 1 != 0
+            && lazy_root
+            && fn_side
+            && !start.no_retf,
+        lzretf_short: cfg.limits.lzretf & 2 != 0,
+        lzretf_loopmeth: cfg.limits.lzretf & 8 != 0,
+        lzretf_noret0: cfg.limits.lzretf & 16 != 0,
         sidepush: cfg.limits.sidepush != 0,
         mfdeep: cfg.limits.mfdeep != 0,
         mfshare: cfg.limits.mfshare != 0,
@@ -2604,7 +2621,9 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             cache::unroll_ok(st, rpr);
         }
     }
-    if ir.rec_ret.is_some() || ir.rec_call.is_some() {
+    // (section 89.1: a lazy `RETF` returns natively at the other sites, `lzretf` bit 2)
+    let lz_retf = lazy && ir.ins.iter().any(|i| i.op == ir::TOp::Lroot);
+    if ir.rec_ret.is_some() || ir.rec_call.is_some() || lz_retf {
         let code = rootp.code_ptr() as u64;
         let found = cache::with_tr(st, rpr, |tp| {
             // R2: a native return of `n` results continues only at sites whose `CALL` wants exactly `n` results or all of
@@ -2787,6 +2806,8 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
             && !emuverify,
         // SAFETY: as above.
         rec_vb_keep: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.dlink } & 2 != 0,
+        // SAFETY: as above.
+        lzretf_alt: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.lzretf } & 4 != 0,
         // SAFETY: as above.
         slink_snaps: unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.slink } & 3 != 0
             && !emurun
@@ -3138,6 +3159,12 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     .unwrap_or(0)
             },
             rec_ret: ir.rec_ret.is_some(),
+            noretf_exits: ir
+                .ins
+                .iter()
+                .filter(|i| i.op == ir::TOp::Lroot)
+                .map(|i| ir::aux_snap(i.aux))
+                .collect(),
             ret_late_snap: (ir.rec_ret.is_some() && rec_late)
                 .then(|| ir.ins.last().map(|i| ir::aux_snap(i.aux)))
                 .flatten(),
@@ -3326,6 +3353,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                     | ir::TOp::Lib
                     // N2b: the native run moves the frame below the private copy the re-run uses (`+emurun` runs on the live frame)
                     | ir::TOp::Retf
+                    | ir::TOp::Lroot
             ) || is_uv_identity_guard(&ir, i)
         });
         let t = EmuTrace {
