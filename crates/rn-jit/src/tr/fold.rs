@@ -473,6 +473,7 @@ pub fn optimize(src: &TraceIr, fold: bool, cse: bool) -> Result<TraceIr, IrAbort
     out.snaps = src.snaps.clone();
     out.frames = src.frames.clone();
     out.segs = src.segs.clone();
+    out.lib_site = src.lib_site;
     out.deps = src.deps.clone();
     out.head = src.head;
     out.extent = src.extent;

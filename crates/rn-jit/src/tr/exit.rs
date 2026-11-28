@@ -423,6 +423,13 @@ pub fn site_classes(ir: &TraceIr) -> Vec<ExitSite> {
                 ir.at(i.a).op,
                 TOp::Tnew | TOp::Snew | TOp::Concat | TOp::Lib
             )
+            // (section 92.2: only the guard against 0; the outcome guards of a `LIB` helper, `NE %find, 1` "found" and the like, are branches of the
+            // program: their exits want side traces)
+            && (ir.at(i.a).op != TOp::Lib
+                || !ir.lib_site
+                || (i.b != NOREF
+                    && i.b < super::ir::REF_BIAS
+                    && matches!(ir.kval(i.b), super::ir::KVal::Int(0))))
             // (section 78.1: the end guard `NE %gm, 1` of a `GMATCH` step is a site of its own: its side trace records the end of the iteration)
             && !(ir.gm_end_site
                 && ir.at(i.a).op == TOp::Lib

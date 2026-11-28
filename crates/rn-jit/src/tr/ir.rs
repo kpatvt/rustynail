@@ -874,6 +874,9 @@ pub struct TraceIr {
     /// Section 78.1 (`stitch` bit 2): the end guard behind a `GMATCH` helper (`NE %gm, 1`) is an ordinary site, not an allocation site, so the loop's
     /// end gets a side trace (which records the end with `GMATCH_END`).
     pub gm_end_site: bool,
+    /// Section 92.2 (`libsite`): only the guard `NE %lib, 0` behind a `LIB` helper is an allocation site; its outcome guards (`NE %find, 1`) are
+    /// ordinary sites (their exits get side traces).
+    pub lib_site: bool,
     /// E5 (`midfold`): a method `SELF` of the family's key on register 0 was folded to the running closure: the trace relies on the region
     /// invariant of section 35.4.
     pub midfold: bool,
@@ -1004,6 +1007,7 @@ impl TraceIr {
         self.idfold = false;
         self.midfold = false;
         self.rec_trip = 0;
+        self.lib_site = false;
     }
 
     /// Is `r` an instruction ref?

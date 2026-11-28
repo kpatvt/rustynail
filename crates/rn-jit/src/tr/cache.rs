@@ -655,6 +655,12 @@ pub struct TrLimits {
     pub second: u32,
     /// Section 88.9 (`rerootfam`): `reroot` does not fire on a root whose family has at least this many side traces (0 = no limit).
     pub rerootfam: u32,
+    /// Section 92.1 (`sretry`): an exit whose second side attempt ended `SideShort` is not blacklisted: it waits `sretry` report windows (`hot_exit`
+    /// exits each, at most 255) and the third attempt is not held to `sidemin` (0 = off: the second `SideShort` blacklists the exit).
+    pub sretry: u32,
+    /// Section 92.2 (`libsite`): the outcome guards of a `LIB` helper (`NE %find, 1` "found", any guard against a value other than 0) are ordinary
+    /// exit sites with side traces, not allocation sites (0 = off: every `NE %lib, k` guard is an allocation site).
+    pub libsite: u32,
     /// BUNDLE-C: a side recording that starts inside inlined frames at an exit whose previous attempt ended `SideShort` gets `sbump` more recursion unrolls
     /// ([`SideStart::ubump`]). The common case: a stitch exit at the recursion limit; a side trace starting AT the limit stitches again at its first call and is too short
     /// by construction, so the exit is blacklisted and storms in tier 1 (`regex_nfa`: two exits of 1 M each). 0 = off; default [`SBUMP_PROCESS`] (process and tests).
@@ -1236,6 +1242,8 @@ impl Default for TrLimits {
             hoptop: HOPTOP_PROCESS,
             second: SECOND_PROCESS,
             rerootfam: 0,
+            sretry: 0,
+            libsite: 0,
             sbump: SBUMP_PROCESS,
             fretry: FRETRY_PROCESS,
             ccalls: CCALLS_PROCESS,
@@ -1518,6 +1526,8 @@ impl TrLimits {
                 "rerootchk" => l.rerootchk = v,
                 "rerootkeep" => l.rerootkeep = v.min(100),
                 "rerootfam" => l.rerootfam = v.min(1024),
+                "sretry" => l.sretry = v.min(511),
+                "libsite" => l.libsite = v.min(1),
                 "ncallee" => l.ncallee = v.min(1),
                 "chainre" => l.chainre = v.min(100),
                 "chainn" => l.chainn = v,
@@ -4218,6 +4228,7 @@ fn side_failed(
     let blfirst = d.tr.cfg.limits.blfirst;
     let sideback = d.tr.cfg.limits.sideback;
     let sideblf = d.tr.cfg.limits.sideblf;
+    let sretry = d.tr.cfg.limits.sretry;
     let Some(Slot {
         body: Body::Trace(t),
         ..
@@ -4239,6 +4250,11 @@ fn side_failed(
             && !sbump2_pending(sbump2, reason, u32::from(t.fails[k]));
         t.last[k] = unchangeable.then_some(reason);
     }
+    // section 92.1 (`sretry`): the second `SideShort` of an exit waits `sretry` windows for a third attempt without `sidemin`
+    let sretry_wait = repeat && sretry_due(sretry & 255, reason, u32::from(t.fails[k]));
+    if sretry_wait {
+        repeat = false;
+    }
     if reason == "SideUntraced"
         && t.fails[k] < MAX_SIDE_FAILS
         && !mutants::active("side_untraced_retry")
@@ -4251,11 +4267,27 @@ fn side_failed(
     } else {
         // section 76.2 (`sideback`): a failed recording that leaves a retry waits `2^(s * fails) - 1` more windows first
         if fault && k < t.bwait.len() {
-            t.bwait[k] = sideback_wait(sideback, u32::from(t.fails[k]), unchangeable, reason);
+            t.bwait[k] = if sretry_wait {
+                u8::try_from(sretry & 255).unwrap_or(u8::MAX)
+            } else {
+                sideback_wait(sideback, u32::from(t.fails[k]), unchangeable, reason)
+            };
         }
         // the inline stub reports an exit when its counter passes `hot_exit - 1`: count `hot_exit` more
         t.exits[k].set(0);
     }
+}
+
+/// Section 92.1 (`sretry`): does the `fails`th failed side attempt of an exit, ended `reason`, wait for a third attempt without `sidemin` instead of
+/// blacklisting the exit?
+pub fn sretry_due(sretry: u32, reason: &str, fails: u32) -> bool {
+    sretry != 0 && reason == "SideShort" && fails == 2
+}
+
+/// Section 92.1 (`sretry`): is the side attempt at an exit whose previous attempts (`fails` of them, the last ended `last`) waited by [`sretry_due`]
+/// exempt from `sidemin`?
+pub fn sretry_free(sretry: u32, last: Option<&'static str>, fails: u32) -> bool {
+    sretry != 0 && last == Some("SideShort") && fails >= 2
 }
 
 /// Section 76.2 (`sideback`): the report windows a side attempt waits after its exit's `fails`th failed recording (`unchangeable`: the cause is a
@@ -6220,6 +6252,8 @@ pub struct SideStart {
     pub ubump: u32,
     /// K3 (`fretry`): the side trace may be shorter than `framemin` (the previous attempt at this exit ended `SideShort`).
     pub fretry: bool,
+    /// Section 92.1 (`sretry`): the side trace may be shorter than `sidemin` (the exit's second attempt ended `SideShort`, [`sretry_free`]).
+    pub sretry: bool,
     /// N3a: record without `RETF` (an earlier recording from this exit that used it failed).
     pub no_retf: bool,
     /// T9 (`innerlink` bit 1): the family root's head is the target of a root trace's frame-linking exit ([`HeadData::linked_in`]).
@@ -7062,6 +7096,7 @@ fn side_attempt(
         Vec::new()
     };
     let fretry;
+    let sretry;
     let ubump = {
         let d = d_of(st);
         let (last, fails) = match d.tr.slot(id) {
@@ -7076,6 +7111,9 @@ fn side_attempt(
         };
         let retry = matches!(last, Some("SideShort" | "Recursion"));
         fretry = fretry_due(d.tr.cfg.limits.fretry, last, !frames.is_empty());
+        // (bit 8 of `sretry`: also exits inside inlined frames, which `fretry` covers otherwise)
+        sretry = (d.tr.cfg.limits.sretry & 256 != 0 || frames.is_empty())
+            && sretry_free(d.tr.cfg.limits.sretry & 255, last, fails);
         let base = if d.tr.cfg.limits.sbump != 0
             && retry
             && !frames.is_empty()
@@ -7126,6 +7164,7 @@ fn side_attempt(
             max_ci: pdepth,
             ubump,
             fretry,
+            sretry,
             no_retf,
             inner_ret,
             carry,
@@ -8879,6 +8918,23 @@ pub fn head_reroot_avoid(
     let i = tp.head_index(pc)?;
     let a = tp.head(i).reroot_avoid.borrow();
     a.as_ref().map(|x| x.0.clone())
+}
+
+/// Section 92.1: is the recording `id` a root recording of a head that carries a `reroot` path constraint?
+pub fn reroot_pending(st: &mut State, id: TrId) -> bool {
+    let d = d_of(st);
+    if d.tr.cfg.limits.reroot == 0 {
+        return false;
+    }
+    let Some(Slot {
+        body: Body::Rec(r), ..
+    }) = d.tr.slot(id)
+    else {
+        return false;
+    };
+    let (root, head) = (r.root, r.head);
+    root != 0
+        && tr_of(d, root).is_some_and(|tp| tp.heads.get(head).is_some_and(|h| h.reroot_avoid.borrow().is_some()))
 }
 
 /// Section 59: the recording `id` closed (`side`: a side recording) with this path: kept for the `reroot` rule; a root recording ends its head's constraint.

@@ -441,6 +441,8 @@ pub struct RecCfg {
     pub side_cstitch: bool,
     /// Section 78.1 (`stitch` bit 2): the end of a `gmatch` iteration is recorded in side recordings of the loop's frame (`GMATCH_END`).
     pub gm_end: bool,
+    /// Section 92.2 (`libsite`): copied into [`TraceIr::lib_site`] at the close (the exit-site classes read it).
+    pub lib_site: bool,
     /// Section 78.1 (`stitch` bit 3): the root `RETURN` of a generic continuation root or of a side recording pops into the caller when its loop
     /// around the `CALL` is traced (`RETF`), else ends with the stitching exit before the `RETURN`.
     pub cont_ret: bool,
@@ -698,6 +700,7 @@ impl Default for RecCfg {
             cont_gen: false,
             side_cstitch: false,
             gm_end: false,
+            lib_site: false,
             cont_ret: false,
             fmt0: false,
             cont_head: None,
@@ -3126,6 +3129,7 @@ impl Rec {
             }
         }
         ir.loop_at = None;
+        ir.lib_site = self.cfg.lib_site;
         let rc_end = self.rec_call.is_some();
         ir.rec_call = self.rec_call.take();
         ir.rec_ret = self.rec_ret.map(|x| x.0);

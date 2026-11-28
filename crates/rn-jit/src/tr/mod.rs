@@ -1054,6 +1054,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
             None
         },
         mrset: cfg.limits.mrset & 1 != 0,
+        lib_site: cfg.limits.libsite != 0,
         mrset_va: cfg.limits.mrset & 2 != 0,
         ..RecCfg::default()
     };
@@ -1132,6 +1133,9 @@ pub fn driver_start_side(
         return None;
     }
     let rem = snap::land_info(&inner_low, start.pc).1;
+    if start.sretry && cfg.verbose >= 2 {
+        eprintln!("[trace] sretry: side start at pc {} (exit of {:?}) without sidemin", start.pc, id);
+    }
     let resolve: record::ResolveFn = Rc::new(|st, p| {
         cache::proto_ref(p).or_else(|| {
             crate::rt::ensure_compiled(st, p)
@@ -1158,7 +1162,11 @@ pub fn driver_start_side(
             known: start.known.clone(),
             head_state: hs,
             // a prelude replaces a failing entry (type_entry): it pays at any length
-            min_len: if start.prelude { 0 } else { cfg.limits.sidemin },
+            min_len: if start.prelude || start.sretry {
+                0
+            } else {
+                cfg.limits.sidemin
+            },
             frames: start.frames.clone(),
             max_extent: start.max_extent,
             max_ci: start.max_ci,
@@ -1251,6 +1259,7 @@ pub fn driver_start_side(
         tprep_link: cfg.limits.stitch & 8 != 0,
         outer_link: cfg.limits.outerlink != 0,
         mrset: cfg.limits.mrset & 1 != 0,
+        lib_site: cfg.limits.libsite != 0,
         mrset_va: cfg.limits.mrset & 2 != 0,
         fmt0: cfg.limits.stitch & 16 != 0,
         cont_head: if cfg.limits.stitch & 8 != 0 {
@@ -1433,6 +1442,15 @@ fn finish_outcome(st: &mut State) {
             ),
         },
         RecOutcome::Closed(rec) => {
+            // section 92.1: a constrained re-record of a peeled root that would not peel is dropped like one that completed the avoided prefix (a rolled
+            // loop has no pre-roll: the probation of `rerootchk` never sees it, and the old peeled root was the better trace)
+            if !act.side
+                && cache::reroot_pending(st, act.id)
+                && !opt_loop::peelable(&rec.ir, crate::rt::trace_config(st).limits.hdrlib)
+            {
+                cache::abort_reroot(st, act.id);
+                return;
+            }
             // section 59 (`reroot`): remember the path (the rule compares a root's path with its side trace's); a closed root recording ends its head's constraint
             cache::reroot_closed(
                 st,

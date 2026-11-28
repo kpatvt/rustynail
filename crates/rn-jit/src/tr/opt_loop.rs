@@ -79,6 +79,12 @@ pub fn last_note() -> String {
     NOTE.with(|n| n.borrow().clone())
 }
 
+/// Section 92.1: would [`run`] peel this recorded iteration (shaped for peeling, no header-mutating instruction at `hdrlib`)? The `reroot` re-record of a
+/// peeled root that would come out rolled is dropped (`cache::reroot_rolled_drop`).
+pub fn peelable(ir: &TraceIr, hdrlib: u32) -> bool {
+    shaped_for_peeling(ir) && ir.ins.iter().all(|i| opt_mem::header_safe_ins(i, hdrlib))
+}
+
 /// A recorded iteration starts with `POLL, BUDGET` on snapshot 0 (the loop-top charge); anything else is not peeled.
 fn shaped_for_peeling(ir: &TraceIr) -> bool {
     ir.ins.len() >= 2 && ir.ins[0].op == TOp::Poll && ir.ins[1].op == TOp::Budget
@@ -194,6 +200,7 @@ impl<'a> Em<'a> {
         b.ir.rec_ret = rec.ir.rec_ret;
         b.ir.idfold = rec.ir.idfold;
         b.ir.rec_trip = rec.ir.rec_trip;
+        b.ir.lib_site = rec.ir.lib_site;
         b.ir.midfold = rec.ir.midfold;
         // R1: the carried loads of a side trace and where the parent's exit has their values; the pruning info of the recording
         b.ir.carry_in = rec.ir.carry_in.clone();
