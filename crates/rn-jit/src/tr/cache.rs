@@ -341,9 +341,10 @@ pub const REROOTCHK_PROCESS: u32 = 1024;
 /// Section 62 (`rerootkeep`): process value of [`TrLimits::rerootkeep`]: the re-recorded root is kept when its pre-roll exits are below `rerootkeep` percent
 /// of the flushed root's pre-roll fraction; otherwise it is flushed and the head records unconstrained (the rule never fires there again).
 pub const REROOTKEEP_PROCESS: u32 = 75;
-/// P2 fix (`pollr15`): process value of [`TrLimits::pollr15`]. **2 = on except in traces of native self-recursion** (regression fix of 2026-11-12: the P2 fix had made it 0, which cost 1 instruction per loop iteration of every other trace: lib/m_*, int_sum +5..13 %). 0 = off, 1 = on everywhere. The r15-addressed poll makes `programs/fib` 7-9 % slower in cycles than the
-/// `movabs` form at every loop-head offset (docs/PERF.md "P2 loop-top placement fix"); `RUSTYNAIL_JIT_TRACE_LIMITS=pollr15=1` turns it on (all 223 programs 0.985 / 0.971 on, 0.989 / 0.983 off).
-pub const POLLR15_PROCESS: u32 = 2;
+/// P2 fix (`pollr15`): process value of [`TrLimits::pollr15`]. **1 = on everywhere** (section 97.2: the `programs/fib` cycle loss of C44 that kept native
+/// self-recursion traces on the `movabs` form (value 2, the regression fix of 2026-11-12) is gone: fib -1.5 % instructions, cycles -0.2 %, towers -1.1 instructions
+/// per move; whole set -0.05 % instructions, outputs identical). 0 = off, 2 = on except in traces of native self-recursion (`rec_call` / `rec_ret`).
+pub const POLLR15_PROCESS: u32 = 1;
 /// P2 bundle 1 (`xregs`): process value of [`TrLimits::xregs`] (K3a: the process value is also the struct default): bit 0 = `rbp` (`V9`), bit 1 = `r14` (`V10`) are allocatable in traces. **0 = off:**
 /// the A/B gate of the bundle is not clean (docs/PERF.md "P2 bundle 1"); `RUSTYNAIL_JIT_TRACE_LIMITS=xregs=3` turns both on (geomean over the 223 programs: instructions
 /// 0.985, cycles 0.982; `jit-trace/field_method` 0.69 / 0.76), and this constant is the one-line switch.

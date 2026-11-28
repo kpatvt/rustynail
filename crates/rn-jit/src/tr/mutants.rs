@@ -1215,6 +1215,8 @@ pub const NAMES: &[&str] = &[
     "eflazy_ignored",
     // docs/JIT_TRACE.md section 84.2 (`mrset`): the values of an open-list `SETLIST` are stored in reverse order
     "mrset_vals_reversed",
+    // section 97.1: the `+verify` segment oracle's store comes before the parent exit map's stores in a `dlink` entry (it clobbers a parent spill slot)
+    "dlink_oracle_first",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1331,7 +1333,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 956);
+        assert_eq!(NAMES.len(), 957);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

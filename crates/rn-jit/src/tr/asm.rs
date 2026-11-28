@@ -4049,7 +4049,9 @@ pub(crate) fn assemble_dl_in(
         (Some(dl), Some(ce)) => {
             let l = cx.label();
             cx.bind(l);
-            cx.seg_oracle_entry();
+            // (no segment-oracle store here: a carry entry exists only for a trace without segments, and the store would clobber a parent spill
+            // slot the stores and the carry moves below read, section 97.1)
+            debug_assert!(cx.ir.segs.is_empty());
             if let Some((ctr, inc)) = dl.count.filter(|_| !mutants::active("slink_count_skip")) {
                 cx.push(Op::Mov(7, ctr));
                 cx.push(Op::AddM {
@@ -4078,7 +4080,13 @@ pub(crate) fn assemble_dl_in(
         (Some(dl), Some(after)) => {
             let l = cx.label();
             cx.bind(l);
-            cx.seg_oracle_entry();
+            // Section 97.1: the `+verify` segment oracle's word is a spill slot past this trace's own (`ext_slot`), which may be a slot of the
+            // PARENT's allocation that holds part of the exit map the stores below read: the oracle store comes after them (MUTANT
+            // `dlink_oracle_first`: before, as it was: a table slot got the `CallInfo` address, the latent stale-slot crash of section 93.1)
+            let oracle_first = mutants::active("dlink_oracle_first");
+            if oracle_first {
+                cx.seg_oracle_entry();
+            }
             if let Some((ctr, inc)) = dl.count.filter(|_| !mutants::active("slink_count_skip")) {
                 cx.push(Op::Mov(7, ctr));
                 cx.push(Op::AddM {
@@ -4091,6 +4099,9 @@ pub(crate) fn assemble_dl_in(
                 for op in &dl.ops {
                     cx.push(*op);
                 }
+            }
+            if !oracle_first {
+                cx.seg_oracle_entry();
             }
             let refund = if mutants::active("dlink_refund_off") {
                 dl.refund + 1
