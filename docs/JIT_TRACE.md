@@ -11889,3 +11889,111 @@ offset 0x700 changed nothing (reverted). A front-end layout effect of the binary
 loop-free iterators (a `loopfree` word in the prototype header, `t1g` bit 3): iter_pipeline unchanged, stream_closures +1.8 % instructions
 against bit 2 alone (reverted). Open: a per-site rule for the flat push in iter_pipeline's map/filter chain. Defaults unchanged (bit 2 is
 worth -3.7 % instructions on stream_closures).
+
+## 100. Heavy-gate repairs of integ10 (82c5871) and the session-s regressions (2026-11-28, branch `gatefix11`, base 82c5871)
+
+### 100.1 Mutant survivors: the fused-pass detectors ran no fused trace
+
+`asmfuse_call_live`, `asmfuse_no_reload`, `asmfuse_no_store`, `asmfuse_two_addr` (detector `s87_asmfuse_programs`), `fusecov_patch_skip`,
+`fusecov_rrg_skip` (`s91_fusecov_programs`) survived with 0 caught when run alone: the detectors passed in 1-2 s because **no trace of theirs went
+through the fused back end**. `fuse::refusal` refuses every trace while `sloadhome` is on (`"homes"`: `ropts.homes || ropts.homes_snap`), and
+`sloadhome` is 3 by default since 77.10 (7ef7cfb). Sections 87 / 91 were built on a tree with `sloadhome` 0 (e3dc73c); the merge f1c0b19
+(compile-cost 76-91 into the 77-93 tree, `sloadhome=3`) silently turned the detectors into controls (`RUSTYNAIL_JIT_OPSTAT=1`: `[fuse] refused:
+homes` for every side trace of `s87_fuse_arith`). Not caused by the 82/86 merge. Fix: the fused-on limit strings of both detectors carry
+`sloadhome=0` (`asmfuse=2,sloadhome=0`, `asmfuse=1,sloadhome=0`, control `asmfuse=0`; `siderooms=1,asmfuse=2,fusecov=3,sloadhome=0`,
+`siderooms=1,fusecov=3,sloadhome=0`, control `fusecov=0`); all six are caught again (output differences / child failures on `s87_fuse_arith`,
+`s76_side_fail`, `rec_tree`), and the detectors pass unmutated.
+
+**Consequence for the shipped configuration:** with the process defaults (`asmfuse=1`, `fusecov=3`, `sloadhome=3`) the fused back end of
+87 / 91 compiles **nothing**: every number measured for it since f1c0b19 is the old back end. Open handle: let the fused pass handle homes (or
+refuse only traces that actually have a home `SLOAD`), then judge `asmfuse` again on its programs.
+
+`sloadhome_slot_reused` (detector `s77_home_programs`, flaky since 99.2): the reuse of case (5) of `s77_home.lua` (a loop invariant's home slot
+after the scan crosses `LOOP`) shows only under some `pairs` orders, i.e. string-hash seeds; with the seed inherited from the test process it was
+caught in about one run of four. A scan of seeds 1-30 x 24 option sets and seeds 1-12 x 48 `randra` / exit-storm sets caught it only with
+`+exitstorm=7 +verify +randra=5`, deterministically per seed (4 of 4 repeats): `always` seed 3, `on2` seeds 3, 4, 5, 8, 9, 12. The detector now
+adds these five pinned-seed jobs (`Job::seed`): caught on every run.
+
+### 100.2 tr_oracle `oracle_options`: quadratic checkpoints of stack-limit recursions
+
+`tests/vm/s83_subtree` and `s89_lzretf` (core and vm specs) crashed "memory allocation failed" under every budgeted cell (`budget=3` / `17`, also
+plain `always budget=17` and `budget=200` of the other oracle tests, which the heavy gate does not run). Root cause: their "stack overflow" case
+(`pcall(deep, 1e7)`: ~10^5 frames) under a stay budget. A stay ends every few instructions and every checkpoint digest walked **all** frames,
+storing the live named slots of each (`digest` -> `Dig::live`): O(depth) bytes per checkpoint, O(depth^2) per recursion; the child passed its
+2 GB address-space cap within 5 s (without the case: 23 MB peak). The traces are fine (the same programs pass with no budget). The mechanism is
+the one section 58 documented for `e4_02_lazy_loop_errors` and solved by excluding programs (`MEM_HEAVY`).
+
+Fix (harness): a digest covers the innermost `DIGEST_FRAMES` = 256 frames. A deeper frame is checked by the checkpoints taken after the frames
+above it have returned, and the depth itself stays in every digest (the innermost frame's absolute function slot is mixed into `chain`). Peaks:
+s89_lzretf 140-290 MB, s83_subtree 225-450 MB over the six cells (none mismatched). The four recursion programs excluded as `MEM_HEAVY` since
+section 58 now fit as well (`e4_02_lazy_loop_errors` 0.6-1.0 GB, `co_09_stack_and_args`, `err_08_stack_overflow`,
+`err_09_error_in_error_handling` ~150 MB) and are back in the oracle; only `gen:4` (collector stopped) stays out.
+`scripts/gate-oracle.sh` (CPUs 2-7, 6 workers): **4356 jobs, 0 inconclusive (was 52), PASS, 375 s, peak 3.0 GB**.
+
+### 100.3 Session-s regressions: `load_small` (compiler) and the compile-arena allocator
+
+Method: `cargo build --release` of session-r (6058b77) and of this branch, both copied to one path, `perf stat -e instructions:u,cycles:u`,
+interleaved, `taskset` CPU 8 / 10, min of 15 (another builder on CPUs 2-7). The release-build binaries of session-r / session-s reproduce the
+session-s numbers (load_small +15.4 % instructions / +19.5 % cycles, getmt -9.0 % / +15.6 %, sel_loop -3.9 % / +10.0 %; rep, error_tbl,
+pcall_err, sink_tuple, template_gsub within +-0.4 % instructions).
+
+**load_small** (119 k `load("return " .. k .. " + 1")`): +15 % instructions also with the JIT off, so the loader. `rn_compiler::uvk::UvkTrack`
+(77.3) grew five vectors per compiled chunk (`open` pushed three, `alloc_uv` one for the main function's `_ENV`, `apply` walked the tree): about
+700 instructions per `load` with the `malloc` / `free` pairs. The main function is no longer tracked (its only upvalue `_ENV` captures no
+variable, so its `ro` flags were always false; children map to `stack[fi - 1]` / `done[pid - 1]`), and `apply` returns at once when no nested
+function was opened: a chunk without nested functions allocates nothing. JIT off 956 M -> 872 M instructions (session-r 842 M).
+
+The rest is `rnlua`'s `#[global_allocator]` `carena::CArena` (76.4 / 76.8): with the default allocator instead, load_small has 857 M. Its
+`GlobalAlloc` methods were `#[inline]` whole, so every allocation site of the program (fat LTO) carried the bump allocator and the in-place
+`realloc`: `rnlua` stripped 4.59 MB against 3.81 MB without the wrapper. Now only the mode / range tests are inlined and the arena paths
+(`arena_alloc`, `arena_alloc_zeroed`, `arena_dealloc`, `arena_realloc`) are out of line: 3.98 MB. Against the inlined version (min of 7):
+load_small -0.35 % instructions / -2.4 % cycles, havlak +0.2 % / -4.7 %, template_engine 0.0 % / -2.8 %, lua_interp 0.0 % / -1.5 %, deltablue /
+json +0.3-0.4 % instructions (compile paths now call the arena) / 0.0 %.
+
+Final, this branch against session-r (min of 15, interleaved): load_small **+1.4 % cycles** (was +19.5 %), +4.9 % instructions (the wrapper's tests
+and the remaining layout of the compiler; 2.4 points of it are the wrapper itself).
+
+### 100.4 Session-s regressions that are loop-head layout (`headoff`)
+
+Same table (this branch / session-r, min of 15): getmt -9.0 % instructions / +15.5 % cycles, sel_loop -3.9 % / +9.1 %, m_sqrt -1.6 % / +2.1 %,
+template_gsub +0.4 % / +2.3 %, iter_pipeline +0.6 % / +3.1 % (`t1g` bit 2, 99.3: `t1g=3` gives 169.4 M against session-r 171.6 M), sink_tuple
+-0.3 % / +1.1 %; within +-1.4 % cycles: rep, error_tbl, pcall_err, stream_closures (-1.6 %, +10 % instructions: its known window spread), varargs,
+str_method_len, sel_count.
+
+getmt: the loop of the new root trace is strictly shorter (no spill store / reload of the metatable, `cmp byte [m]` instead of `movzx; cmp`, the
+`HMISS` key-type test gone) and the same at the same line offset, yet +16 % cycles per inner iteration (65536 x 40 variant: 7.7 -> 8.9 cycles;
+branch misses equal, op-cache dispatch slightly down). The new knob `headoff` (TrLimits, default 48 = `asm::HEAD_OFFSET`, the loop head's
+offset inside its 64-byte line) shows it is the head placement of section P2 / Q2: getmt at offsets 8..40 / 56 is 13.9 M cycles (-1 % against
+session-r), at 48 16.5 M, at 0 23.8 M; sel_loop 204 M at 56 (-1.5 % against session-r), 227 M at 48; m_sqrt 270 M at 0..24 (-1.5 %), 292 M at 48.
+
+No other global offset is better (sweep, 124 programs of bench/lib + bench/jit-trace, min of 3, CPU 10, cycles against 48): 8 +1.45 % geomean
+(30 programs worse than 2 %, 22 better), 16 +0.42 % (23 / 26), 24 +0.11 % (26 / 23), 32 +1.10 % (26 / 23), 40 +0.48 % (20 / 18), 56 +0.06 % (22 /
+17). Per program the zones differ by up to 1.7x (sub_1char -41.7 % at 16, string_key_dyn -25.8 % at 32, sink_vec -25 % at 32 / 56, inline_2
+-17 % at 56, reverse +39 % at 56); the best offset per program would be -3.8 % geomean (an upper bound: the min over 7 offsets also picks noise).
+As in docs/PERF.md ("no model of the zone was found"), branch density per 32 / 64-byte window does not separate the slow offsets of getmt (16
+and 48 have the same 32-byte pattern; 16 is fast, 48 slow). Defaults unchanged.
+
+Open handle (the one per-loop lever left): **an adaptive head placement**: assemble a hot looping root at a second offset (or relocate its
+loop), time both (cycle counter per N back-edges) and keep the faster; target getmt / sel_loop / m_sqrt / inline_2 / sink_vec, bound -3.8 %.
+
+### 100.5 `fusecov` bit 3 (`COV_HOMES`): the fused pass with `sloadhome` on (built, off); the fused `CxState` merge gap
+
+The direct test of 100.1's consequence: bit 3 makes traces compiled with `sloadhome` on eligible (the fused allocation has no `homes`: every
+spilled `SLOAD` gets a spill slot, as with `sloadhome=0`; `carry_at` still refuses). Outputs equal; first measurement (before the fix below), single runs, CPU 10,
+`fusecov=11` against `fusecov=3` (same binary): awfy/richards **+235 % instructions / +125 % cycles**, corpus/astar_jumper +88 % / +46 %, awfy/cd +10.9 % / +9.6 %,
+awfy/json +11.0 % / +9.2 %, stream_closures -2.0 % / +37 %, deltablue +2.5 % / -3.3 %, havlak / nbody / inline_2 / lua_interp unchanged. richards:
+with the bit 77 side traces recorded, 63 failed (33 / 22 without), 10 heads blacklisted (2), 4 ineffective flushes: the fused back end, built on
+a tree without `sloadhome` and without the 79-99 features, breaks trace formation on the current tree. The cause is a compile failure, the
+same in the configuration 87 / 91 were built for: `RUSTYNAIL_JIT_TRACE_LIMITS=sloadhome=0 RUSTYNAIL_JIT_VERBOSE=3 rnlua bench/awfy/richards.lua`
+logs 33 `side failed ... Compile(x86)` with `pipeline: x86: UnboundLabel(..)` (richards 485 M instructions against 145 M with `asmfuse=0`):
+Root cause: a merge gap. The fused pass hands its assembler state to `assemble_dl_in` through `CxState` (`cx_state!`), and the two cold lists
+added later, `tbar_cold` (93.1, `peep` bit 2: the out-of-line `TBAR` slow paths) and `lzretf_alts` (89.1: the native-return tails of lazy
+`RETF`s), were not in it: every fused trace with a cold `TBAR` lost its slow-path label (`TBAR` is in all 33 failing traces and in none of the 11
+fused ones that compiled). Both lists are in `CxState` now: richards with `sloadhome=0` 485 M -> 148 M instructions (145 M with `asmfuse=0`), no
+compile failure. `fusecov=11` against `fusecov=3` after the fix (single runs, CPU 10): instructions richards +2.0 %, list +1.3 %, astar_jumper
+-4.9 % (its spread), the others (havlak, deltablue, cd, nbody, inline_2, stream_closures, json, lua_interp, bounce, fib, getmt) within +-0.6 %;
+cycles single-run noise. Whole set (223 programs, one run each, CPU 10, same binary through two wrappers): **+0.06 % geomean instructions**,
+all outputs equal; above 1 %: astar_jumper +4.2 % (spread), class_middleclass +2.1 %, richards +2.0 %, oop_override +1.8 %, list +1.3 %; nothing
+below -1 %. Correctness: 62 tr_core tests (`s7* s8* s9* b1_* h1_* r1_* r2_*`) pass with `TR_FUSECOV=11` (every job fused where eligible). No
+gain on the current tree: the fused pass stays idle by default (bit 3 off). The `CxState` fix stays (a fused trace with a cold `TBAR` no longer
+fails to compile, which matters for `sloadhome=0` runs and any later use of the pass).
