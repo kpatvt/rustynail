@@ -10684,6 +10684,26 @@ fn s81_eflazy_programs() {
     );
 }
 
+/// Section 84.2 (`mrset`): constructors filled by open result lists (`{ byte(s, i, e) }` with changing counts, a fixed item in front, a Lua callee's
+/// results, empty lists, tables that escape), in every mode against the interpreter with the knob on and off; then the knob really records them
+/// (the `ASIZE` helper is in an installed trace: the constructor's head gets entries). Mutant `mrset_vals_reversed`.
+#[test]
+fn s84_mrset_programs() {
+    let res = compare(b1_jobs(&["s84_02_mrset"], &["mrset=1", "mrset=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().mrset, 0);
+    let mk = |l: &str| {
+        let mut j = Job::new("s84_02_mrset", "on").env("RUSTYNAIL_JIT_VERBOSE", "1");
+        j.limits = l.into();
+        j
+    };
+    let r = run_all(vec![mk("mrset=1"), mk("mrset=0")]);
+    assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
+    let multret = |e: &str| e.contains("MultRet@") || e.contains("aborted MultRet");
+    assert!(!multret(&r[0].1.stderr), "{}", r[0].1.stderr);
+    assert!(multret(&r[1].1.stderr), "{}", r[1].1.stderr);
+}
+
 /// Section 76.2 (`sideback`): exponential back-off of side recordings at exits whose recordings failed. The program with repeatedly failing side
 /// exits runs identically with the knob at 3 (every fault), 11 (path causes only), 6 (unchangeable causes, shift 2) and 0 (control) in every mode
 /// (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves), and the back-off really waits at 3. Mutant `sideback_no_wait`.

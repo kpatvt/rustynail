@@ -135,6 +135,8 @@ pub const EFKEEP_TIMES: u8 = 2;
 pub const EFKEEP_PROCESS: u32 = 0;
 /// Section 81.2 (`eflazy`): the process default of [`TrLimits::eflazy`] (the struct default is 0).
 pub const EFLAZY_PROCESS: u32 = 0;
+/// Section 84.2 (`mrset`): the process default of [`TrLimits::mrset`] (the struct default is 0).
+pub const MRSET_PROCESS: u32 = 1;
 /// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0).
 pub const OUTERLINK_PROCESS: u32 = 0;
 /// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
@@ -1181,6 +1183,11 @@ pub struct TrLimits {
     /// that the failing entry does not pass are remembered per head (`HeadData::eflazy`), and later root recordings of the head check those slots at
     /// their first use instead of in the entry segment. 0 = off. Default 0 here, [`EFLAZY_PROCESS`] in a process.
     pub eflazy: u32,
+    /// Section 84.2 (`mrset`, docs/JIT_TRACE.md section 84.2): constructors filled by an open result list (`{ byte(s, i, j) }`): `string.byte(s, i, j)`
+    /// with open results records (the count is guarded) and `SETLIST` with `B = 0` into a table the trace created grows its array part with the
+    /// `ASIZE` helper (`luaH_resizearray`, as the interpreter) and stores (bit 0; bit 1: also an open list left by `VARARG`, `{ ... }`). 0 = off.
+    /// Default 0 here, [`MRSET_PROCESS`] in a process.
+    pub mrset: u32,
 }
 
 impl Default for TrLimits {
@@ -1361,6 +1368,7 @@ impl Default for TrLimits {
             outerlink: 0,
             efkeep: 0,
             eflazy: 0,
+            mrset: 0,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1610,6 +1618,7 @@ impl TrLimits {
                 "outerlink" => l.outerlink = v.min(1),
                 "efkeep" => l.efkeep = v.min(1024),
                 "eflazy" => l.eflazy = v.min(1),
+                "mrset" => l.mrset = v.min(3),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
@@ -1772,6 +1781,9 @@ impl TrConfig {
         }
         if !names_limit(limits_env, "outerlink") {
             self.limits.outerlink = OUTERLINK_PROCESS;
+        }
+        if !names_limit(limits_env, "mrset") {
+            self.limits.mrset = MRSET_PROCESS;
         }
     }
 

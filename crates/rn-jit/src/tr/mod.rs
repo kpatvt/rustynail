@@ -1053,6 +1053,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         } else {
             None
         },
+        mrset: cfg.limits.mrset & 1 != 0,
+        mrset_va: cfg.limits.mrset & 2 != 0,
         ..RecCfg::default()
     };
     match record::arm(st, ci, pc, rc) {
@@ -1248,6 +1250,8 @@ pub fn driver_start_side(
         cont_ret: cfg.limits.stitch & 8 != 0,
         tprep_link: cfg.limits.stitch & 8 != 0,
         outer_link: cfg.limits.outerlink != 0,
+        mrset: cfg.limits.mrset & 1 != 0,
+        mrset_va: cfg.limits.mrset & 2 != 0,
         fmt0: cfg.limits.stitch & 16 != 0,
         cont_head: if cfg.limits.stitch & 8 != 0 {
             Some(Rc::new(|st: &mut State, p: &rn_core::func::Proto, pc| {

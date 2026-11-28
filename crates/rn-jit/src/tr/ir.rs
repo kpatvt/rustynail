@@ -550,8 +550,12 @@ pub mod lib {
     /// Section 78.1 (`stitch` bit 4): `string.gmatch(s, p)` of two strings: `a` = `s`, `b` = `p` (flag bits 0 / 3: long). The helper allocates the
     /// iterator closure the C function returns (upvalues `s`, `p`, 0, -1) and returns it (a C closure); 0 when the allocation fails.
     pub const GMATCH_NEW: u32 = 29;
+    /// Section 84.2 (`mrset`): `luaH_resizearray(t, n)` of `SETLIST` with an open count (`{ f() }`): `a` = a table, `b` = the new array size
+    /// (an integer, larger than the current one); result 1, 0 when the allocation fails (nothing changed: the guard exits and the interpreter runs
+    /// the `SETLIST`, which raises the memory error). Moves the array part: not header-safe.
+    pub const ASIZE: u32 = 30;
     /// Number of kinds (below [`FMT_BASE`]).
-    pub const COUNT: u32 = 30;
+    pub const COUNT: u32 = 31;
     /// The names `TYPENAME` produces, by index.
     pub const TYPENAMES: [&str; 10] = [
         "nil", "boolean", "number", "string", "table", "function", "thread", "userdata", "integer",

@@ -456,6 +456,10 @@ pub struct RecCfg {
     pub fn_min_leaf: Option<u32>,
     /// Section 78.4 (`outerlink`): side recordings pass the untraced head of an outer loop of a traced inner loop (see [`super::cache::TrLimits::outerlink`]).
     pub outer_link: bool,
+    /// Section 84.2 (`mrset`): open-result `string.byte` and `SETLIST B=0` with the `ASIZE` growth (see [`super::cache::TrLimits::mrset`]).
+    pub mrset: bool,
+    /// Section 84.2 (`mrset` bit 1): also open lists left by `VARARG` (`{ ... }`).
+    pub mrset_va: bool,
     /// A1: lower the `NEWREF` of a short-string key into a table allocated by the same trace to stores at record-time-known nodes
     /// (see `Rec::nr_plan`).
     pub nrinline: bool,
@@ -700,6 +704,8 @@ impl Default for RecCfg {
             tprep_link: false,
             fn_min_leaf: None,
             outer_link: false,
+            mrset: false,
+            mrset_va: false,
             nrinline: false,
             presize: false,
             pcall: false,
@@ -1458,6 +1464,8 @@ struct Rec {
     /// BUNDLE-M C1 (lockstep off): for each `NEWREF` / `TSET` in IR order, the table the recorder knew at record time (`None`: a table
     /// of this trace made by a `TNEW` of the same step, see [`Rec::light_new`]).
     ls_tabs: std::collections::VecDeque<Option<TableRef>>,
+    /// Section 84.2: the tables of the `ASIZE` helpers emitted since the last light step (the element budget of their model, as `ls_tabs`).
+    ls_asize: std::collections::VecDeque<TableRef>,
     /// BUNDLE-M C1 (lockstep off): model handle of every `TNEW` ref adopted so far.
     ls_tnew: HashMap<Ref, u64>,
     /// A1: IR position of the latest `TSET` (its position in the hash part is data dependent): tables allocated before it are
@@ -1524,6 +1532,8 @@ struct Rec {
     outer_pass: bool,
     /// Section 78.1: the instruction being recorded is a `CALL` followed by such a `TFORPREP` (`string.gmatch` may be recorded in the frame).
     tprep_ahead: bool,
+    /// Section 84.3: `string.gmatch` on trace in the root frame (not a function root, or one whose loop behind the call has a root trace).
+    gm_root_ok: bool,
     /// T9: a `RETF` of this recording was taken where the return half allows it.
     inner_ret_used: bool,
     /// T9: the recording ended with the frame link behind a recorded data-dependent `FORPREP`.
@@ -1819,6 +1829,7 @@ impl Rec {
             p1_pend: None,
             p1_memo: None,
             ls_tabs: Default::default(),
+            ls_asize: Default::default(),
             ls_tnew: HashMap::default(),
             last_tset: 0,
             hs_guarded: Vec::new(),
@@ -1850,6 +1861,7 @@ impl Rec {
             cont_pop_lazy_ok: false,
             tprep_ok: false,
             tprep_ahead: false,
+            gm_root_ok: false,
             stitch_use: 0,
             entered_lua: false,
             stitch_feeds: None,
@@ -2062,6 +2074,7 @@ impl Rec {
         self.p1_pend = None;
         self.p1_memo = None;
         self.ls_tabs.clear();
+        self.ls_asize.clear();
         self.ls_tnew.clear();
         self.last_tset = 0;
         self.shape_dirty.clear();
@@ -2312,6 +2325,14 @@ impl Rec {
             && Instruction(code[idx]).opcode() == Some(OpCode::Call)
             && tprep_at(idx + 1)
             && tq(st, idx + 2);
+        // section 84.3: in the root frame of a function root, `gmatch` on trace only when its loop has a root trace to link to (else the root
+        // records into the loop body: csv_ini_yaml's recursive `yaml_scalar` then inlined its self-call and woke the recursion machinery, +0.43 %)
+        self.gm_root_ok = depth == 0
+            && (!self.cfg.fn_root
+                || idx + 2 < code.len()
+                    && Instruction(code[idx]).opcode() == Some(OpCode::Call)
+                    && Instruction(code[idx + 1]).opcode() == Some(OpCode::Tforprep)
+                    && tq(st, idx + 2));
         // F8: a table the recording holds a handle to was freed by a collector step since the last step
         if st.heap().watch_hit() {
             return Err(AbortReason::DepFreed);
@@ -2371,7 +2392,9 @@ impl Rec {
                 Instruction(code[idx]).opcode(),
                 Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
             )
-            && (self.caller_loop_traced(st, ci) || self.caller_cont_traced(st, ci));
+            && (self.caller_loop_traced(st, ci) || self.caller_cont_traced(st, ci))
+            // section 84.3: not out of a recursion (the pops of recursive code replaced its recursion machinery: sudoku_solver +2.1 %)
+            && !Self::ret_in_recursion(st, ci);
         // (the caller's prototype is known not to be lazy-aware: its table exists and it is neither lazy nor a candidate, so I9's static
         // "may be lazy-aware" does not have to hold for this pop)
         self.cont_pop_lazy_ok = self.cont_ret_ok
@@ -3492,6 +3515,19 @@ impl Rec {
                 TOp::Tlen => {
                     self.post_val.take();
                 }
+                // section 84.2: the table `ASIZE` grew is one this trace created (the element budget, as `TSET`)
+                TOp::Lib if ins.aux & 0xFF == lib::ASIZE => {
+                    let known = self.ls_asize.pop_front();
+                    let h = match known {
+                        Some(t) => self.reg.get(&(t.as_ptr() as usize)).copied(),
+                        None => self.ls_tnew.get(&ins.a).copied(),
+                    };
+                    if let Some(h) = h {
+                        if let Some(&t) = self.tabs.get(h as usize - 1) {
+                            self.resync_table(h, t)?;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -3732,6 +3768,15 @@ impl Rec {
             }
             TOp::Strto => {
                 self.model.strto_result = self.pending_strto.take();
+            }
+            TOp::Lib if ins.aux & 0xFF == lib::ASIZE => {
+                // section 84.2: the array part was reallocated: the model of the table is rebuilt from the VM (as after `TSET`)
+                self.model.str_result = self.post_strs.pop_front();
+                let h = self.val_bits(ins.a);
+                let Some(&t) = self.tabs.get((h as usize).wrapping_sub(1)) else {
+                    return self.diverge(|| format!("ASIZE on unknown table handle {h}"));
+                };
+                self.resync_table(h, t)?;
             }
             TOp::Snew | TOp::Concat | TOp::Lib => {
                 self.model.str_result = self.post_strs.pop_front();
@@ -6078,11 +6123,29 @@ impl Rec {
             i.c() as usize,
             rn_core::instruction::MAXARG_C as usize + 1,
         );
-        if n == 0 {
+        let open = n == 0;
+        // (section 84.2: an open list of `VARARG` only with `mrset` bit 1: memo_cache's `{ ... }` key of a recursive memoised function, +2.4 %)
+        let from_va = open
+            && idx > 0
+            && Instruction(*vm.code.get(idx - 1).ok_or(AbortReason::Diverge)?).opcode()
+                == Some(OpCode::Vararg);
+        if open && (!self.cfg.mrset || from_va && !self.cfg.mrset_va) {
             // `{f()}`, `{...}`: up to the `top` a producer left. The constructor's array part is sized for the fixed items
             // only, so the stores would be insertions (`Insert`) whatever the count: not recorded (F4 decision).
             return Err(AbortReason::MultRet);
         }
+        let n = if open {
+            // section 84.2 (`mrset`): the count is the `top` the producer left (`top_in`, a recorded constant: the producer guarded it)
+            let a_rel = self.frames[self.cur_depth].base_off + i.a() as usize;
+            let top = self.top_in.ok_or(AbortReason::MultRet)?;
+            let c = top.checked_sub(a_rel + 1).ok_or(AbortReason::Diverge)?;
+            if vm.st.top().0 != vm.base + i.a() as usize + 1 + c {
+                return Err(AbortReason::Diverge);
+            }
+            c
+        } else {
+            n
+        };
         let mut next = idx + 1;
         if i.k() != 0 {
             last += Instruction(*vm.code.get(idx + 1).ok_or(AbortReason::Diverge)?).ax() as usize
@@ -6096,12 +6159,36 @@ impl Rec {
             return Err(AbortReason::Diverge);
         }
         last += n;
-        if last > tbl.array_size() as usize || last > MAX_NEW_ASIZE * 4 {
+        if n == 0 {
+            return Ok(next); // (an open list of no values: the interpreter neither resizes nor stores)
+        }
+        let grow = last > tbl.array_size() as usize;
+        if last > MAX_NEW_ASIZE * 4 || grow && !open {
             return Err(AbortReason::Insert); // the interpreter resizes the array
         }
+        if self.elems.saturating_add(last) > self.cfg.max_model_elems {
+            return Err(AbortReason::Charge);
+        }
         let mut vals = Vec::with_capacity(n);
+        let a_rel = self.frames[self.cur_depth].base_off + a;
         for j in 1..=n {
-            vals.push(self.rd(vm, a + j)?);
+            // (an open list may extend beyond the frame's registers: the producer's results are live up to `top`)
+            vals.push(if open {
+                self.rd_slot(vm, a_rel + j)?
+            } else {
+                self.rd(vm, a + j)?
+            });
+        }
+        if grow {
+            // section 84.2: `luaH_resizearray(t, last)` of the interpreter's `SETLIST` (raw: no metamethod is involved); the guard `NE %lib, 0`
+            // exits before any store when the allocation fails
+            let kl = self.kint(last as i64);
+            self.lib_op(lib::ASIZE, Ty::Int, t, kl, None, usize::MAX)?;
+            self.ls_asize.push_back(tbl);
+        }
+        // MUTANT `mrset_vals_reversed`: the open list is stored in reverse order
+        if open && mutants::active("mrset_vals_reversed") {
+            vals.reverse();
         }
         // one guard for all the stores: nothing is stored unless every index is in the array part
         let asize = self.fload(t, Field::Asize, Ty::U32)?;
@@ -7598,7 +7685,7 @@ impl Rec {
                 // (only in the root frame: its loop follows in the same frame and links; inside an inlined frame the loop would be unrolled)
                 None if self.cfg.fmt0
                     && addr == rn_std::lib_string::jit_gmatch_new_addr()
-                    && (self.cur_depth == 0 || self.tprep_ahead)
+                    && (self.gm_root_ok || self.tprep_ahead)
                     && nargs == 2
                     && matches!(ty_of_value(&vm.slot(a + 1)), Some(Ty::ShrStr | Ty::LngStr))
                     && matches!(ty_of_value(&vm.slot(a + 2)), Some(Ty::ShrStr | Ty::LngStr)) =>
@@ -8608,6 +8695,33 @@ impl Rec {
 
     /// Section 78.1 (`stitch` bit 3): does the continuation head of the caller of frame `ci` (the instruction behind its `CALL`) have an installed
     /// trace (asked through `retf_head`)? A pop there links straight into it.
+    /// Section 84.3 (`stitch` bit 3): is the frame `ci` part of a recursion: its prototype is marked recursive (`cache::proto_recursive`) or runs
+    /// in one of the 8 nearest caller frames too (a mutual or method recursion no probe has marked)?
+    fn ret_in_recursion(st: &mut State, ci: Ci) -> bool {
+        let Some(cl) = st.ci_lclosure(ci) else {
+            return false;
+        };
+        let p = cl.proto();
+        if super::cache::proto_ref(&p).is_some_and(|pr| super::cache::proto_recursive(st, pr)) {
+            return true;
+        }
+        let me = &*p as *const Proto;
+        let mut cur = ci.previous();
+        for _ in 0..8 {
+            let Some(c) = cur else {
+                return false;
+            };
+            if st
+                .ci_lclosure(c)
+                .is_some_and(|o| std::ptr::eq(&*o.proto(), me))
+            {
+                return true;
+            }
+            cur = c.previous();
+        }
+        false
+    }
+
     fn caller_cont_traced(&self, st: &mut State, ci: Ci) -> bool {
         let Some(q) = self.cfg.cont_head.clone() else {
             return false;
@@ -11768,7 +11882,14 @@ impl Rec {
         };
         let l = sref.get().len() as i64;
         let n = vj.wrapping_sub(vi).wrapping_add(1);
-        if vi < 1 || vj < vi || vj > l || !(1..=MAX_BYTE_RANGE).contains(&n) || wanted < n as i32 {
+        // (section 84.2, `mrset`: an open result list takes all `n`; the count guard below makes it the count at run time)
+        let open = wanted < 0 && self.cfg.mrset;
+        if vi < 1
+            || vj < vi
+            || vj > l
+            || !(1..=MAX_BYTE_RANGE).contains(&n)
+            || (wanted < n as i32 && !open)
+        {
             return Err(self.nyi());
         }
         let (func_rel, top_rel) = self.lib_head(vm, a, nargs, addr)?;

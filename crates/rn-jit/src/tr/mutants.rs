@@ -1158,6 +1158,8 @@ pub const NAMES: &[&str] = &[
     "chain_end_nil",
     // docs/JIT_TRACE.md section 81.2 (`eflazy`): the head's set of slots whose entry checks failed is ignored by `entry_checks`
     "eflazy_ignored",
+    // docs/JIT_TRACE.md section 84.2 (`mrset`): the values of an open-list `SETLIST` are stored in reverse order
+    "mrset_vals_reversed",
 ];
 
 #[cfg(feature = "tr_mutants")]

@@ -2382,6 +2382,18 @@ pub unsafe fn lib_core(st: &mut rn_core::state::State, x: u32, args: [u64; 3]) -
             };
             rn_std::lib_string::jit_gmatch_new(st, sv, pv).map_or(0, |c| c.as_ptr() as u64)
         }
+        lib::ASIZE => {
+            // SAFETY: caller contract: a live table (the trace's type guard on the operand; section 84.2: a table the trace created).
+            let t = unsafe {
+                rn_core::table::TableRef::from_raw(args[0] as *mut rn_core::table::Table)
+            };
+            // (the recorder emits it only for a size above the current one, as the interpreter's `SETLIST`; anything else is not a growth)
+            let n = args[1] as i64;
+            if n <= i64::from(t.array_size()) || n > i64::from(u32::MAX) {
+                return 0;
+            }
+            u64::from(t.resize_array(st.heap(), n as u32).is_ok())
+        }
         lib::GMATCH_END => {
             // SAFETY: caller contract: a live C closure (the trace's type guard on the operand); `Value` is `repr(C)` `{ tag word, payload }`.
             let v: Value = unsafe {
@@ -8436,6 +8448,7 @@ impl Cx<'_> {
                     lib::BYTE
                     | lib::TYPE
                     | lib::GMATCH_NEW
+                    | lib::ASIZE
                     | lib::IPAIRS_END
                     | lib::SETMT
                     | lib::STREQ
