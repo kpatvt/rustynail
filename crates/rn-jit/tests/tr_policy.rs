@@ -1226,7 +1226,7 @@ fn bb_process_defaults() {
     }
 }
 
-/// P2 bundle 3: the process default of `pollr15` is 2 = on except in native self-recursion traces (`POLLR15_PROCESS`; 0 between the P2 fix and the 2026-11-12 regression fix). K3b: `budsub` and `fpool` are hard-wired on.
+/// P2 bundle 3: the process default of `pollr15` is 1 = on everywhere (`POLLR15_PROCESS`, section 97.2; 2 = on except in native self-recursion traces from the 2026-11-12 regression fix, 0 between the P2 fix and it). K3b: `budsub` and `fpool` are hard-wired on.
 /// Mutant `loopdiet_default_ignored`.
 #[test]
 fn p2_loopdiet_process_defaults() {
@@ -1234,10 +1234,10 @@ fn p2_loopdiet_process_defaults() {
     let c = TrConfig::for_mode(TrMode::On);
     assert_eq!(c.limits.pollr15, rn_jit::tr::cache::POLLR15_PROCESS);
     for (env, want) in [
-        (None, 2),
-        (Some(""), 2),
-        (Some("nest=2"), 2),
-        (Some("pollr15=1,maxside=9"), 1),
+        (None, 1),
+        (Some(""), 1),
+        (Some("nest=2"), 1),
+        (Some("pollr15=2,maxside=9"), 2),
         (Some("pollr15=0"), 0),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);

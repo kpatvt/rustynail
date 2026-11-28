@@ -10141,3 +10141,13 @@ atomic phase, so an unnamed slot holds a valid object or nil: the model may read
 
 Tests: `tr_core::s93_latent_stale_slot` un-ignored (both configurations that met it: `peep=0 +randra=9`, defaults `+randra=6`), the
 `twins_options` job restored. Mutant `dlink_oracle_first` (registry 931; detected by `s93_latent_stale_slot`).
+
+### 97.2 `pollr15` on everywhere (process default 1, was 2)
+
+The r15-addressed trace poll (`cmp byte [r15 + disp], 0; jne`, P2-3b) was kept out of native self-recursion traces (value 2) because it cost
+`programs/fib` 7-9 % cycles at every loop-head offset (docs/JIT_PARKED.md C44). Re-measured on the 97.1 binary (CPU 8, min of 7, interleaved):
+fib 3359.2 -> 3308.7 M instructions (-1.5 %), cycles 528.3 -> 527.3 M (-0.2 %); towers 308.9 -> 307.85 instructions per move, cycles at the
+default size equal (40.33 M). Whole set (223 programs, one run per setting, serial, CPU 8): instructions geomean -0.047 %, no program up by
+more than 0.3 % in instructions, outputs identical; the single-run cycle rises above 2 % are all programs whose instruction count did not
+move (noise); astar_jumper's instruction count varies run to run (noise program; min-of-5 cycles +0.5 %). C44 is closed by this
+measurement. Test: `tr_policy::p2_loopdiet_process_defaults` (default 1); the `tr_core` loop-diet controls run `pollr15=0` and the shipped value.
