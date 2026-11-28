@@ -235,6 +235,25 @@ thread_local! {
     static SIZES: [Cell<u64>; NSZ] = const { [const { Cell::new(0) }; NSZ] };
 }
 
+/// Section 85.0: the accumulated value of phase `ph` (counter mode: instructions) and of size counter `k`, for the per-pipeline log
+/// (`RUSTYNAIL_JIT_PIPELOG=1`).
+pub fn acc(ph: usize) -> u64 {
+    ACC.with(|a| a[ph].get())
+}
+
+/// See [`acc`].
+pub fn size_acc(k: usize) -> u64 {
+    SIZES.with(|s| s[k].get())
+}
+
+/// Section 85.0: `RUSTYNAIL_JIT_PIPELOG=1` (with the counter mode) prints one line per pipeline: its phase instructions and sizes.
+pub fn pipelog() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        ctr_mode() && std::env::var_os("RUSTYNAIL_JIT_PIPELOG").is_some_and(|v| v == "1")
+    })
+}
+
 /// Adds `n` to size counter `k` (only in the counter mode `RUSTYNAIL_JIT_PHASECTR=1`).
 #[inline(always)]
 pub fn size(k: usize, n: usize) {

@@ -1929,8 +1929,47 @@ fn pipeline(st: &mut State, act: &Active, rec: Recorded) -> Result<(), PipeErr> 
     crate::cspeed::set(unsafe { (*crate::rt::data_ptr(st)).tr.cfg.limits.cspeed });
     let side = rec.side.is_some();
     phase::set_root(!side);
+    // (section 85.0: `RUSTYNAIL_JIT_PIPELOG=1`, one line per pipeline: side, total, front, sinking, root passes, allocator, exits, assembler,
+    // encoder, IR instructions, snapshots, snapshot entries, micro-ops)
+    let log = phase::pipelog();
+    const LOGPH: [usize; 7] = [
+        phase::FRONT,
+        phase::PASS_SINK,
+        phase::PASS_OTHER,
+        phase::RA,
+        phase::EXITS,
+        phase::ASM,
+        phase::X86,
+    ];
+    const LOGSZ: [usize; 4] = [
+        phase::SZ_INS,
+        phase::SZ_SNAPS,
+        phase::SZ_SNAPENTS,
+        phase::SZ_OPS,
+    ];
+    let snap_log = || -> Vec<u64> {
+        LOGPH
+            .iter()
+            .map(|&p| phase::acc(p))
+            .chain(LOGSZ.iter().map(|&k| phase::size_acc(k)))
+            .collect()
+    };
+    let before = if log { snap_log() } else { Vec::new() };
     let r = pipeline_inner(st, act, rec);
     phase::add(phase::PIPELINE, t0);
+    if log && r.is_ok() {
+        let d: Vec<String> = snap_log()
+            .iter()
+            .zip(&before)
+            .map(|(a, b)| (a - b).to_string())
+            .collect();
+        eprintln!(
+            "[pipelog] {} {} {}",
+            u8::from(side),
+            phase::now().wrapping_sub(t0),
+            d.join(" ")
+        );
+    }
     phase::set_root(false);
     if side {
         phase::add(phase::PIPE_SIDE, t0);

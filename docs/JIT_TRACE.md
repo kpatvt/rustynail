@@ -9426,3 +9426,54 @@ samples were the copy's memory traffic, not instructions; dropped. `lower::Ty` c
 
 State: committed with the diagnostics only; no round-2 lever is on. Next steps in order: (a) as designed above, (b) on top of it, then (e) the backward
 assembler if the phase table still ranks it first.
+
+## 85. Compile cost, round 3: the snapshot-delta premise measured, sinking without hash sets (2026-11-27, base 9cdbdf0)
+
+Task: cut the per-trace compile cost in converted, gated steps (S1 delta snapshots, S2 roots, S3 backward assembler, S4 what the phase table
+ranks next). Numbers are user-mode instructions (`RUSTYNAIL_JIT_PHASECTR=1`, `RUSTYNAIL_SEED=0`, CPU 5), deterministic; the machine's load
+was 30-50 from other sessions throughout, so no cycle claim is made without its load.
+
+### 85.0 Diagnostics: the per-pipeline log, and what the snapshot entries cost
+
+`RUSTYNAIL_JIT_PIPELOG=1` (with the counter mode) prints one line per successful pipeline: side flag, total, front, sinking, root passes,
+allocator, exits, assembler, encoder, IR instructions, snapshots, snapshot entries, micro-ops (`phase::pipelog`, `phase::acc`,
+`phase::size_acc`). A least-squares fit of each phase over the 418 pipelines of cd, raytrace, richards, json and towers (cost = a * IR + b *
+snapshots + c * entries + d) gives, for side traces (mean 64 IR, 18 snapshots, 160 entries, 322 k instructions): allocator 1069 per IR
+instruction and 46 per entry (entries 9 % of the phase), assembler 722 per IR instruction and none per entry, encoder 496 per IR instruction,
+exits 176 per entry (68 % of the phase), front 443 per entry (r2 0.83, collinear with the sunk-table traces). Entries explain about a third of
+the pipeline, not the "about 1 k instructions per entry" of 80.4: the allocator, assembler and encoder scale with instructions.
+
+**Kill test of S1 in its largest consumer, the exit builder (built, measured, dropped).** `TraceIr::snap_delta_into` (each entry of snapshot
+`s` mapped to the equal entry of `s - 1` by a merge on the slot order; maps with sunk-table entries or unordered slots refused) and an exit
+builder that copied the previous snapshot's `SlotRestore` for an equal entry at an equal location. On cd it hit 25.7 k of 61.3 k entries (42 %;
+26.4 k entries are in snapshots it refuses, mostly sunk tables), and the A/B on one binary (`snapdelta=0` / `1`) moved the exits phase
+14.82 -> 14.71 M (-0.7 %), while the extra code made the binary's flat path slower than the base (13.57 M). The per-entry work it skips
+(`slot_value`, about 90 instructions measured with a counter pair per call) is the same order as the merge and the bookkeeping it adds. The
+exit builder's entry loop is 63 % of the phase (8.6 M of 13.6 M on cd, plain snapshots ~145 instructions per entry including the restore push,
+one allocation per snapshot ~45), so only an exit format that is itself a chain (the runtime restore and the stub planner following the base
+snapshot) would remove the volume; that changes the exit handler, the inline stubs, `lazystub`, `dlink` / `slink` and the oracles, and its
+ceiling is the exits phase (13 % of a pipeline). Not built; the code was removed.
+
+Where the front goes (counter pairs around the passes, cd / raytrace, M instructions of the whole run): side forwarding `opt_loop::run_fwd`
+14.09 / 2.03 (14 % / 7 % of all pipelines, 58 k per side trace on cd), sinking 8.39 / 4.28 (of which the candidate analysis 3.60 / 1.56 = 33 k /
+43 k per `TNEW`, the rebuild 4.36 / 2.44), the root `loop` pass 5.00 / 2.10 (312 k / 175 k per root), entry checks 1.0 / 0.2.
+
+### 85.1 `SINKD`: allocation sinking without hash sets (`cspeed` lever 8192, in `cspeed::ALL`: default on)
+
+Identical passes (`ccheck` compares the front with `cspeed=0`; `tr_core::c1_cspeed_identical_code`). (1) The candidate analysis (`sink::analyse`)
+kept seven hash sets of instruction indices (removed, the metatable / `lsizenode` / node field loads, the `HREFK`s with their keys, the `NEWREF`s,
+the metatable loads after a `SETMT`) and looked every operand of every later instruction up in five of them, per `TNEW`; with the lever they are one
+byte of flags per instruction and a key table (`sink::Marks`). (2) The snapshot rebuild re-derived, for every snapshot that names a sunk table, its
+header constant (an interning lookup) and its field group from the store events before the snapshot's first guard; with the lever the header
+constant is computed once per table and a snapshot whose store prefix (and metatable entry) equals the previous group's copies that group from the
+new map; the per-snapshot candidate -> group-slot map is a short list instead of a hash map. Sinking on cd 8.39 -> 6.18 M instructions (-26 %),
+raytrace 4.28 -> 3.28 M (-23 %), measured against the same binary with the lever off. Mutants `sinkd_ls_miss` (the dense marks miss the
+`lsizenode` loads), `sinkd_group_any` (the group is reused whatever its store prefix), both caught by `c1_cspeed_identical_code`; a first mutant
+`sinkd_fld_newref` (the `NEWREF` marks not counted as derived values) survived and is equivalent: the users of a `NEWREF` (its `NE` and `HSTORE`)
+are marked removed when it is accepted, so the analysis never reaches them. Dropped.
+
+| program | k / pipeline | front | instructions M (whole run) |
+|---|---|---|---|
+| apps/raytrace | 707 -> 684 (-3.3 %) | 253 -> 229 | 271.70 -> 270.70 (-0.37 %) |
+| awfy/cd | 370 -> 362 (-2.2 %) | 119 -> 111 | 599.91 -> 597.75 (-0.36 %) |
+| awfy/towers, awfy/json, lib/fmt_s, awfy/richards | unchanged (no sunk table) | | +-0.00 % |

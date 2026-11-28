@@ -51,9 +51,25 @@ pub const PRUNEQ: u32 = 2048;
 /// stub) and its reloads / spill stores without copying the allocation's lists, the label tables of the exit builder copied without a lookup per pc.
 pub const M1: u32 = 4096;
 
+/// Section 85.1: allocation sinking without hash sets: the analysis of a candidate marks the instructions it derives from the table in one byte
+/// per instruction (it looked every operand of every later instruction up in five hash sets), and the rebuild of the snapshots derives the
+/// contents of a sunk table once per prefix of its stores and its header constant once per table (it re-derived both for every snapshot).
+pub const SINKD: u32 = 8192;
+
 /// All levers.
-pub const ALL: u32 =
-    MASKS | ENC | FXHASH | PASSES | RA | REC | SIDEHASH | FWDSNAP | SINKSKIP | FIXSUM | PRUNEQ | M1;
+pub const ALL: u32 = MASKS
+    | ENC
+    | FXHASH
+    | PASSES
+    | RA
+    | REC
+    | SIDEHASH
+    | FWDSNAP
+    | SINKSKIP
+    | FIXSUM
+    | PRUNEQ
+    | M1
+    | SINKD;
 /// The process default of `TrLimits::cspeed`.
 pub const DEFAULT: u32 = ALL;
 

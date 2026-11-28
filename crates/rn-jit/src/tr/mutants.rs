@@ -1147,6 +1147,10 @@ pub const NAMES: &[&str] = &[
     "gexit_exitno_imm",
     // section 80.2 (`cspeed` lever `M1`): the allocator's mask path picks the highest free register
     "m1_free_highest",
+    // section 85.1 (`cspeed` lever `SINKD`): the dense marks of the sinking analysis miss the `lsizenode` loads
+    "sinkd_ls_miss",
+    // section 85.1 (`cspeed` lever `SINKD`): the snapshot rebuild reuses the last field group of a sunk table whatever its store prefix
+    "sinkd_group_any",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1240,7 +1244,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 919);
+        assert_eq!(NAMES.len(), 921);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
