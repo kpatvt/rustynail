@@ -291,8 +291,8 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
         let u = &s.stitch_use;
         let _ = writeln!(
             o,
-            "[trace] stitch: cont roots {} side stitches {} gmatch ends {} pops {} tprep links {} outer links {}",
-            u[0], u[1], u[2], u[3], u[4], u[5]
+            "[trace] stitch: cont roots {} side stitches {} gmatch ends {} pops {} tprep links {} outer links {} tailf0 {} tailnat0 {}",
+            u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7]
         );
     }
     if s.ci_repaired > 0 {

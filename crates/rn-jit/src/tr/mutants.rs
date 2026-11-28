@@ -1235,6 +1235,12 @@ pub const NAMES: &[&str] = &[
     "tailf_kcache_skip",
     // section 86.1: the native frame replacement does not set `CIST_TAIL`
     "tailf_cist_tail_skip",
+    // section 101.1 (`tailf0`): no TAILF before a pop (the knob is inert)
+    "tailf0_never",
+    // section 101.1: an exit decides "segment 0" by the pop count (a TAILF segment before any pop lands with the entry prototype's code)
+    "tailf0_code_by_pops",
+    // section 101.1: no root native tail call with its pop
+    "tailnat0_never",
 ];
 
 #[cfg(feature = "tr_mutants")]
@@ -1351,7 +1357,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 966);
+        assert_eq!(NAMES.len(), 969);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

@@ -5300,6 +5300,21 @@ const TABLE: &[Row] = &[
         owner: "S86",
         dets: &[d("tr_core", "s86_tailf_programs")],
     },
+    Row {
+        name: "tailf0_never",
+        owner: "S101",
+        dets: &[d("tr_core", "s101_tailf0_programs")],
+    },
+    Row {
+        name: "tailf0_code_by_pops",
+        owner: "S101",
+        dets: &[d("tr_core", "s101_tailf0_programs")],
+    },
+    Row {
+        name: "tailnat0_never",
+        owner: "S101",
+        dets: &[d("tr_core", "s101_tailf0_programs")],
+    },
 ];
 
 /// Mutants whose injection site exists only under `--cfg rustynail_lua54` (the 5.5 run skips them).
@@ -5354,6 +5369,10 @@ const V55_ONLY: &[&str] = &[
     "tailf_func_store_skip",
     "tailf_kcache_skip",
     "tailf_cist_tail_skip",
+    // section 101.1 (`tailf0`): TAILF and the pops are inert on 5.4
+    "tailf0_never",
+    "tailf0_code_by_pops",
+    "tailnat0_never",
 ];
 
 /// Mutants that are equivalent since the same-table `table.move` pre-reads its source elements (BUNDLE-VA): the order of the stores no longer changes any value

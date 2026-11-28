@@ -580,7 +580,7 @@ struct TStats {
     ret_late: u64,
     ret_start_sides: u64,
     /// Section 78.1: `stitch: cont roots C side stitches S gmatch ends G pops P tprep links T`.
-    stitch_use: [u64; 6],
+    stitch_use: [u64; 8],
     /// T9: `innerlink: links L rets R linked heads H exits woken W`.
     inner_links: u64,
     inner_rets: u64,
@@ -861,7 +861,7 @@ impl TStats {
                 s.ret_start_sides = w.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if let Some(r) = l.strip_prefix("stitch: cont roots ") {
                 let w: Vec<&str> = r.split_whitespace().collect();
-                for (k, at) in [0usize, 3, 6, 8, 11, 14].into_iter().enumerate() {
+                for (k, at) in [0usize, 3, 6, 8, 11, 14, 16, 18].into_iter().enumerate() {
                     s.stitch_use[k] = w.get(at).and_then(|v| v.parse().ok()).unwrap_or(0);
                 }
             } else if let Some(r) = l.strip_prefix("innerlink: links ") {
@@ -4758,6 +4758,67 @@ fn s82_pfam_programs() {
         }
     }
     compare(jobs);
+}
+
+/// Section 101.1 (`tailf0`): TAILF on the entry frame of a side trace (before any pop) and the root native tail call followed by its pop: the
+/// raytrace sky-path shape from two call sites, type changes after the TAILF, arity mismatches, errors with levels, tracebacks and `istailcall`
+/// inside the tail-called function, `__gc` / `__metatable` metatables; the trace modes, `+verify`, exit storms, budgets 3 and 17, GC stress 2.
+/// Asserts that both shapes form with the knob and none without. Mutants `tailf0_*`, `tailnat0_*`.
+#[test]
+fn s101_tailf0_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "tailf0=1",
+            "tailf0=3",
+            "tailf0=7",
+            "tailf0=1,innerlink=15",
+            "tailf0=1,retf=1203",
+            "tailf0=0",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 3),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s101_tailf0", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s101_tailf0", trace)
+                .limits_s("tailf0=1")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+    }
+    let res = compare(jobs);
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().tailf0, 0);
+    assert_eq!(TrLimits::parse("tailf0=1").0.tailf0, 1);
+    assert_eq!(TrLimits::parse("tailf0=3").0.tailf0, 3);
+    let plain = |j: &Job| j.opts.is_empty() && j.budget.is_none() && j.env.is_empty();
+    let (mut tf, mut tn) = (0u64, 0u64);
+    for (j, o) in &res {
+        if j.limits == "tailf0=0" {
+            assert_eq!(o.stats.stitch_use[6..8], [0, 0], "{}: tailf0=0", j.tag());
+        }
+        if j.limits == "tailf0=1" && plain(j) {
+            tf += o.stats.stitch_use[6];
+            tn += o.stats.stitch_use[7];
+        }
+    }
+    // (5.4: TAILF and `RETF` are inert, C63)
+    if !cfg!(rustynail_lua54) {
+        assert!(
+            tf > 0 && tn > 0,
+            "tailf0=1 forms TAILF {tf} and native tail pops {tn}"
+        );
+    }
 }
 
 /// Section 86.1 (TAILF, `retf` bit 10): side traces that pop into a caller and record its `TAILCALL` as a frame replacement: closure pipelines,

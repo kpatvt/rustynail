@@ -1078,6 +1078,8 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
         mfshare: cfg.limits.mfshare != 0,
         chainlive: cfg.limits.chainlive != 0,
         rootproto: cfg.limits.rootproto != 0,
+        tailf0: cfg.limits.tailf0 != 0,
+        tailf0_static: cfg.limits.tailf0 & 2 != 0,
         mfside: cfg.limits.mfside != 0,
         dyn_ban: cache::dyn_ban(st),
         dynpol: cfg.limits.dynpol,
@@ -1406,6 +1408,8 @@ pub fn driver_start_side(
         mfshare: cfg.limits.mfshare != 0,
         chainlive: cfg.limits.chainlive != 0,
         rootproto: cfg.limits.rootproto != 0,
+        tailf0: cfg.limits.tailf0 != 0,
+        tailf0_static: cfg.limits.tailf0 & 2 != 0,
         mfside: cfg.limits.mfside != 0,
         dyn_ban: cache::dyn_ban(st),
         dynpol: cfg.limits.dynpol,
@@ -1567,6 +1571,22 @@ fn finish_outcome(st: &mut State) {
                     u32::try_from(rec.path.len()).unwrap_or(u32::MAX),
                 )
             {
+                return;
+            }
+            // section 101.1 (`tailf0` bit 2): a side recording that starts at the `TAILCALL` (a function root's final exit), does not pop and
+            // ends in a stitch at a C call inside the callee is refused as before the knob (`LeaveFrame`, an empty side): an extra transition
+            // without the return it was for (real_dis_mips; stream_closures' TAILF sides end at once and keep their gain)
+            if act.side
+                && rec.tailf0_first
+                && rec.stitch_use & 2 != 0
+                && crate::rt::trace_config(st).limits.tailf0 & 4 != 0
+                && rec.ir.segs.last().map_or(0, |g| g.pops) == 0
+            {
+                if act.verbose >= 2 {
+                    eprintln!("[trace] --- tailf0: TAILF without a pop refused");
+                }
+                let why = AbortReason::LeaveFrame;
+                cache::abort_recording(st, act.id, abort_name(why), side_unchangeable(why));
                 return;
             }
             // (what the error handling below reads of the recording, which the pipeline consumes)
