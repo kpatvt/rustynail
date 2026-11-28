@@ -1963,6 +1963,9 @@ pub struct HeadData {
     pub reroot_done: Cell<bool>,
     /// Section 62: while the head's `reroot` re-record is on probation, the flushed root's pre-roll exits in per mille of its entries, plus 1 (0 = none).
     pub reroot_old: Cell<u32>,
+    /// Section 92.3: drops left of rolled (unpeelable) root recordings of a head flushed by `reroot` once its path constraint is gone (the
+    /// unconstrained re-record must peel too; [`REROOT_TRIES`] when the rule fires, 0 when a root recording of the head closed peelable).
+    pub reroot_rolled: Cell<u8>,
     /// Section 59: the path prefix a root recording of this head must not complete (pc, prototype, depth per step) and the drops left; cleared when a root
     /// recording of the head closes or the drops run out.
     pub reroot_avoid: RefCell<Option<(std::rc::Rc<Vec<(u32, usize, u8)>>, u8)>>,
@@ -2126,6 +2129,7 @@ impl HeadData {
             dom_done: Cell::new(false),
             reroot_done: Cell::new(false),
             reroot_old: Cell::new(0),
+            reroot_rolled: Cell::new(0),
             reroot_avoid: RefCell::new(None),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
@@ -8371,6 +8375,7 @@ pub fn pre_exit_check(st: &mut State, ci: Ci, id: TrId, meta: &ExitMeta) -> bool
             if let Some(av) = reroot_avoid_path(&d.tr.rr_paths, id, sid, meta, k) {
                 let n = av.len();
                 *h.reroot_avoid.borrow_mut() = Some((av, REROOT_TRIES));
+                h.reroot_rolled.set(REROOT_TRIES);
                 h.reroot_old.set(
                     u32::try_from(p_all * 1000 / e.max(1))
                         .unwrap_or(u32::MAX - 1)
@@ -8991,7 +8996,7 @@ pub fn reroot_pending(st: &mut State, id: TrId) -> bool {
         && tr_of(d, root).is_some_and(|tp| {
             tp.heads
                 .get(head)
-                .is_some_and(|h| h.reroot_avoid.borrow().is_some())
+                .is_some_and(|h| h.reroot_avoid.borrow().is_some() || h.reroot_rolled.get() > 0)
         })
 }
 
@@ -9028,6 +9033,7 @@ pub fn reroot_closed(
         let (root, head) = (r.root, r.head);
         if let Some(tp) = tr_of(d, root).filter(|_| root != 0) {
             tp.heads[head].reroot_avoid.borrow_mut().take();
+            tp.heads[head].reroot_rolled.set(0);
         }
     }
 }
@@ -9044,8 +9050,13 @@ pub fn abort_reroot(st: &mut State, id: TrId) {
         let (root, head) = (r.root, r.head);
         if let Some(tp) = tr_of(d, root).filter(|_| root != 0) {
             let mut a = tp.heads[head].reroot_avoid.borrow_mut();
+            if a.is_none() {
+                // (section 92.3: a rolled unconstrained re-record)
+                let r = &tp.heads[head].reroot_rolled;
+                r.set(r.get().saturating_sub(1));
+            }
             let left = a.as_ref().map_or(0, |x| x.1.saturating_sub(1));
-            if left == 0 {
+            if left == 0 && a.is_some() {
                 *a = None;
                 d.tr.stats.reroot_gaveup += 1;
             } else if let Some(x) = a.as_mut() {
