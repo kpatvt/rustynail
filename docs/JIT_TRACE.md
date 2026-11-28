@@ -11997,3 +11997,17 @@ all outputs equal; above 1 %: astar_jumper +4.2 % (spread), class_middleclass +2
 below -1 %. Correctness: 62 tr_core tests (`s7* s8* s9* b1_* h1_* r1_* r2_*`) pass with `TR_FUSECOV=11` (every job fused where eligible). No
 gain on the current tree: the fused pass stays idle by default (bit 3 off). The `CxState` fix stays (a fused trace with a cold `TBAR` no longer
 fails to compile, which matters for `sloadhome=0` runs and any later use of the pass).
+
+### 100.6 Gates and state
+
+All on CPUs 2-7, `GATE_LOAD_MAX=0` (another builder on the machine). `scripts/gate-mutants.sh` (full, tree of 42f17d0): **958 ran, 956
+caught, 2 known survivors (`rec_inner_first_stale`, `tmove_interleaved_guards`), OK**, 5195 s; after the 100.5 commits `--only
+carena_,asmfuse_,fusecov_,sloadhome_,peep_tbar,tbar_`: 15 / 15 caught. `scripts/gate-oracle.sh` on the final tree: 4356 jobs, 0 inconclusive, PASS
+(418 s). `scripts/gate-light.sh --base 82c5871 --no-mutants`: OK (936 s). Whole set (223 programs, instructions, one run each, CPU 8, integ10
+82c5871 -> this branch before 100.5): geomean **-0.01 %**, outputs equal; movers: load_small -9.0 %, fmt_q -3.8 %, real_dis_x86 -0.7 %,
+astar_jumper +5.2 % in that run (+1.5 % in a min-of-5 rerun, its spread; cycles -4.9 %), the compile-heavy awfy programs +0.3..0.7 % (the arena's
+out-of-line calls during compiles; cycles -0.9..-1.2 % on cd / richards).
+
+Open: (1) iter_pipeline `t1g` bit 2 (+3.1 % cycles against session-r; a per-site rule for the flat push at polymorphic `TFORCALL` sites, 99.3);
+(2) getmt / sel_loop / m_sqrt loop-head zones (100.4: adaptive placement); (3) load_small +4.9 % instructions / +1.4 % cycles left (the
+allocator wrapper's tests and compiler layout); (4) the fused back end (100.5): idle by default, no gain on the whole set when enabled.
