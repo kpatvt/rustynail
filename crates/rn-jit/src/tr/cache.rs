@@ -66,8 +66,9 @@ pub const SLOTLIVE_PROCESS: u32 = 1;
 pub const MEMTUNE_PROCESS: u32 = 0;
 /// Section 53: the process default of [`TrLimits::codemap`] (also the struct default).
 pub const CODEMAP_PROCESS: u32 = 1;
-/// Section 87: the process default of [`TrLimits::asmfuse`] (also the struct default): off until the fused back end wins.
-pub const ASMFUSE_PROCESS: u32 = 0;
+/// Section 87: the process default of [`TrLimits::asmfuse`] (also the struct default): on (87.5: strictly cheaper, oracle-clean, whole set
+/// geomean -0.03 %, no program above +0.1 %).
+pub const ASMFUSE_PROCESS: u32 = 1;
 /// S1: the process default of [`TrLimits::lazystub`] (also the struct default).
 pub const LAZYSTUB_PROCESS: u32 = 1;
 /// Section 80.1 (`gexit`): the process default of [`TrLimits::gexit`] (also the struct default).

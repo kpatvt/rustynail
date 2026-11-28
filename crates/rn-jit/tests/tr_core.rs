@@ -10680,7 +10680,7 @@ fn s87_asmfuse_programs() {
     ];
     let res = compare(b1_jobs(&progs, &["asmfuse=2", "asmfuse=1", "asmfuse=0"]));
     assert!(!res.is_empty());
-    assert_eq!(TrLimits::default().asmfuse, 0);
+    assert_eq!(TrLimits::default().asmfuse, 1);
 }
 
 /// BUNDLE-1 (2): tail-called functions count and compile (`tailhook`): the programs run identically in every mode with the knob on, at
