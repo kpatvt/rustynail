@@ -16365,6 +16365,17 @@ print(r[1], r[60], #full, #half, #hole)
         small: true,
         src: include_str!("../../../../tests/vm/t4_01_late_ret.lua"),
     },
+    // docs/JIT_TRACE.md section 81: armed ticks after allocation exits, entry type checks moved to their first use
+    Prog {
+        name: "s81_01_allocarm",
+        small: true,
+        src: include_str!("../../../../tests/vm/s81_01_allocarm.lua"),
+    },
+    Prog {
+        name: "s81_02_eflazy",
+        small: true,
+        src: include_str!("../../../../tests/vm/s81_02_eflazy.lua"),
+    },
     // docs/JIT_TRACE.md section 78.1 (`stitch`): continuation traces and stitching for non-recursive code
     Prog {
         name: "s78_05_outerlink",

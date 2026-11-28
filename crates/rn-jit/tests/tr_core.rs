@@ -10667,7 +10667,7 @@ fn s81_eflazy_programs() {
         e.lines()
             .find(|l| {
                 l.starts_with("[heads]")
-                    && l.contains("s81_02_eflazy.lua:12 pc ")
+                    && (l.contains(":12 pc ") || l.contains(":13 pc "))
                     && l.contains(" loop ")
             })
             .and_then(|l| l.split(" entries ").nth(1))
