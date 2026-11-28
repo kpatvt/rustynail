@@ -274,6 +274,13 @@ pub fn stats_report(s: &super::cache::TrStats, entered: u64, warnings: &[String]
             s.inner_links, s.inner_rets, s.inner_heads, s.inner_woken
         );
     }
+    if s.eflazy_slots > 0 {
+        let _ = writeln!(
+            o,
+            "[trace] eflazy: entry-check slots moved to their first use {}",
+            s.eflazy_slots
+        );
+    }
     if s.efkept > 0 {
         let _ = writeln!(o, "[trace] efkeep: entry-failure flushes kept {}", s.efkept);
     }

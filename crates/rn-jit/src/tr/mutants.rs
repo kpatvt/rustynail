@@ -1156,6 +1156,8 @@ pub const NAMES: &[&str] = &[
     "htramp_swap_args",
     // section 76.10 (`t1exit` bit 2): the rolled `__index` chain answers nil when it runs out of levels
     "chain_end_nil",
+    // docs/JIT_TRACE.md section 81.2 (`eflazy`): the head's set of slots whose entry checks failed is ignored by `entry_checks`
+    "eflazy_ignored",
 ];
 
 #[cfg(feature = "tr_mutants")]

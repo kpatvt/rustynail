@@ -2588,7 +2588,13 @@ pub unsafe fn exit_entry(th: *mut Thread, ci: *mut CallInfo, budget: *mut i32) -
         flushed = cache::alloc_storm(&mut st, id, unsafe { budget.read() });
         if !flushed {
             // N3b: the interpreter allocates (and steps the collector) now; the loop's next back-edge should enter compiled code again
-            rn_core::jit_hooks::arm_tick_next(&mut st);
+            // (section 81.1: a trace whose root frame is inside a loop goes back to that loop: any prototype may be compiled, as before; the exit of a
+            // loop-free root (a function root) restricts the compile to the frames it left)
+            let root = (!root_frame_in_loop(&st, ci)).then(|| {
+                // SAFETY: `ci` is the trace's live root frame (contract of this function).
+                unsafe { Ci::from_raw(ci) }
+            });
+            crate::rt::arm_tick_enter_only(&mut st, root);
         }
     }
     if out.count > 0 && !flushed {
@@ -2987,6 +2993,33 @@ pub unsafe fn lazy_leave(th: *mut Thread, inner: *mut CallInfo, area: &mut ExitA
             th8.add(thr::TOP).cast::<StkId>().write(StkId(top));
         }
     }
+}
+
+/// Section 81.1: is the trace's root frame `root` (restored: its `savedpc` is where the interpreter continues, or the `CALL` of an inlined frame
+/// above it) inside a loop of its prototype, i.e. is there a backward branch at or after that pc whose target is at or before it?
+fn root_frame_in_loop(st: &State, root: *mut CallInfo) -> bool {
+    use rn_core::instruction::Instruction;
+    use rn_core::ver::active::OpCode as O;
+    // SAFETY: `root` is the live frame the trace was entered at (contract of `exit_entry`).
+    let ci = unsafe { Ci::from_raw(root) };
+    let Some(cl) = st.ci_lclosure(ci) else {
+        return false;
+    };
+    let p = cl.proto();
+    let code = p.code();
+    let pc = (ci.r().savedpc as usize).wrapping_sub(p.code_ptr() as usize) / 4;
+    if pc >= code.len() {
+        return false;
+    }
+    code.iter().enumerate().skip(pc).any(|(j, &w)| {
+        let i = Instruction(w);
+        let target = match i.opcode() {
+            Some(O::Jmp) => j as i64 + 1 + i64::from(i.sj()),
+            Some(O::Forloop | O::Tforloop) => j as i64 + 1 - i64::from(i.bx()),
+            _ => return false,
+        };
+        target <= pc as i64
+    })
 }
 
 /// Fail stop for a stale region root: the chain below `inner` ends (`previous == null`) without containing `root`. Walking on would dereference

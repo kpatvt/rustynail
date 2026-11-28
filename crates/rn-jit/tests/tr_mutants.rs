@@ -5050,6 +5050,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s78_stitch_programs")],
     },
     Row {
+        name: "eflazy_ignored",
+        owner: "S81",
+        dets: &[d("tr_core", "s81_eflazy_programs")],
+    },
+    Row {
         name: "sideback_no_wait",
         owner: "S76",
         dets: &[d("tr_core", "s76_sideback_programs")],

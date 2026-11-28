@@ -133,12 +133,14 @@ pub const T7_PROCESS: u32 = 0;
 pub const EFKEEP_TIMES: u8 = 2;
 /// Section 78.5 / 78.8 (`efkeep`): the process default of [`TrLimits::efkeep`] (the struct default is 0).
 pub const EFKEEP_PROCESS: u32 = 0;
+/// Section 81.2 (`eflazy`): the process default of [`TrLimits::eflazy`] (the struct default is 0).
+pub const EFLAZY_PROCESS: u32 = 0;
 /// Section 78.4 (`outerlink`): the process default of [`TrLimits::outerlink`] (the struct default is 0).
 pub const OUTERLINK_PROCESS: u32 = 0;
 /// Section 78.3 (`wgloop`): the process default of [`TrLimits::wgloop`] (the struct default is 0).
 pub const WGLOOP_PROCESS: u32 = 16;
-/// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (also the struct default).
-pub const FNLEAF_PROCESS: u32 = 0;
+/// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (the struct default is 0; back on since section 81.1).
+pub const FNLEAF_PROCESS: u32 = 16;
 /// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (also the struct default).
 pub const STITCH_PROCESS: u32 = 0;
 /// Section 78.1 (`stitch` bit 1): fewest recorded steps of a side recording before it stitches at a C call.
@@ -1175,6 +1177,10 @@ pub struct TrLimits {
     /// has at least `efkeep` installed side traces: the failing entries keep going to tier 1 (or to the head's prelude) and the family's side
     /// traces stay (awfy/cd re-records 7 families and discards 52 traces). 0 = off. Default [`EFKEEP_PROCESS`].
     pub efkeep: u32,
+    /// Section 81.2 (`eflazy`, docs/JIT_TRACE.md section 81.2): when a head's entry failures get persistent, the entry type checks of the installed root
+    /// that the failing entry does not pass are remembered per head (`HeadData::eflazy`), and later root recordings of the head check those slots at
+    /// their first use instead of in the entry segment. 0 = off. Default 0 here, [`EFLAZY_PROCESS`] in a process.
+    pub eflazy: u32,
 }
 
 impl Default for TrLimits {
@@ -1354,6 +1360,7 @@ impl Default for TrLimits {
             wgloop: 0,
             outerlink: 0,
             efkeep: 0,
+            eflazy: 0,
         };
         if mutants::active("bb_default_ignored") {
             l.maxside = 64;
@@ -1602,6 +1609,7 @@ impl TrLimits {
                 "wgloop" => l.wgloop = v.min(1024),
                 "outerlink" => l.outerlink = v.min(1),
                 "efkeep" => l.efkeep = v.min(1024),
+                "eflazy" => l.eflazy = v.min(1),
                 "t1call" => l.t1call = v.min(0x7f) | 0x80,
                 "cspeed" => l.cspeed = v & crate::cspeed::ALL,
                 "ccheck" => l.ccheck = v.min(1),
@@ -1754,6 +1762,9 @@ impl TrConfig {
         // section 78.8 (`efkeep`): likewise
         if !names_limit(limits_env, "efkeep") {
             self.limits.efkeep = EFKEEP_PROCESS;
+        }
+        if !names_limit(limits_env, "eflazy") {
+            self.limits.eflazy = EFLAZY_PROCESS;
         }
         // section 78 (`wgloop`, `outerlink`): on in a process; the struct default 0 keeps the tests' formation as it was
         if !names_limit(limits_env, "wgloop") {
@@ -1927,6 +1938,9 @@ pub struct HeadData {
     pub ncallee: Cell<bool>,
     /// BUNDLE-L B (`bhoist`): the head is recorded without hoisted bounds guards (set when a root with hoisted guards was flushed as ineffective; never reset).
     pub nohoist: Cell<bool>,
+    /// Section 81.2 (`eflazy`): root-relative slots (below 64) whose entry type check failed when the head's entry failures got persistent (set at the
+    /// entry-failure flush; never reset): later root recordings check them at their first use.
+    pub eflazy: Cell<u64>,
     /// T9 (`innerlink`): a root trace that ends with a frame-linking exit into this head was installed (set at install; never reset: a hint for the
     /// return half, `innerlink` bit 1).
     pub linked_in: Cell<bool>,
@@ -2083,6 +2097,7 @@ impl HeadData {
             reroot_avoid: RefCell::new(None),
             ncallee: Cell::new(false),
             nohoist: Cell::new(false),
+            eflazy: Cell::new(0),
             rearm_budget: Cell::new(REARM_BUDGET),
             rearm_wait: Cell::new(0),
             rearm_last: Cell::new(0),
@@ -3368,6 +3383,8 @@ pub struct TrStats {
     pub inner_rets: u64,
     /// Section 78.5 (`efkeep`): entry-failure flushes the rule skipped.
     pub efkept: u64,
+    /// Section 81.2 (`eflazy`): slots added to heads' `eflazy` sets.
+    pub eflazy_slots: u64,
     /// Section 78.1 (`stitch`): installed traces by what they used (the bits of `Recorded::stitch_use`).
     pub stitch_use: [u64; 6],
 }
@@ -3489,6 +3506,8 @@ struct Trace {
     dbl: Vec<bool>,
     /// P3 (`ncallee`): the entry segment of this root holds a callee identity guard (`EQREF` on an empty-map snapshot).
     entry_callee: bool,
+    /// Section 81.2 (`eflazy`): the type checks of the root's entry segment, `(slot, type)` (empty for side traces and roots without any).
+    entry_tys: Vec<(u16, super::ir::Ty)>,
     /// BUNDLE-L B: the trace holds hoisted bounds guards ([`TraceIr::hoisted`]).
     hoisted: bool,
     /// P3 (`chainre`): per exit, the child subtree of the exit was flushed for re-ordering ([`chain_check`]).
@@ -3676,6 +3695,11 @@ pub struct TrState {
     pub(crate) warm_edges: u64,
     /// R1: the entry that `hot_loop` just granted to a rearm tick is not a stay for the entry monitor (consumed by `enter`).
     pub(crate) rearm_entering: bool,
+    /// Section 81.1: the value `jit_hooks::hot_fired()` has when the tick armed by an allocation exit (N3b `arm_tick_next`) fires at the next
+    /// back-edge (0 = none armed). That firing only enters compiled code: it does not compile the prototype it lands in.
+    pub(crate) arm_fired: u64,
+    /// Section 81.1: the prototypes (code pointers) of the frames the armed exit left, which that firing may compile (`None`: any).
+    pub(crate) arm_protos: Option<[usize; 8]>,
     next_no: u32,
     pub(crate) stats: TrStats,
     /// H8: per-head diagnostics (`RUSTYNAIL_JIT_VERBOSE >= 1`; empty otherwise).
@@ -3729,6 +3753,8 @@ impl TrState {
             warm_n: 0,
             warm_edges: 0,
             rearm_entering: false,
+            arm_fired: 0,
+            arm_protos: None,
             next_no: 1,
             stats: TrStats::default(),
             diag: Default::default(),
@@ -5410,6 +5436,7 @@ pub fn install(st: &mut State, id: TrId, ti: TraceInstall) -> Result<TrId, Insta
         bwait: vec![0; nex],
         dbl: Vec::new(),
         entry_callee: false,
+        entry_tys: Vec::new(),
         hoisted: false,
         chain_done: vec![0; nex],
         chain_n: 0,
@@ -7841,7 +7868,8 @@ pub fn head_traced(st: &mut State, pr: ProtoRef, pc: u32) -> Option<bool> {
 
 /// The entry-failure counters of head `pc` reached the threshold (`jit_tr_entry_fail`): queue the flush and
 /// re-record. Returns whether a flush was queued.
-pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
+pub fn entry_fail_hot(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) -> bool {
+    eflazy_learn(st, ci, pr, pc);
     let d = d_of(st);
     let Some(tp) = tr_of(d, pr.0) else {
         return false;
@@ -7871,6 +7899,20 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
                 && matches!(d.tr.slot(id), Some(Slot { body: Body::Trace(t), .. }) if t.nside >= keep)
                 && kept < EFKEEP_TIMES
             {
+                vlog(d, || {
+                    let (ok, fail) = (tp.head(i).entry_ok.get(), tp.head(i).entry_fail.get());
+                    let (ns, ex) = match d.tr.slot(id) {
+                        Some(Slot {
+                            body: Body::Trace(t),
+                            ..
+                        }) => (
+                            t.nside,
+                            t.exits.iter().map(|c| u64::from(c.get())).sum::<u64>(),
+                        ),
+                        _ => (0, 0),
+                    };
+                    format!("efkeep: head pc {pc} kept (entries ok {ok} fail {fail}, side traces {ns}, root exits {ex})")
+                });
                 tp.head(i).efkeeps.set(kept + 1);
                 tp.head(i).entry_fail.set(0);
                 tp.head(i).entry_ok.set(0);
@@ -7894,6 +7936,61 @@ pub fn entry_fail_hot(st: &mut State, pr: ProtoRef, pc: u32) -> bool {
         }
         _ => false,
     }
+}
+
+/// Section 81.2 (`eflazy`): the entry failures of head `pc` got persistent (`entry_fail_hot`): the frame `ci` is a failing entry at the head (the state
+/// before the iteration). Every entry type check of the installed root whose slot holds a value of another type now is added to the head's
+/// `eflazy` set: the re-record checks that slot at its first use, where a mismatch is a body exit with a side trace of its own instead of an entry
+/// failure (roguelike_turns: `best` is nil at the loop's first iteration and a number after it, `away` true or false; which of them the re-record
+/// saw at its start decided whether its entries failed, and three re-records in a row could blacklist the head).
+fn eflazy_learn(st: &mut State, ci: Ci, pr: ProtoRef, pc: u32) {
+    if d_of(st).tr.cfg.limits.eflazy == 0 {
+        return;
+    }
+    let Some(i) =
+        tr_of(d_of(st), pr.0).and_then(|tp| tp.head_index(pc).filter(|&i| tp.entry_fail_hot(i)))
+    else {
+        return;
+    };
+    let mask = entry_type_misses(st, ci, pr, i);
+    if mask == 0 {
+        return;
+    }
+    let d = d_of(st);
+    if let Some(tp) = tr_of(d, pr.0) {
+        let h = tp.head(i);
+        if h.eflazy.get() | mask != h.eflazy.get() {
+            h.eflazy.set(h.eflazy.get() | mask);
+            d.tr.stats.eflazy_slots += u64::from(mask.count_ones());
+        }
+    }
+    vlog(d_of(st), || {
+        format!("eflazy: head pc {pc}: entry checks of slots {mask:#x} failed: checked at their first use from now on")
+    });
+}
+
+/// Section 81.2: the entry type checks of the root installed at head `i` of `pr` that the frame `ci` (an entry at the head) does not pass, as a slot mask.
+fn entry_type_misses(st: &mut State, ci: Ci, pr: ProtoRef, i: usize) -> u64 {
+    let d = d_of(st);
+    let Some(tp) = tr_of(d, pr.0) else {
+        return 0;
+    };
+    let tys = match tp.head(i).trace.get().and_then(|id| d.tr.slot(id)) {
+        Some(Slot {
+            body: Body::Trace(t),
+            ..
+        }) if !t.entry_tys.is_empty() => t.entry_tys.clone(),
+        _ => return 0,
+    };
+    let base = ci.r().func.0 + 1;
+    let mut mask = 0u64;
+    for (slot, ty) in tys {
+        let v = st.get(rn_core::state::StkId(base + usize::from(slot)));
+        if super::record::ty_of_value(&v) != Some(ty) {
+            mask |= 1u64 << slot;
+        }
+    }
+    mask
 }
 
 /// Pre-roll exits of trace `id` per entry at which it counts as ineffective: `exits * 10 >= entries * 9`.
@@ -8324,7 +8421,7 @@ pub fn entry_fail_hot_id(st: &mut State, ci: Ci, id: TrId) -> bool {
     else {
         return false;
     };
-    entry_fail_hot(st, pr, pc)
+    entry_fail_hot(st, ci, pr, pc)
 }
 
 // ---- free_code / state hooks ------------------------------------------------------------------------------
@@ -8661,6 +8758,28 @@ pub fn set_entry_callee(st: &mut State, id: TrId, v: bool) {
     {
         t.entry_callee = v;
     }
+}
+
+/// Section 81.2 (`eflazy`): the type checks of the entry segment of root `id`.
+pub fn set_entry_tys(st: &mut State, id: TrId, v: Vec<(u16, super::ir::Ty)>) {
+    if let Some(Slot {
+        body: Body::Trace(t),
+        ..
+    }) = d_of(st).tr.slot_mut(id)
+    {
+        t.entry_tys = v;
+    }
+}
+
+/// Section 81.2 (`eflazy`): the slots of head `pc` of `pr` whose entry checks root recordings leave at their first use (0 with the knob off).
+pub fn head_eflazy(st: &mut State, pr: ProtoRef, pc: u32) -> u64 {
+    let d = d_of(st);
+    if d.tr.cfg.limits.eflazy == 0 {
+        return 0;
+    }
+    tr_of(d, pr.0)
+        .and_then(|tp| tp.head_index(pc).map(|i| tp.head(i).eflazy.get()))
+        .unwrap_or(0)
 }
 
 /// BUNDLE-L B: the trace `id` holds hoisted bounds guards.
@@ -9294,7 +9413,7 @@ pub unsafe extern "C" fn jit_tr_entry_fail(
         let d = d_of(&mut st);
         d.tr.in_handler += 1; // a trace's failure path is running: defer the flush to the next safe point
         if !ci_spare_repair(&mut st, pr, a) {
-            entry_fail_hot(&mut st, pr, a);
+            entry_fail_hot(&mut st, ci, pr, a);
         }
         let d = d_of(&mut st);
         d.tr.in_handler -= 1;

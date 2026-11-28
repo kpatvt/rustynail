@@ -1321,14 +1321,23 @@ fn persistent_entry_failures_flush_and_rerecord() {
     let (mut st, f, pc) = with_f(cfg_on(1000));
     let n = AtomicU64::new(0);
     let id = install_fake(&mut st, f, pc, &n);
-    assert!(!c::entry_fail_hot(&mut st, f, pc), "below the threshold");
+    assert!(
+        !{
+            let ci = st.ci();
+            c::entry_fail_hot(&mut st, ci, f, pc)
+        },
+        "below the threshold"
+    );
     c::with_tr(&mut st, f, |tp| {
         for _ in 0..70 {
             tp.note_entry_fail(0);
         }
     })
     .unwrap();
-    assert!(c::entry_fail_hot(&mut st, f, pc));
+    assert!({
+        let ci = st.ci();
+        c::entry_fail_hot(&mut st, ci, f, pc)
+    });
     assert!(!c::trace_live(&mut st, id));
     let h = head(&mut st, f);
     assert_eq!(

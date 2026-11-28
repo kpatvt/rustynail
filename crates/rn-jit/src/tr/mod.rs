@@ -226,6 +226,9 @@ pub struct TraceOpts {
     pub bhoist: u32,
     /// N1b: `TrLimits::nidx` (set from the limits when a recording starts): the negated index of an induction-indexed array load is a second induction variable.
     pub nidx: u32,
+    /// Section 81.2 (`eflazy`): root-relative slots (below 64) whose entry type checks failed persistently at this head (`HeadData::eflazy`): `entry_checks`
+    /// leaves their `SLOAD` at its first use (a body guard, whose exit can get a side trace) instead of moving it into the entry checks.
+    pub eflazy: u64,
 }
 
 /// H1: `RUSTYNAIL_JIT_HASHINT=0` turns the integer-key hash access (`HREFV` integer form) off; read once.
@@ -267,6 +270,7 @@ impl Default for TraceOpts {
             aidx: 0,
             bhoist: 0,
             nidx: 0,
+            eflazy: 0,
         }
     }
 }
@@ -1076,6 +1080,7 @@ pub fn driver_start(st: &mut State, ci: Ci, id: TrId, pc: u32) -> bool {
                         } else {
                             cfg.limits.bhoist
                         };
+                        o.eflazy = pr.map_or(0, |pr| cache::head_eflazy(st, pr, pc));
                         o
                     },
                     hot_exit: cfg.hot_exit,
@@ -1603,14 +1608,21 @@ fn relaxstr(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
 /// the free-peel bookkeeping (`pending` / `entry_fail`) never applied to it, and a live-in whose type differs at
 /// every entry (`type_entry`: `local a = 0` that turns float) was counted as a hot type-guard exit and re-recorded
 /// forever. With the check at the entry, persistent failures are handled by the entry-failure rule of 3.3 instead.
-fn entry_checks(rec: &mut Recorded, _opts: &TraceOpts) -> Result<(), String> {
+fn entry_checks(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
     use ir::{aux_bits, guard_aux, TOp, F_GUARD, REF_BIAS};
     let ir = &mut rec.ir;
     if ir.loop_at.is_some() {
         return Ok(()); // peeled layouts (P7) have their own entry segment
     }
-    let checked =
-        |i: &ir::Ins| i.op == TOp::Sload && i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0;
+    // (section 81.2, `eflazy`: a slot whose entry check failed persistently at this head keeps its check at its first use)
+    let lazy = |i: &ir::Ins| {
+        usize::from(i.a) < 64
+            && opts.eflazy & (1u64 << i.a) != 0
+            && !mutants::active("eflazy_ignored")
+    };
+    let checked = |i: &ir::Ins| {
+        i.op == TOp::Sload && i.flags & F_GUARD != 0 && aux_bits(i.aux) & 1 != 0 && !lazy(i)
+    };
     // POLL and BUDGET first. A side trace entered with carried values starts with its carried loads (unchecked, position-less: they have no code); they
     // belong to the prefix too, or the checks would be moved in front of the `BUDGET` charge, and a failing check there would leave with `refund = n`
     // for a charge that was never made (the budget word grows by `n`: 5.4 `r1_live_flip [on2 budget=200]` was 168 instructions short)
@@ -3284,6 +3296,28 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
         });
         if ec {
             cache::set_entry_callee(st, newid, true);
+        }
+        // Section 81.2 (`eflazy`): the type checks of the entry segment (checked `SLOAD`s on an empty-map snapshot), compared with the stack of a failing
+        // entry when the head's entry failures get persistent
+        let et: Vec<(u16, ir::Ty)> = ir
+            .ins
+            .iter()
+            .enumerate()
+            .filter(|&(k, i)| {
+                i.flags & ir::F_GUARD != 0
+                    && i.op == ir::TOp::Sload
+                    && ir::aux_bits(i.aux) & 1 != 0
+                    && lp.is_none_or(|l| k < l)
+                    && usize::from(i.a) < 64
+                    && {
+                        let s = &ir.snaps[ir::aux_snap(i.aux) as usize];
+                        s.map.1 == 0 && s.nframes == 0 && s.frame == 0 && s.top == 0
+                    }
+            })
+            .map(|(_, i)| (i.a, i.t))
+            .collect();
+        if !et.is_empty() {
+            cache::set_entry_tys(st, newid, et);
         }
     }
     if attached.is_none() {

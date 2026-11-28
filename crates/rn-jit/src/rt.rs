@@ -2467,6 +2467,47 @@ fn rearm_after_exit(st: &mut State, code: u32, ret_ci: usize, entry: (usize, usi
     }
 }
 
+/// N3b: arms the sampling tick for the next back-edge so that the loop the interpreter continues re-enters compiled code at once. Section 81.1:
+/// that firing compiles only a prototype of the frames the exit left (`root`: the trace's root frame, up to the running frame `st.ci()`, at most
+/// [`ARM_PROTOS`] of them; `None`: any prototype, the tier-1 site); in any other prototype it only enters compiled code. The next back-edge is
+/// not always the exiting trace's loop: after the allocation exit of a loop-free function root (a short leaf root of `fnleaf`:
+/// `insert(self.chunks, {...})`) it is whatever the interpreter runs next, and template_etlua compiled every freshly `load`ed template chunk in
+/// tier 1 that way (80 -> 625 compiles, +22.6 % instructions). A loop trace's exit inside an inlined callee does land in the callee's loop, whose
+/// prototype may never have been compiled (it ran inlined): that compile stays (sudoku_solver +14.6 % without it).
+#[cfg(feature = "trace")]
+pub(crate) fn arm_tick_enter_only(st: &mut State, root: Option<Ci>) {
+    jit_hooks::arm_tick_next(st);
+    let mut keys = [0usize; ARM_PROTOS];
+    let mut any = root.is_none();
+    if let Some(root) = root {
+        let mut c = st.ci();
+        for k in &mut keys {
+            if let Some(cl) = proto_of(st, c) {
+                *k = cl.proto().code_ptr() as usize;
+            }
+            if c.as_ptr() == root.as_ptr() {
+                break;
+            }
+            match c.previous() {
+                Some(n) => c = n,
+                None => break,
+            }
+        }
+        // (a chain deeper than the array: no restriction)
+        any = c.as_ptr() != root.as_ptr();
+    }
+    // (`jit_hot_loop` counts the firing before it calls `hot_loop`; a firing at a call instead resets the tick and leaves a stale value, which
+    // the next firing does not match)
+    // SAFETY: the per-state data is live (see `set_mode`).
+    let d = unsafe { &mut *data_ptr(st) };
+    d.tr.arm_fired = jit_hooks::hot_fired().wrapping_add(1);
+    d.tr.arm_protos = if any { None } else { Some(keys) };
+}
+
+/// Section 81.1: frames whose prototypes the firing of an armed tick may compile.
+#[cfg(feature = "trace")]
+pub(crate) const ARM_PROTOS: usize = 8;
+
 fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
     #[cfg(feature = "trace")]
     if rearmed != 0 {
@@ -2501,6 +2542,22 @@ fn hot_loop(st: &mut State, ci: Ci, pc: *const u32, rearmed: u32) -> bool {
         return false;
     };
     let p = cl.proto();
+    // section 81.1: the firing of a tick armed by an allocation exit enters compiled code only (no mutant: only formation changes, and the storm
+    // of armed ticks that showed it builds up late in template_etlua; no program small enough for a test shows it)
+    #[cfg(feature = "trace")]
+    {
+        // SAFETY: the per-state data is live (see `set_mode`).
+        let d = unsafe { &mut *data_ptr(st) };
+        let a = std::mem::take(&mut d.tr.arm_fired);
+        let key = p.code_ptr() as usize;
+        if a != 0
+            && a == jit_hooks::hot_fired()
+            && p.jit.get().is_null()
+            && d.tr.arm_protos.is_some_and(|ks| !ks.contains(&key))
+        {
+            return false;
+        }
+    }
     if !ensure_compiled(st, &p) {
         return false;
     }
@@ -2814,7 +2871,7 @@ fn enter(st: &mut State, ci: Ci) -> JitExit {
             // instruction tier 1 cannot do): the loop wants back in compiled code at its next back-edge, not after a whole tick period
             #[cfg(feature = "trace")]
             if jit_hooks::take_alloc_refusal() && executed >= LONG_STAY {
-                jit_hooks::arm_tick_next(st);
+                arm_tick_enter_only(st, None);
             }
             #[cfg(feature = "trace")]
             rearm_after_exit(st, 0, ret.ci, entry_key);

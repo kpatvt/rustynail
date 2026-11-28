@@ -8639,10 +8639,14 @@ impl Rec {
         if self.segs.is_empty() || self.seg_steps.last().copied() != Some(self.path.len() as u32) {
             return None;
         }
+        // (section 81.5: only an installed trace there counts. An untraced continuation head is not a loop head: answering `Some(false)` ended the
+        // recording behind every pop as if it had reached an untraced loop head (`SideUntraced`), where before it recorded on in the caller;
+        // dijkstra_routes: the side traces of bfs' `ipairs` loop popped into `bfs`'s caller and stopped, 9.8 -> 22.3 M exits, +10.6 % instructions)
         self.cfg
             .cont_head
             .clone()
             .and_then(|q| q(st, p, idx as u32))
+            .filter(|&t| t)
     }
 
     /// Section 77.7 (`retf` bit 4): the root frame of a function-entry family's side recording returns into a frame of its own prototype (a
@@ -13453,7 +13457,12 @@ impl Rec {
             .as_lclosure()
             .ok_or(AbortReason::MetaTable)?;
         if tbl.flags() & rn_core::table::BITDUMMY == 0 {
-            return Err(AbortReason::TableHash);
+            // (section 81.6: a miss of THIS key; another key of the same access can be a raw hit (a key of the hash part, which the recording
+            // handles): a property of the data, not of the code, so not the unchangeable `TableHash` that blacklists at the second occurrence.
+            // msgpack_pure's `unpackers[byte]` (the tagged bytes in the table, `__index` for the rest) recorded at a tagged byte or not by luck,
+            // and two misses in a row blacklisted `unpack_array`'s loop whenever another knob moved the moment of its recordings)
+            // (no mutant: only formation changes)
+            return Err(AbortReason::IntMiss);
         }
         let h = self.handle(tbl);
         let _ = h;

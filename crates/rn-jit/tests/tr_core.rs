@@ -10638,6 +10638,52 @@ fn s78_efkeep_programs() {
     assert_eq!(TrLimits::default().efkeep, 0);
 }
 
+/// Section 81.1: a short leaf root that allocates, called before a freshly `load`ed chunk runs its loop (the tick armed by an allocation exit only
+/// enters compiled code), in every mode against the interpreter, `fnleaf` on and off.
+#[test]
+fn s81_allocarm_programs() {
+    let res = compare(b1_jobs(
+        &["s81_01_allocarm"],
+        &["fnleaf=16,fnpromow=0", "fnleaf=0"],
+    ));
+    assert!(!res.is_empty());
+}
+
+/// Section 81.2 (`eflazy`): a loop whose live-ins change type between entries, in every mode against the interpreter with the knob on and off;
+/// then the head: with the knob the slots whose entry checks failed are checked at their first use and the root keeps far more of its entries
+/// (mutant `eflazy_ignored`: the head's set is ignored, the entries stay as without the knob).
+#[test]
+fn s81_eflazy_programs() {
+    let res = compare(b1_jobs(&["s81_02_eflazy"], &["eflazy=1", "eflazy=0"]));
+    assert!(!res.is_empty());
+    assert_eq!(TrLimits::default().eflazy, 0);
+    let mk = |l: &str| {
+        let mut j = Job::new("s81_02_eflazy", "on").env("RUSTYNAIL_JIT_VERBOSE", "1");
+        j.limits = l.into();
+        j
+    };
+    let r = run_all(vec![mk("eflazy=1"), mk("eflazy=0")]);
+    let entries = |e: &str| -> u64 {
+        e.lines()
+            .find(|l| {
+                l.starts_with("[heads]")
+                    && l.contains("s81_02_eflazy.lua:12 pc ")
+                    && l.contains(" loop ")
+            })
+            .and_then(|l| l.split(" entries ").nth(1))
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    };
+    assert!(r[0].1.ok && r[1].1.ok, "{}", r[0].1.stderr);
+    let (on, off) = (entries(&r[0].1.stderr), entries(&r[1].1.stderr));
+    assert!(
+        on > off * 2,
+        "eflazy root entries {on} against {off} without the knob: {}",
+        r[0].1.stderr
+    );
+}
+
 /// Section 76.2 (`sideback`): exponential back-off of side recordings at exits whose recordings failed. The program with repeatedly failing side
 /// exits runs identically with the knob at 3 (every fault), 11 (path causes only), 6 (unchangeable causes, shift 2) and 0 (control) in every mode
 /// (`+verify`, exit storms, budgets, `-loop`, GC stress 1 / 2, stack moves), and the back-off really waits at 3. Mutant `sideback_no_wait`.
