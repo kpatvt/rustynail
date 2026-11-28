@@ -224,7 +224,7 @@ pub const LZRETF_PROCESS: u32 = 61;
 /// Section 93.1 (`peep`): the process default of [`TrLimits::peep`] (also the struct default).
 pub const PEEP_PROCESS: u32 = 31;
 /// Section 93.2 (`smallkeys`): the process default of [`TrLimits::smallkeys`] (also the struct default).
-pub const SMALLKEYS_PROCESS: u32 = 2;
+pub const SMALLKEYS_PROCESS: u32 = 6;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1069,7 +1069,9 @@ pub struct TrLimits {
     pub peep: u32,
     /// Section 93.2 (`smallkeys`, docs/JIT_TRACE.md section 93.2): the absent-key proof of a short-string key in a table whose node vector has at
     /// most `2^(smallkeys - 1)` nodes, all holding live short-string keys, is the key of every node (`HREFK` guards, shared by every miss and every
-    /// field access of that table in the trace) instead of the `HMISS` chain of each key. 0 = off; default [`SMALLKEYS_PROCESS`].
+    /// field access of that table in the trace) instead of the `HMISS` chain of each key, when the node keys not yet checked by the recording cost
+    /// no more guards than this key's chain plus the earlier misses of the table; value + 4: a `SELF` lookup covers whatever the cost. Bits 0-1 = 0:
+    /// off; default [`SMALLKEYS_PROCESS`].
     pub smallkeys: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
@@ -1663,7 +1665,7 @@ impl TrLimits {
                 "lzretfmax" => l.lzretfmax = v.min(1023),
                 "lzretf" => l.lzretf = v.min(63),
                 "peep" => l.peep = v.min(31),
-                "smallkeys" => l.smallkeys = v.min(3),
+                "smallkeys" => l.smallkeys = v.min(7),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

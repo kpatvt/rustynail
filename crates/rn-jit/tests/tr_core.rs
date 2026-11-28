@@ -4984,7 +4984,14 @@ fn s93_peep_programs() {
 fn s93_smallkeys_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
-        for limits in ["smallkeys=2", "smallkeys=3", "smallkeys=1", "smallkeys=0"] {
+        for limits in [
+            "smallkeys=6",
+            "smallkeys=2",
+            "smallkeys=7",
+            "smallkeys=3",
+            "smallkeys=1",
+            "smallkeys=0",
+        ] {
             for (opts, budget) in [
                 ("", 0),
                 ("+verify", 0),

@@ -369,6 +369,8 @@ pub struct RecCfg {
     pub midfold_ident: bool,
     /// Section 93.2 (`smallkeys`): the largest `lsizenode + 1` whose absent-key proofs are the keys of every node (0: off).
     pub smallkeys: u8,
+    /// Section 93.2 (`smallkeys` bit 2 of the knob value + 4): a `SELF` lookup covers whatever the cost.
+    pub smallkeys_self: bool,
     /// J2-2: most IR instructions of this recording (0 = the general limit): a deep recording's bound.
     pub max_ins: usize,
     /// P-E2: record `table.pack(...)` of a fixed argument count (see `Rec::pack_call`).
@@ -671,6 +673,7 @@ impl Default for RecCfg {
             midfold: None,
             mfkeys: None,
             smallkeys: 0,
+            smallkeys_self: false,
             midfold_ident: false,
             max_ins: 0,
             pack: false,
@@ -1483,6 +1486,8 @@ struct Rec {
     /// S4: the tables (addresses) that an insertion of this recording went into: later accesses to them carry no shape guard (the layout is not an
     /// invariant of the trace).
     shape_dirty: Vec<usize>,
+    /// Section 93.2 (`smallkeys`): the node-vector refs whose every node key this recording has guarded.
+    sk_covered: Vec<Ref>,
     /// MUTANTS `shape_stale_across_rehash` / `shape_header_fact_kept_over_alloc`: tables guarded once, with the IR position of the guard.
     shape_guarded: Vec<(usize, usize)>,
     /// F4 (TR22b relaxed): the root-relative slot the interpreter's `thread.top` holds after the instruction just recorded
@@ -1829,6 +1834,7 @@ impl Rec {
             last_tset: 0,
             hs_guarded: Vec::new(),
             shape_dirty: Vec::new(),
+            sk_covered: Vec::new(),
             shape_guarded: Vec::new(),
             top_rel: None,
             top_in: None,
@@ -2063,6 +2069,7 @@ impl Rec {
         self.ls_tnew.clear();
         self.last_tset = 0;
         self.shape_dirty.clear();
+        self.sk_covered.clear();
         self.shape_guarded.clear();
         self.top_rel = None;
         self.top_in = None;
@@ -5695,7 +5702,7 @@ impl Rec {
             self.guard(TOp::Eq, Ty::I64, ls, kl, 0)?;
         }
         let node = self.fload(t, Field::Node, Ty::P64)?;
-        if self.small_keys_cover(h, tbl, node, key.1)? {
+        if self.small_keys_cover(h, tbl, node, key.1, ix)? {
             return Ok(());
         }
         for _ in 0..=MAX_MISS_CHAIN {
@@ -5718,12 +5725,66 @@ impl Rec {
     /// node holds a known key holds no other key, whatever the chain links are; the guards are the same instructions as the field accesses of those
     /// keys (CSE shares them between all the misses and accesses of the table in the trace). A key at an address that was freed and reused is
     /// another live string, never `key` (a live constant). `false`: not applicable (the `HMISS` chain follows).
-    fn small_keys_cover(&mut self, h: u64, tbl: TableRef, node: Ref, key: StrRef) -> R<bool> {
+    ///
+    /// Policy (per site): only when it costs no more guards than the `HMISS` chain of this key (the chain is at least as long as the node
+    /// vector) or the node vector is already covered in this recording (the guards are then shared: no new instruction); never for a table
+    /// this recording inserted into.
+    fn small_keys_cover(
+        &mut self,
+        h: u64,
+        tbl: TableRef,
+        node: Ref,
+        key: StrRef,
+        mainpos: usize,
+    ) -> R<bool> {
         let ls = tbl.lsizenode();
         if self.cfg.smallkeys == 0 || ls >= self.cfg.smallkeys {
             return Ok(false);
         }
+        if self.shape_dirty.contains(&(tbl.as_ptr() as usize)) {
+            return Ok(false);
+        }
         let n = 1usize << ls;
+        if !self.sk_covered.contains(&node) {
+            // cost: the nodes whose key no `HREFK` of this node vector in the recording checks yet; benefit: this key's chain plus the misses of
+            // this node vector recorded before (a node vector that misses repeatedly is worth covering)
+            let mut have = vec![false; n];
+            for i in &self.b.ir.ins {
+                if i.op == TOp::Hrefk && i.a == node {
+                    let j = (aux_bits(i.aux) & 0x7FFF) as usize;
+                    if j < n && !TraceIr::is_ins(i.b) {
+                        if let KVal::Ptr(p, _) = self.b.ir.kval(i.b) {
+                            if p == tbl.node_key(j).1 {
+                                have[j] = true;
+                            }
+                        }
+                    }
+                }
+            }
+            let cost = have.iter().filter(|&&b| !b).count();
+            let prior = self
+                .b
+                .ir
+                .ins
+                .iter()
+                .filter(|i| i.op == TOp::Hmiss && i.a == node)
+                .count();
+            let mut chain = 1usize;
+            let mut ix = mainpos;
+            for _ in 0..=MAX_MISS_CHAIN {
+                let d = tbl.node_next(ix);
+                if d == 0 {
+                    break;
+                }
+                chain += 1;
+                ix = (ix as i64 + i64::from(d)) as usize;
+            }
+            // (a method lookup `SELF` on a receiver covers at once: the receiver's other method keys and its fields follow in the same trace)
+            let method = self.cur_op == OpCode::SelfOp as u8 && self.cfg.smallkeys_self;
+            if !method && cost > chain + prior {
+                return Ok(false);
+            }
+        }
         let sstr = ctb(LUA_VSHRSTR);
         let mut keys = Vec::with_capacity(n);
         for j in 0..n {
@@ -5741,6 +5802,9 @@ impl Rec {
             self.fill_node(h, j);
             let k = self.b.ir.konst(KVal::Ptr(bits, PtrKind::Raw));
             self.guard(TOp::Hrefk, Ty::P64, node, k, j as u32)?;
+        }
+        if !self.sk_covered.contains(&node) {
+            self.sk_covered.push(node);
         }
         Ok(true)
     }
