@@ -2108,7 +2108,7 @@ fn t4_knob() {
     }
 }
 
-/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the knob (struct default = shipped, parse, cap at the four bits).
+/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the knob (struct default = shipped, parse, cap at the six bits: section 86.3 adds bits 4 and 5).
 #[test]
 fn t9_innerlink_knob() {
     use rn_jit::tr::cache::{TrConfig, TrMode, INNERLINK_PROCESS};
@@ -2121,7 +2121,7 @@ fn t9_innerlink_knob() {
         (Some("innerlink=0"), 0),
         (Some("innerlink=3"), 3),
         (Some("innerlink=11"), 11),
-        (Some("innerlink=99"), 15),
+        (Some("innerlink=99"), 63),
         (None, INNERLINK_PROCESS),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
