@@ -9850,3 +9850,8 @@ core x2, 5.5 trace suite, vm_corpus, jit-diff 1-50 PASS; the 5.4 trace suite fai
 leash of their `GC_STRESS=2` + `GC_VERIFY=1` children under load (as in 85.4), both pass alone (22 s). The whole `tr_core` suite with
 `TR_ASMFUSE=2` and `fusecov=7` failed only `m1_interp_shapes` (bit 2, above) and `pm3_rec` under `stackmove` (133 s with `fusecov=0` too: the
 job is over the leash in debug builds; dropped from the s91 program list).
+
+Cycles (`fusecov` 0 / 3, same binary path, min of N interleaved; load average 40-45 from other sessions, so not conclusive): 15 runs CPU 6: cd
++3.4 %, richards -2.2 %, raytrace -12 % (noise), json +0.0 %; 25 runs CPU 7: cd +1.6 %, raytrace -0.6 %. cd's instructions fall 0.44 %; its cycle
+rise repeated in both series and should be re-measured on a quiet machine (suspects: code placement of the 78 newly fused traces; the R2 room
+checks' extension slots now sit at spill offset ~2.1 KB instead of a few hundred bytes, another cache line at every room-checked entry).
