@@ -9533,3 +9533,48 @@ instructions per bytecode; `driver_step` with `record_one` inlined is 1.5 % of c
 step PASS except `tests-5.5-trace` / `tests-5.4-trace` on `tr_core::h2_newkey_programs`, whose `RUSTYNAIL_GC_STRESS=2` + `GC_VERIFY=1` children hit
 the 120 s child leash under that load (101-120 s); the test passes alone (11.8 s on 5.5, 19.3 s on 5.4). The first run also caught the stale
 `registry_is_the_frozen_list` count (fixed). Mutants `sinkd_ls_miss`, `sinkd_group_any`, `fwdk_key_shift`: 3 ran, 3 caught.
+
+### 85.5 S3 (round 2 request): the fused backward allocate + emit pass, design for the builder who starts it (nothing built yet)
+
+The coordinator asked for S3a-S3d after 85.3. This builder's context was nearly used up by round 1, so it wrote the design down against the
+current interfaces and built nothing; a fresh builder starts here.
+
+**Interfaces today.** `ra::allocate_hinted` (backward linear scan, `Ra::process` per instruction, `open_snap` per snapshot at its last guard)
+materialises an `Allocation`: per instruction an `InsAlloc { dst, ops[3], stores, pre, post }` (three `Vec`s each), `snap_locs` per snapshot,
+the entry / back-edge moves, `calls`, `homes`. `exit::build_exits_ex` turns `snap_locs` into `ExitSnap`s. `asm::assemble_dl` (`Cx`, 11 k lines)
+walks the IR **forwards**, reads `InsAlloc` and the `ExitSnap`s, selects micro-ops into a `Program` (with lookahead fusions: `HREFK`+`HLOAD`,
+the counted-loop tail, the in-place last `ADD`, the hoisted budget, dense / carry stubs) and plans stubs; `x86::emit_ex` encodes the micro-ops.
+Per IR instruction on side traces (85.0 fit): allocator ~1070, assembler ~720, encoder ~500 instructions.
+
+**S3a shape (knob `asmfuse`, `TrLimits` + `ASMFUSE_PROCESS = 0` until it wins; `ccheck` compares the machine code of the old path).** One
+backward pass in the order LuaJIT's `asm_trace` uses: start at the end (the back-edge / link / writeback), walk instructions from the last to
+the first; for each instruction (1) its destination: the register the later uses already chose (or a spill slot: emit the spill store *here*,
+since emission is backwards the store lands after the definition), free it; (2) its operands: allocate at the use (`ra_alloc` with hints), an
+evicted value gets its restore emitted at this point (= after its later uses in program order); (3) emit the instruction's machine code into a
+**backwards growing** code buffer (LuaJIT `mcp` decreasing): x86 bytes written from the end, so no fix-up pass and no `Program`; (4) a guard
+emits its branch to the exit stub, whose snapshot map is resolved from the current register state at that moment (no `snap_locs` vector, no
+`open_snap` pin pass: the state *is* the map), and generic stubs are emitted into a separate cold buffer. No `InsAlloc`, no forward re-walk.
+
+**Staging that keeps every commit complete:**
+1. Range split: a trace is fused only if every instruction is in the converted class set (start: `SLOAD` typed / untyped, integer and float
+   arithmetic without overflow checks and with them, compare guards, `FLOAD`, `ALOAD` / `ASTORE` with fused bases, `HREFK` + `HLOAD` / `HSTORE`,
+   `SSTORE`, `POLL` / `BUDGET`, `LOOP` / `PHI` later), and the trace has no deferred stubs, `dlink` / `slink` entries, carry entries or sunk tables;
+   otherwise the old pipeline runs unchanged. Measure first which share of cd / raytrace / json side traces is fully in the start set
+   (`RUSTYNAIL_JIT_PIPELOG` plus a class histogram): a fused side trace skips `allocate_hinted`, `build_exits_ex`'s location part, `assemble_dl`
+   and `x86::emit_ex`.
+2. The exit metadata (`ExitSnap` for the handler, `lazystub`, side-trace entry tags) is still needed: build it from the per-guard register state
+   captured during the pass (same `SlotRestore`s), so `ccheck` can compare `ExitSnap`s too.
+3. Oracle: for a fused trace under `ccheck`, also run the old path and compare the code bytes. Bytes will differ (different register choices and
+   order), so the identity check is not the oracle for S3: use the `+verify` lockstep oracle, `+emuverify` cannot apply (no micro-ops), the
+   `tr_core` matrix (`always`, `on2`, GC stress 1 / 2, exit storms) and jit-diff 1-200 in the seven modes; add a `tr_core` test that runs the
+   corpus with `asmfuse=1` against `asmfuse=0` outputs, and per class a mutant (wrong operand register, missing spill store, missing restore,
+   stale snapshot location at a guard).
+4. Grow the class set one class per commit, measuring per-pipeline instructions after each (`compile-cost.sh phases`, cd / raytrace / towers /
+   json / fmt_s / richards). The deferred stubs, `dlink` / `slink` link entries, the emulator modes and the tier-1 re-derivation keep consuming
+   micro-ops: they stay on the old path (S3b: a fused trace that needs them falls back, or the micro-ops of those pieces are generated lazily).
+
+**S3c / S3d** stay as in 85.3 (forwarding at record time with `run_fwd` as the oracle; the recorder's per-step cost).
+
+Expected bound: a side trace that is fully fused drops the four back-end phases (about 230 k of cd's 267 k per side trace after 85.2, 86 %) to
+the cost of one pass; LuaJIT's whole compile is ~70 k per trace. The win is gated by the coverage of step 1, which must be measured before
+writing the emitters.
