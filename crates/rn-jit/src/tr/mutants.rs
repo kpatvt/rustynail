@@ -464,8 +464,18 @@ pub const NAMES: &[&str] = &[
     "flink_no_proof",
     // section 77.6 (`sloadhome`): a home is given to an `SLOAD` a sunk / function / carried snapshot entry or (bit 1 off) any entry names
     "sloadhome_snap_named",
-    // section 77.6 bit 1: a home whose slot another snapshot entry writes / a home entry of its own slot kept as a restore
-    "sloadhome_slot_written",
+    // section 77.6: a loop invariant's home slot goes back to the free slots when the scan crosses `LOOP` (another value is then spilled to it)
+    "sloadhome_slot_reused",
+    // section 77.6: the carry entry of a side trace reads a parent spill slot whose number is a home of this trace from the stack
+    "sloadhome_carry_src",
+    // section 77.14 (`t1g` bit 2): the flat iterator call takes a closure with three or more parameters (no nil fill)
+    "t1g_tflat_params_skip",
+    // section 77.14: `top` of the flat iterator call one slot short (a vararg iterator loses its last argument)
+    "t1g_tflat_top_short",
+    // section 77.15 (`retf` bit 9): a recursive lazy-aware caller is popped into too
+    "retf_demote_recursive",
+    // section 77.17 (`polyhead`): the polymorphic-head rule never applies
+    "polyhead_never",
     // M1 (rn-std `tmovepre`): `move_presize` ignores holes of the source range
     "tmove_presize_holes",
     // R1 (rn-std `tpop`): the `table.remove(t)` fast path ignores the metatable
@@ -1161,7 +1171,19 @@ fn names() -> &'static [String] {
 /// Is mutant `name` active? `name` must be in [`NAMES`] (checked in debug builds).
 #[cfg(feature = "tr_mutants")]
 pub fn active(name: &str) -> bool {
-    debug_assert!(NAMES.contains(&name), "unregistered mutant {name}");
+    // (the registry check is a hash lookup: a linear scan of `NAMES` on every call cost a third of a debug child's time in the hot paths that
+    // ask, e.g. `rt::hot_loop` / `loop_len_w`, and grew with every registered mutant until long `instruction_count_identity` jobs such as
+    // `bm_next_ends` hit the 120 s child leash; section 77.18)
+    #[cfg(debug_assertions)]
+    {
+        static REG: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+            std::sync::OnceLock::new();
+        debug_assert!(
+            REG.get_or_init(|| NAMES.iter().copied().collect())
+                .contains(name),
+            "unregistered mutant {name}"
+        );
+    }
     names().iter().any(|n| n == name)
 }
 
@@ -1232,9 +1254,20 @@ pub fn apply_vm_mutants() {
 mod tests {
     use super::*;
 
+    /// Section 77.18: the registry check of `active` (a hash lookup since the linear scan made debug children twice as slow) still rejects an
+    /// unregistered name in debug builds, and still answers registered ones.
+    #[cfg(all(feature = "tr_mutants", debug_assertions))]
+    #[test]
+    #[should_panic(expected = "unregistered mutant")]
+    fn active_rejects_unregistered_names() {
+        let _ = active(NAMES[0]);
+        let _ = active(NAMES[NAMES.len() - 1]);
+        let _ = active("no_such_mutant_77_18");
+    }
+
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 916);
+        assert_eq!(NAMES.len(), 921);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();

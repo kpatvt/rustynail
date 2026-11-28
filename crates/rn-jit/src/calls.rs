@@ -385,6 +385,99 @@ impl Cx<'_> {
         self.op(Op::Jmp(next));
     }
 
+    /// Section 77.14 (`t1g` bit 2): `TFORCALL A C` of a Lua closure iterator as a flat call, the way [`Cx::tpl_call`] pushes a compiled
+    /// Lua callee: the iterator, the state and the control value are copied to the call slots the interpreter's `OP_TFORCALL` uses
+    /// (5.5: `R[A+3..A+5]`, 5.4: `R[A+4..A+6]`), the frame is filled like `pre_call_lua_fast` with `C` wanted results and the callee is
+    /// entered without native recursion; its `RETURN` lands at the `TFORLOOP` through the resume table (an entry `lower` adds after
+    /// every `TFORCALL` while the bit is on), the interpreter's return path continues there too. The frame is no fresh C boundary any
+    /// more (the general helper calls the iterator with `State::call`), so traces can return through it. Anything the flat call does not
+    /// take (not a compiled Lua closure, missing parameters, stack, a spare `CallInfo`, an interrupt) falls through to the caller's
+    /// helper call. The caller has done the hook test and the count.
+    pub(crate) fn tfor_flat(&mut self, pc: u32, i: Instruction) {
+        let env = self.env();
+        let (a, c) = (i.a(), i.c());
+        let fa = if rn_core::jit_layout::LUA54 {
+            a + 4
+        } else {
+            a + 3
+        };
+        let slow = self.p.label();
+        // Ctrl-C (the interrupt flag): the helper performs the call, the interpreter notices at its next poll
+        self.op(Op::Mov(1, self.cfg.interrupt_addr as u64));
+        self.ld(2, W::B1, Self::m_reg(1, 0));
+        self.br(Cc::Ne, 2, Src::Imm(0), slow);
+        // the iterator must be a Lua closure with a function entry and at most two parameters
+        self.ld(0, W::B1, fr(a, 0));
+        self.br(Cc::Ne, 0, Src::Imm(i32::from(ctb(LUA_VLCL))), slow);
+        self.ld(1, W::B8, fr(a, 8));
+        self.ld(2, W::B8, Self::m_reg(1, lclosure::PROTO as i32));
+        self.ld(3, W::B8, Self::m_reg(2, proto::JIT as i32));
+        self.br(Cc::Le, 3, Src::Imm(1), slow);
+        self.ld(4, W::B8, Self::m_reg(3, HDR_ENTRY0));
+        self.br(Cc::Eq, 4, Src::Imm(0), slow);
+        self.ld(4, W::B1, Self::m_reg(2, proto::NUMPARAMS as i32));
+        if !mut_active("t1g_tflat_params_skip") {
+            self.br(Cc::Gt, 4, Src::Imm(2), slow); // three or more parameters: nil-fill in the helper
+        }
+        // top = the end of the two arguments (callee func = `func + 1 + fa`, then two values; a vararg callee counts them from `top`)
+        self.ld(5, W::B8, ciw(ci::FUNC));
+        self.op(Op::Add(
+            5,
+            Src::Imm((fa + 4 - u32::from(mut_active("t1g_tflat_top_short"))) as i32),
+        ));
+        self.ld(0, W::B1, Self::m_reg(2, proto::MAXSTACKSIZE as i32));
+        self.ld(6, W::B8, thw(thr::STACK_SIZE));
+        self.op(Op::Sub(6, Src::V(5)));
+        self.br(Cc::Le, 6, Src::V(0), slow); // stack_size - top <= fsize
+        self.ld(6, W::B8, ciw(ci::NEXT));
+        self.br(Cc::Eq, 6, Src::Imm(0), slow);
+        // ---- committed: the copies of OP_TFORCALL (function, state, control value), `top`, `savedpc`
+        let copy = |cx: &mut Self, dst: u32, src: u32| {
+            cx.ld(0, W::B8, fr(src, 0));
+            cx.st(W::B8, fr(dst, 0), 0);
+            cx.ld(0, W::B8, fr(src, 8));
+            cx.st(W::B8, fr(dst, 8), 0);
+        };
+        if rn_core::jit_layout::LUA54 {
+            copy(self, a + 4, a);
+            copy(self, a + 5, a + 1);
+            copy(self, a + 6, a + 2);
+        } else {
+            copy(self, a + 5, a + 3); // the control variable first: its slot is overwritten by the function
+            copy(self, a + 4, a + 1);
+            copy(self, a + 3, a);
+        }
+        self.st(W::B8, thw(thr::TOP), 5);
+        self.op(Op::Mov(0, self.pc_addr(pc + 1)));
+        self.st(W::B8, ciw(ci::SAVEDPC), 0);
+        // ---- the flat call: V6 = new CallInfo, V2 = proto, V3 = descriptor (reloaded: the copies used V0)
+        self.ld(1, W::B8, fr(fa, 8));
+        self.ld(2, W::B8, Self::m_reg(1, lclosure::PROTO as i32));
+        self.ld(3, W::B8, Self::m_reg(2, proto::JIT as i32));
+        self.ld(0, W::B1, Self::m_reg(2, proto::MAXSTACKSIZE as i32));
+        self.ld(1, W::B8, ciw(ci::FUNC));
+        self.op(Op::Add(1, Src::Imm(fa as i32 + 1))); // callee func index
+        self.st(W::B8, Self::m_reg(6, ci::FUNC as i32), 1);
+        self.op(Op::Add(0, Src::V(1)));
+        self.op(Op::Add(0, Src::Imm(1)));
+        self.st(W::B8, Self::m_reg(6, ci::TOP as i32), 0); // func + 1 + fsize
+        let nres = c + 1;
+        self.st_imm(W::B4, Self::m_reg(6, ci::CALLSTATUS as i32), nres as i32); // wanted results + 1
+        self.st_imm(W::B4, Self::m_reg(6, ci::TRAP as i32), 0);
+        self.ld(0, W::B8, Self::m_reg(2, env.proto_code));
+        self.st(W::B8, Self::m_reg(6, ci::SAVEDPC as i32), 0);
+        self.ld(0, W::B8, Self::m_reg(2, env.proto_k));
+        self.st(W::B8, Self::m_reg(6, ci::KCACHE as i32), 0);
+        self.st(W::B8, thw(thr::CI), 6);
+        self.op(Op::Lea(1, fr(fa + 1, 0)));
+        self.ld(3, W::B8, Self::m_reg(3, HDR_ENTRY0));
+        self.op(Op::SetCi(6));
+        self.op(Op::SetFrame(1));
+        self.op(Op::SetK(0));
+        self.op(Op::JmpR(3));
+        self.op(Op::Bind(slow));
+    }
+
     /// `TAILCALL A B C k`.
     pub(super) fn tpl_tailcall(&mut self, pc: u32, i: Instruction) {
         let env = self.env();

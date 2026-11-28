@@ -9133,7 +9133,7 @@ before and LuaJIT's 0.41 G; the remaining per-token costs are the token loop's p
 loads, 6 leading `SLOAD`s), the `string.sub` / `string.char` helpers (`short_core` 14 % of all instructions) and the links that do not pass the
 A2 proof (77.2). Not built: 77.1.
 
-### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default **0 = off**, `SLOADHOME_PROCESS`)
+### 77.6 `sloadhome`: SLOADs live in their own stack slot instead of a spill slot (`TrLimits::sloadhome`, default 3 since 77.10, `SLOADHOME_PROCESS`)
 
 The handle of 77.1, built (round 2). Between an entry and an exit nothing writes the Lua stack but the stubs, the writeback at the end and the
 TR3b `SSTORE`s (G1, 7.x), so the payload of an `SLOAD`'s slot *is* the value until the trace ends. `ra::sload_homes` picks the `SLOAD`s that may
@@ -9167,7 +9167,7 @@ slot another snapshot entry writes). Dropped, not caught by any program built fo
 the ones the next iteration does not read, so a home of such a slot is never reloaded after the store in these programs) and
 `sloadhome_carry_dense`; both checks stay in the code.
 
-**Shipped OFF: a correctness failure that is not root-caused.** The full gate-light with `sloadhome=3` as the default failed nine `tr_core` matrices
+**Shipped OFF in round 2: a correctness failure, root-caused and fixed in 77.10 (default 3 since).** The full gate-light with `sloadhome=3` as the default failed nine `tr_core` matrices
 on 5.5 (seven on 5.4) that pass with it off: wrong results under `+exitstorm=7 +verify +randra=5` in `bh_next` (the `over` / `later` / `fresh`
 lines print addresses as numbers), `n6_dynkey_shape`, `f1_next_hint`, `n7_gfor_nest`, `n5_str_variants`, and a crash (SIGSEGV) of `dm_dynkey` under
 `-fwd -cse -sink`; `sloadhome=1` (no snapshot entries at homes) fails the same way. In the child reproducer (`TR_CORE_JOB="bh_next|always|+exitstorm=7
@@ -9237,3 +9237,248 @@ Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the 
 With `sloadhome=3` on top (measured before it was switched off): towers -0.44 % / -2.3 % cycles, permute -0.31 %, lua_lexer -0.20 %. Whole set
 (223 programs, instructions, one run each, each knob against its off setting): `sloadhome=3` geomean -0.05 %, `retf=179` geomean -0.10 %; no rise
 beyond 0.3 % but astar_jumper / testrunner_luaunit, both re-measured as noise.
+
+### 77.10 `sloadhome`: the two causes of the round-2 failures, fixed; default 3
+
+The failures of 77.6 were bugs of the homes, not latent ones of G1: no variant of the reproducer family fails without homes (bh_next,
+n6_dynkey_shape, f1_next_hint, n7_gfor_nest, n5_str_variants with `+exitstorm=3/5/7 +verify +randra=1..8`, `sloadhome=0`: 120 jobs, all equal to
+the interpreter; f1_next_hint prints addresses, its raw output differs run to run in every setting, so it was judged through the harness). With
+homes only `+randra=5` failed, and only with some address layouts (a third of the runs). Minimal reproducers, by line deletion on the harness child
+(`TR_CORE_JOB="@file|always|<opts>||sloadhome=1||0"`): bh_next's `over` loop behind three main-chunk locals and a fill loop (wrong totals), and
+dm_dynkey's case E (stores through `__newindex` function / table metatables; SIGSEGV with `-fwd -cse -sink`: tier 1 called a C function at 0x11, a
+slot restored with an integer payload under a function tag). A temporary check (keep the home's spill store, compare it with the stack at every
+home reload, abort on a difference) never fired, so the reloads were right; switching the sources of the moves back to the spill slots made both
+reproducers pass, and a print at each move kind named the culprits:
+
+1. **The loop invariant's home slot was handed back.** `Ra::cross_loop` turns a loop invariant's permanent slots into ordinary ones when the
+   backward scan crosses `LOOP`, so they are freed at the definition; a home slot then went to another value, whose spills and reloads the
+   assembler took for the home (`Allocation::homes` names slot numbers for the whole trace). Now home slots stay permanent there. Mutant
+   `sloadhome_slot_reused` (caught by `s77_home_programs`, whose case (5) is bh_next's shape and whose matrix now runs `+randra=1..8` with storms 3 / 7).
+2. **The carry entry read a parent spill slot as a home.** The R1 carry entry of a side trace moves the parent's exit-map values (`CarrySrc::Spill(n)`:
+   the parent's spill slots in the exit area) to where this trace holds them, through `Cx::emit_move`, whose spill sources resolve this trace's
+   homes: a parent slot whose number is a home here was read from the stack. It now uses `Cx::emit_move_raw` (sources are exit-area slots as they
+   are). Mutant `sloadhome_carry_src` (caught by `r1_regcarry_programs`).
+
+Rules added on the way and dropped again once the two causes were found (none of them was needed: the failing set passes without them, and their
+mutants survived every detector): a home slot written back at the end of the trace, R1's leading run in a root with a carrying entry, bit 1 off in
+traces with register carrying. Kept as defensive rules without a mutant: snapshots no guard names count for eligibility like the guards' (the end
+exit of a straight-line trace), and an exit with an entry restored from a home takes no R1 carry path (it has no register to hand over).
+
+Gate subset re-run with `sloadhome=3` as the default (5.5 debug): the nine failing `tr_core` tests of 77.6 plus `r1_*`, `s77_*`,
+`twins_options`, `twins_emulator_modes`, `s1_lazystub_programs`: all pass. Whole set (223 programs, instructions, `sloadhome=0` against `=3`,
+one binary): geomean **-0.07 %**, no rise beyond 0.3 %; queens -1.2 %, fmt_x_pad -1.2 %, diff_levenshtein -0.9 %, type_call -0.8 %, dijkstra -0.7 %,
+tremove_front / tunpack -0.6 %, rep_sep / heapsort -0.5 %, setmt / metamethods / tmove / towers / class_middleclass / oop_override / char /
+rep / tail_loop -0.3 .. -0.4 %. Outputs of the 223 programs identical. Default **3** (on). Cycles: 77.13.
+
+### 77.11 Homes for slots that register-carrying links leave unwritten (towers): not built, and why it cannot save anything
+
+towers' hottest trace (28) keeps its leading `SLOAD`s in spill slots because they are R1's dense slots (`TraceIr::carry`): every snapshot after the
+run restores them (`SNAP_CARRY` entries), precisely because a register-carrying link into the root's third entry hands their values over in
+registers and leaves the stack stale (its exit stubs store tags only). A home reads the stack, so it needs that slot's payload in the stack: the
+carrying link would have to store it. On the entries that come through such a link the root's own definition stores do not run either (the third
+entry is behind the leading run, the link stores into the root's spill slots), so the store would only move from the link's spill store to a stack
+store: no instruction saved on those entries; on the other entries (interpreter, second entry) the stores are already gone with 77.10's rules where
+the slot is not dense. The dense entries would also have to be restored from the stack at exits that follow a carrying entry, where the stack is
+stale. Not built: no gain on the entries it targets, and a correctness argument (stale stack after carried entries) against it.
+
+### 77.12 Item 2 for stream_closures: native returns into lazy-aware families, region membership, sunk records through returns: blocked
+
+Measured where stream_closures' `LeaveFrame` side aborts come from (instrumented `Rec::ret` / `Rec::retf`, removed again): the 33 aborts are root
+`RETURN`s of the `map` / `filter` / `readings` closures' function-entry families and of filter's `while` loop root; `Rec::retf` refuses them at the
+root-frame test (`CIST_FRESH`: 17 at `retf=7`) and at I9 (`pop_into_ok`, a maybe-lazy caller: 49). The first one is structural: tier 1 runs
+`fold`'s `for v in src` through `jit_tforcall`, which calls the Lua iterator with `State::call` (a C-level call), so the iterator's frame is a
+fresh C boundary and a return from it has to come back into that helper; no trace can pop into `fold` natively. With I9 off for the whole program
+(`lazyci=0`), `retf=7` and `retfmax=4` the `LeaveFrame` aborts stay (36) and the stub materialisations are unchanged (286 731 -> 286 030);
+instructions -0.3 %. So pieces (a) native returns from a function-entry side trace into another lazy-aware family and (b) region membership of the
+caller's code are not what limits this program: (0) a tier-1 `TFORCALL` that pushes a Lua iterator's frame natively (no C recursion, the way
+tier-1 `CALL` pushes) is the prerequisite, and only then do (a) and (b) apply, and (c) carrying the sunk record through the return into the fold
+loop's trace (section 52's replay from exits generalised to returns) can keep it virtual. (0) is a change of tier 1's call protocol (resumable
+generic-`for` frames, the hook and error paths of `luaD_call`), outside this branch's JIT pieces; none of (0), (a), (b), (c) was built.
+json and towers: their remaining `LeaveFrame` aborts (8 and 4) are the self-recursive pops that 77.7's bits now take where the caller loop
+qualifies (json -0.2 %), and pops into non-loop callers, which 77.7 measured as regressions (lua_interp +39 %, list +63 %).
+
+### 77.13 Round 3 numbers (one binary, 7ef7cfb + docs, `RUSTYNAIL_SEED=0`, CPU 8, 15 runs interleaved, minimum)
+
+Every handle of section 77 off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the shipped defaults (`uvk=11,flink=1,sloadhome=3,retf=179`):
+
+| program | instructions M | cycles M |
+|---|---|---|
+| corpus/lua_lexer | 3206.73 -> 2747.17 (**-14.3 %**) | 800.27 -> 702.99 (**-12.2 %**) |
+| awfy/towers | 164.64 -> 164.01 (-0.4 %) | 43.35 -> 42.66 (-1.6 %) |
+| awfy/json | 431.04 -> 426.65 (-1.0 %) | 135.02 -> 135.28 (+0.2 %, noise) |
+| awfy/permute | 117.82 -> 117.49 (-0.3 %) | 23.25 -> 23.22 (-0.1 %) |
+| awfy/queens | 497.12 -> 393.17 (-20.9 %) | 93.92 -> 78.87 (-16.0 %) |
+| awfy/cd | 644.83 -> 617.99 (-4.2 %) | 238.49 -> 238.08 (-0.2 %) |
+| awfy/storage | 492.26 -> 482.05 (-2.1 %) | 105.92 -> 100.21 (-5.4 %) |
+
+`sloadhome` alone (`=0` against `=3`): lua_lexer -0.19 % / +0.8 % cycles, towers -0.38 % / -2.3 %, json +0.07 % / +1.0 %, permute -0.28 % / 0,
+queens -1.2 % / -0.8 %, diff_levenshtein -0.9 % / -1.1 %. The lua_lexer and json cycle rises are inside the bar (2 %) and the instruction counts
+do not rise beyond 0.3 %; default on.
+
+### 77.14 Tier-1 flat generic `for` (`t1g` bit 2, value 4): built, default off
+
+**What it does.** `TFORCALL A C` of a compiled Lua closure iterator no longer goes through `jit_tforcall` (which calls the iterator with
+`State::call`, a C-level call whose frame is a fresh C boundary). `Cx::tfor_flat` (`calls.rs`, entered from the helper template after the `ipairs` /
+`next` fast paths, the hook test and the count) copies the iterator, the state and the control value to the call slots `OP_TFORCALL` uses (5.5:
+`R[A+3..A+5]`, the control value first because its slot is overwritten; 5.4: `R[A+4..A+6]`), sets `top` behind the two arguments and `savedpc` to
+the `TFORLOOP`, fills the next `CallInfo` like `pre_call_lua_fast` with `C + 1` in `callstatus` (C wanted results, no `CIST_FRESH`, no
+`CIST_T1RET`) and jumps to the callee's `entry0`, the way `tpl_call` pushes a compiled callee. `lower` adds a resume entry at the `TFORLOOP` after
+every `TFORCALL` while the bit is on, so the callee's `RETURN` (`ret_tail`) and the interpreter's return path both continue at the `TFORLOOP`.
+Everything else falls through to the helper call: not a Lua closure, no compiled entry, three or more parameters (the nil fill stays the
+helper's), not enough stack for the callee's frame, no spare `CallInfo`, the interrupt flag set. Hooks: the template's hook test sends the
+instruction to the interpreter before any of this (unchanged); a hook installed inside the iterator is seen by the callee's own guards and at the
+`TFORLOOP`'s re-entry. Errors, tracebacks, `debug.getinfo(2)` from the iterator and coroutine yields across the iterator see an ordinary
+Lua-to-Lua call (the interpreter's `OP_TFORCALL` makes the same frame, through C recursion).
+
+**Tests.** `tests/vm/s77_tflat.lua` (also a vm-corpus program, compared with the reference): results nil-filled and cut to the loop's
+variables, a three-parameter and a vararg iterator, errors at levels 1 and 2 and a traceback, `getinfo` of the loop's frame from the iterator,
+yields from inside the iterator, a call hook installed mid-loop, deep recursion inside the iterator (stack growth), a callable table and `next` as
+iterators, a closure pipeline folded by a generic `for`, function-entry iterators whose side traces return toward the loop.
+`tr_core::s77_tflat_programs`: `t1g` 7 / 3 (also with `retf=695`) in `always`, `on2`, `on`, `t1x`, with `+verify`, `+exitstorm=3 +verify`,
+budget 17 and GC stress 2; kept out of the emulator twins (`S77_PROGS`). Mutants (caught): `t1g_tflat_params_skip` (a three-parameter iterator
+taken without the nil fill), `t1g_tflat_top_short` (`top` one slot short: a vararg iterator loses its control value). A mutant on the `C + 1`
+result count was caught by no program and was dropped.
+
+**Measured** (one binary, instructions exact, `RUSTYNAIL_SEED=0`):
+
+| program | `t1g=3` -> `t1g=7`, traces on | traces off (tier 1 only) |
+|---|---|---|
+| corpus2/heldout/stream_closures | 3519.7 -> 3381.0 M (-3.9 %) | 9448.7 -> 9190.8 M (-2.7 %) |
+| corpus2/dev/iter_pipeline | 785.8 -> 6909.4 M (**+779 %**) | 14030.8 -> 8996.3 M (-35.9 %) |
+| corpus2/dev/text_adventure | 7378.8 -> 7394.0 M (+0.2 %) | 8578.1 -> 8595.3 M (+0.2 %) |
+| awfy/json, awfy/towers, corpus/lua_lexer | +0.00 %, +0.00 %, +0.02 % | |
+
+Whole set (223 programs, instructions): geomean +0.97 %, entirely iter_pipeline; otherwise only stream_closures (-3.9 %), coroutines (+0.4 %),
+testrunner_luaunit (+0.4 %) and astar_jumper (+0.3 %) move beyond 0.3 %. Output identical on all 223.
+
+**Why iter_pipeline explodes.** In tier 1 alone the flat push is a 36 % win there. With traces, the program's `Iter:reduce` loop (`for v in
+self.next do acc = f(acc, v) end`, one loop head serving every pipeline of the program) goes `Black`. With the bit off its second root (recorded on
+the primes `filter` pipeline, whose `while` and `for d` loops `loopany` unrolls) is flushed `Ineffective` once and the third root, recorded on
+another pipeline, survives (7371 entries). With the bit on the iterators run in tier 1 instead of the interpreter (the general helper's
+`State::call` sends a small callee to the interpreter: `hot_call_plain`'s heuristic), their function-entry and continuation heads warm up (the
+`map` / `filter` / `take` closures get roots of their own: 8 more traces before the reduce head re-records), and the reduce head's third root is
+recorded on the primes pipeline again: the second `Ineffective` flush blacklists the head (Q2) and the program runs its hottest loop in tier 1 (48 %
+of the samples in `lua_proto:170`). The push itself is not wrong (identical output, the oracle passes); it changes which pipeline the megamorphic
+head gets recorded on. No static per-site rule separates the two programs (their fold loops are the same bytecode); a loop-free-iterators-only
+variant (a `JitProtoHdr` flag) was measured (iter_pipeline 6940 M, stream_closures -2.8 %) and removed. Default off (`T1G_PROCESS` stays 3).
+
+**What it unblocks.** stream_closures' function-entry side traces no longer stop at the root-frame identity test (`CIST_FRESH`, 77.12): with the
+bit on and `retf` bit 2 every refusal left is I9 (`pop_into_ok`: 23 of 24 refusals, one at `retfmax`). With I9 off for the whole program
+(`lazyci=0,t1g=7,retf=183`) 26 pops are compiled, the stub materialisations fall from 414 853 to 283 000 and the program runs 3176.4 M
+instructions (-9.8 % against the default 3519.7 M): the ceiling of pieces (a) and (b) on this program.
+
+### 77.15 Pieces (a) and (b): `RETF` into a never-recursive lazy-aware caller (`retf` bit 9, value 512): built, default off; (c) not built
+
+**(a) + (b) as built.** I9 refuses every loop-free, non-vararg caller (`maybe_lazy_proto`, the static superset of `TrProto::lazy`). The reason
+(C70): a lazy-aware family's frames can be lazy, and a pop into one continues outside its region. A lazy frame exists only below a native push of
+the family (`rec_call`), and a prototype none of whose compiled traces made one (`TrProto::recursive` false; `mark_recursive` runs at that
+compile) never had one. With bit 9, `pop_into_ok` asks `TrProto::retf_demote` about such a caller: not lazy-aware: yes; lazy-aware, never
+recursive, no installed root trace: demoted to eager for good (its and its heads' `lazy` cleared, the cells recomputed with `set_rec`, the E4
+decision in the other direction), yes; lazy-aware, never recursive, with installed traces: yes, and the prototype is pinned (`retf_pin`: a later
+native self-call of it aborts its compile, `retf-pin`, so its frames never become lazy under the popping trace); recursive: no. Region
+membership (b): after the pop the side trace runs the caller's code as an eager trace; it links only at loop heads of the caller (`retf_head`
+answers for loop heads only, and a loop-free caller has none) and at frame heads of prototypes with loops (unchanged rules), never into the lazy
+family's own traces. Mutant `retf_demote_recursive` (recursive callers popped into) is caught by `tr_core::s77_retf_demote_programs`
+(`deep_recursion`, `s77_rself`, `s77_tflat` with `retf=695`, `retf=695,lazyci=2`, `t1g=7,retf=695,retfmax=4`); the pin is a conservative guard
+that no test program reaches (its mutant was not caught and was dropped).
+
+**Measured** (one binary, 15 runs interleaved, minimum, CPU 8; `t1g=3` against `t1g=7,retf=695`: flat push + function-entry pops + bit 9):
+
+| program | instructions M | cycles M |
+|---|---|---|
+| corpus2/heldout/stream_closures | 3519.72 -> 3364.96 (-4.4 %) | 805.82 -> 765.17 (-5.0 %) |
+| awfy/json | 426.65 -> 420.31 (-1.5 %) | 134.00 -> 133.73 (-0.2 %) |
+| awfy/towers | 164.01 -> 164.01 | 42.60 -> 42.63 |
+| corpus2/dev/text_adventure | 7378.75 -> 7403.88 (+0.3 %) | 2371.05 -> 2409.12 (+1.6 %) |
+| corpus/lua_lexer | 2747.21 -> 3357.63 (**+22.2 %**) | 710.58 -> 904.06 (**+27.2 %**) |
+| corpus2/dev/iter_pipeline | 785.79 -> 6912.21 (**+780 %**) | 180.28 -> 1317.72 |
+
+Bit 9 alone (`retf=691`, whole set, instructions): no program moves (geomean -0.000 %): without bit 2 no function-entry root pops, and the pops
+77.7's bits take go into frames of the same closure (recursive: refused). On top of `t1g=7`, bit 9 brings stream_closures from 3383.8 to 3365.2 M
+(`retf=951`): 11 pops compiled against 26 with `lazyci=0`, because most remaining `LeaveFrame` aborts are now `map`'s `return f(v)` (a `TAILCALL`
+in the caller's frame after the pop), which the `RETF` recording does not continue through. lua_lexer's +22 % is `retf` bit 2 (function-entry
+families pop everywhere: 77.7's finding); without bit 2 bit 9 has no work. Default off.
+
+A bit 8 (`RETF` into a caller suspended at a `TFORCALL`, i.e. into the frame 77.14 pushes) was built and measured: two pops more in
+stream_closures (3176.4 -> 3177.4 M with `lazyci=0`), none in the test programs; removed with its mutant.
+
+**(c) carrying sunk allocations through the return: not built.** After a pop the recording continues in the caller and ends at the fold loop's
+head with a link into its root trace. A sunk allocation still virtual there must be materialised at the link: links pass register values (R1's
+carry) and stack slots, never virtual objects, and the fold loop's root trace starts from its own `SLOAD`s; it would need a second entry per virtual
+shape that takes the allocation's fields (section 52's replay generalised from exits to links). The measurements bound what is left for it: with
+`lazyci=0` the pops already cut the stub materialisations by 32 % (414 853 -> 283 000); the rest happen at the links into `fold`'s trace. Not
+attempted: (a) and (b) are not on by default, so (c) would carry nothing in the shipped configuration.
+
+### 77.16 Round 4 numbers: every shipped handle of section 77 combined (one binary, final defaults, `RUSTYNAIL_SEED=0`)
+
+The shipped defaults are unchanged by 77.14 / 77.15 (`uvk=11, flink=1, sloadhome=3, retf=179`, `t1g=3`). All 223 programs, instructions, the
+handles off (`uvk=0,flink=0,sloadhome=0,retf=3`) against the defaults: geomean **-0.585 %**, no program up by more than 0.3 %. Movers beyond
+0.3 %: awfy/queens -20.9 %, corpus/lua_lexer -14.3 %, jit-trace/tail_loop -10.9 %, programs/fasta -10.7 %, corpus2/heldout/forth_vm -10.3 %,
+jit-trace/rec_loop -4.9 %, awfy/cd -4.2 %, corpus2/dev/particles_physics -4.0 %, awfy/bounce -3.8 %, corpus/class_middleclass -3.7 %,
+awfy/richards -3.4 %, awfy/deltablue -2.4 %, corpus/astar_jumper -2.2 %, awfy/storage -2.1 %, apps/raytrace -2.0 %, corpus/sha2_base64 -1.9 %,
+programs/metamethods -1.4 %, roguelike_turns -1.3 %, awfy/json -1.0 %, programs/json -0.9 %, diff_levenshtein -0.9 %, containers_lru_heap
+-0.8 %, lib/type_call -0.8 %, dijkstra_routes -0.7 %, vending_fsm -0.7 %, and fourteen more between -0.3 and -0.6 % (lib/tremove_front, tunpack,
+rep_sep, sel_loop, msgpack_pure, regex_nfa, heapsort, towers, oop_override, sudoku_solver, setmt, tmove, char, rep). Cycles of the movers: 77.13
+(the knobs and the code they gate are unchanged since).
+
+### 77.17 Round 5: the polymorphic-head rule (`polyhead`): built, default off; items 2-4 not reached
+
+**Cause of 77.14's iter_pipeline regression, refined.** iter_pipeline's `Iter:reduce` head records, under `t1g=7`, its second and third
+roots on the same pipeline (the primes `filter`, whose `while` / `for d` loops `loopany` unrolls). Both are flushed `Ineffective`, and Q3
+blacklists at the second one (`TrProto::on_ineffective`). Under `t1g=3` the first `Rerec` flush of the head falls ~14 entries later (199 against
+185: the exit counts that trigger it differ), so the second root is recorded on another pipeline. That root is flushed `Ineffective` once, and the third
+(2806 B, the trace that later serves the nested `sum` part) survives. The two runs diverge at that one flush; the flat push is not involved
+beyond moving it.
+
+**The rule** (`TrLimits::polyhead`, default 0, `TrProto::on_ineffective(i, poly, deps, hot)`, `TrProto::on_identical_poly`). Bits 0-3: how many
+`Ineffective` flushes past the first are not counted as repeats. They are not counted when the flushed trace inlined other prototypes than the last
+ineffective one (a hash of `Trace::deps`, kept per head in `ineff_deps`), or, with bit 5, regardless of that. Bit 4: such a re-record waits
+`hot * 16 << (n - 2)` iterations instead of one. With bit 5, a byte-identical re-record inside the budget backs off the same way instead of
+`on_identical`'s blacklist. Test `tr_policy::s77_polyhead_rule` (the decision table; mutant `polyhead_never` caught); program
+`tests/vm/s77_polyhead.lua` (one `reduce` head serving five pipelines, nested, with a data-dependent inner loop; vm corpus and
+`tr_core::s77_polyhead_programs` with `t1g` 7 / 3, `+verify`, exit storms). The program does not reproduce the blowup (it is too short for the
+head to go through several roots); it checks results.
+
+**Measured** (one binary, instructions exact):
+
+| iter_pipeline, `t1g=7` | instructions |
+|---|---|
+| `polyhead=0` | 6909 M |
+| `=1` / `=3` / `=8` (prototype rule only) | 6909 M (no effect: the two ineffective roots have the same prototypes) |
+| `=50` (bits 1, 4, 5) | 4795 M |
+| `=52` (4 repeats, back-off, any) | 3279 M |
+| `=55` / `=63` | 3300 / 3380 M |
+| `t1g=3` (any `polyhead`) | 786 M |
+
+With `polyhead=52` the reduce head still goes `Black` (5 `Ineffective` flushes, then an `Identical` re-record outside the budget). The trace that serves it
+under `t1g=3` (2806 B) is recorded, but it is flushed `Ineffective` here (3306 entries, 6596 exits) instead of surviving, and the nested part
+runs `reduce` in tier 1 (`lua_proto:170` 19 %, `lua_proto:255` 19 %, `lua_proto:183` 15 % of the samples). The rule does not fix the cause. A
+per-closure trace family per loop head (one root per iterator prototype) is what the shape needs, and it was not built in this round.
+
+Whole set (223, instructions): `t1g=3,polyhead=52` against `t1g=3`: geomean -0.085 %, nothing above +0.3 %; prototype_objects -9.2 %,
+csv_report -1.6 %, stream_closures -1.2 %, real_dis_x86 -0.7 % (astar_jumper -6 % is its run-to-run variation: its base varies 4.28-4.56 G between
+runs). `t1g=7,polyhead=52`: geomean +0.57 % (iter_pipeline +317 %). Cycles (7 runs interleaved, minimum, CPU 8), `t1g=3` against
+`t1g=3,polyhead=52`: prototype_objects 2434 -> 2424 M (-0.4 %), csv_report 1438 -> 1465 M (+1.9 %), **stream_closures 835 -> 917 M (+9.8 %)** at
+-1.2 % instructions, iter_pipeline and lua_lexer unchanged. stream_closures misses the cycles bar. `polyhead` stays 0, and `t1g` bit 2 stays off.
+
+**Item 2 (retf bit 2 on lua_lexer), first measurement only.** `retf=183` (179 + bit 2) compiles 29 pops against 12 and costs +22.2 %
+instructions (2748 -> 3358 M); bit 9 changes nothing there (691 = 179). The profile moves from one dominant trace (TRACE-14, 10 %) to several
+(TRACE-19 / 3 / 1, about 5 % each): the bit-2 pops split the lexer's hot loop into several traces. The per-site discriminator was not built.
+**Items 3 (RETF through a caller's `TAILCALL`) and 4 (link entries for sunk allocations): not reached.**
+
+### 77.18 Heavy gate: `instruction_count_identity` failures in `bm_next_ends` were child timeouts; the cause is the mutant registry check
+
+main c707218's heavy gate reported 6 (5.5) and 2 (5.4) identity failures, all `bm_next_ends`. They are exactly the jobs the log lists as
+`tr_core child TIMED OUT after 120.0s`. Their failure text is empty because a killed child prints no `IDENT` line. The count identity itself
+holds: the same jobs pass when they finish. The 20000-round lockstep `next` walk takes 30 to 47 s per job in a debug build, and more under a
+loaded machine. main's binary and this branch's take the same time (39-45 s on one core), and the section 77 handles switched off change nothing
+(36-38 s).
+
+The profile of one child (`always +emurun budget=3`, debug, `tr_mutants`): 34 % in `tr::mutants::active`. Its
+`debug_assert!(NAMES.contains(&name))` scans the whole registry (911 names) on every call, and hot paths ask on every sampled loop tick
+(`rt::hot_loop`, `cache::loop_len_w`'s `wgcall_weight_skip`, ...). Every registered mutant made every debug child slower, until the long jobs
+crossed the 120 s leash. Fix: the registry check is a `HashSet` lookup built once (same guarantee, unit test
+`mutants::tests::active_rejects_unregistered_names`). The child goes from 40-45 s to 19-20 s, and `TR_CORE_ONLY=bm_next_ends`
+`instruction_count_identity` on three CPUs passes with no child above 30 s. `ident_check` now reports the child's `<no result: ...>` line, so a
+timeout is visible as one. The remaining cost of that child is the interpreter (41 %) and `hot_loop` -> `loop_len_w` (26 %: the loop length is
+recomputed on every sampled tick); this was not changed.

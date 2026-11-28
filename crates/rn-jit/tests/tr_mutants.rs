@@ -2261,9 +2261,34 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s77_home_programs")],
     },
     Row {
-        name: "sloadhome_slot_written",
+        name: "sloadhome_slot_reused",
         owner: "S77",
         dets: &[d("tr_core", "s77_home_programs")],
+    },
+    Row {
+        name: "sloadhome_carry_src",
+        owner: "S77",
+        dets: &[d("tr_core", "r1_regcarry_programs")],
+    },
+    Row {
+        name: "t1g_tflat_params_skip",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_tflat_programs")],
+    },
+    Row {
+        name: "t1g_tflat_top_short",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_tflat_programs")],
+    },
+    Row {
+        name: "retf_demote_recursive",
+        owner: "S77",
+        dets: &[d("tr_core", "s77_retf_demote_programs")],
+    },
+    Row {
+        name: "polyhead_never",
+        owner: "S77",
+        dets: &[d("tr_policy", "s77_polyhead_rule")],
     },
     Row {
         name: "tmove_presize_holes",
