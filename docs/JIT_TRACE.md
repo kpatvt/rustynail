@@ -9743,3 +9743,9 @@ virtual-frame exits whose side trace sinks every replayed table again: measure w
 re-measure `innerlink` bit 4: its links remove the `InnerLoop` aborts but every link materialises frames, which only pays when the loop trace's
 exits stop materialising records. (4) The time-window dependence of formation (86.6 caveat) should be found before more chain tuning: it
 moves stream_closures by 18 %.
+
+**Gates** (`GATE_CPUS=2-4`, load 8-35): commit 6fa4f6e `gate-light.sh tailf_`: all steps PASS except `bn_retf_process_default` (the `retf` clamp
+moved to 4095; fixed in c378174) and the stale mutant map (regenerated). Final: `gate-light.sh --base 2df261d` on 5d90e16 (130 mutants chosen
+from the changed files: all caught, 2030 s; vm_corpus, jit-diff 1-50, clippy, core suites PASS); the only failure was `t9_innerlink_knob` (the
+`innerlink` clamp moved to 63; fixed in b60cb56), after which the 5.5 and 5.4 trace suites, fmt and the mutant map were re-run on b60cb56: PASS.
+Not run: the heavy gate.
