@@ -630,6 +630,8 @@ pub fn run_buf(ir: &TraceIr, m: &mut Model, v: &mut Vec<u64>) -> RunResult {
                 m.shift += i.b;
                 0
             }
+            // section 86.1: the frame replacement writes the function slot and the `CallInfo` (not modelled); the slots stay
+            TOp::Tailf => 0,
             TOp::Hrefk => {
                 // the node of constant key `b` at index `bits` of the node vector of table (node handle) `a`
                 let (h, key, ix) = (val!(i.a), val!(i.b), hrefk_idx(bits));

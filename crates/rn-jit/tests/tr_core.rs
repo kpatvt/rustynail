@@ -4718,6 +4718,121 @@ fn s77_polyhead_programs() {
     compare(jobs);
 }
 
+/// Section 82.1 (`pfam`): per-iterator trace families: one generic-`for` head serving many pipelines (same prototype over different upvalue
+/// closures, nested), C-function iterators and a callable table through one head, fresh closures under collections, the iterator replaced by
+/// `debug.setlocal`, a yield and an error inside the iterator; families on demand / from the start (bit 5), with and without upvalue keys
+/// (bit 4), two members (slots recycled and refused), `t1g` 7 / 3, the trace modes, `+verify`, exit storms, budget 17, GC stress 2; and the
+/// pipeline programs of 77.14 / 77.17 with families. Mutants `pfam_member_cell_stub`, `pfam_guard_free_entry`.
+#[test]
+fn s82_pfam_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "t1g=7,pfam=24",
+            "t1g=3,pfam=56",
+            "t1g=7,pfam=34",
+            "t1g=7,pfam=36",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s82_pfam", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s82_pfam", trace)
+                .limits_s("t1g=7,pfam=56")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+        for name in ["s77_polyhead", "s77_tflat"] {
+            for limits in ["t1g=7,pfam=24", "t1g=7,pfam=36"] {
+                jobs.push(Job::new(name, trace).opts("+verify").limits_s(limits));
+            }
+        }
+    }
+    compare(jobs);
+}
+
+/// Section 86.1 (TAILF, `retf` bit 10): side traces that pop into a caller and record its `TAILCALL` as a frame replacement: closure pipelines,
+/// arity mismatches, several results, upvalues of both sides, a larger callee frame, errors with levels and tracebacks, `istailcall`, hooks installed
+/// mid-loop, deep tail recursion, callees that change identity or are not Lua closures, allocation; `retf` 1975 (with `retfmax` 3 and `lazyci=0`,
+/// the shapes that need them) / 951 (bit 10 off), the trace modes, `+verify`, exit storms, budgets 3 and 17, GC stress 2. Mutants `tailf_*`.
+#[test]
+fn s86_tailf_programs() {
+    let mut jobs = Vec::new();
+    for trace in ["always", "on2", "on"] {
+        for limits in [
+            "t1g=7,retf=1975,retfmax=3,lazyci=0",
+            "t1g=7,retf=1975",
+            "t1g=3,retf=1975,retfmax=3,lazyci=0",
+            "t1g=7,retf=951,retfmax=3,lazyci=0",
+        ] {
+            for (opts, budget) in [
+                ("", 0),
+                ("+verify", 0),
+                ("+exitstorm=3 +verify", 0),
+                ("", 3),
+                ("", 17),
+            ] {
+                let mut j = Job::new("s86_tailf", trace).opts(opts).limits_s(limits);
+                if budget != 0 {
+                    j = j.budget(budget);
+                }
+                jobs.push(j);
+            }
+        }
+        jobs.push(
+            Job::new("s86_tailf", trace)
+                .limits_s("t1g=7,retf=1975,retfmax=3,lazyci=0")
+                .env("RUSTYNAIL_GC_STRESS", "2"),
+        );
+        // section 86.2 (`retf` bit 11, `lazydec`): eager popping sides of never-recursive lazy-aware families; the recursion programs (lazy frames
+        // below their side traces) must keep their sides lazy-aware
+        for limits in [
+            "t1g=7,retf=4023,retfmax=3",
+            "t1g=7,retf=4023,retfmax=3,lazydec=1",
+            // section 86.3 / 86.4: backward-edge links (dead tables nil at the link) and sinking in segmented side traces
+            "t1g=7,retf=1975,retfmax=3,lazyci=0,innerlink=48",
+            "t1g=7,retf=1975,retfmax=3,lazyci=0,sinkseg=1",
+            "t1g=7,retf=4023,retfmax=3,lazydec=1,innerlink=48,sinkseg=1",
+            // section 86.5 (`retf` bit 12): function-entry families do not pop into untraced caller loops
+            "t1g=7,retf=6071,retfmax=3,lazydec=1,sinkseg=1",
+            "t1g=7,retf=5047,retfmax=3",
+        ] {
+            for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                jobs.push(Job::new("s86_tailf", trace).opts(opts).limits_s(limits));
+            }
+        }
+        for name in ["deep_recursion", "s77_rself"] {
+            for limits in [
+                "retf=2231",
+                "retf=2231,retfmax=3",
+                "retf=4023,retfmax=3,lazydec=1",
+            ] {
+                jobs.push(Job::new(name, trace).opts("+verify").limits_s(limits));
+            }
+        }
+        for name in ["s82_pfam", "s77_tflat", "s77_polyhead"] {
+            for limits in [
+                "t1g=7,retf=4023,retfmax=3,lazydec=1,innerlink=48,sinkseg=1",
+                "t1g=7,retf=1975,retfmax=3,lazyci=0,innerlink=48,sinkseg=1",
+            ] {
+                for opts in ["", "+verify", "+exitstorm=3 +verify"] {
+                    jobs.push(Job::new(name, trace).opts(opts).limits_s(limits));
+                }
+            }
+        }
+    }
+    compare(jobs);
+}
+
 /// Section 77.15 (`retf` bit 9): `RETF` pops into loop-free (maybe lazy-aware) callers that never recursed; the recursion programs (whose callers
 /// are lazy-aware and recursive, and must stay refused) with the bit on, in the trace modes. Mutant `retf_demote_recursive`.
 #[test]

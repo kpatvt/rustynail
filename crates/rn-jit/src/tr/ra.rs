@@ -494,6 +494,11 @@ pub fn op_clobbers(i: &Ins, ir: &TraceIr) -> CallClobber {
         },
         // Section 89.1: the root test uses V2 as scratch
         TOp::Lroot => CallClobber { gpr: 0b100, xmm: 0 },
+        // section 86.1: `r14` is reloaded from the callee's constants (V7 is the assembler's scratch)
+        TOp::Tailf => CallClobber {
+            gpr: 1 << 10,
+            xmm: 0,
+        },
         _ => CallClobber::default(),
     }
 }

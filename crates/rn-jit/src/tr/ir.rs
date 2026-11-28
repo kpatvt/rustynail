@@ -351,6 +351,13 @@ pub enum TOp {
     /// lazy [`TOp::Retf`]. No operands; `aux` = [`guard_aux`]. Its exit (a snapshot of its own) is marked `noretf`: the region root returns through
     /// the side trace of that exit, which does not pop. Never CSE'd (the frame changes at every `RETF`).
     Lroot,
+    // ---- section 86 additions (appended) ----
+    /// Section 86.1 (TAILF): the native half of `pre_tail_call` for the root frame of a trace after a [`TOp::Retf`] (the root is a real frame):
+    /// stores the closure `a` (tag and payload) into the frame's function slot (`rbx - 16`), sets `ci.top = ci.func + 1 + aux` (`aux` = the
+    /// callee's `maxstacksize`), `ci.savedpc` / `ci.kcache` to the code and constants of the prototype `b` (a `KPTR` proto constant, a trace
+    /// dependency), `CIST_TAIL` in `ci.callstatus`, and `r14 = kcache`. The base and the `CallInfo` stay: the moved arguments are slot-map
+    /// entries of the following snapshots. No result, not a guard; never CSE'd, never moved (only traces with segments contain it).
+    Tailf,
 }
 
 /// S4: bit of the op bits of an [`TOp::Hrefk`]: a dominating [`TOp::Hshape`] on the same node vector proves that the node holds the key (no key compare);
@@ -1116,7 +1123,7 @@ pub enum IrAbort {
 
 impl TOp {
     /// Number of operations (size of per-op tables).
-    pub const COUNT: usize = TOp::Lroot as usize + 1;
+    pub const COUNT: usize = TOp::Tailf as usize + 1;
 
     /// Ops that are guards by definition (their `F_GUARD` flag is always set by the builder).
     pub const fn always_guard(self) -> bool {
@@ -1299,6 +1306,7 @@ impl TOp {
             TOp::Tnext => "TNEXT",
             TOp::Retf => "RETF",
             TOp::Lroot => "LROOT",
+            TOp::Tailf => "TAILF",
         }
     }
 }
@@ -1502,6 +1510,20 @@ impl Builder {
             self.heads[TOp::Uvrel as usize] = r;
         }
         Ok(r)
+    }
+
+    /// Section 86.1: emits a [`TOp::Tailf`] (`a` = the callee closure, `b` = its `KPTR` proto constant, `aux` = its `maxstacksize`). The base does not
+    /// move, so the `UVREL` chain stays.
+    pub fn emit_tailf(&mut self, a: Ref, b: Ref, aux: u32) -> Result<Ref, IrAbort> {
+        self.emit_raw(Ins {
+            op: TOp::Tailf,
+            t: Ty::Nil,
+            flags: 0,
+            a,
+            b,
+            prev: NOREF,
+            aux,
+        })
     }
 
     /// Appends `ins` as is (links the CSE chain).

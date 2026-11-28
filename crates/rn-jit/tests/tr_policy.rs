@@ -1332,7 +1332,7 @@ fn s77_polyhead_rule() {
 }
 
 /// BUNDLE-N: `retf` is 179 by default (side RETF recording + inline re-push stub; function-entry families, bit 2, stay off; section 77.7: bits 4, 5, 7,
-/// self-recursion pops into a numeric / `while` loop of the caller); an explicit value wins and is clamped to 255 (`retfmax` to 8).
+/// self-recursion pops into a numeric / `while` loop of the caller); an explicit value wins and is clamped to 8191 (bits 0-12, section 86) (`retfmax` to 8).
 #[test]
 fn bn_retf_process_default() {
     use rn_jit::tr::cache::{TrConfig, TrMode, RETFMAX_PROCESS, RETF_PROCESS};
@@ -1341,7 +1341,7 @@ fn bn_retf_process_default() {
     for (env, want, wmax) in [
         (None, RETF_PROCESS, RETFMAX_PROCESS),
         (Some("retf=1"), 1, RETFMAX_PROCESS),
-        (Some("retf=9999,retfmax=2"), 1023, 2),
+        (Some("retf=9999,retfmax=2"), 8191, 2),
         (Some("retfmax=99"), RETF_PROCESS, 8),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
@@ -1352,6 +1352,23 @@ fn bn_retf_process_default() {
             "limits env {env:?}"
         );
         let _ = TrMode::On;
+    }
+}
+
+/// Section 86.2: `lazydec` is 1 in a process (`apply_process_limits`), 0 in the struct default the tests use; an explicit value wins.
+#[test]
+fn s86_lazydec_process_default() {
+    use rn_jit::tr::cache::{TrConfig, LAZYDEC_PROCESS};
+    assert_eq!(LAZYDEC_PROCESS, 1);
+    for (env, want) in [(None, 1), (Some("lazydec=0"), 0), (Some("lazydec=7"), 1)] {
+        let mut c = TrConfig::parse(None, None, None, env, None);
+        assert_eq!(
+            c.limits.lazydec,
+            if env.is_some() { want } else { 0 },
+            "parse {env:?}"
+        );
+        c.apply_process_limits(env);
+        assert_eq!(c.limits.lazydec, want, "process {env:?}");
     }
 }
 
@@ -2091,7 +2108,7 @@ fn t4_knob() {
     }
 }
 
-/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the knob (struct default = shipped, parse, cap at the four bits).
+/// T9 (`innerlink`, docs/JIT_TRACE.md section 47): the knob (struct default = shipped, parse, cap at the six bits: section 86.3 adds bits 4 and 5).
 #[test]
 fn t9_innerlink_knob() {
     use rn_jit::tr::cache::{TrConfig, TrMode, INNERLINK_PROCESS};
@@ -2104,7 +2121,7 @@ fn t9_innerlink_knob() {
         (Some("innerlink=0"), 0),
         (Some("innerlink=3"), 3),
         (Some("innerlink=11"), 11),
-        (Some("innerlink=99"), 15),
+        (Some("innerlink=99"), 63),
         (None, INNERLINK_PROCESS),
     ] {
         let mut c = TrConfig::parse(None, None, None, env, None);
