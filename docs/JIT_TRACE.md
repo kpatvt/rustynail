@@ -9655,3 +9655,26 @@ exits at pc 15 `RETURN1` (6.0 k / 5.0 k / 4.8 k), `MaxSide` / `Depth` exits (5.5
 ### 88.6 Not reached
 
 raytrace (`fnleaf` bit 12 per-site discriminator, `innerlink`-style links for loops inside callees) and the cd items of 88.5.
+
+### 88.7 Final defaults and the whole set (binary 7549eec)
+
+Process defaults: `stitch=95` (ON since 88.2), `fnleaf=16`, `wgloop=16`, `mrset=1`; `efkeep`, `eflazy`, `outerlink` 0 (struct defaults all 0). 223
+programs, instructions, one run each (machine load 38-60 during this run from other work: instruction counts only, no cycle claims):
+
+* final defaults against `stitch=0` (= the defaults of f226977): geomean **-0.26 %**; no rise above 0.11 % (cd +0.11 %; astar_jumper +2.1 %, its
+  run-to-run spread); text_adventure -14.25 %, lua_parser -7.7 %, real_dis_ppc -5.6 %, wordfreq_wrap -5.4 %, inspect_lua -5.0 %, gmatch_words
+  -4.2 %, json_rxi -3.8 %, real_dis_x86 -2.9 %, roguelike -2.4 %, real_dis_mips -2.2 %.
+* `efkeep=4,eflazy=1` on top: geomean -0.13 %; parser_combinator -18.6 %, cd -5.35 %, stream_closures -3.2 %, json_roundtrip -1.7 %; up lua_parser
+  +3.3 % (single path; a `LeaveFrame`/path-mode program, 88.3), deltablue +1.4 % (path mode, median of 3 paths -0.6 %), roguelike +0.85 % (88.3).
+* `outerlink=1` on top: geomean -0.41 %; fmt_s -13.4 %, mandelbrot -8.1 %; up class_middleclass +1.08 % (88.4), roguelike +0.52 %.
+
+### 88.8 Queue for the next round
+
+1. `eflazy`: roguelike's `LeaveFrame` lottery (head 120 pc 7) and lua_parser's (154 pc 27) need one rule that picks the better of "loop root" and
+   "no loop root" for loops that usually leave their frame (measured exits per entry of the installed root against the tier-1 cost, or a recording
+   that closes at the `RETURN`); serpent_ser needs `GETTABLE` of an integer key in a hash part on trace (`TableHash`).
+2. `outerlink`: a majority-receiver root for polymorphic dispatch loops (class_middleclass), or a `reroot` revert that keeps the better trace (then
+   `reroot` itself: queens -24 %, cd +1.3 % at `reroot=50`).
+3. cd: 88.5's unlinked exits (the pc 17 `LTI` pair first), the raw-copy materialisation template.
+4. raytrace: `fnleaf` bit 12 discriminator, links for loops inside callees.
+5. programs/json: per-exit memo of `root_frame_in_loop` in the exit metadata (88.1, <= 0.15 %).
