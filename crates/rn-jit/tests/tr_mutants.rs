@@ -5168,6 +5168,11 @@ const TABLE: &[Row] = &[
         dets: &[d("tr_core", "s98_lzretf_alt_refund_identity")],
     },
     Row {
+        name: "t1_err_refund_skip",
+        owner: "S98",
+        dets: &[d("tr_core", "s98_lzretf_alt_refund_identity")],
+    },
+    Row {
         name: "peep_tbar_white_skip",
         owner: "S93",
         dets: &[

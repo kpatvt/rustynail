@@ -4505,6 +4505,11 @@ pub(crate) fn t1q_mut() -> u32 {
 }
 
 /// C2: the active tier-1 comparison mutants `(c2cmp_swap, c2cmp_exit_skip)` (queried by `templates_alloc`).
+/// Section 98.4: mutant `t1_err_refund_skip` (tier 1's slow-path error exit keeps the pre-paid rest of the block).
+pub(crate) fn t1_err_refund_mut() -> bool {
+    mutants::active("t1_err_refund_skip")
+}
+
 pub(crate) fn c2cmp_mut() -> (bool, bool) {
     (
         mutants::active("c2cmp_swap"),

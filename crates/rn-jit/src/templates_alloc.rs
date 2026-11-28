@@ -815,6 +815,22 @@ impl Cx<'_> {
                     self.op(Op::Bind(l));
                     let x = self.exit_r(pc);
                     self.br(Cc::Eq, 0, Src::Imm(h::H_EXIT as i32), x);
+                    // section 98.4: the helper raised an error. The instruction ran (the interpreter fetched it too), the rest of the block
+                    // was pre-paid and never runs: give it back (`for i = 1, n do t[nil] = i end` under `pcall` counted its `FORLOOP`)
+                    #[cfg(feature = "trace")]
+                    let skip = crate::tr::t1_err_refund_mut();
+                    #[cfg(not(feature = "trace"))]
+                    let skip = false;
+                    let refund = self.rem[pc as usize].saturating_sub(1);
+                    if refund > 0 && !skip {
+                        let m = M {
+                            base: Base::Cnt,
+                            off: 0,
+                        };
+                        self.ld(1, W::B4, m);
+                        self.op(Op::Add(1, Src::Imm(refund as i32)));
+                        self.st(W::B4, m, 1);
+                    }
                     self.op(Op::Jmp(err));
                 }
                 Cold::Hook { l, next, refund } if self.exit_shared(next, refund) => {

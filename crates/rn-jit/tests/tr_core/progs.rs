@@ -12066,6 +12066,31 @@ print(total)
 "##,
     },
     Prog {
+        name: "s98_err_refund",
+        small: true,
+        src: r##"
+-- section 98.4: errors raised by tier 1's table helpers in the middle of a block (the rest of the block was pre-paid): nil / NaN keys, indexing
+-- a non-table, a raising __index / __newindex, in loops and straight-line code, caught by pcall, many times
+local function badkey(set, n) for i = 1, n do set[nil] = i end end
+local function nankey(set, n) for i = 1, n do set[0 / 0] = i end end
+local function idx(t, n) local s = 0 for i = 1, n do s = s + t.a.b end return s end
+local function setx(t, n) for i = 1, n do t.a.b = i end end
+local rais = setmetatable({}, { __index = function() error("ix", 0) end, __newindex = function() error("nx", 0) end })
+local function mm(t, n) local s = 0 for i = 1, n do t[i] = i; s = s + t.k end return s end
+local c = 0
+for r = 1, 300 do
+  if not pcall(badkey, {}, 3) then c = c + 1 end
+  if not pcall(nankey, {}, 3) then c = c + 1 end
+  if not pcall(idx, { a = (r % 3 == 0) and { b = 1 } or nil }, 4) then c = c + 1 end
+  if not pcall(setx, {}, 2) then c = c + 1 end
+  if not pcall(mm, rais, 2) then c = c + 1 end
+  local ok = pcall(function(t, k) t[k] = 1; return 2 end, {}, nil)
+  if not ok then c = c + 1 end
+end
+print(c)
+"##,
+    },
+    Prog {
         name: "bc_sbump",
         small: true,
         src: r##"

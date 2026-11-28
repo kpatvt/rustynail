@@ -4973,7 +4973,8 @@ fn s89_lzretf_programs() {
 /// Section 98.1: the out-of-line native return of a lazy `RETF` at another site (`lzretf` bit 2) refunds exactly the steps after the `RETURN`
 /// (`TraceIr::seg_refund`). `bc_sbump` at budget 200 pops into the other site of `add` where the first snapshot behind the pop lies several
 /// steps after it: that snapshot's refund over-counted 60887 instructions (`always`) / 13409 (`on2`) in `instruction_count_identity`.
-/// Mutants `lzretf_alt_snap_refund`, `lzretf_alt_refund_off`.
+/// Mutants `lzretf_alt_snap_refund`, `lzretf_alt_refund_off`. Also `s98_err_refund` (section 98.4, tier 1 alone and with traces): errors
+/// raised by tier 1's table helpers mid-block; mutant `t1_err_refund_skip`.
 #[cfg(feature = "t15_oracle")]
 #[test]
 fn s98_lzretf_alt_refund_identity() {
@@ -4986,6 +4987,15 @@ fn s98_lzretf_alt_refund_identity() {
         for lim in ["", "lzretf=29", "lzretf=5", "nest=2,stitchmin=4"] {
             for b in [None, Some(17), Some(200)] {
                 let mut j = Job::new("bc_sbump", t).opts(o).limits_s(lim);
+                j.budget = b;
+                j.ident = true;
+                jobs.push(j);
+            }
+        }
+        // section 98.4: errors raised by tier 1's table helpers mid-block refund the pre-paid rest of the block (mutant `t1_err_refund_skip`)
+        for b in [None, Some(3), Some(17), Some(200)] {
+            for tr in [t, "t1"] {
+                let mut j = Job::new("s98_err_refund", tr).opts(o);
                 j.budget = b;
                 j.ident = true;
                 jobs.push(j);

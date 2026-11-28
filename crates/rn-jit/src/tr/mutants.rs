@@ -1183,6 +1183,8 @@ pub const NAMES: &[&str] = &[
     // section 98.1 (`lzretf` bit 2): the native return at another site takes the refund of the first snapshot behind the pop (its steps up
     // to that snapshot and the recorded site's landing label are not refunded)
     "lzretf_alt_snap_refund",
+    // section 98.4: tier 1's slow-path error exit keeps the pre-paid rest of the block (an error raised by a table helper mid-block)
+    "t1_err_refund_skip",
     // section 93.1 (`peep` bit 1): the `TBAR` test form does not test the value's colour
     "peep_tbar_white_skip",
     // section 93.2 (`smallkeys`): the last node of a small node vector is not checked
@@ -1333,7 +1335,7 @@ mod tests {
 
     #[test]
     fn registry_is_the_frozen_list() {
-        assert_eq!(NAMES.len(), 957);
+        assert_eq!(NAMES.len(), 958);
         let mut v = NAMES.to_vec();
         v.sort_unstable();
         v.dedup();
