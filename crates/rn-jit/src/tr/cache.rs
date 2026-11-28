@@ -143,8 +143,8 @@ pub const OUTERLINK_PROCESS: u32 = 0;
 pub const WGLOOP_PROCESS: u32 = 16;
 /// Section 78.2 (`fnleaf`): the process default of [`TrLimits::fnleaf`] (the struct default is 0; back on since section 81.1).
 pub const FNLEAF_PROCESS: u32 = 16;
-/// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (also the struct default).
-pub const STITCH_PROCESS: u32 = 0;
+/// Section 78.1 (`stitch`): the process default of [`TrLimits::stitch`] (the struct default is 0; on since section 88.2).
+pub const STITCH_PROCESS: u32 = 95;
 /// Section 78.1 (`stitch` bit 1): fewest recorded steps of a side recording before it stitches at a C call.
 pub const STITCH_SIDE_MIN: usize = 8;
 /// Section 78.1 (`stitch` bit 0): leaf samples (`FnShort` recordings) of a prototype's function-entry head after which its continuation heads

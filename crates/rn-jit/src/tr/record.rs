@@ -1522,6 +1522,8 @@ struct Rec {
     cont_pop_lazy_ok: bool,
     /// Section 78.1: the instruction being recorded is a `TFORPREP` of an inlined frame whose loop head links (`tprep_link`).
     tprep_ok: bool,
+    /// Section 88.2: `prep_link` was set by a `TFORPREP` (`tprep_ok`), not by a numeric `FORPREP` (T9).
+    prep_tfor: bool,
     /// Section 78.1: [`Recorded::stitch_use`] so far.
     stitch_use: u8,
     /// Section 78.2: a step of the recording ran in an inlined Lua frame.
@@ -1860,6 +1862,7 @@ impl Rec {
             cont_ret_ok: false,
             cont_pop_lazy_ok: false,
             tprep_ok: false,
+            prep_tfor: false,
             tprep_ahead: false,
             gm_root_ok: false,
             stitch_use: 0,
@@ -2102,6 +2105,7 @@ impl Rec {
         self.midfolded = false;
         self.prep_link_ok = false;
         self.prep_link = None;
+        self.prep_tfor = false;
     }
 
     fn diverge<T>(&self, msg: impl FnOnce() -> String) -> R<T> {
@@ -2251,7 +2255,23 @@ impl Rec {
         };
         // T9 (`inner_link`): the step behind a recorded data-dependent `FORPREP` of an inlined frame is its loop head: it links (or, the head lost its
         // trace meanwhile, aborts as the prep used to)
-        let prep_hit = self.prep_link.take() == Some((depth, idx as u32));
+        let mut prep_hit = self.prep_link.take() == Some((depth, idx as u32));
+        // section 88.2: a side recording that reaches the head behind a linking `TFORPREP` while still short does not abort `SideShort`: unlike a
+        // numeric `FORPREP` (T9) the generic loop can be recorded through, so it goes on under the ordinary frame-head rule (msgpack_pure: the
+        // side trace of `map`'s loop into `packers.table`'s `pairs` loop was lost, +0.61 %). Not when the loop's frame is a recursion of a frame
+        // below it (lua_parser's `fold` walking its children: the side traces that record through the recursive frame cost 7 %)
+        if prep_hit
+            && std::mem::take(&mut self.prep_tfor)
+            && self.cfg.side.is_some()
+            && self.frame_link_short()
+            && depth < self.frames.len()
+            && !self.frames[..depth]
+                .iter()
+                .any(|f| f.proto == self.frames[depth].proto)
+        {
+            prep_hit = false;
+            self.stitch_use &= !16;
+        }
         let frame_head = if prep_hit {
             let traced = self
                 .cfg
@@ -10607,6 +10627,7 @@ impl Rec {
         if self.tprep_ok && r == idx + 1 {
             // section 78.1: the next step is the loop head: it links
             self.prep_link = Some((self.cur_depth, idx as u32 + 1));
+            self.prep_tfor = true;
             self.stitch_use |= 16;
         }
         // 5.5: `R[A+2]` now holds the closing value (`R[A+3]` was overwritten by the call). 5.4 swaps nothing. (The mutant leaves the
@@ -10898,6 +10919,7 @@ impl Rec {
         }
         if prep_link {
             self.prep_link = Some((self.cur_depth, idx as u32 + 1));
+            self.prep_tfor = false;
         }
         Ok(idx + 1)
     }
