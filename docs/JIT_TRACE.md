@@ -9704,3 +9704,27 @@ towers / queens / json unchanged, binary_trees +0.59 %, memo_cache +0.47 %. Not 
    push and `RecCall::inl` widened (`ir::MAX_INL`), and a code-size budget per family (`unrollcode`-like) before it can be a default.
 5. **permute** is now below LuaJIT's instruction count per call (46.4 vs 48); its default-size cycles are the compile cost of the per-level
    side traces (section 83.3).
+
+### 89.5 binary_trees: `lzretf` bit 5, the short budget after a pop into a continuation without a loop (default 61)
+
+binary_trees' +0.59 % (89.1) is the length of its popped side traces: `lzretfmax` swept on the final binary (instructions, default size):
+
+| `lzretfmax` | 64 | 32 | 16 | 8 | 4 |
+|---|---:|---:|---:|---:|---:|
+| permute | 62.24 | 67.95 | 67.88 | 67.83 | 67.82 M |
+| fib | 3375.9 | 3375.9 | 3375.9 | 3375.9 | 3582.1 M |
+| binary_trees | 5533.2 | 5533.2 | **5373.8** | 5471.0 | 5480.6 M (base 5500.8) |
+| memo_cache | 4680.9 | 4680.9 | 4680.9 | **4626.4** | 4667.3 M (base 4659.1) |
+
+permute needs the long budget (its pops land in or in front of its `for` loop: the inlined `swap` calls), binary_trees the short one (its
+continuation after the first `BottomUpTree` call builds the node: no loop). Bit 5 (32): the budget is a quarter of `lzretfmax` (16) when the
+caller's call is outside a loop and its continuation (up to the next `RETURN`, 32 instructions) enters none; policy only (no mutant: `RetfLong`
+is the existing fallback). An abort on allocation after the pop instead (tried) made binary_trees +2.0 %.
+
+Whole set, 61 against 0 (same method as 89.1): permute -12.61 %, fib -10.96 %, **binary_trees -2.31 %**, coro_generators -0.37 %; rises
+memo_cache +0.47 % (unchanged by bit 5; `lzretfmax=8` gives -0.70 % there but costs permute +9 %: not narrowed further, next step), astar_jumper
++0.42 % (noise program); geomean -0.117 %. towers / queens / json unchanged.
+
+Not done of the coordinator's list (context): towers per-transition costs (merge b87b8cc and measure, mfconst-style pinning of towers' method
+chains, POLL/BUDGET per inlined region), deeper subtrees beyond `MAX_INL`, memo_cache's +0.47 %, the `RETURN1` alt tails. 89.3 / 89.4 hold the
+analysis for those.

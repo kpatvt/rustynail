@@ -221,7 +221,7 @@ pub const SIDESUB_PROCESS: u32 = 1;
 /// Section 89 (`lzretfmax`): the process default of [`TrLimits::lzretfmax`] (also the struct default).
 pub const LZRETFMAX_PROCESS: u32 = 64;
 /// Section 89 (`lzretf`): the process default of [`TrLimits::lzretf`] (also the struct default).
-pub const LZRETF_PROCESS: u32 = 29;
+pub const LZRETF_PROCESS: u32 = 61;
 /// Section 77.2 (`flink`): the process default of [`TrLimits::flink`] (also the struct default).
 pub const FLINK_PROCESS: u32 = 1;
 /// Section 77.3 (`uvk`): the process default of [`TrLimits::uvk`] (also the struct default).
@@ -1051,8 +1051,8 @@ pub struct TrLimits {
     pub lzretfmax: u32,
     /// Section 89.1 (`lzretf`, docs/JIT_TRACE.md section 89.1): a side recording of a lazy-aware function-entry family pops its root frame at its `RETURN` into a caller of the same closure (RETF inside the region: the caller-site guard, no callstatus tests, the region root exits) and goes on recording in the caller (LuaJIT down-recursion). Bit 0: on; bit 1: only into a short continuation
     /// (`record::cont_short`); bit 2: a caller at another continuation site returns natively there instead of exiting; bit 3: not into a continuation
-    /// that calls other receiver methods outside a loop (`record::cont_methods`); bit 4: not into a bare `RETURN0`. 0 = off; default 29
-    /// ([`LZRETF_PROCESS`]: bits 0, 2, 3, 4).
+    /// that calls other receiver methods outside a loop (`record::cont_methods`); bit 4: not into a bare `RETURN0`; bit 5: a quarter of `lzretfmax` after a pop into a continuation without a loop. 0 = off; default 61
+    /// ([`LZRETF_PROCESS`]: bits 0, 2, 3, 4, 5).
     pub lzretf: u32,
     /// S1 (`lazystub`, docs/JIT_TRACE.md section 31): the stub of an exit that would get an inline stub is assembled at its first exit (the trace carries a
     /// 5-byte `nop` and a tagged generic stub instead; the handler assembles the stub, patches the branches to it and resumes in it): 1 = deferred
@@ -1640,7 +1640,7 @@ impl TrLimits {
                 "chainloop" => l.chainloop = v.min(63),
                 "sidesub" => l.sidesub = v.min(1),
                 "lzretfmax" => l.lzretfmax = v.min(1023),
-                "lzretf" => l.lzretf = v.min(31),
+                "lzretf" => l.lzretf = v.min(63),
                 "lazystub" => l.lazystub = v.min(1),
                 "presize" => l.presize = v.min(1),
                 "recunroll" => l.recunroll = v.min(2),

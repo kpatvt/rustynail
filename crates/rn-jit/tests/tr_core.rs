@@ -4795,6 +4795,7 @@ fn s89_lzretf_programs() {
     let mut jobs = Vec::new();
     for trace in ["always", "on2", "on"] {
         for limits in [
+            "lzretf=61",
             "lzretf=29",
             "lzretf=0",
             "lzretf=1",

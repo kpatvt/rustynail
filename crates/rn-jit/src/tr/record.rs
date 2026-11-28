@@ -225,6 +225,8 @@ pub struct RecCfg {
     pub lzretf_loopmeth: bool,
     /// Section 89.1 (`lzretf` bit 4): not into a bare `RETURN0` continuation.
     pub lzretf_noret0: bool,
+    /// Section 89.5 (`lzretf` bit 5): a quarter of `lzretfmax` after a pop into a call outside a loop of the caller.
+    pub lzretf_noalloc: bool,
     /// Section 75.10 (`sidepush`): native pushes from side recordings that start inside chain frames.
     pub sidepush: bool,
     /// Section 75.13 (`mfdeep`): E5's fold in chain frames called with the root closure on the root receiver.
@@ -609,6 +611,7 @@ impl Default for RecCfg {
             lzretf_short: super::cache::LZRETF_PROCESS & 2 != 0,
             lzretf_loopmeth: super::cache::LZRETF_PROCESS & 8 != 0,
             lzretf_noret0: super::cache::LZRETF_PROCESS & 16 != 0,
+            lzretf_noalloc: super::cache::LZRETF_PROCESS & 32 != 0,
             sidepush: super::cache::SIDEPUSH_PROCESS != 0,
             mfdeep: super::cache::MFDEEP_PROCESS != 0,
             mfshare: super::cache::MFSHARE_PROCESS != 0,
@@ -1539,6 +1542,8 @@ struct Rec {
     lzretf_now: bool,
     /// Section 89.1 (`lzretfmax`): the IR length at the lazy `RETF` (0: none yet).
     lzretf_at: usize,
+    /// Section 89.5: the IR budget of the current lazy pop (`lzretfmax`, or a quarter of it outside a loop with `lzretf` bit 5).
+    lzretf_budget: u32,
     /// N2c: the prototype of the entry root (the current root's, `proto`, changes at a `RETF`).
     entry_proto: usize,
     /// N2c: entry-relative extent, `room` and spare-`CallInfo` count of the segments before the current one.
@@ -1855,6 +1860,7 @@ impl Rec {
             reroot: None,
             lzretf_now: false,
             lzretf_at: 0,
+            lzretf_budget: 0,
             entry_proto: proto,
             ext_entry: 0,
             room_entry: 0,
@@ -2502,7 +2508,7 @@ impl Rec {
         if self.lzretf_at != 0
             && self.cfg.lzretfmax != 0
             && !self.stitched
-            && self.b.ir.ins.len() > self.lzretf_at + self.cfg.lzretfmax as usize
+            && self.b.ir.ins.len() > self.lzretf_at + self.lzretf_budget as usize
         {
             // Section 89.1 (`lzretfmax`): a long continuation after the lazy pop (the exit records the native return next time)
             return Err(AbortReason::RetfLong);
@@ -8451,6 +8457,27 @@ impl Rec {
                 self.lzretf_now = false;
                 if let Some(r) = r? {
                     self.lzretf_at = self.b.ir.ins.len();
+                    // (section 89.5, `lzretf` bit 5: a quarter of the budget when the caller's call is outside a loop and its continuation enters none:
+                    // binary_trees' constructor continuation; permute's continuations (in its loop, or entering it) keep the whole budget)
+                    let in_loop = super::cache::enclosing_loop_head(vm.code, r.saturating_sub(1))
+                        .is_some()
+                        || vm.code[r.min(vm.code.len())..vm.code.len().min(r + 32)]
+                            .iter()
+                            .map(|&w| Instruction(w))
+                            .take_while(|i| {
+                                !matches!(
+                                    i.opcode(),
+                                    Some(OpCode::Return | OpCode::Return0 | OpCode::Return1)
+                                )
+                            })
+                            .any(|i| {
+                                matches!(i.opcode(), Some(OpCode::Forprep | OpCode::Tforprep))
+                            });
+                    self.lzretf_budget = if self.cfg.lzretf_noalloc && !in_loop {
+                        self.cfg.lzretfmax / 4
+                    } else {
+                        self.cfg.lzretfmax
+                    };
                     return Ok(r);
                 }
             }
