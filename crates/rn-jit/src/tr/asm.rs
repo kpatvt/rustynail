@@ -3015,7 +3015,7 @@ impl<'a> Cx<'a> {
         }
         let s = &self.ir.snaps[aux_snap(ins.aux) as usize];
         let kind = match ins.op {
-            TOp::Sload => aux_bits(ins.aux) & 1 != 0,
+            TOp::Sload => aux_bits(ins.aux) & (1 | SLOAD_LAZY) == 1,
             TOp::Eqref => true,
             _ => false,
         };

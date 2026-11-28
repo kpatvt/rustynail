@@ -762,6 +762,10 @@ pub const SNAP_CARRY: u8 = 64;
 /// (`TraceIr::carry_in`), the stack slot may be stale. The load is an unchecked, position-less definition at the start of the trace: it emits no code
 /// where it stands (the entry sequence loads it from the stack, or moves it from the parent's location).
 pub const SLOAD_CARRIED: u32 = 2;
+/// [`TOp::Sload`] op bits (section 88.3, `eflazy`): a checked load that `entry_checks` left at its first use because its entry check failed persistently at
+/// the head. Its guard is a body exit even when its snapshot is the empty map at the head (a first use before any store): an entry check there would fail
+/// the entries as before, and the head would be re-recorded until it is blacklisted (serpent_ser's `pairs` loop at line 66 pc 172).
+pub const SLOAD_LAZY: u32 = 4;
 /// Any of the sunk-table entry kinds.
 pub const SNAP_SUNK_ANY: u8 = SNAP_SUNK | SNAP_SFKEY | SNAP_SFVAL | SNAP_SALIAS | SNAP_SMT;
 /// `slot` values at or above this are not stack slots (the field entries of a sunk table).

@@ -1658,6 +1658,20 @@ fn entry_checks(rec: &mut Recorded, opts: &TraceOpts) -> Result<(), String> {
             .position(|i| i.op == TOp::Retf)
             .unwrap_or(ir.ins.len())
     };
+    // (section 88.3: the loads it leaves at their first use are marked, so that their guards are body exits, see `ir::SLOAD_LAZY`)
+    {
+        for i in p..first_retf {
+            let ins = &ir.ins[i];
+            if ins.op == TOp::Sload
+                && ins.flags & F_GUARD != 0
+                && aux_bits(ins.aux) & 1 != 0
+                && lazy(ins)
+            {
+                let bits = aux_bits(ins.aux) | ir::SLOAD_LAZY;
+                ir.ins[i].aux = guard_aux(ir::aux_snap(ins.aux), bits);
+            }
+        }
+    }
     let moved: Vec<usize> = (p..first_retf).filter(|&i| checked(&ir.ins[i])).collect();
     if moved.is_empty() {
         return Ok(());
@@ -3311,6 +3325,7 @@ fn pipeline_inner(st: &mut State, act: &Active, rec: Recorded) -> Result<(), Pip
                 i.flags & ir::F_GUARD != 0
                     && i.op == ir::TOp::Sload
                     && ir::aux_bits(i.aux) & 1 != 0
+                    && ir::aux_bits(i.aux) & ir::SLOAD_LAZY == 0
                     && lp.is_none_or(|l| k < l)
                     && usize::from(i.a) < 64
                     && {
