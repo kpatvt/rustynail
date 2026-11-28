@@ -9553,3 +9553,105 @@ the unbuilt items (a) and (b) of the brief.
   (2) the `eflazy` knock-ons (lua_parser head 154 pc 27, roguelike heads 37 pc 41 / 8, inspect_lua head 88 pc 22), then `eflazy=1` + `efkeep=4`
   ON together; (3) `outerlink` per-exit attribution (class_middleclass, dijkstra_routes, sudoku_solver); (4) the unbuilt items (a) cd's unlinked
   exits + raw-copy materialisation, (b) raytrace (`fnleaf` bit 12 discriminator, links for loops inside callees).
+
+
+## 88. The four coverage knobs after sections 81 / 84: programs/json, `stitch` back ON, `eflazy` / `outerlink` causes (2026-11-27, base f226977)
+
+Method: release `rn-cli`, `RUSTYNAIL_SEED=0`, one binary per step, `perf stat -e instructions:u`, every program of bench_fast's nine sets (223),
+serially on one pinned CPU (14) with the environment length padded equal per configuration; machine quiet (load 4-5). Section 84 (84.1 memo of
+`root_frame_in_loop`, 84.2 `mrset` on, 84.3 no `stitch` pops out of recursions / root `gmatch` only with a linked loop) exists only in its commit
+messages (3a43b1c, f226977); its state is measured in 88.0.
+
+**Path lottery.** The script's path is part of the instruction count: the chunk name is a string on the heap, its length moves the collector's
+debt and with it the moments of allocation exits and of later recordings. lua_parser with all knobs at 0 runs 4208 M or 4324 M depending on the
+length of the path it is started with (two stable modes over six path lengths), awfy/deltablue with `eflazy=1` -0.85 % (relative path) or
++1.39 % (absolute path, the bench driver's). A program that moves is therefore re-measured with three paths (the original and two copies at paths
+of other lengths) and the **median** is taken; deltablue's `eflazy` rise is such a mode switch (median -0.6 %); astar_jumper moves 3-4 % between
+runs of one setting (sections 39 / 48) and is not counted.
+
+### 88.0 Step 0: where section 84 left the knobs
+
+Process defaults at f226977: `fnleaf=16`, `wgloop=16`, `mrset=1` ON; `stitch`, `efkeep`, `eflazy`, `outerlink` 0. 223 programs, f226977, each knob
+against the defaults: `stitch=95` geomean -0.25 %, the only rise msgpack_pure **+0.61 %** (84.2's `mrset` took it from +3.45 %; sudoku_solver,
+csv_ini_yaml, dijkstra_routes, lua_parser, roguelike no longer rise); `efkeep=4,eflazy=1` -0.10 %, rises deltablue +1.39 % (path mode, see above),
+serpent_ser **+0.98 %**, inspect_lua **+0.50 %** (lua_parser and roguelike no longer rise); `outerlink=1` -0.40 %, rise class_middleclass
+**+1.08 %** (sudoku_solver now -3.6 %, dijkstra_routes -0.5 %); all four -0.78 %.
+
+### 88.1 programs/json's residual +0.19 %: the bookkeeping of the armed tick (attributed; deterministic, not bimodal)
+
+A probe build with forms of the allocation-exit arm (`exit_entry`): as shipped 6771.1 M; the frame set computed but never used as a restriction
+6771.7 M; no `root_frame_in_loop` and no frame walk (the arm as before section 81) 6760.5 M; the arm without the memo lookup 6766.6 M; the memo
+lookup without the arm 6765.4 M. Formation is identical in all forms (same traces, heads, entries and exits with `RUSTYNAIL_JIT_VERBOSE=1`; the
+restriction never fires on json: all of its 179.8 k allocation exits are exits of loop roots, the memo hits on every one, the frame walk runs 45
+times). The residual is the per-exit cost of the bookkeeping, about 59 instructions per allocation exit (memo lookup through `data_ptr`, the arm's
+`hot_fired` store, the firing's check), 10.6 M = 0.157 % of the program; the rest of the 0.19 % is code layout. Not changed: a cheaper form keeps the
+answer per exit in the exit metadata (it is a property of the exit's snapshot); worth at most 0.15 % on json and nothing measurable elsewhere.
+
+### 88.2 `stitch`: a short side recording at a linking `TFORPREP` (msgpack_pure +0.61 %; fixed, `stitch=95` ON)
+
+Bisect by bit on msgpack_pure: `stitch=87` (no bit 3) and `=65` equal `stitch=0`, so bit 3; of bit 3 only the `TFORPREP` links act (`tprep links 2`).
+First divergence of the trace sets: the side trace at exit 9 of `packers.map`'s loop (line 28 pc 75), which inlines `packers.table` and reaches its
+`pairs` loop, is installed (2563 B) without bit 3 and aborts `SideShort` with it: `tforprep` sets `prep_link` when the `pairs` head has a root trace,
+the next step is that head, the link is forced, and a side that has recorded only the call and the `TFORPREP` is below `min_len`. Without the link
+the recording goes on through one iteration and links at the head under the ordinary frame-head rule. Every later formation step differs from
+there (head 65 pc 7: 449 k -> 111 k entries).
+
+Fix (`Rec::on_step`, field `prep_tfor`): a side recording that reaches the head behind a linking `TFORPREP` while `frame_link_short()` holds does not
+take the link (and does not abort): it continues under the frame-head rule, as without bit 3. A numeric `FORPREP` (T9) keeps the forced link (that
+loop cannot be recorded through). **Not inside a recursion** (the loop's frame has the prototype of a frame below it): lua_parser's `fold` walks its
+children with `pairs` and calls itself; there the `SideShort` aborts are worth 7.7 % (with the fallback also in recursions lua_parser's `stitch`
+gain went from -7.7 % to +0.4 %, in every path mode). msgpack_pure `stitch=95` +0.61 % -> **0.00 %**.
+
+223 programs, `stitch=95` against `stitch=0` (binary of this fix): geomean **-0.28 %**; no program up by more than 0.22 % (serpent_ser +0.22 %, cd
++0.11 %, template_engine / sha2_base64 +0.09 %); text_adventure -14.25 %, lua_parser -10.3 %, real_dis_ppc -5.6 %, wordfreq_wrap -5.4 %,
+inspect_lua -4.9 %, gmatch_words -4.2 %, json_rxi -3.9 %, real_dis_x86 -2.8 %, roguelike -2.4 %. **Process default `stitch=95`** (struct default 0).
+No mutant: the rule only chooses between two formations of the same code (no test program observes it).
+
+### 88.3 `eflazy` / `efkeep`: what is left (knobs stay OFF)
+
+With `stitch=95` as the base the pair `efkeep=4,eflazy=1` measures (9 programs, median of 3 paths): parser_combinator -21.4 %, cd -5.3 %,
+testrunner_luaunit -1.8 %, json_roundtrip -1.7 %, inspect_lua **-1.5 %** (its rise of 88.0 is gone under `stitch`); rises **roguelike_turns
++0.85 %**, **serpent_ser +0.4 .. +0.5 %**.
+
+* **Built: `ir::SLOAD_LAZY`.** A load `entry_checks` leaves at its first use (an `eflazy` slot) keeps an empty-map snapshot when its first use comes
+  before any store (serpent_ser's loop at line 66 pc 172: the key, string or integer, is read by the first instruction), and `Asm::entry_kind`
+  treated its guard as an entry check again: the entries failed as before, the head learned the same slot three times and was blacklisted after the
+  third re-record. The marked load's guard is now a body exit (normal exit stub; not in `Trace::entry_tys`). serpent_ser with `eflazy=1`: +1.04 % ->
+  +0.5 %; the head keeps 343 k entries (66 k without `eflazy`). No effect at the defaults (the knob is off). No mutant (formation only).
+* **serpent_ser's rest (+0.5 %)**: the moved key guard's exit wants a side trace for the integer keys, whose recording aborts `TableHash` at `t[key]`
+  (pc 172 `GETTABLE`): the exit stays unlinked and is taken by every integer-key iteration (1.32 M exits against 0.92 M); an entry failure was cheaper
+  than a handled exit. The fix is on the recording side (`GETTABLE` with an integer key in the hash part).
+* **roguelike_turns (+0.85 %)**: a `LeaveFrame` lottery. `wander_step`'s loop (line 120 pc 7) returns from its first iteration most of the time; a
+  recording that starts at a back-edge records an iteration that returns and aborts `LeaveFrame`. Without `eflazy` the 4th recording sampled a
+  looping iteration and installed (50.6 k entries); with it (the recordings move in time) 8 in a row aborted and the head was blacklisted (6 + the 2
+  of C36's second chance). The same mechanism decides lua_parser's `Parser:expr` loop (154 pc 27), where the installed trace is the *worse* one.
+* Tried and reverted: `eflazy` not at continuation heads / not at function heads (serpent +0.25 % but inspect's gain lost, roguelike unchanged);
+  `LeaveFrame` aborts of loop heads counted as data in the `LeaveLoop` budget (16 attempts, growing waits): roguelike +0.55 %, but deltablue
+  **+3.1 %** with the knobs off; no C36 second chance for loop heads of prototypes with a function-entry head (no effect: lua_parser's head got its
+  trace before the entry head was traced; with the entry-head condition alone lua_parser +0.7 %). The type pairs learned do not separate gains from
+  losses either (testrunner gains with string / integer, serpent loses with string / integer).
+
+### 88.4 `outerlink`: class_middleclass +1.08 % is a root-choice lottery in a polymorphic dispatch loop (cause found; knob stays OFF)
+
+Per-exit attribution (`RUSTYNAIL_JIT_EXITDUMP=1`, `outerlink=0` against `=1`): the exits that grow are not those of the outer-link side traces. The 7
+outer links route the end of the pairwise loop (line 253, head 0 pc 182) past the untraced `step` head into the traced loops (182: 214 k -> 15 k root
+entries, as intended); what changes besides is the moment at which the root of the update loop (`for i = 1, #world do e:update(0.1) ...`, head 0
+pc 166) is recorded, and with it the receiver class the root inlines: with the knob the root exits at its first `SELF` guard (pc 167) 1.11 M times
+into its side trace, without it 0.64 M times (the other classes go through side traces in both). The rise is the cost of the extra transitions
+(8.18 M -> 8.96 M exits). The class distribution at the recording, not `outerlink`, decides it.
+
+Section 59's `reroot` (re-record once, steered away from the dominant pre-roll exit) fires on that root: `outerlink=1,reroot=50` class_middleclass
+-3.0 % against both off, queens -24 %, but cd +1.3 % (section 64's cost: the flush itself); with `reroot=50` class_middleclass's re-record is
+reverted by `rerootchk` and the gain comes from the unconstrained re-record after the revert (itself a lottery). Not shipped. A real fix records a
+polymorphic dispatch loop's root on the majority receiver (a sample of the `SELF` receiver's metatable over the head's hot firings before the first
+recording) or lets the `reroot` revert keep the better of the two traces.
+
+### 88.5 cd's unlinked exits (measured, not built)
+
+Default size, `stitch=95`: 1.43 M exits, 231 k unlinked. Largest unlinked: one side trace's two exits at pc 17 `LTI` (58.6 k + 14.3 k, blacklisted
+exits without failed attempts), then the stitching exits before `put`'s `RETURN1` (pc 82: 7.3 k / 6.5 k / 5.2 k in three traces), the `LeaveFrame`
+exits at pc 15 `RETURN1` (6.0 k / 5.0 k / 4.8 k), `MaxSide` / `Depth` exits (5.5 k each). The raw-copy materialisation template is not built.
+
+### 88.6 Not reached
+
+raytrace (`fnleaf` bit 12 per-site discriminator, `innerlink`-style links for loops inside callees) and the cd items of 88.5.
